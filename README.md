@@ -104,8 +104,11 @@ Copy `.env.example` to `.env` for local secrets. Never commit production secrets
 
 - `ENVIRONMENT`: Set to `local` for development or `production` for deployed workers.
 - `SESSION_SECRET`: Random secret used to sign session cookies.
-- `GOOGLE_CLIENT_ID`: Google OAuth client ID for web authentication.
-- `GOOGLE_CLIENT_SECRET`: Google OAuth client secret.
+- `FIREBASE_PROJECT_ID`: Google Firebase project ID used by the Worker to verify Firebase ID tokens.
+- `VITE_FIREBASE_API_KEY`: Client-side Firebase API key for Google sign-in.
+- `VITE_FIREBASE_AUTH_DOMAIN`: Client-side Firebase auth domain (e.g. `<project-id>.firebaseapp.com`).
+- `VITE_FIREBASE_PROJECT_ID`: Client-side Firebase project ID.
+- `VITE_FIREBASE_APP_ID`: Client-side Firebase app ID.
 - `TELEGRAM_BOT_TOKEN`: Bot token from @BotFather.
 - `TELEGRAM_WEBHOOK_SECRET`: Secret token for verifying Telegram webhook updates.
 - `GEMINI_API_KEY`: API key for Google Gemini provider.

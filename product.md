@@ -185,7 +185,7 @@ Sketch. Names can change, invariants cannot.
 ```
 workspaces        id, name, owner_user_id, timezone, default_locale, plan,
                   provider_config_ref?, created_at
-users             id, google_sub, email, display_name
+users             id, firebase_uid, email, display_name
 workspace_users   workspace_id, user_id, timezone, locale, brief_time, brief_delivery
 channel_identities id, user_id, channel (telegram|whatsapp|web), external_id,
                    active_workspace_id?, verified_at
@@ -470,7 +470,7 @@ Provision the initial Kerning workspace and Avi/Hunor memberships manually. Self
 
 Build:
 
-- Google sign-in for Avi and Hunor; one shared Kerning workspace and attributed chats visible to both.
+- Google sign-in via Firebase Auth for Avi and Hunor; one shared Kerning workspace and attributed chats visible to both.
 - A mobile-first web conversation and Telegram bot for text and voice notes.
 - Live Working activity on web, conversational clarification, and per-write Undo on both channels.
 - Ledger service, events, entities, state, tasks, and undo with invariants tested.
@@ -513,7 +513,7 @@ Accept when:
 
 - Names and phone numbers of business owners collected in the EU are personal data. Store the minimum, allow deletion and export, keep a purpose for every field.
 - Use EU data location for D1 and R2 for EU workspaces. Consider per-workspace isolation if this becomes hard.
-- Subprocessors to list: Cloudflare, the model provider(s), Google (sign-in, Sheets), Telegram, later Meta. Have a DPA ready before selling in the EU.
+- Subprocessors to list: Cloudflare, the model provider(s), Google (Firebase Auth, Sheets), Telegram, later Meta. Have a DPA ready before selling in the EU.
 - Telegram bot messages are not end-to-end encrypted. Be honest about it.
 - Voice files: delete raw audio from R2 after 14 days by default, or sooner when its workspace is deleted. Keep the transcript and attributed event history under the normal workspace retention policy. An unsupported or over-length attachment is never downloaded to R2.
 - Verify webhook secrets. Rate limit per workspace. Scope every tool by workspace and trigger.
