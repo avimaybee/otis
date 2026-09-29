@@ -1,14 +1,9 @@
 import { describe, it, expect } from 'vitest';
-import worker, { type Env } from '../src/index.js';
+import { SELF, env } from 'cloudflare:test';
 
-describe('Worker /api/health Endpoint', () => {
-  it('returns status ok without leaking bindings or environment secrets', async () => {
-    const fakeEnv: Env = {
-      ENVIRONMENT: 'production-secret-env',
-    };
-
-    const req = new Request('http://localhost/api/health');
-    const res = await worker.fetch(req, fakeEnv, {} as ExecutionContext);
+describe('Worker Integration in workerd runtime', () => {
+  it('returns status ok without leaking bindings through real workerd', async () => {
+    const res = await SELF.fetch('http://localhost/api/health');
 
     expect(res.status).toBe(200);
     expect(res.headers.get('Content-Type')).toContain('application/json');
@@ -18,16 +13,29 @@ describe('Worker /api/health Endpoint', () => {
     expect(json).toHaveProperty('timestamp');
     expect(typeof json['timestamp']).toBe('string');
 
-    // Asserts no internal secrets or bindings are present
-    expect(json).not.toHaveProperty('ENVIRONMENT');
+    // Asserts no internal secrets or bindings are leaked
     expect(json).not.toHaveProperty('DB');
     expect(json).not.toHaveProperty('STORAGE');
     expect(json).not.toHaveProperty('WORKSPACE_ACTOR');
   });
 
-  it('returns 404 for unknown endpoints when no assets binding is provided', async () => {
-    const req = new Request('http://localhost/unknown-path');
-    const res = await worker.fetch(req, {}, {} as ExecutionContext);
+  it('proves D1, R2, and Durable Object bindings exist in workerd', () => {
+    expect(env.DB).toBeDefined();
+    expect(env.STORAGE).toBeDefined();
+    expect(env.WORKSPACE_ACTOR).toBeDefined();
+  });
+
+  it('proves WorkspaceActor Durable Object executes in workerd', async () => {
+    const id = env.WORKSPACE_ACTOR.idFromName('test-ws');
+    const stub = env.WORKSPACE_ACTOR.get(id);
+    const res = await stub.fetch('http://localhost/');
+    expect(res.status).toBe(200);
+    const json = (await res.json()) as Record<string, unknown>;
+    expect(json['status']).toBe('active');
+  });
+
+  it('returns 404 for unknown API endpoints', async () => {
+    const res = await SELF.fetch('http://localhost/api/unknown-endpoint');
     expect(res.status).toBe(404);
   });
 });

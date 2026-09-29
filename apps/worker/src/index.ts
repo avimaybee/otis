@@ -52,6 +52,14 @@ export default {
       });
     }
 
+    // Explicit 404 for unhandled API routes
+    if (url.pathname.startsWith('/api/')) {
+      return new Response(JSON.stringify({ error: 'Not Found' }), {
+        status: 404,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
     // Static assets fallback
     if (env.ASSETS) {
       return env.ASSETS.fetch(request);

@@ -22,8 +22,10 @@
 │  D1Database  │          │    R2Bucket     │          │ Durable Object  │
 │   binding:   │          │    binding:     │          │    binding:     │
 │     "DB"     │          │    "STORAGE"    │          │"WORKSPACE_ACTOR"│
-│ (EU Storage) │          │  (EU Storage)   │          │ (Serial Queue)  │
+│ (Local / EU) │          │  (Local / EU)   │          │ (Serial Queue)  │
 └──────────────┘          └─────────────────┘          └─────────────────┘
+*Note: EU jurisdiction for D1 and R2 is a production deployment requirement.
+Local development uses local Miniflare/SQLite bindings with placeholder IDs.
 ```
 
 ---

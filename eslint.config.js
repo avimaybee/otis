@@ -8,6 +8,7 @@ export default tseslint.config(
     ignores: [
       '**/dist/**',
       '**/dist-client/**',
+      '**/dist-worker/**',
       '**/.wrangler/**',
       '**/node_modules/**',
       '**/.vite/**'
