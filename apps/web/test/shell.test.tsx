@@ -40,10 +40,11 @@ describe('Web App Shell Smoke & 360px Layout', () => {
     expect(html).toContain('width=device-width');
   });
 
-  it('renders Daybook shell into 360px mobile viewport without throwing', async () => {
+  it('renders Daybook shell into 360px mobile viewport without horizontal overflow', async () => {
     const container = document.createElement('div');
     container.style.width = '360px';
     container.style.minHeight = '640px';
+    container.style.overflowX = 'auto';
     document.body.appendChild(container);
 
     const root = createRoot(container);
@@ -51,7 +52,34 @@ describe('Web App Shell Smoke & 360px Layout', () => {
       root.render(<App />);
     });
 
+    const header = container.querySelector('header');
+    const main = container.querySelector('main');
+    expect(header).toBeDefined();
+    expect(main).toBeDefined();
     expect(container.querySelector('h1')?.textContent).toBe('Daybook');
+
+    // Programmatic verification: no element exceeds the 360px container
+    expect(container.scrollWidth).toBeLessThanOrEqual(360);
+
+    await React.act(async () => {
+      root.unmount();
+    });
+    document.body.removeChild(container);
+  });
+
+  it('renders Daybook shell into desktop viewport without horizontal overflow', async () => {
+    const container = document.createElement('div');
+    container.style.width = '1024px';
+    container.style.minHeight = '768px';
+    container.style.overflowX = 'auto';
+    document.body.appendChild(container);
+
+    const root = createRoot(container);
+    await React.act(async () => {
+      root.render(<App />);
+    });
+
+    expect(container.scrollWidth).toBeLessThanOrEqual(1024);
 
     await React.act(async () => {
       root.unmount();
