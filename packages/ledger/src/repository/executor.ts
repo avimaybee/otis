@@ -101,15 +101,26 @@ function createGuardStatement(
               w.lease_fence = ?
               AND (w.lease_expires_at IS NULL OR unixepoch(w.lease_expires_at) > unixepoch('now'))
             ))
-            -- 5. Run validation (if run_id provided):
-            AND (? IS NULL OR EXISTS (
+            -- 5a. Ordinary run validation (if run_id provided and NOT resuming clarification):
+            AND (? IS NOT NULL OR ? IS NULL OR EXISTS (
               SELECT 1 FROM agent_runs ar
               WHERE ar.id = ?
                 AND ar.workspace_id = w.id
-                AND ar.status IN ('queued', 'running', 'waiting_for_input')
+                AND ar.status IN ('queued', 'running')
                 AND (? IS NULL OR ar.source_message_id = ?)
                 AND (? IS NULL OR ar.source_job_id = ?)
                 AND (? IS NULL OR ar.lease_fence = ?)
+            ))
+            -- 5b. Clarification Resumption validation (if resuming_clarification_id provided):
+            AND (? IS NULL OR EXISTS (
+              SELECT 1 FROM pending_clarifications pc
+              LEFT JOIN agent_runs ar ON ar.id = pc.run_id
+              WHERE pc.id = ?
+                AND pc.workspace_id = w.id
+                AND pc.status = 'pending'
+                AND (pc.run_id IS NULL OR ar.status = 'waiting_for_input')
+                AND (pc.run_id IS NULL OR ? IS NULL OR ar.id = ?)
+                AND (pc.run_id IS NULL OR ? IS NULL OR ar.lease_fence = ?)
             ))
             -- 6. Step validation (if step_id provided):
             AND (? IS NULL OR EXISTS (
@@ -139,6 +150,8 @@ function createGuardStatement(
       context.actor.system_job || '',
       context.fence !== undefined ? context.fence : null,
       context.fence !== undefined ? context.fence : 0,
+      // 5a (ordinary run):
+      context.resuming_clarification_id || null,
       context.run_id || null,
       context.run_id || '',
       context.source_message_id || null,
@@ -147,6 +160,14 @@ function createGuardStatement(
       context.source_job_id || '',
       context.fence !== undefined ? context.fence : null,
       context.fence !== undefined ? context.fence : 0,
+      // 5b (clarification resumption):
+      context.resuming_clarification_id || null,
+      context.resuming_clarification_id || '',
+      context.run_id || null,
+      context.run_id || '',
+      context.fence !== undefined ? context.fence : null,
+      context.fence !== undefined ? context.fence : 0,
+      // 6 (step):
       context.step_id || null,
       context.step_id || '',
       context.run_id || '',
@@ -284,8 +305,52 @@ async function handleBatchError(
     }
   }
 
-  // Check run
-  if (context.run_id) {
+  // Check pending clarification if resuming
+  if (context.resuming_clarification_id) {
+    const clarRow = await db
+      .prepare(`SELECT status, workspace_id, run_id FROM pending_clarifications WHERE id = ?`)
+      .bind(context.resuming_clarification_id)
+      .first<Record<string, unknown>>();
+    if (!clarRow || clarRow['workspace_id'] !== context.workspace_id) {
+      return {
+        status: 'conflict',
+        action_id: context.action_id,
+        error: {
+          code: 'clarification_not_found',
+          message: `Pending clarification '${context.resuming_clarification_id}' not found in workspace '${context.workspace_id}'.`,
+        },
+      };
+    }
+    if (clarRow['status'] !== 'pending') {
+      return {
+        status: 'conflict',
+        action_id: context.action_id,
+        error: {
+          code: 'already_resolved',
+          message: `Clarification '${context.resuming_clarification_id}' is '${clarRow['status']}', no longer pending.`,
+        },
+      };
+    }
+    if (clarRow['run_id']) {
+      const runRow = await db
+        .prepare(`SELECT status FROM agent_runs WHERE id = ?`)
+        .bind(clarRow['run_id'])
+        .first<Record<string, unknown>>();
+      if (runRow && runRow['status'] !== 'waiting_for_input') {
+        return {
+          status: 'conflict',
+          action_id: context.action_id,
+          error: {
+            code: 'run_not_waiting',
+            message: `Run '${clarRow['run_id']}' status is '${runRow['status']}', not 'waiting_for_input'.`,
+          },
+        };
+      }
+    }
+  }
+
+  // Check run for ordinary writes
+  if (context.run_id && !context.resuming_clarification_id) {
     const runRow = await db
       .prepare(`SELECT workspace_id, status, source_message_id, source_job_id FROM agent_runs WHERE id = ?`)
       .bind(context.run_id)
@@ -300,7 +365,7 @@ async function handleBatchError(
         },
       };
     }
-    if (runRow['status'] !== 'queued' && runRow['status'] !== 'running' && runRow['status'] !== 'waiting_for_input') {
+    if (runRow['status'] !== 'queued' && runRow['status'] !== 'running') {
       return {
         status: 'conflict',
         action_id: context.action_id,
@@ -1045,13 +1110,71 @@ export async function resumePendingClarification(
     };
   }
 
-  // 2. Merge original validated args with answered fields
-  const mergedArgs = {
-    ...pendingOp.args,
-    ...options.resolved_fields,
-  };
+  // 2. Validate and bound resolved_fields against clarification's missing_fields
+  let allowedMissingFields: string[] = [];
+  if (clar['missing_fields']) {
+    try {
+      const parsed = JSON.parse(String(clar['missing_fields']));
+      if (Array.isArray(parsed)) {
+        allowedMissingFields = parsed.map(String);
+      }
+    } catch {
+      allowedMissingFields = [];
+    }
+  }
 
-  // 3. Resolve command handler
+  const allowedSet = new Set(allowedMissingFields);
+  const resolvedKeys = Object.keys(options.resolved_fields || {});
+
+  // Reject unsolicited fields (e.g. attempting to overwrite title or entity_id)
+  for (const key of resolvedKeys) {
+    if (!allowedSet.has(key)) {
+      return {
+        status: 'rejected',
+        action_id: context.action_id,
+        error: {
+          code: 'unsolicited_field',
+          message: `Field '${key}' was not requested in clarification '${options.clarification_id}'. Allowed missing fields: [${allowedMissingFields.join(', ')}].`,
+        },
+      };
+    }
+  }
+
+  // Reject if any required missing field is omitted
+  for (const requiredField of allowedMissingFields) {
+    if (options.resolved_fields[requiredField] === undefined) {
+      return {
+        status: 'rejected',
+        action_id: context.action_id,
+        error: {
+          code: 'missing_required_field',
+          message: `Required field '${requiredField}' was not provided for clarification '${options.clarification_id}'.`,
+        },
+      };
+    }
+  }
+
+  // Merge strictly bounded fields into original validated args
+  const mergedArgs: Record<string, unknown> = { ...pendingOp.args };
+  for (const key of allowedMissingFields) {
+    if (options.resolved_fields[key] !== undefined) {
+      mergedArgs[key] = options.resolved_fields[key];
+    }
+  }
+
+  // 3. Resuming clarification requires a source_message_id attributing the member answer
+  if (!context.source_message_id) {
+    return {
+      status: 'rejected',
+      action_id: context.action_id,
+      error: {
+        code: 'missing_source_message',
+        message: `Resuming clarification '${options.clarification_id}' requires a source_message_id attributing the member's answer.`,
+      },
+    };
+  }
+
+  // 4. Resolve command handler
   const registry = handlerRegistry || DEFAULT_COMMAND_HANDLERS;
   const handler = registry[pendingOp.command_name];
   if (!handler) {
@@ -1065,7 +1188,7 @@ export async function resumePendingClarification(
     };
   }
 
-  // 4. Construct atomic statements to resolve the clarification and unblock the run
+  // 5. Construct atomic statements to resolve the clarification and unblock the run
   const now = new Date().toISOString();
   const resolveStmt = db
     .prepare(
@@ -1100,16 +1223,16 @@ export async function resumePendingClarification(
   }
 
   const effectiveChatId = context.chat_id || (clar['chat_id'] ? String(clar['chat_id']) : undefined);
-  const effectiveSourceMsgId = context.source_message_id || (clar['source_message_id'] ? String(clar['source_message_id']) : undefined);
 
   const resumedContext: LedgerCommandContext = {
     ...context,
     run_id: effectiveRunId,
     chat_id: effectiveChatId,
-    source_message_id: effectiveSourceMsgId,
+    source_message_id: context.source_message_id,
+    resuming_clarification_id: options.clarification_id,
   };
 
-  // 5. Execute resumed command atomically with clarification resolution statements
+  // 6. Execute resumed command atomically with clarification resolution statements
   return await executeLedgerCommand(
     db,
     resumedContext,

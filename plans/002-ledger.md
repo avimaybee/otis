@@ -114,16 +114,17 @@ Use [verification.md](../docs/verification.md) cases `LEDGER`, `UNDO`, `IDENTITY
    - Deterministic Replay: `rebuildProjections` reconstructs identical projections from sequence-ordered events; excludes reverted events causally.
    - Undo: supports `from_here` (same run suffix) and `single` undo; detects dependent subsequent actions and requests clarification instead of silently corrupting state; active-target detection ignores already-reverted events.
 
-2. **D1 Local Transaction & Isolation Suite (`apps/worker/test/ledger.integration.test.ts` - 16 passing tests in `workerd`):**
+2. **D1 Local Transaction & Isolation Suite (`apps/worker/test/ledger.integration.test.ts` - 17 passing tests in `workerd`):**
    - `TX-01`: Guard failure in atomic D1 batch rolls back all operations with zero partial state.
    - `TX-02`: Stale `expected_business_revision` aborts with `revision_conflict`.
    - `TX-04`: Retrying exact same `action_id` and payload returns original receipt (`already_applied`); altered payload returns `conflict`.
    - Authority & Fencing: Rejects removed workspace member (`forbidden`), rejects wrong-workspace source message (`source_conflict`), rejects member citing another member's message in the *same* workspace (`guard_conflict`), rejects stale execution fence (`fence_conflict`).
    - Lease Fence with Sub-Day Normalization: `unixepoch(w.lease_expires_at) > unixepoch('now')` guards against expired same-day ISO timestamps where string comparison would fail due to `'T' > ' '`. Verified with an expiry earlier today (rejected with `fence_conflict`) and a valid expiry later today (`applied`).
-   - Run & Step Validation: Guard rejects non-existent run (`run_conflict`), inactive/cancelled run (`run_inactive`), trigger message mismatch (`run_source_mismatch`), and permits active runs including `waiting_for_input` when resuming clarifications.
+   - Run & Step Validation: Guard rejects non-existent run (`run_conflict`), inactive/cancelled run (`run_inactive`), trigger message mismatch (`run_source_mismatch`), and strictly restricts ordinary ledger writes to active execution (`queued` or `running`). Proves delayed tool calls while a run is `waiting_for_input` are rejected with `run_inactive`.
    - Projection Synchronization on Undo: Proves `executeLedgerCommand` with `undo_commit` physically deletes undone entities, tasks, and state fields from D1 tables; complete D1 database matches pure `rebuildProjections` replay exactly (0 remaining rows).
    - Repeated Undo: A repeated undo targeting the same action with a new `action_id` returns `already_applied`, appends 0 new events, and leaves workspace revision unchanged.
-   - Durable Clarification Retention & Resumption: Missing-deadline task creation commits an `action_receipts` row (`needs_clarification`) and records a `pending_clarifications` entry with a versioned, typed `PendingOperationPayload` (persisting command name and validated original arguments). `resumePendingClarification` successfully resumes after actor restart with fresh context, unblocking the run and atomically committing the final task with both original title and clarified due date.
+   - Durable Clarification Retention, Resumption & Field Bounding: Missing-deadline task creation commits an `action_receipts` row (`needs_clarification`) and records a `pending_clarifications` entry with a versioned, typed `PendingOperationPayload`. `resumePendingClarification` strictly rejects unsolicited fields (`unsolicited_field`), rejects omitted missing fields (`missing_required_field`), and requires an explicit `source_message_id` attributing the member's new answer message. Successfully resumes after actor restart, committing the final task with original title, clarified due date, and answer message provenance.
+   - Concurrency & Competing Answers on Clarifications: Verified via `Promise.all` that two competing answers racing concurrently from the same snapshot revision result in exactly one applying and the other failing with conflict (`already_resolved` / `revision_conflict`). Proves a clarification cannot commit twice under competing answers, creating exactly one task. Subsequent retry against resolved clarification is rejected as `already_resolved`.
    - Conflict Resolution Lifecycle in D1: Verifies competing quotes produce `disputed` state with candidate IDs in SQLite, rejects resolutions targeting clear fields (`field_not_disputed`) or invalid candidate IDs (`candidate_mismatch`), and atomically applies valid resolution to restore `clear` state.
    - System Jobs & Channel Attribution: Validates system jobs require active status and matching job kind; inbound Telegram source messages record events with `channel = 'telegram'`.
    - Immutability Triggers: Database-level SQLite triggers prevent any `DELETE` or `UPDATE` on `events`, and prevent `DELETE` on `action_receipts`. Provenance foreign keys use `ON DELETE RESTRICT`.
@@ -132,7 +133,7 @@ Use [verification.md](../docs/verification.md) cases `LEDGER`, `UNDO`, `IDENTITY
 3. **Four Root Checks:**
    - `pnpm typecheck`: Exit 0 (all 10 workspace projects build cleanly).
    - `pnpm lint`: Exit 0 (all ESLint rules satisfied, 0 warnings).
-   - `pnpm test`: Exit 0 (101 passing tests across 10 test files).
+   - `pnpm test`: Exit 0 (102 passing tests across 10 test files).
    - `pnpm build`: Exit 0 (Vite client bundle, TypeScript build, Wrangler deploy dry-run pass).
 
 ## STOP conditions

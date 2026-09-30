@@ -93,4 +93,5 @@ export interface RecordDraftArgs {
 export interface LedgerCommandContext extends WorkspaceContext {
   action_id: string;
   expected_business_revision: number;
+  resuming_clarification_id?: string;
 }

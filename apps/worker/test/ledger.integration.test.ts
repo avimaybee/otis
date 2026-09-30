@@ -913,13 +913,76 @@ describe('Worker Ledger D1 Integration (workerd runtime)', () => {
       expect(resRetry.status).toBe('needs_clarification');
       expect(resRetry.action_id).toBe(actClarId);
 
+      // --- WAITING RUNS RESTRICTED FROM ORDINARY WRITES ---
+      // An ordinary command attempting to execute in run-ledger-test-1 while it is waiting_for_input MUST be rejected
+      const ordinaryWhileWaiting = await executeLedgerCommand(
+        env.DB,
+        makeContext('act_ordinary_while_waiting', rev),
+        'create_entity',
+        { name: 'Late Tool Call Entity' },
+        handleCreateEntity,
+      );
+      expect(ordinaryWhileWaiting.status).toBe('conflict');
+      expect(ordinaryWhileWaiting.error?.code).toBe('run_inactive');
+
       // --- RESUMPTION AFTER ACTOR RESTART ---
       // Simulate actor restart: fresh execution context, no in-memory state, current workspace revision
       const clarId = String(pending!['id']);
       const wsAfterClar = await getWorkspaceRevision(env.DB, workspaceId);
       const resumeRev = wsAfterClar!.business_revision;
 
-      const resumeCtx = makeContext('act_resume_bistro_task', resumeRev);
+      // Seed a distinct answer message in messages_in from Avi
+      const answerMsgId = 'msg_bistro_answer_1';
+      await env.DB.prepare(
+        `INSERT INTO messages_in (id, workspace_id, user_id, channel, external_id, payload_fingerprint, status, created_at, updated_at)
+         VALUES (?, ?, ?, 'web', 'web_answer_1', 'fp_ans1', 'processed', ?, ?)`
+      ).bind(answerMsgId, workspaceId, aviUserId, now, now).run();
+
+      const resumeCtx: LedgerCommandContext = {
+        ...makeContext('act_resume_bistro_task', resumeRev),
+        source_message_id: answerMsgId,
+      };
+
+      // 1. Resuming with an unsolicited field (e.g. attempting to override title) MUST be rejected
+      const rejectUnsolicited = await resumePendingClarification(
+        env.DB,
+        resumeCtx,
+        {
+          clarification_id: clarId,
+          resolved_fields: {
+            due: { kind: 'date', local_date: '2026-10-15' },
+            title: 'Hacked Title Overwrite',
+          },
+        },
+      );
+      expect(rejectUnsolicited.status).toBe('rejected');
+      expect(rejectUnsolicited.error?.code).toBe('unsolicited_field');
+
+      // 2. Resuming without the required 'due' field MUST be rejected
+      const rejectMissingField = await resumePendingClarification(
+        env.DB,
+        resumeCtx,
+        {
+          clarification_id: clarId,
+          resolved_fields: {},
+        },
+      );
+      expect(rejectMissingField.status).toBe('rejected');
+      expect(rejectMissingField.error?.code).toBe('missing_required_field');
+
+      // 3. Resuming without a source_message_id attributing the answer MUST be rejected
+      const rejectNoSourceMsg = await resumePendingClarification(
+        env.DB,
+        { ...resumeCtx, source_message_id: undefined },
+        {
+          clarification_id: clarId,
+          resolved_fields: { due: { kind: 'date', local_date: '2026-10-15' } },
+        },
+      );
+      expect(rejectNoSourceMsg.status).toBe('rejected');
+      expect(rejectNoSourceMsg.error?.code).toBe('missing_source_message');
+
+      // 4. Valid resumption: strictly bounded missing field provided, attributed to answer message
       const resumeRes = await resumePendingClarification(
         env.DB,
         resumeCtx,
@@ -944,6 +1007,12 @@ describe('Worker Ledger D1 Integration (workerd runtime)', () => {
       expect(dbTask!['due_local_date']).toBe('2026-10-15');
       expect(dbTask!['due_kind']).toBe('date');
 
+      // Verify the committed event is attributed to the answer message
+      const events = await getWorkspaceEvents(env.DB, workspaceId);
+      const taskEvent = events.find((e) => e.action_id === 'act_resume_bistro_task');
+      expect(taskEvent).toBeDefined();
+      expect(taskEvent!.source_message_id).toBe(answerMsgId);
+
       // Verify pending_clarifications is marked 'resolved' with resolution details
       const resolvedClar = await env.DB
         .prepare(`SELECT status, resolution_response, resolved_at FROM pending_clarifications WHERE id = ?`)
@@ -960,6 +1029,122 @@ describe('Worker Ledger D1 Integration (workerd runtime)', () => {
       expect(resumedRun!['status']).toBe('queued');
 
       // Reset run status back to running for other tests
+      await env.DB.prepare(
+        `UPDATE agent_runs SET status = 'running' WHERE id = 'run-ledger-test-1'`
+      ).run();
+    });
+
+    it('rejects duplicate clarification resolution when two competing answers race concurrently', async () => {
+      const currentWs = await getWorkspaceRevision(env.DB, workspaceId);
+      const rev = currentWs!.business_revision;
+
+      // 1. Create a task missing deadline to produce a pending clarification
+      const actClarId = 'act_clar_competing_test';
+      const resClar = await executeLedgerCommand(
+        env.DB,
+        makeContext(actClarId, rev),
+        'create_task',
+        { title: 'Sign insurance policy' },
+        handleCreateTask,
+      );
+      expect(resClar.status).toBe('needs_clarification');
+
+      const clarRow = await env.DB
+        .prepare(`SELECT id FROM pending_clarifications WHERE run_id = 'run-ledger-test-1' AND status = 'pending' ORDER BY created_at DESC LIMIT 1`)
+        .first<Record<string, unknown>>();
+      expect(clarRow).not.toBeNull();
+      const clarId = String(clarRow!['id']);
+
+      // 2. Seed two distinct answer messages in messages_in from Avi and Hunor
+      const ansMsgAvi = 'msg_ans_avi_competing';
+      const ansMsgHunor = 'msg_ans_hunor_competing';
+      await env.DB.prepare(
+        `INSERT INTO messages_in (id, workspace_id, user_id, channel, external_id, payload_fingerprint, status, created_at, updated_at)
+         VALUES (?, ?, ?, 'web', 'ext_avi_comp', 'fp_ac', 'processed', ?, ?)`
+      ).bind(ansMsgAvi, workspaceId, aviUserId, now, now).run();
+
+      await env.DB.prepare(
+        `INSERT INTO messages_in (id, workspace_id, user_id, channel, external_id, payload_fingerprint, status, created_at, updated_at)
+         VALUES (?, ?, ?, 'web', 'ext_hunor_comp', 'fp_hc', 'processed', ?, ?)`
+      ).bind(ansMsgHunor, workspaceId, hunorUserId, now, now).run();
+
+      // 3. Prepare two competing resumption contexts sharing the exact same business revision snapshot
+      const wsSnapshot = await getWorkspaceRevision(env.DB, workspaceId);
+      const snapshotRev = wsSnapshot!.business_revision;
+
+      const ctxAvi: LedgerCommandContext = {
+        ...makeContext('act_resume_comp_avi', snapshotRev),
+        actor: { kind: 'member', user_id: aviUserId },
+        source_message_id: ansMsgAvi,
+      };
+
+      const ctxHunor: LedgerCommandContext = {
+        ...makeContext('act_resume_comp_hunor', snapshotRev),
+        actor: { kind: 'member', user_id: hunorUserId },
+        source_message_id: ansMsgHunor,
+      };
+
+      // 4. Dispatch two competing answers concurrently
+      const [resAvi, resHunor] = await Promise.all([
+        resumePendingClarification(
+          env.DB,
+          ctxAvi,
+          {
+            clarification_id: clarId,
+            resolved_fields: { due: { kind: 'date', local_date: '2026-10-20' } },
+            resolution_response: 'Due October 20',
+          },
+        ),
+        resumePendingClarification(
+          env.DB,
+          ctxHunor,
+          {
+            clarification_id: clarId,
+            resolved_fields: { due: { kind: 'date', local_date: '2026-10-25' } },
+            resolution_response: 'Due October 25',
+          },
+        ),
+      ]);
+
+      // Exactly ONE must succeed (applied), and the other must be rejected/conflict (already_resolved)
+      const statuses = [resAvi.status, resHunor.status];
+      expect(statuses).toContain('applied');
+      expect(statuses).toContain('conflict');
+
+      const failedRes = resAvi.status === 'conflict' ? resAvi : resHunor;
+      expect(['already_resolved', 'revision_conflict', 'run_not_waiting', 'guard_conflict']).toContain(failedRes.error?.code);
+
+      // Verify the clarification is resolved in D1
+      const clarDb = await env.DB
+        .prepare(`SELECT status FROM pending_clarifications WHERE id = ?`)
+        .bind(clarId)
+        .first<Record<string, unknown>>();
+      expect(clarDb!['status']).toBe('resolved');
+
+      // Verify only ONE task was created for "Sign insurance policy"
+      const taskRows = await env.DB
+        .prepare(`SELECT id, title FROM tasks WHERE title = 'Sign insurance policy'`)
+        .all<Record<string, unknown>>();
+      expect(taskRows.results.length).toBe(1);
+
+      // 5. Subsequent attempt to resume the now-resolved clarification with latest revision returns already_resolved
+      const wsAfterComp = await getWorkspaceRevision(env.DB, workspaceId);
+      const resSubsequent = await resumePendingClarification(
+        env.DB,
+        {
+          ...makeContext('act_resume_subsequent', wsAfterComp!.business_revision),
+          actor: { kind: 'member', user_id: hunorUserId },
+          source_message_id: ansMsgHunor,
+        },
+        {
+          clarification_id: clarId,
+          resolved_fields: { due: { kind: 'date', local_date: '2026-10-30' } },
+        },
+      );
+      expect(resSubsequent.status).toBe('conflict');
+      expect(resSubsequent.error?.code).toBe('already_resolved');
+
+      // Reset run status back to running for subsequent tests
       await env.DB.prepare(
         `UPDATE agent_runs SET status = 'running' WHERE id = 'run-ledger-test-1'`
       ).run();
