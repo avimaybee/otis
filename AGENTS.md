@@ -1,46 +1,59 @@
-# Instructions for AI Agents Working on Daybook
+# Working on Otis
 
-Welcome. Before making any code or design changes in this repository, you must read and adhere to these guidelines.
+Otis is a mobile-first conversational business memory for Kerning. Execute the assigned gate; do not invent a CRM or general browser assistant.
 
----
+## Read before implementing
 
-## 1. Source of Truth
+Read README.md and your assigned plan, then the relevant product.md, architecture.md and docs/contracts.md sections. UI/copy work requires design.md. roadmap.md explains dependencies; plans/README.md records status. docs/agent-handoff.md gives a portable start/completion template.
 
-- **Product & Business Logic:** Read [product.md](product.md) before implementing features.
-- **Design & Layout:** Read [design.md](design.md) before creating or modifying UI components.
-- **Execution Plans:** Check [plans/README.md](plans/README.md) and execute the assigned plan in sequential order. Do not skip ahead or implement unapproved features.
+Inspect git status/history and live source. Plans describe targets, not proof that dependencies already exist. Preserve unrelated changes. Resolve routine file decomposition, naming and reversible implementation choices yourself. Ask only about material unresolved product, data, authority or external-action decisions; do not reopen settled choices in docs/decisions.md.
 
----
+## Product decisions to preserve
 
-## 2. Hard Invariants
+- Ordinary work is conversational. Commands, settings and inspection controls are optional helpers.
+- Clear complete instructions save directly. Missing deadlines and uncertain details ask. Inferred lead-status changes ask before mutation.
+- Neutral charcoal/monochrome UI, ChatGPT-like mobile composition, Codex-like desktop sidebar/chat/detail. No dashboard, decorative cards or dead attachment buttons.
+- One user identity, equal workspace members, protected owner lifecycle. Teammates read all historical chats and retained audio; only the author appends.
+- Gemini and OpenCode Go shared workspace credentials; handpicked model registry; /model changes the current chat.
+- Recorded voice notes, text reply default; Android/iPhone/Telegram formats need actual evidence.
+- Briefs start disabled and run at each member's chosen time/days/timezone. No 09:00 fallback.
+- Default Undo from here reverts the selected write and later writes of that run; single-action is secondary. Preserve unrelated teammate work.
+- All durable memory/preferences stay per workspace. No canonical mutable memory.md runtime file.
+- V1 outward messages are drafts; opening WhatsApp is not proof of sending.
 
-1. **The Ledger is the Sole Writer of Business State:**
-   - The `events` table is append-only. Never run `UPDATE` or `DELETE` on `events`.
-   - `entity_state` and `tasks` are deterministic projections derived from `events`.
-   - Undo appends a `revert` event pointing to the target event; it never deletes historical rows.
-2. **Workspace Scope:**
-   - Every business query, ledger mutation, and tool call must be explicitly scoped by `workspace_id`.
-   - The repository layer must refuse workspace-data access without an authenticated `workspace_id`.
-   - Never leak data or preferences across workspace boundaries.
-3. **No LLM in Deterministic Logic:**
-   - Authentication, permissions, date parsing/resolution, selection algorithms, and morning brief generation must be plain TypeScript code.
-   - LLMs interpret language, draft text, and propose tool calls.
-4. **Outward Actions are Drafts Only:**
-   - The agent never autonomously sends a message or email to a third party.
-5. **No Secret Leakage:**
-   - Secrets belong exclusively in Cloudflare Worker secrets or local `.env`. Never commit credentials or expose them in client responses or prompts.
+## Architecture invariants
 
----
+1. Business writes go through ledger commands. Events are append-only in ordinary operation; only the separate audited erasure procedure may remove/anonymize history.
+2. Projections rebuild deterministically from versioned events. Conversation/identity/transport are separate durable stores, not all ledger projections.
+3. Workspace-owned reads and writes require trusted scoped context. Recheck current membership and source ownership; model/client IDs cannot grant authority.
+4. Failed D1 preconditions must abort the transaction. A zero-row UPDATE is not rollback. Test membership, revision, fence and late-batch failure.
+5. Persist accepted input/outbox, logical tool steps and receipts. Queue retries and actor restart cannot repeat business effects.
+6. Human clarification releases the workspace execution slot but preserves the pending operation. Revalidate before continuing.
+7. Permission, schema validation, date validity, ranking and scheduling are code. The model proposes interpretation and tools; it is not a security boundary.
+8. Public activity is persisted before publication. Display only provider-supplied public summaries, never fabricated thoughts or hidden prompts/protocol artifacts.
+9. Private audio/exports use membership-checked Worker access. Secrets never enter client bundles, prompts, logs or exported data.
+10. Provider caches/IDs, DO memory and summaries are not the sole source of business or conversation state.
 
-## 3. Verification Protocol
+## Work order and scope
 
-Before declaring any task or plan step complete, ensure all baseline verification commands exit with code 0:
+Use the dependency gates, not numeric filename order: 003A identity → 004A conversation/source storage → 002 ledger → 003B/004B integration → providers → agent/memory → API/commands → clients → voice/brief/export → release. Do not duplicate schemas in later plans. One coordinated migration sequence owns numbering.
 
-```bash
+Introduce packages/dependencies only when required for implemented behavior. Use prepared SQL for v1; no speculative ORM/vector service. Shared schema changes update contracts, fixtures and affected clients together. Provider/cloud APIs must be checked against current official documentation when implementing them.
+
+## Verification and handoff
+
+For implementation changes run:
+```powershell
 pnpm typecheck
 pnpm lint
 pnpm test
 pnpm build
 ```
 
-Do not claim a command has passed without running it.
+Add targeted behavior tests from docs/verification.md. Use actual local Workers/D1 integration for transactions/bindings. Fake providers are for reproducible orchestration tests, not live capability claims.
+
+Use Codex/Antigravity native browser controls for UI review; no Playwright. happy-dom geometry is not layout proof. Record real viewport/browser/device evidence or explicitly leave it unverified. Documentation-only changes require link/consistency/diff checks; do not claim application tests were rerun if they were not.
+
+Completion report: implemented behavior, files/contracts/migrations, exact checks, evidence, unresolved limitations and next eligible gate. Mark a subgate complete only with its evidence. Do not label stubs or documentation as built features.
+
+Task authorization governs commits, pushes, PRs and deployment. Do preparatory reversible work before any genuinely necessary final approval. Never send real lead messages, publish secrets or run a destructive remote operation because a sample plan mentions it.

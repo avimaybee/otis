@@ -1,6 +1,6 @@
 /**
- * @daybook/agent
- * Bounded agent, tool definitions, and autonomy policy for Daybook.
+ * @otis/agent
+ * Bounded agent, tool definitions, and autonomy policy for Otis.
  */
 
 export interface ToolDefinition<TParams = unknown, TResult = unknown> {

@@ -1,9 +1,9 @@
 /**
- * @daybook/channels
- * Channel adapters (Telegram, Web, future WhatsApp) for Daybook.
+ * @otis/channels
+ * Channel adapters (Telegram, Web, future WhatsApp) for Otis.
  */
 
-import type { ChannelType } from '@daybook/contracts';
+import type { ChannelType } from '@otis/contracts';
 
 export interface NormalizedMessage {
   id: string;
@@ -19,7 +19,4 @@ export interface NormalizedMessage {
   timestamp: string;
 }
 
-export interface ChannelAdapter {
-  receive(update: unknown): Promise<NormalizedMessage>;
-  send(target: string, message: string): Promise<void>;
-}
+export * from './telegram.js';

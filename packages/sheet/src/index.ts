@@ -1,6 +1,6 @@
 /**
- * @daybook/sheet
- * Spreadsheet generator (XLSX in R2) and future Google Sheets sync for Daybook.
+ * @otis/sheet
+ * Spreadsheet generator (XLSX in R2) and future Google Sheets sync for Otis.
  */
 
 export interface SheetOptions {

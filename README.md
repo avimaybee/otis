@@ -1,117 +1,77 @@
-# Daybook
+# Otis
 
-> A business memory you talk to. Tell it what happened by text or voice note. It keeps the books, keeps your spreadsheet current, and tells you each morning who to contact and why.
+A business memory you talk to. Avi and Hunor use conversation to retain Kerning's leads, contacts, promises and follow-ups.
 
-- **Product & Business Source of Truth:** [product.md](product.md)
-- **Visual & Interaction Design Guide:** [design.md](design.md)
-- **Implementation Plans:** [plans/README.md](plans/README.md)
+**Current status:** foundation scaffold implemented; product features remain planned. A passing shell/build does not mean the agent, ledger, authentication or voice works yet. The real-browser foundation acceptance record is still open.
 
----
+## Start here
 
-## Architecture & Worker Bindings
+| Read | Purpose |
+|---|---|
+| [product.md](product.md) | User behavior and v1 boundaries |
+| [design.md](design.md) | Approved mobile/desktop composition, charcoal tokens and interaction states |
+| [architecture.md](architecture.md) | Cloudflare responsibilities, state, transactions and recovery |
+| [docs/contracts.md](docs/contracts.md) | Shared dates, schemas, APIs, tools and commands |
+| [roadmap.md](roadmap.md) | Complete delivery sequence, scenarios and release gates |
+| [plans/README.md](plans/README.md) | Assigned implementation packages and current status |
+| [docs/verification.md](docs/verification.md) | What evidence each check actually proves |
+| [docs/agent-handoff.md](docs/agent-handoff.md) | Start/completion templates for any implementation agent |
+| [docs/decisions.md](docs/decisions.md) | Settled decisions and remaining measurements |
 
-```text
-               ┌───────────────────────────────────────┐
-               │    Cloudflare Worker (apps/worker)     │
-               │   API router (/api/*) & Static Assets │
-               └───────────────────┬───────────────────┘
-                                   │
-      ┌────────────────────────────┼────────────────────────────┐
-      ▼                            ▼                            ▼
-┌──────────────┐          ┌─────────────────┐          ┌─────────────────┐
-│  D1Database  │          │    R2Bucket     │          │ Durable Object  │
-│   binding:   │          │    binding:     │          │    binding:     │
-│     "DB"     │          │    "STORAGE"    │          │"WORKSPACE_ACTOR"│
-│ (Local / EU) │          │  (Local / EU)   │          │ (Serial Queue)  │
-└──────────────┘          └─────────────────┘          └─────────────────┘
-*Note: EU jurisdiction for D1 and R2 is a production deployment requirement.
-Local development uses local Miniflare/SQLite bindings with placeholder IDs.
+## Local development
+
+Planning host: Node 24.16.0 and pnpm 11.10.0. Check the lockfile and CI versions before upgrading. Run from the repository root:
+
+```powershell
+pnpm install --frozen-lockfile
+pnpm typecheck
+pnpm lint
+pnpm test
+pnpm build
+pnpm dev
 ```
 
----
+Build first so Wrangler has the current static assets. Development starts Vite at http://localhost:5173 and Wrangler at http://localhost:8787; the Vite web origin proxies /api to Wrangler. Use the Vite URL for live UI development. The Worker origin serves the last built assets. `pnpm dev:web` and `pnpm dev:worker` are available for independent debugging.
 
-## Workspace Structure
+`pnpm build` builds the web client and TypeScript declarations, then performs a Worker deploy **dry run**. It does not deploy. Local development simulates D1/R2/DO; configured remote IDs do not change that. Never run remote migrations/deployments merely to satisfy a local test.
 
-- `apps/worker`: Cloudflare Worker handling `/api` routes and `WorkspaceActor` Durable Object.
-- `apps/web`: React + Vite SPA with mobile-first conversational shell.
-- `packages/contracts`: Shared TypeScript types, API contracts, and DTOs.
-- `packages/ledger`: Append-only event ledger and state projection reducers.
-- `packages/agent`: Tool definitions, context assembly, and model provider integrations.
-- `packages/channels`: Channel normalization and adapters (Telegram, Web).
-- `packages/sheet`: Generated XLSX workbook exporter and future Google Sheets adapter.
-- `packages/design`: Design tokens, typography scales, and UI constants.
-- `migrations`: Monotonic D1 SQL migrations.
+## Packages
 
----
+Existing: apps/web, apps/worker, packages/contracts, ledger, agent, channels, sheet and design. Most contain stubs. Planned identity, memory, commands and brief packages are created only in their owning gates. Architecture.md records the dependency direction.
 
-## Prerequisites
+D1 is the canonical store for business/conversation/job records. The ledger writes business state. The actor coordinates durable work. R2 stores private audio/files. Queues/Cron are planned, not yet configured features. EU resource location is a provisioning requirement to verify; it is not established by a label in a diagram.
 
-- **Node.js:** v24.16.0+
-- **pnpm:** v11.10.0+
-- **Cloudflare Wrangler:** installed via pnpm devDependencies
+## Secrets and client configuration
 
----
+Use .env.example as a names/template reference, never as production credentials. Local Worker values may use .env or .dev.vars according to the installed Wrangler version; do not maintain conflicting copies. Private values include session/encryption secrets, Telegram token/webhook secret and provider keys. Workspace credentials will be encrypted server-side when plan 003 implements them.
 
-## Setup & Verification
+Firebase client configuration uses explicitly public VITE_FIREBASE_* values. Everything prefixed VITE_ is potentially bundled for the browser. Never give a provider key that prefix. The identity gate must configure Vite's envDir deliberately: its current root is apps/web, so a root .env cannot be assumed to reach client code without configuration. Document one authoritative local convention when that gate lands.
 
-1. **Install dependencies:**
-   ```bash
-   pnpm install --frozen-lockfile
-   ```
+Server Firebase verification needs FIREBASE_PROJECT_ID. Exact required secrets, defaults and rotation belong in the implemented environment schema and operations report; missing required production configuration must fail explicitly.
 
-2. **Verify type safety:**
-   ```bash
-   pnpm typecheck
-   ```
+## Migrations
 
-3. **Verify code quality:**
-   ```bash
-   pnpm lint
-   ```
+There are no business SQL migrations in the foundation. After the owning gates introduce them:
 
-4. **Run test suite:**
-   ```bash
-   pnpm test
-   ```
-
-5. **Build client and packages:**
-   ```bash
-   pnpm build
-   ```
-
-6. **Start local development server:**
-   ```bash
-   pnpm dev
-   ```
-
----
-
-## Local D1 Database Migrations
-
-Apply migrations to local development D1:
-```bash
-npx wrangler d1 migrations apply DB --local
+```powershell
+pnpm exec wrangler d1 migrations list DB --local
+pnpm exec wrangler d1 migrations apply DB --local
 ```
 
-List applied migrations:
-```bash
-npx wrangler d1 migrations list DB --local
-```
+Identity schema comes first, then conversation/source storage, then ledger. Plan numbers are not migration numbers. Never edit an already-applied shared migration. Remote resource commands require an explicitly chosen environment and task scope.
 
----
+## Verification and dependencies
 
-## Environment Variables
+- TypeScript: strict package/interface checking.
+- ESLint and typescript-eslint: source checks.
+- Vite and React plugin: client development/build.
+- React and React DOM: conversation UI.
+- Vitest: pure and integration test runner.
+- Cloudflare Workers Vitest integration: actual local Workers runtime/bindings.
+- happy-dom: component DOM behavior; **not** actual browser layout.
+- Wrangler: local Cloudflare runtime and Worker bundle/deploy tooling.
+- concurrently: runs web and Worker development processes together.
 
-Copy `.env.example` to `.env` for local secrets. Never commit production secrets.
+Additional test-runner packages in the lockfile must remain compatible as a set. Pin/upgrade deliberately and explain each new dependency. No Playwright. Native browser/device evidence follows [docs/browser-review.md](docs/browser-review.md).
 
-- `ENVIRONMENT`: Set to `local` for development or `production` for deployed workers.
-- `SESSION_SECRET`: Random secret used to sign session cookies.
-- `FIREBASE_PROJECT_ID`: Google Firebase project ID used by the Worker to verify Firebase ID tokens.
-- `VITE_FIREBASE_API_KEY`: Client-side Firebase API key for Google sign-in.
-- `VITE_FIREBASE_AUTH_DOMAIN`: Client-side Firebase auth domain (e.g. `<project-id>.firebaseapp.com`).
-- `VITE_FIREBASE_PROJECT_ID`: Client-side Firebase project ID.
-- `VITE_FIREBASE_APP_ID`: Client-side Firebase app ID.
-- `TELEGRAM_BOT_TOKEN`: Bot token from @BotFather.
-- `TELEGRAM_WEBHOOK_SECRET`: Secret token for verifying Telegram webhook updates.
-- `GEMINI_API_KEY`: API key for Google Gemini provider.
-- `OPENCODE_GO_API_KEY`: API key for OpenCode Go provider.
+See [AGENTS.md](AGENTS.md) before changing implementation or shared contracts.

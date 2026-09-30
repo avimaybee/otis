@@ -9,6 +9,7 @@ const __dirname = dirname(__filename);
 export default defineConfig({
   plugins: [react()],
   root: resolve(__dirname, 'apps/web'),
+  envDir: resolve(__dirname),
   publicDir: resolve(__dirname, 'apps/web/public'),
   build: {
     outDir: resolve(__dirname, 'apps/web/dist'),

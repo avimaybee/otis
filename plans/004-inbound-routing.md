@@ -1,43 +1,67 @@
-# Plan 004: Accept each inbound message once and route it to one workspace
+# Plan 004: Durable conversations, message routing and workspace execution
 
-> Executor: plans 002 and 003 must pass. Read product.md sections 6.1, 7, 9.1, 12.1 and 12.4. This plan builds transport and durable sequencing, not natural-language interpretation. Check source-document hashes from plans/README.md and inspect live migrations before work.
+Planned against a3bd462, revised 2026-09-30. Status: 004A DONE; 004B TODO. **004A requires 003A and precedes 002. 004B requires 004A, 002 and 003B.** Read architecture.md sections 5–9/12/15, docs/contracts.md states/IDs/activity and roadmap gates C/R.
 
-## Status
+## Outcome
 
-- Priority P0; effort L; risk high; category correctness/reliability; depends on 002, 003.
-- Planned at unversioned document snapshot, 2026-09-29.
+Accepted messages survive restart and retries. An identity resolves to exactly one explicit workspace before any agent/ledger work. Messages retain deterministic acceptance order. Human clarification releases the workspace slot without losing the operation. The initial handler is a deterministic echo; this plan does not call a model.
 
-## Why and current state
-
-Web retries and Telegram webhook retries must not duplicate a note, task, or answer. The product requires globally unique (channel, external_id), a nullable workspace until routing, and one serial workspace actor. Cloudflare Queues are at-least-once, not exactly-once; Durable Object requests can interleave around external I/O. A webhook must acknowledge only after a durable inbox write or queue handoff. No transport code exists yet.
+Current Worker has a placeholder WorkspaceActor returning active and a health endpoint. Extend it deliberately rather than treating its presence as a working queue.
 
 ## Scope
 
-Modify messages_in migration and repository, packages/contracts normalized input types, apps/worker web and Telegram receive endpoints, queue consumer, WorkspaceActor, and integration tests. Do not call an LLM, transcribe audio, or produce a business write. A temporary deterministic echo handler is allowed for transport tests, then removed by plan 006. Do not store unsupported photo/location payloads.
+apps/worker/src/inbox/{repository,normalize,reconcile}.ts, actor/WorkspaceActor.ts, routes/inbound.ts, conversation repositories/checkpoints/outbox, contracts and next migrations, Worker tests. Add Queue/Cron bindings only when their handlers exist. No transcription, general agent logic, business writes in the echo handler or unsupported-media download.
 
-## Contract
+## 004A: source and conversation storage
 
-Normalized input includes channel, external ID, authenticated or verified external actor ID, kind, source timestamp, text or media metadata, and optional web chat/workspace ID. Web external ID is a UUID generated once by the client and reused on retry; Telegram external ID is the update ID. The D1 inbox has unique (channel, external_id), status unrouted/queued/processed/unsupported/failed as in product.md, nullable user/workspace until routing, a separate short processing lease/attempt count, timestamps, and a bounded error code. Do not put raw provider keys or full voice data in the inbox. Routing validates the verified identity, active Telegram workspace membership or authenticated web route/chat membership, and message author. With multiple memberships and no valid Telegram active workspace, save unrouted, send one workspace-choice question, and make no agent call. One membership can auto-select. A web workspace switch never changes Telegram's active workspace.
+1. Create chats, chat_messages, messages_in, system_jobs, agent_runs, run_steps, run_activity, pending_clarifications and outbox. Use states and ownership from contracts. Sources precede ledger references; plan 007 reuses this storage.
+2. Assign a monotonic workspace acceptance sequence and chat activity cursor atomically. Random IDs/timestamps are not ordering primitives.
+3. Implement web durable acceptance with explicit authenticated workspace/chat and author. In one transaction persist input/message/execution/outbox, then return 202 stable IDs. Retried UUID with equal owner/chat/fingerprint returns those IDs; conflicting reuse returns 409 without data leakage.
+4. Normalize Telegram update ID with bot installation scope; validate webhook secret/private-chat input before admission. Unlinked or ambiguous identities stay unrouted. One membership may auto-select; web selection never alters Telegram routing.
+5. Add minimal source/history repositories and echo test harness. Chat author restriction and full-member read visibility already apply. Source IDs must be verifiable by the future ledger.
+6. Unsupported photo/location stores metadata only. Attached text needs explicit text-only confirmation; no partial silent processing.
 
-After durable insert, enqueue or signal the workspace actor. Add a scheduled reconciliation pass for queued/failed-retryable inbox rows, because a crash after insert but before handoff must not strand messages. The actor claims the next message in deterministic receive/ID order, records progress in agent_runs/activity, and makes the handler idempotent by source message/action IDs. Use a short local claim/transaction; do not hold a Durable Object concurrency block across model/network calls. A restart replays uncompleted inbox rows, with no duplicate business event. Poison messages move to failed with an inspectable reason and bounded retry/backoff. If a Telegram callback or unsupported attachment arrives, normalize and route it through the same dedupe/auth boundary.
+Verify acceptance, same UUID retry, differing UUID payload/actor, source scope, pagination, two users/workspaces and no acknowledged input loss. Run root checks. Record 004A complete; plan 002 can now reference real source tables.
 
-## Proposed file map and verification commands
+### 004A Verification Evidence (Hardened & Re-verified 2026-09-30)
 
-These paths are targets to create or extend; the repository has no source files at planning time. In scope: migrations/0003_inbox.sql; apps/worker/src/routes/inbound.ts; apps/worker/src/inbox/repository.ts, normalize.ts, reconcile.ts; apps/worker/src/actor/WorkspaceActor.ts; apps/worker/test/inbound.integration.test.ts and actor.integration.test.ts.
+- **Migration**: `migrations/0002_conversations_sources.sql` applied locally via Wrangler and verified in `cloudflare:test` workerd pool directly from disk. Includes transaction guard tables `acceptance_guards` and `link_redemptions`, and pagination index `idx_chats_pagination`.
+- **Contracts**: All conversation, message, inbound, run, step, activity, clarification, outbox, and Telegram link models implemented and exported in `@otis/contracts`.
+- **Channel Normalization**: `@otis/channels` tested across 7 unit tests (webhook secret fail-closed validation, private-chat gating, `/start <code>` extraction, unsupported media classification, and attached text confirmation tagging).
+- **Hardened Inbound & Storage Guarantees**:
+  1. *Fail-Closed Telegram Webhook*: Endpoint disables with HTTP 503 `service_unavailable` if `TELEGRAM_WEBHOOK_SECRET` is unset or empty.
+  2. *Live Membership & Authorship Check for Telegram*: Inbound Telegram verifies active `workspace_users` membership and chat author; removed members are safely categorized as `unrouted` (`not_an_active_member`) with zero message or run mutations.
+  3. *Atomic Single-Use Link Codes*: Enforced via `link_redemptions` table with `PRIMARY KEY (link_code_id)` and `CHECK (guard_ok = 1)` inside the atomic D1 consumption batch. Tested with simultaneous competing redemption requests via `Promise.all` backed by database primary key and check constraints; at most one transaction commits and the losing transaction fails constraints and is rejected.
+  4. *Start Command Isolation & Redacted Link Code Persistence*: `/start` and `/start <code>` are processed as administrative signals prior to conversation routing regardless of whether the account is unlinked or already linked. Plaintext link codes never enter `chat_messages`, `run_activity`, or `messages_in.raw_payload` across linked, unlinked, valid, or invalid submissions.
+  5. *Unambiguous Workspace Selection*: If a user has exactly one active workspace, it is auto-selected; if a user has multiple active memberships, routing does not guess—the message is stored as `unrouted` (`Multiple workspaces available; please select a workspace first`).
+  6. *Storage Failure Propagation to HTTP 500*: Clean-message and link-redemption batches distinguish verified guard rejections from unexpected database/storage errors. D1 infrastructure failures rethrow so the webhook route returns HTTP 500 (`internal_error`), instructing Telegram to retry delivery rather than acknowledging an unpersisted update.
+  7. *Voice Note Isolation*: Inbound voice notes are stored as `status: 'unsupported'` with retained metadata, without appending empty text turns or queuing agent runs until Gate 010.
+  8. *Web Acceptance Transaction Guard*: Batches include `INSERT INTO acceptance_guards` validating active membership and chat author within SQLite; late writes after removal fail the transaction atomically.
+  9. *Retry-Safe Echo Harness*: Re-checks queued status, returns recorded reply idempotently if already succeeded, guards against concurrent execution, and updates outbox rows by exact primary key (`json_extract`).
+  10. *Stable Monotonic Sequence Receipts*: Web acceptance returns the exact committed `acceptance_sequence` from `messages_in`.
+  11. *Lossless Composite Pagination*: Encodes `(last_activity_at, id)` from the last returned item, breaking timestamp ties with `id DESC` without dropping chats.
+- **Root Checks**:
+  - `pnpm typecheck`: Exit code 0.
+  - `pnpm lint`: Exit code 0 (0 problems).
+  - `pnpm test`: 9 test files, 66 passed tests across pure, web, and workerd integration test suites.
+  - `pnpm build`: Vite production bundle + declarations + Wrangler deploy dry-run passed cleanly.
 
-Verification after plan 001 establishes the scripts: pnpm typecheck; pnpm lint; pnpm test; pnpm build. A fault-injection integration test must cover crash after D1 insert and before actor signal. Do not report a command as passed if it has not run. If a proposed path conflicts with the scaffold, preserve the module boundary and document the exact mapping before editing. Do not push or open a PR unless the operator asks.
+## 004B: actor and durable recovery
 
-## Steps and verification
+1. Claim the oldest eligible message using persisted lease owner/attempt/fence/expiry. Claim/renew atomically. One mutating agent turn per workspace; local processing flag is optional optimization only.
+2. Add bounded execution slices/checkpoints and durable continuation outbox. Do not hold blockConcurrencyWhile across network calls or human answers. Do not rely on waitUntil alone for durability.
+3. Persist logical step IDs before invoking handlers. A replay finds the receipt/checkpoint and returns it. Stale attempts/fences cannot commit business effects once model integration lands.
+4. Questions store requester/chat/source/pending typed operation/missing fields/candidates/source revision, mark waiting, and release the slot. Another member can proceed. Answers revalidate state and continue without repeating completed steps.
+5. Queue payloads contain scoped IDs only. Queue wake-up order is not business order. Cron recovers unsent outbox rows and expired leases. Bound retries and poison-message failures.
+6. Stop cancels future steps/continuation, not prior business actions. Run and input status distinguish queued, running, waiting, partial, failure and cancellation.
+7. Keep explicit outbound delivery intent/status; future Telegram cannot rely on an internal key as sendMessage idempotency. Avoid claiming exactly-once network delivery.
 
-1. Add inbox schema and pure normalization/routing functions. Verify pnpm test runs cases for duplicate Telegram update, duplicate web UUID, unknown identity, removed member, one versus two workspaces, and invalid active workspace.
-2. Add receive endpoints. Verify a valid web submission and a verified Telegram webhook return acceptance only after durable storage; invalid Telegram secret is rejected; repeated external IDs return the existing message ID. Use Worker integration tests with mocked bindings.
-3. Add queue/actor dispatch and recovery scanner. Simulate failure after inbox insert, actor restart, out-of-order queue delivery, duplicate queue delivery, and two members writing concurrently; verify each message reaches the echo handler once in per-workspace order and no workspace leaks data to another.
-4. Add status queries for clients and structured logs keyed by message/run ID with redacted content. Verify retry counts and processing status are inspectable without exposing message bodies or keys in logs. Run root typecheck, lint, tests, build.
+## Tests and completion
 
-## Done criteria
+Use real local Workers/D1/DO integration with injected clock and deterministic handler. Fault cases: crash after acceptance before publish; duplicate/out-of-order Queue; concurrent members; actor restart; expired lease; old handler result after new fence; waiting human while teammate proceeds; canceled continuation; poison input; revoked membership.
 
-No inbound request can reach an agent or ledger before identity and workspace membership resolution. Acknowledged messages survive restart and are eventually processed or visibly failed. Unique (channel, external_id) is enforced in D1. Unsupported photo/location input is metadata-only and gets an honest unsupported reply. The web and Telegram paths share dedupe semantics without sharing active-workspace state.
+Assert eventual processed or visible failed state and **no duplicate logical effect**, not that an at-least-once worker function was called only once. Check same source/action IDs persist across retry. Run pnpm typecheck/lint/test/build.
 
-## STOP conditions and maintenance
+DONE requires both 004A and 004B evidence. Stop if the design can acknowledge input then lose it or commit after lease loss. Do not solve that by keeping an unbounded in-memory lock.
 
-Stop if a chosen queue/actor design can acknowledge then lose a message, if D1 and actor status cannot recover after a crash, or if serial order requires blocking an actor over long external I/O without a durable retry plan. Document and test the chosen recovery invariant. Review Cloudflare's at-least-once and DO concurrency guidance before finalizing implementation: https://developers.cloudflare.com/queues/reference/delivery-guarantees/ and https://developers.cloudflare.com/durable-objects/best-practices/rules-of-durable-objects/
+References: https://developers.cloudflare.com/queues/reference/delivery-guarantees/ ; https://developers.cloudflare.com/durable-objects/best-practices/rules-of-durable-objects/

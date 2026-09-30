@@ -40,7 +40,7 @@ describe('Web App Shell Smoke & 360px Layout', () => {
     expect(html).toContain('width=device-width');
   });
 
-  it('renders Daybook shell into 360px mobile viewport without horizontal overflow', async () => {
+  it('renders Otis shell into 360px mobile viewport without horizontal overflow', async () => {
     const container = document.createElement('div');
     container.style.width = '360px';
     container.style.minHeight = '640px';
@@ -56,7 +56,7 @@ describe('Web App Shell Smoke & 360px Layout', () => {
     const main = container.querySelector('main');
     expect(header).toBeDefined();
     expect(main).toBeDefined();
-    expect(container.querySelector('h1')?.textContent).toBe('Daybook');
+    expect(container.querySelector('h1')?.textContent).toBe('Otis');
 
     // Programmatic verification: no element exceeds the 360px container
     expect(container.scrollWidth).toBeLessThanOrEqual(360);
@@ -67,7 +67,7 @@ describe('Web App Shell Smoke & 360px Layout', () => {
     document.body.removeChild(container);
   });
 
-  it('renders Daybook shell into desktop viewport without horizontal overflow', async () => {
+  it('renders Otis shell into desktop viewport without horizontal overflow', async () => {
     const container = document.createElement('div');
     container.style.width = '1024px';
     container.style.minHeight = '768px';

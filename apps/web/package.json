@@ -1,5 +1,5 @@
 {
-  "name": "@daybook/web",
+  "name": "@otis/web",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -9,8 +9,9 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@daybook/contracts": "workspace:*",
-    "@daybook/design": "workspace:*",
+    "@otis/contracts": "workspace:*",
+    "@otis/design": "workspace:*",
+    "firebase": "^12.19.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0"
   },

@@ -1,55 +1,61 @@
-# Daybook implementation handoff
+# Otis implementation gates
 
-Prepared 2026-09-29 from the pre-build repository. The repository contains only product.md and design.md as source documents; it has no Git HEAD, package manifest, tests, or deploy configuration. After the handpicked-model and shared slash-command decisions, including `/model`, the source-document snapshot is SHA-256 product.md 0D6508D7262B982C5D4BC7F25DFDD481E46FF6BD82B22028606199C3BBD9B29B and design.md 3D258F56B5895D1E28416CAE6E06D83803B80E026F1E74D5A29AF7F0813D1B09. Before plan 001, compare those files with this snapshot. Plan 001 intentionally updates them with later user decisions and initializes Git; subsequent plans compare live docs and Git diffs against their assumptions. Do not treat a mismatch as permission to improvise.
+Revised 2026-09-30; foundation baseline is commit `a3bd462`. [roadmap.md](../roadmap.md) is the full delivery guide; [architecture.md](../architecture.md) and [contracts](../docs/contracts.md) are the technical agreements. Earlier pre-build document hashes and fixed migration numbers are retired. Inspect current Git state and dependencies before implementing.
 
-Read the selected plan in full and the relevant sections of product.md and design.md. The plans are self-contained but the two root documents remain the product and visual source of truth. An implementation agent should complete one plan at a time, update this table, and give a reviewable change with the prescribed checks. Later plans assume the command baseline created in plan 001: pnpm typecheck, pnpm lint, pnpm test, and pnpm build. Web interaction and responsive layout are reviewed hands-on in a Codex or Antigravity browser session; do not install a browser automation framework for this project.
+## Order and current status
 
-The user chose the Cloudflare Workers + Durable Objects + D1 + R2 stack, workspace-shared provider credentials (one per connected provider), text replies to voice notes by default, and a dark default theme with Daybook's own palette. The product operator handpicks offered models; provider catalog discovery never auto-publishes a model. A shared default model applies to new chats, and `/model` selects an approved model for the member's current chat without changing a teammate's chat. The agent must retain clearly durable context and personal communication preferences within each workspace only; no preference follows a user into another workspace. Both Avi and Hunor use Google Firebase Auth for web sign-in. Phase 1 is the Kerning dogfood release for Avi and Hunor; self-serve onboarding is later. When a member is added, they may read the full workspace chat history, including chats from before they joined, and both retained voice audio and transcripts; disclose this clearly in the invite flow. Shared slash-command shortcuts appear in both the web composer and Telegram's native command menu, while plain language remains the main interface. Google Sheets sync, photos/location parsing, autonomous third-party messaging, live voice, and WhatsApp bot access are outside this sequence. The user wants OpenCode Go connected for private dogfood; plan 005 documents its published coding-traffic guidance and requires a fresh review before commercial reliance rather than blocking the private adapter.
+| Gate / plan | Outcome | Depends on | Status |
+|---|---|---|---|
+| [001](001-foundation.md) | Tooling/runtime foundation and browser acceptance | — | IMPLEMENTED; actual browser evidence pending |
+| [003A](003-identity.md) | Identity/workspace/session foundations | 001 technical checks | DONE |
+| [004A](004-inbound-routing.md) | Durable conversation, sources, runs, inbox/outbox schema | 003A | DONE |
+| [002](002-ledger.md) | Guarded ledger, projections, dispute and grouped undo | 003A, 004A | DONE |
+| [003B](003-identity.md) | Complete shared settings/lifecycle/provider configuration | 003A, 002 where integration needs it | TODO |
+| [004B](004-inbound-routing.md) | Actor leases, dispatch and recovery | 004A, 002, 003B | TODO |
+| [005](005-provider-spike.md) | Exact provider/model capability and budget evidence | 003B; fake work may start earlier | TODO |
+| [006](006-agent.md) | Bounded agent and durable sourced workspace memory | 002, 004B, 005 | TODO |
+| [007](007-web-chat-api.md) | Chat APIs, replay stream and shared commands | 006, 003B, 004A | TODO |
+| [008](008-conversation-ui.md) | Precise mobile/desktop conversation | 007; fixture prototypes can start earlier | TODO |
+| [009](009-telegram.md) | Complete linked private Telegram channel | 007, 004B | TODO |
+| [010](010-voice.md) | Voice notes and authenticated retained audio | 005, 008, 009 | TODO |
+| [011](011-briefs.md) | Member-chosen brief schedule and explicit reminders | 002, 007, 009 | TODO |
+| [012](012-drafts-sheet.md) | Requested drafts and private XLSX | 002, 007, 009 | TODO |
+| [013](013-release-readiness.md) | Integrated recovery/security/device/release gate | 001–012 accepted | TODO |
 
-## Execution order
+Numbers are stable work-package identifiers, not execution or migration order. 003A/004A exist to avoid building ledger/agent references to tables that do not yet exist. Plan 007 extends the chat storage from 004A instead of recreating it. Status vocabulary: TODO, IN PROGRESS, IMPLEMENTED (code present, acceptance incomplete), DONE (required evidence complete), BLOCKED (specific unmet external prerequisite), or DEFERRED (explicit product choice).
 
-| Plan | Result | Priority | Effort | Depends on | Status |
-|---|---|---|---|---|---|
-| 001 | Repository, tooling, local runtime, and verification baseline | P0 | M | — | DONE |
-| 002 | Event ledger, deterministic state, tasks, disputes, and undo | P0 | L | 001 | TODO |
-| 003 | Firebase and Google identity, membership, workspace and provider settings | P0 | L | 001, 002 schema conventions | TODO |
-| 004 | Durable inbound routing and per-workspace processing | P0 | L | 002, 003 | TODO |
-| 005 | Provider capability and permitted-use spike | P0 | M | 001, 003 | TODO |
-| 006 | Bounded agent, sourced workspace memory and evaluation harness | P0 | L | 002, 004, 005 | TODO |
-| 007 | Web chat API, transcript, stream, shared slash commands and action API | P0 | L | 003, 004, 006 | TODO |
-| 008 | Mobile-first and desktop web conversation UI | P0 | L | 007 | TODO |
-| 009 | Telegram bot, linking, native command menu, callbacks and delivery | P0 | L | 003, 004, 006, 007 | TODO |
-| 010 | Web and Telegram voice notes | P1 | M | 007, 008, 009 | TODO |
-| 011 | Deterministic morning brief and stale sweep | P1 | M | 002, 007, 009 | TODO |
-| 012 | Outward drafts, WhatsApp handoff, and generated XLSX | P1 | M | 002, 007, 009 | TODO |
-| 013 | Security, recovery, dogfood acceptance, and release operations | P0 | L | 001–012 | TODO |
+## Required reading and decision authority
 
-Product.md Appendix C is a terse first-day sketch; this dependency order is the executable sequence. It places identity and ledger guarantees before a functional webhook, while plan 004 still builds the intended plain echo before model wiring.
+Read assigned plan and relevant source docs; use [agent-handoff.md](../docs/agent-handoff.md). Product governs intent; design governs presentation; architecture/contracts govern implementation. Never silently follow an old example that contradicts a confirmed current decision.
 
-For the memory portion of plan 006, use [Workspace memory on Cloudflare](workspace-memory-cloudflare.md) as the detailed execution contract. It specifies D1 tables and source revisions, the Durable Object request path, Queue refresh and Cron recovery, scoped retrieval, correction/forget behavior, and failure tests. It is part of plan 006, not an additional dependency or migration number.
+Settled: Kerning scope, equal members/full history, neutral charcoal UI, private Go+Gemini, handpicked models, shared provider keys, /model chat overrides, workspace-only memory, text replies to voice, Android/iPhone, explicit missing-date/inferred-status clarification, same-run suffix undo, and chosen-time briefs without a default schedule. See [decision register](../docs/decisions.md).
 
-The critical path is 001 → 002/003 → 004/005 → 006 → 007 → 008/009 → 010/011/012 → 013. Plans 002 and 003 can progress independently after 001, but their migrations must be reconciled before 004. Plan 005 can run alongside 004. UI shell work can be prototyped while 007 runs, but its integration and completion gate depend on 007.
+## Gate discipline
 
-## Review and release gates
+Each gate ends with actual targeted evidence and the four root implementation checks. UI requires native-browser evidence; voice requires real-device/endpoint evidence. Mark unavailable checks honestly. Keep commands cross-platform for Windows paths containing spaces.
 
-Every plan requires the relevant unit/integration checks plus the repository-wide typecheck, lint, tests, and build. Do not claim a passing command that does not yet exist; plan 001 must create it first. Keep production credentials out of source, fixtures, logs, transcript exports, and screenshots. No plan authorizes deploying to production or messaging real third parties. Deployment and real-user dogfood use require the final operational review in plan 013.
+Inspect live schema/migrations before allocating the next SQL file. Do not edit applied shared migrations or introduce foreign keys to sources whose tables are created later. Preserve source history and use one package owner for each write path.
 
-Status values: TODO, IN PROGRESS, DONE, BLOCKED with reason, or REJECTED with reason. Do not mark DONE until its done criteria and tests pass. If a plan encounters a STOP condition, keep work reviewable, mark BLOCKED, and report the precise unresolved fact.
+Review/smoke uses synthetic data. Live provider tests are explicit controlled runs, not automatic CI calls. Do not deploy or send real third-party messages merely because a plan describes the eventual workflow. Existing task authorization remains applicable; routine work does not need repeated confirmation.
 
-## Decisions deliberately left measurable
+## Supporting contracts
 
-Match score/margin and action/token caps are named configuration, calibrated by fixtures and provider measurements. They are not arbitrary product promises. The default theme is dark; plan 008 must choose Daybook-specific dark tokens through prototypes. Light/system support is optional. Memory entries and summaries are sourced database records/projections, not a mutable memory.md file; plan 006 defines them and plan 007 links them to chat history. Export/erasure policy and provider processing-region claims require review in plan 013 before outside customers; EU storage jurisdiction alone is not an end-to-end residency guarantee.
+- [Workspace memory](workspace-memory-cloudflare.md) is part of 006.
+- [Verification matrix](../docs/verification.md) supplies cross-cutting failure cases.
+- [Browser evidence](../docs/browser-review.md) records actual observations.
+- [Provider capability matrix](../docs/decisions/provider-capabilities.md) begins unverified.
+- [Roadmap expansion](../roadmap.md#20-after-dogfood-ordered-expansion-candidates) covers future self-serve/MCP/Sheets/WhatsApp, not v1 work authorization.
 
-## Sources checked for platform assumptions
+## Known remaining evidence
 
-- Cloudflare Workers static assets and Vite plugin: https://developers.cloudflare.com/workers/static-assets/
-- Cloudflare Workers Vitest integration: https://developers.cloudflare.com/workers/testing/vitest-integration/
-- Cloudflare D1 and R2 jurisdiction rules: https://developers.cloudflare.com/d1/configuration/data-location/ and https://developers.cloudflare.com/r2/reference/data-location/
-- Cloudflare Queues at-least-once delivery: https://developers.cloudflare.com/queues/reference/delivery-guarantees/
-- Cloudflare D1 FTS5 and atomic batch transactions: https://developers.cloudflare.com/d1/sql-api/sql-statements/ and https://developers.cloudflare.com/d1/worker-api/d1-database/
-- Cloudflare Durable Object alarms: https://developers.cloudflare.com/durable-objects/api/alarms/
-- Durable Object concurrency guidance: https://developers.cloudflare.com/durable-objects/best-practices/rules-of-durable-objects/
-- Firebase Auth ID token verification: https://firebase.google.com/docs/auth/admin/verify-id-tokens
-- Telegram Bot API and deep links: https://core.telegram.org/bots/api and https://core.telegram.org/api/links
-- Gemini tool calling and audio: https://ai.google.dev/gemini-api/docs/function-calling and https://ai.google.dev/gemini-api/docs/audio
-- OpenCode Go usage and endpoint documentation: https://dev.opencode.ai/docs/go/
+Plan 001's technical fixes passed review at 1626124; a3bd462 added simulated-DOM width assertions. A real browser review has not been recorded here. Actual D1 jurisdiction and future provider/audio capabilities remain provisioning/spike evidence, not facts established by source comments.
+
+## Considered and rejected approaches
+
+- Global workspace rewind: would erase unrelated teammate work; use selected same-run actions with dependency checks.
+- Auto-assigned today deadline and inferred warm/cold status: contradict confirmed clarification policy.
+- Mutable memory.md authority: loses structured provenance, concurrency and workspace enforcement.
+- Raw private R2 bearer URLs: incompatible with immediate membership checks.
+- Queue exactly-once assumption: use durable leases/receipts/outbox instead.
+- Simulated-DOM geometry as browser proof: requires a real browser record.
+- Unrequested dashboard/cards/live voice/MCP inside the core: outside the first useful conversational release.

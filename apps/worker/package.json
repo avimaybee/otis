@@ -1,5 +1,5 @@
 {
-  "name": "@daybook/worker",
+  "name": "@otis/worker",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -8,7 +8,10 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@daybook/contracts": "workspace:*"
+    "@otis/contracts": "workspace:*",
+    "@otis/identity": "workspace:*",
+    "@otis/channels": "workspace:*",
+    "@otis/ledger": "workspace:*"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20250224.0"

@@ -5,7 +5,7 @@
 ## Status
 
 - Priority P1; effort M; risk medium; category multimodal/UX; depends on 007, 008, 009.
-- Planned at unversioned document snapshot, 2026-09-29.
+- Planned against scaffold revision `a3bd462` (2026-09-29); actual device/browser/provider support remains unverified until measured.
 
 ## Why and current state
 
@@ -13,17 +13,17 @@ Hunor's field notes may be recorded while walking. The app needs record/stop/sen
 
 ## Scope
 
-Modify apps/web composer, Worker upload and transcription handling, packages/agent transcription adapter, R2 retention job, Telegram voice handler, and deterministic unit/Worker tests. Do not implement streaming bidirectional speech, avatars, voices, video, image upload, or automatic spoken reply. Do not pass raw audio to OpenCode Go without a tested audio capability; a separate transcription provider is allowed.
+Modify the live web composer, Worker upload/transcription handlers, provider adapter, R2 retention job, Telegram voice handler and tests. Do not implement live bidirectional speech, avatars, video, image upload or automatic spoken reply. The operator handpicks models; the capability gate enables audio only after the selected model/endpoint/format passes actual tests. If not, use an explicitly configured and disclosed transcription provider or make voice unavailable for that chat.
 
 ## Required flow
 
-On web, request microphone permission only after a user taps record. Show recording elapsed time, actual level/waveform only if measured, distinct Cancel and Send, and a three-minute limit visible before it is reached. Preserve an unsent recording through a temporary navigation/interruption if browser storage allows; never label it saved to workspace until upload succeeds. Use stable message UUID. Validate media MIME/type, size and duration server-side; reject over-three-minute clips without truncation or transcription and retain metadata only. Stream to R2 where possible rather than buffering a large blob in Worker memory. Associate R2 object with workspace/user/message IDs, verify current workspace membership on fetch (not only the original author), and use a short-lived retrieval path, not public bucket URLs.
+On web, request microphone permission only after a user taps record. Show elapsed time, measured level/waveform only if actually measured, distinct Cancel and Send, and the three-minute limit before it is reached. Preserve an unsent recording through temporary navigation/interruption only where browser storage permits; never label it saved until upload commits. Reuse stable message UUID on retry. Reject known over-limit input before fetching where possible. Actual duration cannot always be trusted from client metadata, so use a bounded private quarantine upload when byte inspection is needed. Keep quarantine inaccessible; do not transcribe or make business writes until validation succeeds. Delete invalid bytes promptly and retain required metadata only. Stream to R2 where possible. Associate the object with workspace/user/message IDs and check current membership on every fetch, including reads by teammates. Use an authenticated Worker stream and scoped short-lived ticket, never a public/raw R2 bearer URL.
 
 After accepted upload, use the workspace's handpicked model directly only if plan 005 verified that exact model/endpoint accepts the recording format and returns a usable transcript. Otherwise use a separately configured and disclosed transcription provider; if none is configured, say voice is unavailable for the selected model before sending audio to any provider. Test Romanian/Hungarian names, money and dates. Persist transcript with source language and confidence/uncertainty metadata if available; do not invent confidence where provider lacks it. The agent receives attributed transcript plus a pointer to original voice, not an untrusted instruction from an attachment. The user sees transcript and can correct it conversationally; the correction adds an event and does not erase the original text. Text is the default answer on both channels. Raw audio is removed after 14 days or earlier on workspace deletion; cleanup is idempotent and reports failures.
 
 ## Proposed file map and verification commands
 
-These paths are targets to create or extend; the repository has no source files at planning time. In scope: apps/web/src/components/VoiceComposer.tsx; apps/web/src/lib/recording.ts; apps/worker/src/routes/voice.ts; apps/worker/src/voice/transcribe.ts, retention.ts; packages/channels/src/telegram/voice.ts; apps/worker/test/voice.integration.test.ts; docs/browser-review.md.
+Suggested implementation areas to map to live source: web recorder/composer, authenticated Worker upload/finalize/media routes, provider transcription adapter, R2 retention job, Telegram voice handler and targeted integration/device evidence. Do not presume these files are absent or add a second chat/message schema. Inspect the scaffold and current provider SDK support first.
 
 Verification after plan 001 establishes the scripts: pnpm typecheck; pnpm lint; pnpm test; pnpm build. Use injected clock/storage for the 14-day deletion test. Then manually review browser microphone permission, recording, cancel, upload, transcript correction, keyboard and mobile safe-area behavior in the Codex or Antigravity browser; record results in docs/browser-review.md. Do not add browser automation. Do not report a command as passed if it has not run. If a proposed path conflicts with the scaffold, preserve the module boundary and document the exact mapping before editing. Do not push or open a PR unless the operator asks.
 

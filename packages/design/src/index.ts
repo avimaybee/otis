@@ -1,5 +1,5 @@
 /**
- * @daybook/design
+ * @otis/design
  * Design tokens, typography, and layout standards specified in design.md.
  */
 

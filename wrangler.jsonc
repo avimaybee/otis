@@ -1,6 +1,6 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "daybook",
+  "name": "otis",
   "main": "apps/worker/src/index.ts",
   "compatibility_date": "2024-09-23",
   "compatibility_flags": ["nodejs_compat"],
@@ -12,7 +12,7 @@
   "d1_databases": [
     {
       "binding": "DB",
-      "database_name": "daybook-db",
+      "database_name": "otis-db",
       "database_id": "8d77dfc4-e8b7-40fe-87a1-12742af3523c",
       "migrations_dir": "migrations"
     }
@@ -20,7 +20,7 @@
   "r2_buckets": [
     {
       "binding": "STORAGE",
-      "bucket_name": "daybook-storage",
+      "bucket_name": "otis-storage",
       "jurisdiction": "eu"
     }
   ],
