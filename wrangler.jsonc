@@ -13,7 +13,7 @@
     {
       "binding": "DB",
       "database_name": "otis-db",
-      "database_id": "8d77dfc4-e8b7-40fe-87a1-12742af3523c",
+      "database_id": "a7d08779-b61e-4717-b8f2-e63726edab08",
       "migrations_dir": "migrations"
     }
   ],
