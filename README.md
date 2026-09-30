@@ -45,7 +45,9 @@ D1 is the canonical store for business/conversation/job records. The ledger writ
 
 Use .env.example as a names/template reference, never as production credentials. Local Worker values may use .env or .dev.vars according to the installed Wrangler version; do not maintain conflicting copies. Private values include session/encryption secrets, Telegram token/webhook secret and provider keys. Workspace credentials will be encrypted server-side when plan 003 implements them.
 
-Firebase client configuration uses explicitly public VITE_FIREBASE_* values. Everything prefixed VITE_ is potentially bundled for the browser. Never give a provider key that prefix. The identity gate must configure Vite's envDir deliberately: its current root is apps/web, so a root .env cannot be assumed to reach client code without configuration. Document one authoritative local convention when that gate lands.
+Firebase client configuration uses explicitly public VITE_FIREBASE_* values. Everything prefixed VITE_ is potentially bundled for the browser. Never give a provider key that prefix. No analytics SDK is wired; only `firebase/app` and `firebase/auth` are used.
+
+Authoritative local convention: the root `.env` (gitignored) is the single local source for web `VITE_FIREBASE_*` values, because the root Vite config sets `envDir` to the repo root. Local Worker vars live only in `.dev.vars` (gitignored), currently `ENVIRONMENT=local` and `FIREBASE_PROJECT_ID=otisauth`. Do not maintain conflicting copies. Production sets `FIREBASE_PROJECT_ID` as a Worker var/secret and bakes `VITE_*` from the build environment.
 
 Server Firebase verification needs FIREBASE_PROJECT_ID. Exact required secrets, defaults and rotation belong in the implemented environment schema and operations report; missing required production configuration must fail explicitly.
 
