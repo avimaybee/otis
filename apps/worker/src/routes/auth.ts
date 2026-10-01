@@ -51,6 +51,16 @@ export async function handleAuthSession(
 
   let claims: FirebaseTokenClaims;
 
+  // Production must configure FIREBASE_PROJECT_ID explicitly; never verify
+  // real tokens against a silent default project.
+  if (!env.FIREBASE_PROJECT_ID && env.ENVIRONMENT === 'production') {
+    return jsonError(
+      500,
+      'server_misconfigured',
+      'Authentication is not configured on this deployment.',
+      requestId,
+    );
+  }
   // Verify Firebase ID Token via Web Crypto RS256
   // customJwks is strictly rejected in production environments
   const projectId = env.FIREBASE_PROJECT_ID || 'otis';

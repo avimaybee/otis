@@ -11,10 +11,11 @@ export class InviteError extends Error {
     | 'invite_not_found'
     | 'invite_expired'
     | 'email_mismatch'
-    | 'already_accepted';
+    | 'already_accepted'
+    | 'not_member';
 
   constructor(
-    code: 'invite_not_found' | 'invite_expired' | 'email_mismatch' | 'already_accepted',
+    code: 'invite_not_found' | 'invite_expired' | 'email_mismatch' | 'already_accepted' | 'not_member',
     message: string,
   ) {
     super(message);
@@ -43,24 +44,57 @@ export async function createInvite(
   const expiresAt = new Date(now.getTime() + ttl * 1000).toISOString();
   const createdAt = now.toISOString();
   const normalizedEmail = params.invitedEmail.trim().toLowerCase();
+  if (!normalizedEmail) {
+    throw new InviteError('email_mismatch', 'Invite email must not be empty.');
+  }
 
-  await db
-    .prepare(
-      `INSERT INTO invites (id, token_hash, workspace_id, invited_email, invited_by_user_id, created_at, expires_at, accepted_at, accepted_by_user_id)
-       VALUES (?, ?, ?, ?, ?, ?, ?, NULL, NULL)`
-    )
-    .bind(
-      inviteId,
-      tokenHash,
-      params.workspaceId,
-      normalizedEmail,
-      params.invitedByUserId,
-      createdAt,
-      expiresAt,
-    )
-    .run();
+  try {
+    await db.batch([
+      // Guard: the inviter is still a member at commit time.
+      db
+        .prepare(
+          `INSERT INTO lifecycle_guards (id, guard_ok)
+           VALUES (?, (SELECT 1 FROM workspace_users WHERE workspace_id = ? AND user_id = ?))`
+        )
+        .bind(crypto.randomUUID(), params.workspaceId, params.invitedByUserId),
+      db
+        .prepare(
+          `INSERT INTO invites (id, token_hash, workspace_id, invited_email, invited_by_user_id, created_at, expires_at, accepted_at, accepted_by_user_id)
+           VALUES (?, ?, ?, ?, ?, ?, ?, NULL, NULL)`
+        )
+        .bind(
+          inviteId,
+          tokenHash,
+          params.workspaceId,
+          normalizedEmail,
+          params.invitedByUserId,
+          createdAt,
+          expiresAt,
+        ),
+    ]);
+  } catch (err) {
+    if (isGuardFailure(err)) {
+      const member = await db
+        .prepare(`SELECT 1 FROM workspace_users WHERE workspace_id = ? AND user_id = ?`)
+        .bind(params.workspaceId, params.invitedByUserId)
+        .first();
+      if (!member) {
+        throw new InviteError('not_member', 'Inviter is no longer a member of this workspace.');
+      }
+    }
+    throw err;
+  }
 
   return { inviteId, token, expiresAt };
+}
+
+function isGuardFailure(err: unknown): boolean {
+  const s = String(err);
+  return (
+    s.includes('SQLITE_CONSTRAINT') ||
+    s.includes('guard_ok') ||
+    s.includes('PRIMARY KEY')
+  );
 }
 
 /**

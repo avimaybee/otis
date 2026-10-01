@@ -1,6 +1,22 @@
 # Plan 003: Identity, equal membership and shared configuration
 
-Planned against a3bd462, revised 2026-09-29. Status: 003A DONE; 003B TODO. Execute **003A before 004A/002**, then complete 003B after the shared storage contracts are integrated. This replaces the old ledger-before-identity migration assumption.
+Planned against a3bd462, revised 2026-09-29. Status: 003A DONE; 003B DONE (2026-09-30). Execute **003A before 004A/002**, then complete 003B after the shared storage contracts are integrated. This replaces the old ledger-before-identity migration assumption.
+
+### 003B Verification Evidence (2026-09-30)
+
+Implemented: `packages/identity` lifecycle (`removeMember`/`leaveWorkspace`/`transferOwnership` with `lifecycle_guards` CHECK batches), AES-256-GCM workspace credentials (fresh nonce, workspace/provider/version AAD, status-only reads, package-level operator rotation preserving status), shared default-model and member settings (brief stays disabled until an explicitly chosen time/timezone/weekdays/channel), `settings_audit`, migration `0004_lifecycle_settings.sql`, worker routes (invites, members, leave, transfer, settings, credentials — no rotation route), and contract DTOs. `MemberSettings.brief_weekdays` is numeric 0-6 (was an unimplemented `string[]` guess).
+
+Root checks (after the acceptance follow-up below): `pnpm typecheck` 0, `pnpm lint` 0, `pnpm test` 117 passed / 11 files (new `lifecycle.integration.test.ts`: 15 tests covering invite issue/accept/reuse/mismatch, removal with revision/audit/Telegram deselection, removed-member 404s, in-flight write guards with zero partial commit, owner/last-member guards, single transfer + lost transfer power, concurrent double-remove serialization, write-only credentials, unknown-provider/misconfigured-key errors, package-level rotation with status preservation + AAD isolation, brief gating including explicit channel, shared model, second-workspace isolation), `pnpm build` clean dry-run. Note: C: disk full in this environment; workerd tests ran with TEMP redirected to D: (log-write ENOSPC noise only, no test impact).
+
+### 003B acceptance follow-up (code inspection, 2026-09-30)
+
+Three findings, all addressed in the working tree and covered by the rerun suite (now 117 passed / 11 files):
+
+1. **Rotation was a member API route (release-blocking, fixed).** `POST /credentials/:provider/rotate` accepted old/new wrapping keys from any member and re-encrypted without coordinating with the Worker's `CREDENTIALS_KEY` secret, risking undecryptable credentials. The route and its registration are removed; `rotateCredentialWrappingKey` remains a package-level operator procedure (documented coordination: rotate D1, deploy the secret, confirm decrypt before retiring the old key). Tests now assert the route is 404 and exercise rotation at package level.
+2. **Removal vs in-flight writes (fixed).** `setMemberSettings`, `setWorkspaceSettings`, `setWorkspaceCredential`, and `createInvite` now open their committing batches with a `lifecycle_guards` membership recheck; a removal landing after the route check aborts the write with `not_member` (404). Tests prove no partial commit for a removed actor.
+3. **Brief channel choice (fixed).** Enabling a brief now requires all four schedule fields explicitly in the enabling request, including `brief_channel`; a carried `web` default no longer counts as a choice. Test covers schedule-minus-channel rejection.
+
+Not re-verified here: real-browser sign-in acceptance (`docs/browser-review.md` still open) and remote deployment of these fixes.
 
 ## Outcome and context
 

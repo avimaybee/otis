@@ -2,6 +2,8 @@ import { describe, it, expect, beforeAll } from 'vitest';
 import { SELF, env } from 'cloudflare:test';
 // @ts-expect-error vite raw import
 import migrationSql from '../../../migrations/0001_identity.sql?raw';
+// @ts-expect-error vite raw import
+import migration0004Sql from '../../../migrations/0004_lifecycle_settings.sql?raw';
 import type {
   AuthSessionResponse,
   MeResponse,
@@ -21,13 +23,17 @@ describe('Worker Identity & Session Integration (workerd runtime)', () => {
   let projectId: string;
 
   beforeAll(async () => {
-    // 1. Apply the ACTUAL shipped migration directly from disk via Vite ?raw import
+    // 1. Apply the ACTUAL shipped migrations directly from disk via Vite ?raw import
+    // (0004 provides lifecycle_guards/settings_audit used by invite creation)
 
     // Split SQL by semicolon, clean comments and empty lines
-    const statements = migrationSql
-      .split(';')
-      .map((s) => s.trim())
-      .filter((s) => s.length > 0);
+    const statements = [migrationSql, migration0004Sql]
+      .flatMap((sql: string) =>
+        sql
+          .split(';')
+          .map((s: string) => s.trim())
+          .filter((s: string) => s.length > 0),
+      );
 
     for (const stmt of statements) {
       await env.DB.prepare(stmt).run();

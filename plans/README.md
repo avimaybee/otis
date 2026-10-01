@@ -10,8 +10,8 @@ Revised 2026-09-30; foundation baseline is commit `a3bd462`. [roadmap.md](../roa
 | [003A](003-identity.md) | Identity/workspace/session foundations | 001 technical checks | DONE |
 | [004A](004-inbound-routing.md) | Durable conversation, sources, runs, inbox/outbox schema | 003A | DONE |
 | [002](002-ledger.md) | Guarded ledger, projections, dispute and grouped undo | 003A, 004A | DONE |
-| [003B](003-identity.md) | Complete shared settings/lifecycle/provider configuration | 003A, 002 where integration needs it | TODO |
-| [004B](004-inbound-routing.md) | Actor leases, dispatch and recovery | 004A, 002, 003B | TODO |
+| [003B](003-identity.md) | Complete shared settings/lifecycle/provider configuration | 003A, 002 where integration needs it | DONE |
+| [004B](004-inbound-routing.md) | Actor leases, dispatch and recovery | 004A, 002, 003B | DONE; independently reviewed 2026-10-01; local evidence only |
 | [005](005-provider-spike.md) | Exact provider/model capability and budget evidence | 003B; fake work may start earlier | TODO |
 | [006](006-agent.md) | Bounded agent and durable sourced workspace memory | 002, 004B, 005 | TODO |
 | [007](007-web-chat-api.md) | Chat APIs, replay stream and shared commands | 006, 003B, 004A | TODO |
@@ -29,6 +29,12 @@ Numbers are stable work-package identifiers, not execution or migration order. 0
 Read assigned plan and relevant source docs; use [agent-handoff.md](../docs/agent-handoff.md). Product governs intent; design governs presentation; architecture/contracts govern implementation. Never silently follow an old example that contradicts a confirmed current decision.
 
 Settled: Kerning scope, equal members/full history, neutral charcoal UI, private Go+Gemini, handpicked models, shared provider keys, /model chat overrides, workspace-only memory, text replies to voice, Android/iPhone, explicit missing-date/inferred-status clarification, same-run suffix undo, and chosen-time briefs without a default schedule. See [decision register](../docs/decisions.md).
+
+## Engineering simplicity
+
+Keep Otis simple, modular and easy to maintain without weakening its working guarantees. Prefer a small set of explicit code paths and existing services. Add an abstraction only when it removes demonstrated duplication or owns a concrete responsibility; do not create generic frameworks, speculative extension points, or infrastructure for later phases.
+
+Durable acceptance, workspace isolation, authorization, idempotency, lease fencing and recovery are required correctness mechanisms. Enforce them at shared committing boundaries rather than duplicating prechecks in each caller. Test meaningful failure and concurrency scenarios; avoid tests that merely repeat implementation details. Split large modules by an existing responsibility when that makes ownership clearer, not to meet an arbitrary line count. Reviews must distinguish defects that can lose or corrupt data from optional cleanup, and must not turn optional cleanup into another release gate.
 
 ## Gate discipline
 

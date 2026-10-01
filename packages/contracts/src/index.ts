@@ -184,7 +184,8 @@ export interface MemberSettings {
   brief_enabled: boolean;
   brief_local_time: string | null;
   brief_timezone: string | null;
-  brief_weekdays: string[] | null;
+  /** Selected weekdays as 0 (Sunday) through 6 (Saturday). */
+  brief_weekdays: number[] | null;
   brief_channel: 'web' | 'telegram';
   preferred_language: string;
   created_at: string;
@@ -227,6 +228,56 @@ export interface WorkspaceDetailResponse {
     business_revision: number;
     created_at: string;
   };
+}
+
+export interface CreateInviteRequest {
+  email: string;
+}
+
+export interface CreateInviteResponse {
+  status: 'ok';
+  invite_id: string;
+  /** Raw token, shown once so the inviter can copy the link. Never stored client-side. */
+  token: string;
+  expires_at: string;
+}
+
+export interface MemberListResponse {
+  members: WorkspaceMember[];
+}
+
+export interface LifecycleActionResponse {
+  status: 'ok';
+  workspace_id: string;
+  affected_user_id: string;
+  membership_revision: number;
+}
+
+export interface TransferOwnershipRequest {
+  new_owner_user_id: string;
+}
+
+export interface UpdateMemberSettingsRequest {
+  brief_enabled?: boolean;
+  brief_local_time?: string | null;
+  brief_timezone?: string | null;
+  brief_weekdays?: number[] | null;
+  brief_channel?: 'web' | 'telegram';
+  preferred_language?: string;
+}
+
+export interface UpdateWorkspaceSettingsRequest {
+  default_model?: string | null;
+}
+
+export interface PutCredentialRequest {
+  /** Raw provider key. Encrypted server-side; never returned or logged. */
+  key: string;
+}
+
+export interface CredentialStatusResponse {
+  status: 'ok';
+  credential: ProviderCredentialMetadata | null;
 }
 
 // --- Domain Enums & Dates ---

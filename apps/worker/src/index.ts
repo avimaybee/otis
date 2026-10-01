@@ -15,7 +15,26 @@ import {
   handleCreateMessage,
 } from './routes/chats.js';
 import { handleTelegramWebhook } from './routes/inbound.js';
-import { jsonError } from './middleware/errors.js';
+import { dispatchWorkspace, listWorkspacesNeedingRecovery, recoverWorkspace } from './actor/dispatch.js';
+import {
+  handleCreateInvite,
+  handleLeaveWorkspace,
+  handleListMembers,
+  handleRemoveMember,
+  handleTransferOwnership,
+} from './routes/members.js';
+import {
+  handleGetCredentialStatus,
+  handlePutCredential,
+} from './routes/credentials.js';
+import {
+  handleGetMemberSettings,
+  handleGetWorkspaceSettings,
+  handleUpdateMemberSettings,
+  handleUpdateWorkspaceSettings,
+} from './routes/settings.js';
+import { handleStopRun } from './routes/runs.js';
+import { jsonError, jsonSuccess } from './middleware/errors.js';
 
 export interface Env {
   DB: D1Database;
@@ -24,6 +43,7 @@ export interface Env {
   ASSETS?: Fetcher;
   ENVIRONMENT?: string;
   FIREBASE_PROJECT_ID?: string;
+  CREDENTIALS_KEY?: string;
   BOOTSTRAP_WORKSPACE_ID?: string;
   BOOTSTRAP_WORKSPACE_NAME?: string;
   BOOTSTRAP_OWNER_UID?: string;
@@ -31,11 +51,14 @@ export interface Env {
   TEST_JWKS?: string;
   TELEGRAM_WEBHOOK_SECRET?: string;
   TELEGRAM_BOT_INSTALLATION_ID?: string;
+  DISPATCH_QUEUE?: Queue;
 }
 
 /**
  * WorkspaceActor Durable Object
- * Manages serialized turns and queue leases per workspace.
+ * One instance per workspace (constructed with idFromName(workspaceId)).
+ * Serializes dispatch/recovery turns for its workspace; D1 leases remain the
+ * authority so a restarted or duplicated instance cannot double-commit.
  */
 export class WorkspaceActor {
   public state: DurableObjectState;
@@ -46,10 +69,39 @@ export class WorkspaceActor {
     this.env = env;
   }
 
-  async fetch(_request: Request): Promise<Response> {
-    return new Response(JSON.stringify({ status: 'active' }), {
-      headers: { 'Content-Type': 'application/json' },
-    });
+  async fetch(request: Request): Promise<Response> {
+    if (request.method === 'GET') {
+      return new Response(JSON.stringify({ status: 'active' }), {
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+    let body: { action?: string; workspace_id?: string; budget?: number };
+    try {
+      body = (await request.json()) as { action?: string; workspace_id?: string; budget?: number };
+    } catch {
+      return jsonError(400, 'invalid_json', 'Request body must be valid JSON.', 'actor');
+    }
+    // The stub id is opaque; callers pass the workspace explicitly so any
+    // instance (including idFromName mismatches) operates on D1 truth.
+    const workspaceId = body.workspace_id ?? '';
+    if (!workspaceId) {
+      return jsonError(422, 'invalid_payload', 'workspace_id is required.', 'actor');
+    }
+    const budget = Math.min(body.budget ?? 5, 25);
+    try {
+      if (body.action === 'dispatch') {
+        const result = await dispatchWorkspace(this.env.DB, workspaceId, { budget });
+        return jsonSuccess({ status: 'ok', ...result }, 200);
+      }
+      if (body.action === 'recover') {
+        const recovery = await recoverWorkspace(this.env.DB, workspaceId);
+        const result = await dispatchWorkspace(this.env.DB, workspaceId, { budget });
+        return jsonSuccess({ status: 'ok', recovery, ...result }, 200);
+      }
+    } catch (err) {
+      return jsonError(500, 'actor_error', err instanceof Error ? err.message : String(err), 'actor');
+    }
+    return jsonError(404, 'not_found', 'Unknown actor action.', 'actor');
   }
 }
 
@@ -144,7 +196,106 @@ export default {
         return jsonError(405, 'method_not_allowed', 'Method not allowed.', requestId);
       }
 
-      // 8. Telegram Inbound Webhook route: /api/inbound/telegram
+      // 8. Workspace lifecycle routes
+      const membersMatch = url.pathname.match(/^\/api\/workspaces\/([^/]+)\/members$/);
+      if (membersMatch) {
+        const workspaceId = membersMatch[1];
+        if (request.method === 'GET' && workspaceId) {
+          return await handleListMembers(request, env, workspaceId, requestId);
+        }
+        return jsonError(405, 'method_not_allowed', 'Method not allowed.', requestId);
+      }
+
+      const invitesMatch = url.pathname.match(/^\/api\/workspaces\/([^/]+)\/invites$/);
+      if (invitesMatch) {
+        const workspaceId = invitesMatch[1];
+        if (request.method === 'POST' && workspaceId) {
+          return await handleCreateInvite(request, env, workspaceId, requestId);
+        }
+        return jsonError(405, 'method_not_allowed', 'Method not allowed.', requestId);
+      }
+
+      const removeMatch = url.pathname.match(/^\/api\/workspaces\/([^/]+)\/members\/([^/]+)\/remove$/);
+      if (removeMatch) {
+        const workspaceId = removeMatch[1];
+        const targetUserId = removeMatch[2];
+        if (request.method === 'POST' && workspaceId && targetUserId) {
+          return await handleRemoveMember(request, env, workspaceId, targetUserId, requestId);
+        }
+        return jsonError(405, 'method_not_allowed', 'Method not allowed.', requestId);
+      }
+
+      const leaveMatch = url.pathname.match(/^\/api\/workspaces\/([^/]+)\/leave$/);
+      if (leaveMatch) {
+        const workspaceId = leaveMatch[1];
+        if (request.method === 'POST' && workspaceId) {
+          return await handleLeaveWorkspace(request, env, workspaceId, requestId);
+        }
+        return jsonError(405, 'method_not_allowed', 'Method not allowed.', requestId);
+      }
+
+      const transferMatch = url.pathname.match(/^\/api\/workspaces\/([^/]+)\/transfer$/);
+      if (transferMatch) {
+        const workspaceId = transferMatch[1];
+        if (request.method === 'POST' && workspaceId) {
+          return await handleTransferOwnership(request, env, workspaceId, requestId);
+        }
+        return jsonError(405, 'method_not_allowed', 'Method not allowed.', requestId);
+      }
+
+      // 9. Settings routes
+      const sharedSettingsMatch = url.pathname.match(/^\/api\/workspaces\/([^/]+)\/settings$/);
+      if (sharedSettingsMatch) {
+        const workspaceId = sharedSettingsMatch[1];
+        if (request.method === 'GET' && workspaceId) {
+          return await handleGetWorkspaceSettings(request, env, workspaceId, requestId);
+        }
+        if (request.method === 'PUT' && workspaceId) {
+          return await handleUpdateWorkspaceSettings(request, env, workspaceId, requestId);
+        }
+        return jsonError(405, 'method_not_allowed', 'Method not allowed.', requestId);
+      }
+
+      const memberSettingsMatch = url.pathname.match(/^\/api\/workspaces\/([^/]+)\/me\/settings$/);
+      if (memberSettingsMatch) {
+        const workspaceId = memberSettingsMatch[1];
+        if (request.method === 'GET' && workspaceId) {
+          return await handleGetMemberSettings(request, env, workspaceId, requestId);
+        }
+        if (request.method === 'PUT' && workspaceId) {
+          return await handleUpdateMemberSettings(request, env, workspaceId, requestId);
+        }
+        return jsonError(405, 'method_not_allowed', 'Method not allowed.', requestId);
+      }
+
+      // 10. Provider credential routes
+      const credentialMatch = url.pathname.match(
+        /^\/api\/workspaces\/([^/]+)\/credentials\/([^/]+)$/,
+      );
+      if (credentialMatch) {
+        const workspaceId = credentialMatch[1];
+        const provider = credentialMatch[2];
+        if (request.method === 'GET' && workspaceId && provider) {
+          return await handleGetCredentialStatus(request, env, workspaceId, provider, requestId);
+        }
+        if (request.method === 'PUT' && workspaceId && provider) {
+          return await handlePutCredential(request, env, workspaceId, provider, requestId);
+        }
+        return jsonError(405, 'method_not_allowed', 'Method not allowed.', requestId);
+      }
+
+      // 11. Run stop route: /api/workspaces/:workspaceId/runs/:runId/stop
+      const stopMatch = url.pathname.match(/^\/api\/workspaces\/([^/]+)\/runs\/([^/]+)\/stop$/);
+      if (stopMatch) {
+        const workspaceId = stopMatch[1];
+        const runId = stopMatch[2];
+        if (request.method === 'POST' && workspaceId && runId) {
+          return await handleStopRun(request, env, workspaceId, runId, requestId);
+        }
+        return jsonError(405, 'method_not_allowed', 'Method not allowed.', requestId);
+      }
+
+      // 12. Telegram Inbound Webhook route: /api/inbound/telegram
       if (url.pathname === '/api/inbound/telegram') {
         if (request.method === 'POST') {
           return await handleTelegramWebhook(request, env, requestId);
@@ -170,6 +321,43 @@ export default {
         'An unexpected internal error occurred.',
         requestId,
       );
+    }
+  },
+
+  /**
+   * Cron recovery: discovers workspaces from durable runs as well as outbox
+   * rows (an accepted input whose dispatch intent was never published still
+   * needs recovery), then requeues stale work and dispatches a bounded slice.
+   */
+  async scheduled(_event: ScheduledEvent, env: Env): Promise<void> {
+    const workspaces = await listWorkspacesNeedingRecovery(env.DB);
+    for (const workspaceId of workspaces) {
+      try {
+        await recoverWorkspace(env.DB, workspaceId);
+        await dispatchWorkspace(env.DB, workspaceId, { budget: 5 });
+      } catch (err) {
+        console.error(`scheduled recovery failed for workspace '${workspaceId}':`, err);
+      }
+    }
+  },
+
+  /**
+   * Queue wake-ups are hints, not business order: each message names one
+   * workspace to dispatch. Malformed messages are acknowledged with a log,
+   * never retried blindly.
+   */
+  async queue(batch: MessageBatch<{ workspace_id?: unknown }>, env: Env): Promise<void> {
+    for (const message of batch.messages) {
+      const workspaceId = message.body?.workspace_id;
+      if (typeof workspaceId !== 'string' || !workspaceId) {
+        console.error('Ignoring malformed dispatch wake-up without workspace_id.');
+        continue;
+      }
+      try {
+        await dispatchWorkspace(env.DB, workspaceId, { budget: 3 });
+      } catch (err) {
+        console.error(`queue dispatch failed for workspace '${workspaceId}':`, err);
+      }
     }
   },
 };

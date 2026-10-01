@@ -32,6 +32,13 @@
       }
     ]
   },
+  "queues": {
+    "producers": [{ "binding": "DISPATCH_QUEUE", "queue": "otis-dispatch" }],
+    "consumers": [{ "queue": "otis-dispatch", "max_batch_size": 10, "max_retries": 5 }]
+  },
+  "triggers": {
+    "crons": ["*/5 * * * *"]
+  },
   "migrations": [
     {
       "tag": "v1",

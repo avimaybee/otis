@@ -4,6 +4,10 @@ import { SELF, env } from 'cloudflare:test';
 import migration0001Sql from '../../../migrations/0001_identity.sql?raw';
 // @ts-expect-error vite raw import
 import migration0002Sql from '../../../migrations/0002_conversations_sources.sql?raw';
+// @ts-expect-error vite raw import
+import migration0006Sql from '../../../migrations/0006_actor_hardening.sql?raw';
+// @ts-expect-error vite raw import
+import migration0007Sql from '../../../migrations/0007_outbox_claim_owner.sql?raw';
 import { AUTH_BOUNDS } from '@otis/contracts';
 import type {
   AcceptMessageResponse,
@@ -26,7 +30,7 @@ describe('Worker Conversations & Inbound Integration (workerd runtime)', () => {
 
   beforeAll(async () => {
     // 1. Apply actual migration SQL files directly from disk
-    for (const sql of [migration0001Sql, migration0002Sql]) {
+    for (const sql of [migration0001Sql, migration0002Sql, migration0006Sql, migration0007Sql]) {
       const statements = sql
         .split(';')
         .map((s: string) => s.trim())
@@ -500,7 +504,9 @@ describe('Worker Conversations & Inbound Integration (workerd runtime)', () => {
   });
 
   it('paginates chats reliably across identical timestamps using composite cursor', async () => {
-    const fixedTime = '2026-09-30T12:00:00.000Z';
+    // Relative to now: a fixed literal becomes a time bomb once wall-clock
+    // passes it (ties flip from newest to oldest and the page math changes).
+    const fixedTime = new Date(Date.now() + 3600 * 1000).toISOString();
     // Create 3 chats with exact identical last_activity_at
     const c1 = `chat_tie_1_${crypto.randomUUID().slice(0, 8)}`;
     const c2 = `chat_tie_2_${crypto.randomUUID().slice(0, 8)}`;

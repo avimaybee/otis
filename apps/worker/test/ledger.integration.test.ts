@@ -83,11 +83,15 @@ describe('Worker Ledger D1 Integration (workerd runtime)', () => {
        VALUES (?, 'fb_hunor_l', 'hunor@kerning.test', 'Hunor Ledger', ?, ?)`
     ).bind(hunorUserId, now, now).run();
 
-    // Seed test workspace
+    // Seed test workspace with a live dispatch lease: fenced run-scoped
+    // writes require a present, unexpired lease held by the run's attempt.
+    // Both seeded runs share the seed attempt; fencing is orthogonal to the
+    // dispute/lifecycle scenarios exercised here.
+    const leaseExpiresAt = new Date(Date.now() + 60 * 60 * 1000).toISOString();
     await env.DB.prepare(
-      `INSERT INTO workspaces (id, name, owner_user_id, business_revision, membership_revision, last_acceptance_sequence, last_event_sequence, lease_fence, created_at, updated_at)
-       VALUES (?, 'Kerning Ledger Test', ?, 0, 1, 0, 0, 1, ?, ?)`
-    ).bind(workspaceId, aviUserId, now, now).run();
+      `INSERT INTO workspaces (id, name, owner_user_id, business_revision, membership_revision, last_acceptance_sequence, last_event_sequence, lease_fence, lease_owner, lease_attempt_id, lease_expires_at, created_at, updated_at)
+       VALUES (?, 'Kerning Ledger Test', ?, 0, 1, 0, 0, 1, 'att_ledger_seed', 'att_ledger_seed', ?, ?, ?)`
+    ).bind(workspaceId, aviUserId, leaseExpiresAt, now, now).run();
 
     // Seed memberships
     await env.DB.prepare(
@@ -112,10 +116,10 @@ describe('Worker Ledger D1 Integration (workerd runtime)', () => {
        VALUES ('chat_ledger_1', ?, ?, 'Ledger Chat', 0, ?, ?, ?)`
     ).bind(workspaceId, aviUserId, now, now, now).run();
 
-    // Seed agent run for avi
+    // Seed agent run for avi (pinned to the seed lease holder)
     await env.DB.prepare(
-      `INSERT INTO agent_runs (id, workspace_id, chat_id, source_message_id, executor_kind, status, lease_fence, created_at, updated_at)
-       VALUES ('run-ledger-test-1', ?, 'chat_ledger_1', 'msg_valid_1', 'agent', 'running', 1, ?, ?)`
+      `INSERT INTO agent_runs (id, workspace_id, chat_id, source_message_id, executor_kind, status, attempt_id, lease_fence, created_at, updated_at)
+       VALUES ('run-ledger-test-1', ?, 'chat_ledger_1', 'msg_valid_1', 'agent', 'running', 'att_ledger_seed', 1, ?, ?)`
     ).bind(workspaceId, now, now).run();
 
     // Seed message, chat, and run for hunor
@@ -130,8 +134,8 @@ describe('Worker Ledger D1 Integration (workerd runtime)', () => {
     ).bind(workspaceId, hunorUserId, now, now, now).run();
 
     await env.DB.prepare(
-      `INSERT INTO agent_runs (id, workspace_id, chat_id, source_message_id, executor_kind, status, lease_fence, created_at, updated_at)
-       VALUES ('run-ledger-hunor-1', ?, 'chat_ledger_hunor', 'msg_hunor_1', 'agent', 'running', 1, ?, ?)`
+      `INSERT INTO agent_runs (id, workspace_id, chat_id, source_message_id, executor_kind, status, attempt_id, lease_fence, created_at, updated_at)
+       VALUES ('run-ledger-hunor-1', ?, 'chat_ledger_hunor', 'msg_hunor_1', 'agent', 'running', 'att_ledger_seed', 1, ?, ?)`
     ).bind(workspaceId, now, now).run();
   });
 
@@ -403,6 +407,42 @@ describe('Worker Ledger D1 Integration (workerd runtime)', () => {
 
       expect(res.status).toBe('conflict');
       expect(res.error?.code).toBe('fence_conflict');
+    });
+
+    it('rejects run-scoped ordinary writes without a dispatch fence (missing_fence)', async () => {
+      const currentWs = await getWorkspaceRevision(env.DB, workspaceId);
+      const rev = currentWs!.business_revision;
+
+      // A dispatched handler must present its claimed fence; omitting it
+      // fails closed before any mutation, even with a live lease and a
+      // current business revision.
+      const ctxNoFence: LedgerCommandContext = {
+        ...makeContext('act_missing_fence_test', rev),
+        fence: undefined,
+      };
+
+      const res = await executeLedgerCommand(
+        env.DB,
+        ctxNoFence,
+        'create_entity',
+        { name: 'Unfenced Entity' },
+        handleCreateEntity,
+      );
+
+      expect(res.status).toBe('rejected');
+      expect(res.error?.code).toBe('missing_fence');
+
+      // Nothing committed: no receipt, no entity, no revision move.
+      const receipt = await env.DB.prepare(
+        `SELECT id FROM action_receipts WHERE workspace_id = ? AND action_id = ?`,
+      ).bind(workspaceId, 'act_missing_fence_test').first();
+      expect(receipt).toBeNull();
+      const ent = await env.DB.prepare(
+        `SELECT id FROM entities WHERE workspace_id = ? AND name = ?`,
+      ).bind(workspaceId, 'Unfenced Entity').first();
+      expect(ent).toBeNull();
+      const afterWs = await getWorkspaceRevision(env.DB, workspaceId);
+      expect(afterWs!.business_revision).toBe(rev);
     });
   });
 
@@ -837,10 +877,11 @@ describe('Worker Ledger D1 Integration (workerd runtime)', () => {
         expect(resValid.status).toBe('applied');
         rev++;
       } finally {
-        // Restore workspace lease_expires_at for subsequent tests
+        // Restore a live seed lease for subsequent tests (fenced run-scoped
+        // writes require a present, unexpired lease).
         await env.DB.prepare(
-          `UPDATE workspaces SET lease_expires_at = NULL WHERE id = ?`
-        ).bind(workspaceId).run();
+          `UPDATE workspaces SET lease_owner = 'att_ledger_seed', lease_attempt_id = 'att_ledger_seed', lease_fence = 1, lease_expires_at = ? WHERE id = ?`
+        ).bind(new Date(Date.now() + 60 * 60 * 1000).toISOString(), workspaceId).run();
       }
     });
 

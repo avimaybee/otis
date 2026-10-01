@@ -9,4 +9,7 @@ export * from './session.js';
 export * from './workspace.js';
 export * from './membership.js';
 export * from './invites.js';
+export * from './lifecycle.js';
+export * from './credentials.js';
+export * from './settings.js';
 export * from './context.js';

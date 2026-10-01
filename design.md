@@ -2,15 +2,15 @@
 
 Otis is a conversation with a capable colleague. A person reports what happened, answers a precise question, and gets back to work. The conversation owns the screen. Working activity explains real actions and becomes quiet when finished. Every surface and control needs a reason to exist.
 
-This is the visual and interaction guide. Read [product.md](product.md) for behavior, [architecture.md](architecture.md) for implementation, and [roadmap.md](roadmap.md) for delivery order. Decisions below are the v1 baseline, not options for each agent to reinterpret. Revised 2026-09-30.
+This is the visual and interaction guide. Read [product.md](product.md) for behavior, [architecture.md](architecture.md) for implementation, and [roadmap.md](roadmap.md) for delivery order. Decisions below are the v1 baseline, not options for each agent to reinterpret. Revised 2026-09-30. A passing build or a dark background does not establish design fidelity; compare the rendered screen with this guide at real viewport sizes.
 
 ## 1. Intended feel
 
-Use the composition of ChatGPT's mobile conversation and Codex's desktop chat: a calm transcript, restrained user bubbles, assistant text directly on the page, an anchored composer, familiar history navigation, and inspectable work. Use Otis's own name and content. Do not reproduce unrelated controls from reference screenshots.
+Use the composition of ChatGPT's mobile conversation and Codex's desktop chat: a calm transcript, restrained user bubbles, assistant text directly on the page, an anchored composer, familiar history navigation, and inspectable work. Use Otis's own name and content. Do not reproduce unrelated controls from reference screenshots. These references define the spatial relationship and interaction rhythm, not their branding, color or complete feature sets.
 
 The user chose **neutral charcoal, off-white text and monochrome controls**, with color reserved for meaningful status. The scaffold's blue-gray palette is superseded. This document changes the target; it does not claim the scaffold already implements it.
 
-Precision comes from alignment, proportion, typography, immediate feedback and honest state. No card around every paragraph, glowing borders, dashboard widgets, decorative metrics, separate icon rail, or introduction explaining that AI is revolutionary.
+Precision comes from alignment, proportion, typography, immediate feedback and honest state. No card around every paragraph, glowing borders, dashboard widgets, decorative metrics, separate icon rail, or introduction explaining that AI is revolutionary. The interface should feel quiet when idle and specific when working. A large empty canvas with a small generic card in the middle is not the intended conversation screen.
 
 Priorities, in order:
 
@@ -32,6 +32,8 @@ Priorities, in order:
 | Access/error state | Explain expiry, revocation or unavailable workspace | Clear next action, recover input where allowed |
 
 No dashboard, kanban, lead editor, task-management screen or required daily checklist. A task list or brief can appear in an answer; it does not become another application inside a card.
+
+The app's first screen depends on actual state. A signed-out person sees a focused sign-in view. A signed-in person lands in the last accessible workspace chat, or a composer-led empty chat. Do not show a technical welcome panel, Firebase UID, workspace role diagnostic, or placeholder dashboard after authentication. During partial implementation, name the screen as a shell in documentation and preview evidence; do not present it as the finished Otis UI.
 
 Business search is conversational: 'What happened with Bistro?' History search finds chats/messages and opens the source. Distinguish these jobs. Mobile history search is inside the drawer, not a permanent field above the transcript.
 
@@ -62,6 +64,8 @@ The transcript is the main vertical scroller. Avoid a second competing page scro
 
 The left drawer contains workspace selection, New chat, history search, own chats, team chats and Settings. Target `min(320px, 86vw)`, leaving a dimmed strip of the conversation. Close by backdrop, Close, Escape and appropriate browser Back behavior. Trap focus while open, then restore focus and scroll. Do not stack drawers.
 
+The mobile reference is a full-screen chat, not a centered desktop panel reduced to phone width. The header, transcript and composer form one continuous vertical layout. Keep the header quiet; the transcript, latest question and reply field carry the hierarchy. The history drawer appears only when summoned. If there is no history yet, keep the drawer simple instead of filling it with suggestions. The Plus control from the reference is not required: show it only when Otis has an attachment action that actually works.
+
 Detail becomes a full-width temporary screen or sheet with Back/Close. Return to the same transcript position. Inspecting an action must not require horizontal scrolling.
 
 ## 4. Desktop and intermediate widths
@@ -85,9 +89,21 @@ Initial breakpoint rules: drawer below 900 px; persistent sidebar at 900 px and 
 
 History scrolls independently where needed; account/settings stays reachable. Selected chat earns one subtle row fill. Unselected entries do not each get a card or border. Long titles truncate.
 
+The desktop reference is one left history rail, one centered conversation column and an optional right detail area. The sidebar is structural navigation, not a second dashboard. Do not put the sign-in card, chat, settings and detail inside the same generic centered container. At desktop widths, the conversation remains readable rather than spanning the viewport; at intermediate widths, collapse the sidebar before squeezing the chat. The inspector is closed until the person asks to inspect something.
+
+## 4A. Entry, sign-in and access states
+
+Sign-in is a short threshold into the conversation, not a separate dashboard. Use the same charcoal canvas and typography as the app. On desktop, center a narrow content column with deliberate vertical placement and generous breathing room; on mobile, give it the full available width with 24 px side padding. Avoid a permanent app header above a disconnected sign-in card, a card-within-card treatment, a decorative illustration or an unnecessary tagline. One clear title, one Google action and any essential disclosure are enough. The action must remain unmistakable at 360 px and 200% zoom.
+
+Show Google sign-in as one primary, full-width control with a visible keyboard focus state and a pending state that prevents duplicate submissions. Do not show a browser-connected or server-connected badge on this screen: health is not authentication. After sign-in, open the conversation or an honest no-workspace/access state. Do not greet the member with their Firebase UID or raw role fields.
+
+An authentication failure sits next to the action and explains the next useful step in plain language. Distinguish a cancelled popup, expired session, unavailable service, denied membership and setup/configuration failure. Preserve the sign-in action when retry is safe. Do not print a raw Firebase verifier exception, token audience, project ID, stack trace or internal route name into the normal UI. Operators need those details in protected diagnostics, with a request ID when available. A broken deployment must say that Otis sign-in is unavailable and needs configuration; it must not imply that the person's Google account is wrong.
+
+Invite acceptance states who invited the person, which workspace they will join and that members can read historical chats and retained voice audio. Keep that disclosure legible before acceptance. If the invitation is expired or already used, show the problem and a clear way to obtain a new one. Access revocation replaces private content immediately with an access state; it never leaves a previous transcript visible behind an overlay.
+
 ## 5. Semantic visual tokens
 
-Implement once in `packages/design` as CSS custom properties. Components use semantic names rather than repeated hex literals. These approved starting values still need measured contrast in the rendered UI.
+Implement once in `packages/design` as CSS custom properties. Components use semantic names rather than repeated hex literals or a parallel TypeScript palette. These approved starting values still need measured contrast in the rendered UI. The existing scaffold colors (`#0f1115`, `#161920`, blue accent) are not the target. A component that imports an old token object has not met this section merely because it uses a shared constant.
 
 | Token | Dark value | Purpose |
 |---|---|---|
@@ -107,6 +123,8 @@ Implement once in `packages/design` as CSS custom properties. Components use sem
 | `success` | `#9DCCAF` | Confirmed outcome when useful |
 
 No bright brand accent in routine chat. Links need a visible underline or unmistakable treatment. Color is never the only state cue. Avoid low-contrast gray for important content.
+
+Surfaces have distinct jobs. `canvas` is the uninterrupted conversation ground; `sidebar` separates navigation; `surface` is for the composer and user messages; `surface-raised` is for transient menus or detail that truly needs elevation. An ordinary assistant reply uses the canvas. A sign-in form may group its content through width and spacing alone; it does not need a bordered rectangle by default. Use borders for a necessary edge or focus state, not to prove that every block is a component.
 
 Typography: one sans-serif family, preferably self-hosted Inter with system fallback. Validate Romanian `ș ț` and Hungarian `ő ű`. Body/composer 16 px / 24 px; UI 14 px / 20 px; compact metadata 13 px / 18 px; rare screen title 20 px / 26 px. Weights 400 prose, 500 labels, 600 emphasis. Prose measure around 60–70 characters. No monospaced business prose, tracked uppercase labels or display-size headings in normal answers.
 
@@ -237,8 +255,10 @@ Only relevant Undo/Change/Done/Draft actions appear. Snooze asks for a time if a
 
 Fixture inventory: empty; short exchange; long Romanian transcript; long Hungarian name; multi-step Working; pending deadline; inferred-status question; ambiguity; dispute; partial failure; offline retry; undo group/dependency; teammate history; configured/disabled brief; unavailable model; drawer/detail; commands; recording/review/upload; audio expired.
 
-Review at 360 × 800, 390 × 844, intermediate around 900, desktop 1280 and 1440 CSS px; include 200% zoom, enlarged text, keyboard-only navigation, focus return, reduced motion, measured contrast and screen-reader labels. No page-level horizontal overflow; wide technical content scrolls inside its detail.
+Review signed-out, signed-in empty-chat and active-chat states at 360 × 800, 390 × 844, intermediate around 900, desktop 1280 and 1440 CSS px; include 200% zoom, enlarged text, keyboard-only navigation, focus return, reduced motion, measured contrast and screen-reader labels. No page-level horizontal overflow; wide technical content scrolls inside its detail. A desktop screenshot of sign-in does not verify mobile chat composition or the Codex-like desktop layout.
 
 Use Codex or Antigravity native browser controls. Do not install Playwright. Record browser/OS, viewport, commit, fixtures, screenshots and defects in `docs/browser-review.md`. A simulated-DOM `scrollWidth` assertion is not proof of actual layout. If browser controls are unavailable, mark visual checks unverified.
 
 Acceptance questions: Is the next action obvious? Can the person keep talking instead of managing fields? Is each container necessary? Is every status true? Can they inspect and undo a change? Is the speaking member unmistakable? Is the composer comfortable with the keyboard open? These determine whether the UI is ready.
+
+Review the rendered result against the approved composition, not only against component tests. Reject a page that still reads as a scaffold: an app-wide health label above a centered login card, a technical welcome panel after sign-in, blue-gray tokens, a stretched empty transcript, a dashboard-like grid, or a detached composer. Record the mismatch and fix it before calling the relevant UI gate done. Do not defer visible sign-in defects merely because the full conversation gate has not started; entry is part of the experience people actually see.

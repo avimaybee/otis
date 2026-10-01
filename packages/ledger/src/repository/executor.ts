@@ -57,8 +57,16 @@ export const DEFAULT_COMMAND_HANDLERS: Record<string, AnyCommandHandler> = {
  * 2. Actor is an active workspace member (or system actor with matching job).
  * 3. Source message exists in this workspace, belongs to the acting member, and matches channel.
  * 4. System job exists in this workspace, matches actor system_job, and is active ('pending' | 'running').
- * 5. Execution fence matches workspace lease fence and lease is not expired.
- * 6. Agent run (if specified) exists in this workspace, is active ('queued' | 'running'), and matches source message/job.
+ * 5. Execution fence matches a present, unexpired workspace lease.
+ *    Ordinary run-scoped writes from a dispatched handler must present the
+ *    fence (fail closed with missing_fence when absent); clarification
+ *    resumption is exempt by resuming_clarification_id. A cleared lease
+ *    (NULL owner/expiry after recovery) never satisfies the guard: the fence
+ *    alone is insufficient without a live lease.
+ * 6. Agent run (if specified) exists in this workspace, is 'running' for
+ *    ordinary dispatched writes, is pinned to the lease holder
+ *    (lease owner/attempt match the run attempt), and matches source
+ *    message/job. Clarification resumption instead requires 'waiting_for_input'.
  * 7. Run step (if specified) exists for this run.
  */
 function createGuardStatement(
@@ -96,20 +104,32 @@ function createGuardStatement(
                 AND (? = 'system' AND sj.job_kind = ?)
                 AND sj.status IN ('pending', 'running')
             ))
-            -- 4. Lease fence and expiration:
+            -- 4. Live lease fence and expiration (skipped when no fence supplied):
+            -- a cleared lease (NULL owner/expiry) never passes, even when the
+            -- fence value still matches after recovery.
             AND (? IS NULL OR (
               w.lease_fence = ?
-              AND (w.lease_expires_at IS NULL OR unixepoch(w.lease_expires_at) > unixepoch('now'))
+              AND w.lease_expires_at IS NOT NULL
+              AND unixepoch(w.lease_expires_at) > unixepoch('now')
+              AND w.lease_owner IS NOT NULL
+              AND w.lease_attempt_id IS NOT NULL
             ))
             -- 5a. Ordinary run validation (if run_id provided and NOT resuming clarification):
+            -- the run must be actively pinned to the live lease holder.
             AND (? IS NOT NULL OR ? IS NULL OR EXISTS (
               SELECT 1 FROM agent_runs ar
+              JOIN workspaces w2 ON w2.id = ar.workspace_id
               WHERE ar.id = ?
                 AND ar.workspace_id = w.id
-                AND ar.status IN ('queued', 'running')
+                AND ar.status = 'running'
+                AND ar.attempt_id IS NOT NULL
+                AND w2.lease_owner = ar.attempt_id
+                AND w2.lease_attempt_id = ar.attempt_id
+                AND w2.lease_expires_at IS NOT NULL
+                AND unixepoch(w2.lease_expires_at) > unixepoch('now')
                 AND (? IS NULL OR ar.source_message_id = ?)
                 AND (? IS NULL OR ar.source_job_id = ?)
-                AND (? IS NULL OR ar.lease_fence = ?)
+                AND (? IS NULL OR (ar.lease_fence = ? AND w2.lease_fence = ?))
             ))
             -- 5b. Clarification Resumption validation (if resuming_clarification_id provided):
             AND (? IS NULL OR EXISTS (
@@ -160,6 +180,7 @@ function createGuardStatement(
       context.source_job_id || '',
       context.fence !== undefined ? context.fence : null,
       context.fence !== undefined ? context.fence : 0,
+      context.fence !== undefined ? context.fence : 0,
       // 5b (clarification resumption):
       context.resuming_clarification_id || null,
       context.resuming_clarification_id || '',
@@ -198,8 +219,8 @@ async function handleBatchError(
   if (
     context.fence !== undefined &&
     (latestWs.lease_fence !== context.fence ||
-      (latestWs.lease_expires_at !== null &&
-        new Date(latestWs.lease_expires_at).getTime() <= Date.now()))
+      latestWs.lease_expires_at === null ||
+      new Date(latestWs.lease_expires_at).getTime() <= Date.now())
   ) {
     return {
       status: 'conflict',
@@ -410,6 +431,7 @@ export async function executeLedgerCommand<TArgs>(
   args: TArgs,
   handler: CommandHandler<TArgs>,
   extraStatements?: D1PreparedStatement[],
+  options?: { deferRunTransition?: boolean },
 ): Promise<CommandResult> {
   const now = new Date().toISOString();
   const payloadHash = await computeHash(JSON.stringify({ commandName, args }));
@@ -464,6 +486,22 @@ export async function executeLedgerCommand<TArgs>(
       error: {
         code: 'revision_conflict',
         message: `Expected business revision ${context.expected_business_revision}, but workspace is at ${wsMeta.business_revision}.`,
+      },
+    };
+  }
+
+  // 3b. Fenced dispatch boundary: ordinary run-scoped writes must present the
+  // dispatch fence so the transaction guard can validate it. A stale attempt
+  // that lost its lease must not commit a business effect first. Direct
+  // clarification resumption is explicitly distinguished: it executes while
+  // the run waits (no lease held) and carries resuming_clarification_id.
+  if (context.run_id && !context.resuming_clarification_id && context.fence === undefined) {
+    return {
+      status: 'rejected',
+      action_id: context.action_id,
+      error: {
+        code: 'missing_fence',
+        message: `Ledger mutations scoped to run '${context.run_id}' must present the dispatch fence.`,
       },
     };
   }
@@ -585,12 +623,19 @@ export async function executeLedgerCommand<TArgs>(
           )
       );
 
-      // Transition run status to waiting_for_input
-      clarStatements.push(
-        db
-          .prepare(`UPDATE agent_runs SET status = 'waiting_for_input', updated_at = ? WHERE id = ? AND workspace_id = ?`)
-          .bind(now, context.run_id, context.workspace_id)
-      );
+      // Transition run status to waiting_for_input, unless the caller is an
+      // active dispatch turn that will own the run/outbox/lease transition
+      // itself (single owner). In that case the receipt + clarification row +
+      // activity still commit here, and the dispatcher completes waiting
+      // (run + inbox + outbox + lease) via waitForInput, which skips duplicate
+      // clarification/activity when it sees the pending row.
+      if (!options?.deferRunTransition) {
+        clarStatements.push(
+          db
+            .prepare(`UPDATE agent_runs SET status = 'waiting_for_input', updated_at = ? WHERE id = ? AND workspace_id = ?`)
+            .bind(now, context.run_id, context.workspace_id),
+        );
+      }
 
       // Advance chat cursor and record clarification_required activity
       const actId = `act_${crypto.randomUUID()}`;
@@ -1039,6 +1084,7 @@ export async function resumePendingClarification(
   context: LedgerCommandContext,
   options: ResumeClarificationOptions,
   handlerRegistry?: Record<string, AnyCommandHandler>,
+  extraStatements?: D1PreparedStatement[],
 ): Promise<CommandResult> {
   // 1. Fetch pending clarification
   const clar = await db
@@ -1206,11 +1252,14 @@ export async function resumePendingClarification(
       options.clarification_id,
     );
 
-  const extraStatements: D1PreparedStatement[] = [resolveStmt];
+  const batchStatements: D1PreparedStatement[] = [resolveStmt];
+  if (extraStatements && extraStatements.length > 0) {
+    batchStatements.push(...extraStatements);
+  }
 
   const effectiveRunId = context.run_id || (clar['run_id'] ? String(clar['run_id']) : undefined);
   if (effectiveRunId) {
-    extraStatements.push(
+    batchStatements.push(
       db
         .prepare(
           `UPDATE agent_runs
@@ -1239,6 +1288,6 @@ export async function resumePendingClarification(
     pendingOp.command_name,
     mergedArgs,
     handler,
-    extraStatements,
+    batchStatements,
   );
 }
