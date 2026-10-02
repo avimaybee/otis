@@ -582,15 +582,15 @@ describe('Worker Lifecycle, Settings & Credentials Integration (workerd)', () =>
     expect(initial.status).toBe(200);
     expect(((await initial.json()) as { settings: { default_model: string | null } }).settings.default_model).toBeNull();
 
+    // Plan 005 validates defaults against the operator registry: unknown
+    // keys are rejected and never stored.
     const update = await SELF.fetch(`http://localhost/api/workspaces/${wsA}/settings`, {
       method: 'PUT',
       headers: { cookie: aviCookie, ...CSRF },
       body: JSON.stringify({ default_model: 'gemini-3-flash' }),
     });
-    expect(update.status).toBe(200);
-    expect(((await update.json()) as { settings: { default_model: string } }).settings.default_model).toBe(
-      'gemini-3-flash',
-    );
+    expect(update.status).toBe(422);
+    expect(((await update.json()) as HttpErrorResponse).error.code).toBe('invalid_model');
 
     // Fiona belongs to ws-b only: ws-a lifecycle, settings, and credentials are invisible.
     // (Elena joined ws-a mid-suite, so she cannot serve as the isolation probe.)

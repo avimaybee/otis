@@ -4,8 +4,11 @@
 
 ## Status
 
-- Priority P0; effort M; risk medium; category integration/research; depends on 003B credential/settings foundations. Provider fake/interface design can begin earlier; live secret-bearing tests wait for the credential owner.
-- Planned against scaffold revision `a3bd462` (2026-09-29); inspect the current checkout and open decision evidence before work.
+Detailed execution instructions: [005-implementation-handoff.md](005-implementation-handoff.md). Read it with this plan; it maps the gate to the accepted foundation and defines protocol, credential, registry and verification boundaries.
+
+- Status: ACCEPTED after independent review 2026-10-01. The three review follow-up findings are closed; 247 tests / 20 suites and root checks pass. Production enables Gemini 3.1 Flash-Lite and both selected MiMo models; secondary entries stay unverified/disabled. See [independent acceptance](005-review-followup.md) and implementation-agent [live evidence](../docs/005-live-provider-evidence.md). Ready for Plan 006; native audio/device/voice-pipeline acceptance remains separate.
+- Verification: 247 tests passing across 20 suites (pure in node, worker in workerd, web in happy-dom). Typecheck passed (0 errors), lint passed (0 errors), build dry-run passed, diff whitespace clean.
+- Planned against scaffold revision `a3bd462` (2026-09-29); latest review inspected HEAD `859ed92` plus preserved uncommitted changes.
 
 ## Why and current state
 
@@ -16,6 +19,8 @@ The user wants Gemini API and OpenCode Go API-key access with workspace-shared c
 Modify packages/agent/provider interfaces, provider adapters, capability registry, Worker secret/credential access, provider tests, and a documented spike report under docs/decisions. Do not build the agent's business policy, UI, voice recorder, or select a permanent model by popularity. Do not send real business notes to a provider during a test without the user's explicit sample.
 
 ## Adapter contract
+
+Voice-routing update (2026-10-01): expose verified native transcription capability per exact endpoint and format separately from text/tool approval. Effective voice support may come from workspace-configured Groq STT in Plan 010; models without native audio are not excluded. Define the shared route-resolution contract with native-preferred, configured-STT fallback, and unavailable outcomes. Do not implement the recorder/Groq transport or add Groq conversation models in 005. See [010-groq-stt-handoff.md](010-groq-stt-handoff.md). No added paid inference or automatic fallback spending is authorized for dogfood.
 
 Expose streamTurn(input, toolSchemas, settings) as an async sequence of normalized events: text_delta, tool_call_start/arguments/end, provider_thought_summary only if actually supplied, usage, finish, and typed error. Separately expose transcribeAudio or explicit unsupported capability. Tool arguments are incomplete until the provider's end marker; never execute a partial streamed JSON fragment. Normalize model ID, provider, endpoint family, request/run ID, input/output token counts, cached-read and cached-write token counts when reported, and measured latency. Record `null` when a provider/endpoint does not expose a cache metric; do not interpret missing as zero. Preserve a stable conversation/session identifier; for Go follow the official x-opencode-session and distinctive User-Agent guidance where applicable. Use a stable session ID per Otis chat (including resumed turns), not one ID shared across members/workspaces, and verify whether each chosen endpoint forwards the header. Never display fabricated thoughts or raw hidden reasoning.
 

@@ -4,14 +4,36 @@
 
 The memory-specific implementation contract is [Workspace memory on Cloudflare](workspace-memory-cloudflare.md). Implement that contract within this plan and its later web/Telegram integration; it is not a separate numbered migration or a later optional phase.
 
+The detailed [Gate 006 execution contract](006-implementation-handoff.md) specifies the current source baseline, exact owner/tool contracts, four implementation checkpoints, durable provider/tool progress, crash recovery, memory schema, tests and completion evidence. Execute that contract alongside this outcome plan; do not infer a new architecture from this shorter overview.
+
 ## Status
 
-- Priority P0; effort L; risk high; category agent/correctness; depends on 002, 004A/004B and 005. Provider fake/interface and memory-source work may start earlier where interfaces are agreed.
-- Planned against scaffold revision `a3bd462` (2026-09-29); inspect live source and migrations before implementation.
+- **Status:** DONE; independently accepted 2026-10-02 ([round 6 review](006-review-round6.md)); local evidence only
+- **Latest independent verdict:** [Round 6 repair review](006-review-round6.md) verified both round-5 blockers closed (N1 undo FK crash; N2 bulk approval dead end), all seven original defect probes eliminated, and 326 passing normal tests with composed D1 acceptance. Gate 007 is now eligible.
+- **Implementation-agent repair report (Round 5):**
+  - **N1 (Undo Foreign Key failure under multi-action / prior-quote state):**
+    - In `packages/ledger/src/commands/undo.ts`, scoped `computeUndoPreview` and `handleUndoCommit` so entities and tasks are only removed or reverted if their creation was specifically in the set of undone events/actions (`revertedEntityIds` / `createdEntityIds`). Existing entities in `currentState` that were not created by the undone actions are preserved rather than pruned by projection diffing.
+    - In `packages/ledger/src/repository/executor.ts`, corrected relational deletion order so child tables (`draft_projections`, `tasks`, `entity_state`, `entity_aliases`) are deleted before parent `entities`.
+    - Verified via `plans/review-evidence/006-a9fk.repro.test.ts` (passes cleanly) and added explicit undo alongside bare undo with prior quote state in `apps/worker/test/agent-composed-eval.integration.test.ts`.
+  - **N2 (Bulk operation confirmation dead-end & resumption routing):**
+    - In `apps/worker/src/actor/dispatch.ts` (`resumeRun`), inspected `operation_payload_json`: if `command_name === 'bulk_operation'`, routes clarification resumption to Section 5 (standard non-ledger resumption) instead of the ledger command resumer. Resolves clarification, queues run, and creates outbox continuation.
+    - In `apps/worker/src/agent/handler.ts`, handled explicit cancellation keywords ("no", "cancel", "stop", "reject") to complete the run immediately with 0 entity commits; on confirmation, populated `approvedBulkScope` and transitioned to `tools_executing` to execute proposed mutations without re-asking.
+    - Verified via `apps/worker/test/agent.integration.test.ts` (tests for bulk approval execution, rejection cancellation, handler restart survival, and duplicate answer rejection).
+  - **Regression coverage gaps closed:**
+    - In `packages/agent/test/provider-gemini.test.ts`, added wire-level verification asserting HTTP request body carries exactly 1 `function_result` block per tool call ID when tool results exist in both messages and pending results.
+    - In `apps/worker/test/agent-composed-eval.integration.test.ts`, verified both explicit (`A9_explicit_undo`) and bare (`A9_suffix_undo`) undo in shared chat with prior quote messages.
+  - Root checks verified:
+    - `pnpm typecheck`: exit 0 (`tsc --build`)
+    - `pnpm lint`: exit 0 (`eslint .`, 0 errors, 0 warnings)
+    - `pnpm test`: 26 files, 326 passed (exit 0)
+    - Defect reproductions (`plans/review-evidence/006-review.config.ts`): 7/7 bad-behavior probes fail; `006-a9fk.repro.test.ts` passes
+    - `pnpm eval:agent`: 14/14 offline fixtures passed with honest unmeasured offline memory promotion accuracy (exit 0)
+    - `pnpm build`: exit 0 (Vite + tsc + Wrangler deploy dry-run)
+    - `git diff --check`: exit 0
 
 ## Why and current state
 
-Users send messy Romanian, Hungarian or English notes and ask questions without managing records. The foundation scaffold exists; inspect it to verify what runs. Business ledger, durable orchestration, provider evidence and sourced memory remain planned until their owning gates pass. Appendix A is the initial acceptance set. Product intent includes concise natural replies, clarification before uncertain writes, attributed actions, no autonomous third-party contact and visible activity.
+Users send messy Romanian, Hungarian or English notes and ask questions without managing records. Ledger, identity/settings, durable dispatch and the primary provider boundary have passed their owning gates locally. The real conversational handler, curated memory and its retrieval/evaluation remain this gate's work. Inspect live source rather than assuming local acceptance proves deployment. Appendix A is the initial acceptance set. Product intent includes concise natural replies, clarification before uncertain writes, attributed actions, no autonomous third-party contact and visible activity.
 
 ## Scope
 

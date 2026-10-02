@@ -15,7 +15,9 @@ export type SettingsErrorCode =
   | 'invalid_channel'
   | 'invalid_language'
   | 'invalid_model'
-  | 'not_member';
+  | 'not_member'
+  | 'conflict'
+  | 'fence_conflict';
 
 export class SettingsError extends Error {
   public readonly code: SettingsErrorCode;
@@ -25,6 +27,15 @@ export class SettingsError extends Error {
     this.name = 'SettingsError';
     this.code = code;
   }
+}
+
+export interface FencedSettingsContext {
+  runId: string;
+  stepId?: string;
+  fence: number;
+  actionId: string;
+  sourceMessageId?: string;
+  maxDailyActions?: number;
 }
 
 export interface MemberSettingsInput {
@@ -137,6 +148,13 @@ export async function getMemberSettings(
   return rowToMemberSettings(params.workspaceId, params.userId, row, new Date().toISOString());
 }
 
+async function computeSha256(data: string): Promise<string> {
+  const encoder = new TextEncoder();
+  const buffer = await crypto.subtle.digest('SHA-256', encoder.encode(data));
+  const hashArray = Array.from(new Uint8Array(buffer));
+  return hashArray.map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+
 /**
  * Updates personal preferences. Enabling the brief requires a complete
  * schedule; a partial schedule stays disabled rather than inventing a time.
@@ -144,10 +162,33 @@ export async function getMemberSettings(
  */
 export async function setMemberSettings(
   db: D1Database,
-  params: { workspaceId: string; userId: string; actorUserId: string; input: MemberSettingsInput },
+  params: {
+    workspaceId: string;
+    userId: string;
+    actorUserId: string;
+    input: MemberSettingsInput;
+    fencedContext?: FencedSettingsContext;
+  },
 ): Promise<MemberSettings> {
   validateMemberInput(params.input);
   const nowIso = new Date().toISOString();
+
+  // If executing inside a fenced run, check action receipt idempotency first
+  let payloadHash: string | undefined;
+  if (params.fencedContext) {
+    payloadHash = await computeSha256(JSON.stringify({ command: 'update_preference', input: params.input }));
+    const existing = await db
+      .prepare(`SELECT payload_hash, result_json FROM action_receipts WHERE workspace_id = ? AND action_id = ?`)
+      .bind(params.workspaceId, params.fencedContext.actionId)
+      .first<Record<string, unknown>>();
+    if (existing) {
+      if (existing['payload_hash'] === payloadHash) {
+        return JSON.parse(String(existing['result_json'])) as MemberSettings;
+      }
+      throw new SettingsError('conflict', 'Action ID already committed with different payload.');
+    }
+  }
+
   const current = await getMemberSettings(db, { workspaceId: params.workspaceId, userId: params.userId });
 
   const next: MemberSettings = {
@@ -193,6 +234,8 @@ export async function setMemberSettings(
     createdAt: current.created_at,
     changed,
     nowIso,
+    fencedContext: params.fencedContext,
+    payloadHash,
   });
 
   return { ...next, created_at: current.created_at };
@@ -208,61 +251,163 @@ async function writeMemberSettings(
     createdAt: string;
     changed: Record<string, unknown>;
     nowIso: string;
+    fencedContext?: FencedSettingsContext;
+    payloadHash?: string;
   },
 ): Promise<void> {
-  try {
-    await db.batch([
-      // Guard: the actor is still a member at commit time.
+  const statements: D1PreparedStatement[] = [];
+
+  // Guard: the actor is still a member at commit time.
+  statements.push(
+    db
+      .prepare(
+        `INSERT INTO lifecycle_guards (id, guard_ok)
+         VALUES (?, (SELECT 1 FROM workspace_users WHERE workspace_id = ? AND user_id = ?))`
+      )
+      .bind(crypto.randomUUID(), params.workspaceId, params.actorUserId),
+  );
+
+  // If executing inside a fenced run, guard run, lease, and fence
+  if (params.fencedContext) {
+    statements.push(
       db
         .prepare(
           `INSERT INTO lifecycle_guards (id, guard_ok)
-           VALUES (?, (SELECT 1 FROM workspace_users WHERE workspace_id = ? AND user_id = ?))`
-        )
-        .bind(crypto.randomUUID(), params.workspaceId, params.actorUserId),
-      db
-        .prepare(
-          `INSERT INTO member_settings
-             (workspace_id, user_id, brief_enabled, brief_local_time, brief_timezone,
-              brief_weekdays, brief_channel, preferred_language, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-           ON CONFLICT (workspace_id, user_id) DO UPDATE SET
-             brief_enabled = excluded.brief_enabled,
-             brief_local_time = excluded.brief_local_time,
-             brief_timezone = excluded.brief_timezone,
-             brief_weekdays = excluded.brief_weekdays,
-             brief_channel = excluded.brief_channel,
-             preferred_language = excluded.preferred_language,
-             updated_at = excluded.updated_at`
+           VALUES (?, (
+             SELECT 1
+             FROM workspaces w
+             JOIN agent_runs ar ON ar.id = ? AND ar.workspace_id = w.id
+             WHERE w.id = ?
+               AND ar.status = 'running'
+               AND w.lease_fence = ?
+               AND w.lease_expires_at IS NOT NULL
+               AND unixepoch(w.lease_expires_at) > unixepoch('now')
+               AND w.lease_owner = ar.attempt_id
+               AND w.lease_attempt_id = ar.attempt_id
+               AND (? IS NULL OR COALESCE((
+                 SELECT action_count
+                 FROM workspace_daily_actions
+                 WHERE workspace_id = w.id AND date_utc = ?
+               ), 0) < ?)
+           ))`
         )
         .bind(
+          crypto.randomUUID(),
+          params.fencedContext.runId,
           params.workspaceId,
-          params.userId,
-          params.next.brief_enabled ? 1 : 0,
-          params.next.brief_local_time,
-          params.next.brief_timezone,
-          params.next.brief_weekdays ? JSON.stringify(params.next.brief_weekdays) : null,
-          params.next.brief_channel,
-          params.next.preferred_language,
-          params.createdAt,
-          params.nowIso,
+          params.fencedContext.fence,
+          params.fencedContext.maxDailyActions !== undefined ? params.fencedContext.maxDailyActions : null,
+          params.nowIso.slice(0, 10),
+          params.fencedContext.maxDailyActions !== undefined ? params.fencedContext.maxDailyActions : 0,
         ),
+    );
+  }
+
+  statements.push(
+    db
+      .prepare(
+        `INSERT INTO member_settings
+           (workspace_id, user_id, brief_enabled, brief_local_time, brief_timezone,
+            brief_weekdays, brief_channel, preferred_language, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT (workspace_id, user_id) DO UPDATE SET
+           brief_enabled = excluded.brief_enabled,
+           brief_local_time = excluded.brief_local_time,
+           brief_timezone = excluded.brief_timezone,
+           brief_weekdays = excluded.brief_weekdays,
+           brief_channel = excluded.brief_channel,
+           preferred_language = excluded.preferred_language,
+           updated_at = excluded.updated_at`
+      )
+      .bind(
+        params.workspaceId,
+        params.userId,
+        params.next.brief_enabled ? 1 : 0,
+        params.next.brief_local_time,
+        params.next.brief_timezone,
+        params.next.brief_weekdays ? JSON.stringify(params.next.brief_weekdays) : null,
+        params.next.brief_channel,
+        params.next.preferred_language,
+        params.createdAt,
+        params.nowIso,
+      ),
+  );
+
+  statements.push(
+    db
+      .prepare(
+        `INSERT INTO settings_audit (id, workspace_id, user_id, actor_user_id, scope, changed_fields_json, occurred_at)
+         VALUES (?, ?, ?, ?, 'member', ?, ?)`
+      )
+      .bind(
+        crypto.randomUUID(),
+        params.workspaceId,
+        params.userId,
+        params.actorUserId,
+        JSON.stringify(params.changed),
+        params.nowIso,
+      ),
+  );
+
+  // If executing inside a fenced run, atomically insert action receipt and increment daily action counter
+  if (params.fencedContext && params.payloadHash) {
+    const todayUtc = params.nowIso.slice(0, 10);
+    statements.push(
       db
         .prepare(
-          `INSERT INTO settings_audit (id, workspace_id, user_id, actor_user_id, scope, changed_fields_json, occurred_at)
-           VALUES (?, ?, ?, ?, 'member', ?, ?)`
+          `INSERT INTO workspace_daily_actions (workspace_id, date_utc, action_count, updated_at)
+           VALUES (?, ?, 1, ?)
+           ON CONFLICT(workspace_id, date_utc) DO UPDATE SET
+             action_count = action_count + 1,
+             updated_at = excluded.updated_at`
+        )
+        .bind(params.workspaceId, todayUtc, params.nowIso),
+    );
+
+    statements.push(
+      db
+        .prepare(
+          `INSERT INTO action_receipts (
+             id, workspace_id, action_id, payload_hash, command_name, result_status, result_json,
+             actor_kind, actor_user_id, source_message_id, source_job_id, run_id, step_id,
+             committed_revision, created_at
+           ) VALUES (?, ?, ?, ?, 'update_preference', 'applied', ?, 'member', ?, ?, NULL, ?, ?, 0, ?)`
         )
         .bind(
           crypto.randomUUID(),
           params.workspaceId,
-          params.userId,
+          params.fencedContext.actionId,
+          params.payloadHash,
+          JSON.stringify(params.next),
           params.actorUserId,
-          JSON.stringify(params.changed),
+          params.fencedContext.sourceMessageId || null,
+          params.fencedContext.runId,
+          params.fencedContext.stepId || null,
           params.nowIso,
         ),
-    ]);
+    );
+  }
+
+  try {
+    await db.batch(statements);
   } catch (err) {
-    if (isGuardFailure(err) && !(await isMember(db, params.workspaceId, params.actorUserId))) {
-      throw new SettingsError('not_member', 'Caller is no longer a member of this workspace.');
+    if (isGuardFailure(err)) {
+      if (!(await isMember(db, params.workspaceId, params.actorUserId))) {
+        throw new SettingsError('not_member', 'Caller is no longer a member of this workspace.');
+      }
+      if (params.fencedContext) {
+        if (params.fencedContext.maxDailyActions !== undefined) {
+          const todayUtc = params.nowIso.slice(0, 10);
+          const quotaRow = await db
+            .prepare(`SELECT action_count FROM workspace_daily_actions WHERE workspace_id = ? AND date_utc = ?`)
+            .bind(params.workspaceId, todayUtc)
+            .first<{ action_count: number }>();
+          if ((quotaRow?.action_count ?? 0) >= params.fencedContext.maxDailyActions) {
+            throw new SettingsError('conflict', `Workspace daily action limit (${params.fencedContext.maxDailyActions}) exceeded.`);
+          }
+        }
+        throw new SettingsError('fence_conflict', 'Fenced settings execution guard failed: run inactive, lease expired, or fence mismatch.');
+      }
     }
     throw err;
   }

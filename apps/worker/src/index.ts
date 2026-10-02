@@ -15,7 +15,17 @@ import {
   handleCreateMessage,
 } from './routes/chats.js';
 import { handleTelegramWebhook } from './routes/inbound.js';
-import { dispatchWorkspace, listWorkspacesNeedingRecovery, recoverWorkspace } from './actor/dispatch.js';
+import {
+  dispatchWorkspace,
+  EchoHandler,
+  listWorkspacesNeedingRecovery,
+  recoverWorkspace,
+  type TurnHandler,
+} from './actor/dispatch.js';
+import { AgentHandler } from './agent/handler.js';
+import { PRODUCTION_REGISTRY } from '@otis/agent';
+import { importWrappingKey } from '@otis/identity';
+import { processMemoryRefreshJobs } from './agent/memory.js';
 import {
   handleCreateInvite,
   handleLeaveWorkspace,
@@ -26,6 +36,7 @@ import {
 import {
   handleGetCredentialStatus,
   handlePutCredential,
+  handleVerifyCredential,
 } from './routes/credentials.js';
 import {
   handleGetMemberSettings,
@@ -42,6 +53,7 @@ export interface Env {
   WORKSPACE_ACTOR?: DurableObjectNamespace;
   ASSETS?: Fetcher;
   ENVIRONMENT?: string;
+  USE_ECHO_HANDLER?: string;
   FIREBASE_PROJECT_ID?: string;
   CREDENTIALS_KEY?: string;
   BOOTSTRAP_WORKSPACE_ID?: string;
@@ -52,6 +64,36 @@ export interface Env {
   TELEGRAM_WEBHOOK_SECRET?: string;
   TELEGRAM_BOT_INSTALLATION_ID?: string;
   DISPATCH_QUEUE?: Queue;
+  AGENT_MAX_DAILY_ACTIONS?: string;
+  AGENT_MAX_ROUNDS_PER_RUN?: string;
+}
+
+export async function createWorkerAgentHandler(env: Env): Promise<TurnHandler> {
+  if (env.USE_ECHO_HANDLER === 'true') {
+    return EchoHandler;
+  }
+
+  let wrappingKey: CryptoKey | undefined;
+  if (env.CREDENTIALS_KEY) {
+    try {
+      wrappingKey = await importWrappingKey(env.CREDENTIALS_KEY);
+    } catch {
+      // Ignored; AgentHandler will report 'misconfigured' if key is needed
+    }
+  }
+
+  const parsedDaily = env.AGENT_MAX_DAILY_ACTIONS ? parseInt(env.AGENT_MAX_DAILY_ACTIONS, 10) : undefined;
+  const parsedRounds = env.AGENT_MAX_ROUNDS_PER_RUN ? parseInt(env.AGENT_MAX_ROUNDS_PER_RUN, 10) : undefined;
+  const limits = (parsedDaily !== undefined && !Number.isNaN(parsedDaily) && parsedDaily > 0 &&
+                  parsedRounds !== undefined && !Number.isNaN(parsedRounds) && parsedRounds > 0)
+    ? { maxDailyActions: parsedDaily, maxRoundsPerRun: parsedRounds }
+    : undefined;
+
+  return new AgentHandler({
+    wrappingKey,
+    registry: PRODUCTION_REGISTRY,
+    limits,
+  });
 }
 
 /**
@@ -88,14 +130,15 @@ export class WorkspaceActor {
       return jsonError(422, 'invalid_payload', 'workspace_id is required.', 'actor');
     }
     const budget = Math.min(body.budget ?? 5, 25);
+    const handler = await createWorkerAgentHandler(this.env);
     try {
       if (body.action === 'dispatch') {
-        const result = await dispatchWorkspace(this.env.DB, workspaceId, { budget });
+        const result = await dispatchWorkspace(this.env.DB, workspaceId, { budget, handler });
         return jsonSuccess({ status: 'ok', ...result }, 200);
       }
       if (body.action === 'recover') {
         const recovery = await recoverWorkspace(this.env.DB, workspaceId);
-        const result = await dispatchWorkspace(this.env.DB, workspaceId, { budget });
+        const result = await dispatchWorkspace(this.env.DB, workspaceId, { budget, handler });
         return jsonSuccess({ status: 'ok', recovery, ...result }, 200);
       }
     } catch (err) {
@@ -269,6 +312,17 @@ export default {
       }
 
       // 10. Provider credential routes
+      const verifyMatch = url.pathname.match(
+        /^\/api\/workspaces\/([^/]+)\/credentials\/([^/]+)\/verify$/,
+      );
+      if (verifyMatch) {
+        const workspaceId = verifyMatch[1];
+        const provider = verifyMatch[2];
+        if (request.method === 'POST' && workspaceId && provider) {
+          return await handleVerifyCredential(request, env, workspaceId, provider, requestId);
+        }
+        return jsonError(405, 'method_not_allowed', 'Method not allowed.', requestId);
+      }
       const credentialMatch = url.pathname.match(
         /^\/api\/workspaces\/([^/]+)\/credentials\/([^/]+)$/,
       );
@@ -330,14 +384,21 @@ export default {
    * needs recovery), then requeues stale work and dispatches a bounded slice.
    */
   async scheduled(_event: ScheduledEvent, env: Env): Promise<void> {
+    const handler = await createWorkerAgentHandler(env);
     const workspaces = await listWorkspacesNeedingRecovery(env.DB);
     for (const workspaceId of workspaces) {
       try {
         await recoverWorkspace(env.DB, workspaceId);
-        await dispatchWorkspace(env.DB, workspaceId, { budget: 5 });
+        await dispatchWorkspace(env.DB, workspaceId, { budget: 5, handler });
       } catch (err) {
         console.error(`scheduled recovery failed for workspace '${workspaceId}':`, err);
       }
+    }
+
+    try {
+      await processMemoryRefreshJobs(env.DB);
+    } catch (err) {
+      console.error('scheduled memory refresh failed:', err);
     }
   },
 
@@ -346,15 +407,29 @@ export default {
    * workspace to dispatch. Malformed messages are acknowledged with a log,
    * never retried blindly.
    */
-  async queue(batch: MessageBatch<{ workspace_id?: unknown }>, env: Env): Promise<void> {
+  async queue(batch: MessageBatch<{ workspace_id?: unknown; kind?: unknown; job_id?: unknown }>, env: Env): Promise<void> {
+    const handler = await createWorkerAgentHandler(env);
     for (const message of batch.messages) {
       const workspaceId = message.body?.workspace_id;
       if (typeof workspaceId !== 'string' || !workspaceId) {
         console.error('Ignoring malformed dispatch wake-up without workspace_id.');
         continue;
       }
+
+      if (message.body?.kind === 'memory_refresh') {
+        try {
+          await processMemoryRefreshJobs(env.DB, {
+            workspaceId,
+            jobId: typeof message.body.job_id === 'string' ? message.body.job_id : undefined,
+          });
+        } catch (err) {
+          console.error(`queue memory refresh failed for workspace '${workspaceId}':`, err);
+        }
+        continue;
+      }
+
       try {
-        await dispatchWorkspace(env.DB, workspaceId, { budget: 3 });
+        await dispatchWorkspace(env.DB, workspaceId, { budget: 3, handler });
       } catch (err) {
         console.error(`queue dispatch failed for workspace '${workspaceId}':`, err);
       }

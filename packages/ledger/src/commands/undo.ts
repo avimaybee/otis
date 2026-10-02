@@ -135,7 +135,9 @@ export function computeUndoPreview(
     const simEntity = simulatedState.entities.get(id);
     const changes: string[] = [];
     if (!simEntity) {
-      changes.push(`Entity '${currentEntity.name}' will be removed.`);
+      if (createdEntityIds.has(id)) {
+        changes.push(`Entity '${currentEntity.name}' will be removed.`);
+      }
     } else {
       if (simEntity.name !== currentEntity.name) {
         changes.push(`Name will revert from '${currentEntity.name}' to '${simEntity.name}'.`);
@@ -154,7 +156,9 @@ export function computeUndoPreview(
     const simTask = simulatedState.tasks.get(id);
     const changes: string[] = [];
     if (!simTask) {
-      changes.push(`Task '${currentTask.title}' will be removed.`);
+      if (createdTaskIds.has(id)) {
+        changes.push(`Task '${currentTask.title}' will be removed.`);
+      }
     } else {
       if (simTask.status !== currentTask.status) {
         changes.push(`Status will revert from '${currentTask.status}' to '${simTask.status}'.`);
@@ -251,6 +255,34 @@ export function handleUndoCommit(
 
   // Re-reduce state with the new revert events
   const nextState = rebuildProjections([...allEvents, ...revertEvents]);
+
+  // Identify entities and tasks specifically created by the reverted events
+  const revertedEntityIds = new Set<string>();
+  const revertedTaskIds = new Set<string>();
+  for (const eventId of preview.affected_event_ids) {
+    const targetEvt = allEvents.find((e) => e.id === eventId);
+    if (!targetEvt) continue;
+    if (targetEvt.kind === 'entity_created' && targetEvt.entity_id) {
+      revertedEntityIds.add(targetEvt.entity_id);
+    }
+    if (targetEvt.kind === 'task_created') {
+      const p = targetEvt.payload as { task_id?: string };
+      if (p?.task_id) revertedTaskIds.add(p.task_id);
+    }
+  }
+
+  // Preserve existing entities and tasks not created by the undone actions
+  // (e.g. seeded entities or external entities present in currentState)
+  for (const [id, entity] of currentState.entities) {
+    if (!revertedEntityIds.has(id) && !nextState.entities.has(id)) {
+      nextState.entities.set(id, entity);
+    }
+  }
+  for (const [id, task] of currentState.tasks) {
+    if (!revertedTaskIds.has(id) && !nextState.tasks.has(id)) {
+      nextState.tasks.set(id, task);
+    }
+  }
 
   return {
     result: {

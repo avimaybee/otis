@@ -744,6 +744,94 @@ export interface DraftProjection {
   updated_at: string;
 }
 
+export interface MessageSentByMemberPayload {
+  draft_id: string;
+  confirmed_by_user_id?: string;
+}
+
+export type MemoryScope = 'workspace' | 'entity' | 'member_in_workspace';
+
+export type MemoryCategory =
+  | 'communication_preference'
+  | 'relationship_context'
+  | 'workflow_context'
+  | 'other_context';
+
+export type MemoryStatus = 'active' | 'superseded' | 'forgotten';
+
+export interface MemoryNotePayload {
+  memory_id: string;
+  scope: MemoryScope;
+  subject_id?: string | null;
+  category: MemoryCategory;
+  content: string;
+  supersedes_memory_id?: string | null;
+}
+
+export interface MemoryForgottenPayload {
+  memory_id: string;
+  rationale?: string;
+}
+
+export interface MemoryEntry {
+  id: string;
+  workspace_id: string;
+  scope: MemoryScope;
+  subject_id: string | null;
+  category: MemoryCategory;
+  content: string;
+  status: MemoryStatus;
+  provenance: Provenance;
+  source_event_id: string | null;
+  source_message_id: string | null;
+  author_user_id: string | null;
+  observed_at: string;
+  created_at: string;
+  superseding_event_id: string | null;
+  business_revision: number;
+}
+
+export interface MemorySuppression {
+  id: string;
+  workspace_id: string;
+  target_memory_id: string;
+  source_event_id: string | null;
+  source_message_id: string | null;
+  suppression_event_id: string;
+  revision: number;
+  created_at: string;
+}
+
+export interface MemorySummary {
+  id: string;
+  workspace_id: string;
+  scope: MemoryScope;
+  subject_key: string;
+  summary_text: string;
+  source_manifest_json: string;
+  built_from_revision: number;
+  format_version: number;
+  generation_model: string | null;
+  built_at: string;
+}
+
+export interface MemoryRefreshJob {
+  id: string;
+  workspace_id: string;
+  scope: MemoryScope;
+  subject_key: string;
+  target_revision: number;
+  state: 'pending' | 'running' | 'completed' | 'failed';
+  attempts: number;
+  max_attempts: number;
+  next_attempt_at: string;
+  claim_token: string | null;
+  claim_expires_at: string | null;
+  error_class: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface ActionReceipt {
   id: string;
   workspace_id: string;

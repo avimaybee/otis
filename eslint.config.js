@@ -11,7 +11,8 @@ export default tseslint.config(
       '**/dist-worker/**',
       '**/.wrangler/**',
       '**/node_modules/**',
-      '**/.vite/**'
+      '**/.vite/**',
+      '**/eval-output/**'
     ]
   },
   {

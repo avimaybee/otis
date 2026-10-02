@@ -14,6 +14,8 @@ import migration0005Sql from '../../../migrations/0005_actor_dispatch.sql?raw';
 import migration0006Sql from '../../../migrations/0006_actor_hardening.sql?raw';
 // @ts-expect-error vite raw import
 import migration0007Sql from '../../../migrations/0007_outbox_claim_owner.sql?raw';
+// @ts-expect-error vite raw import
+import migration0008Sql from '../../../migrations/0008_memory_and_agent_runs.sql?raw';
 import { AUTH_BOUNDS } from '@otis/contracts';
 import type { HttpErrorResponse } from '@otis/contracts';
 import { acceptWebMessage, createChat } from '../src/inbox/repository.js';
@@ -167,12 +169,14 @@ describe('Worker Actor Dispatch & Recovery Integration (workerd)', () => {
       migration0005Sql,
       migration0006Sql,
       migration0007Sql,
+      migration0008Sql,
     ]) {
       for (const stmt of splitSqlStatements(sql)) {
         await env.DB.prepare(stmt).run();
       }
     }
     env.ENVIRONMENT = 'test';
+    env.USE_ECHO_HANDLER = 'true';
 
     const now = new Date().toISOString();
     for (const [id, fb, email, name] of [

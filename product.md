@@ -416,6 +416,12 @@ V1 scheduled briefs and explicit reminders are supported. Whether Otis may initi
 
 ## 13. Interface design
 
+### Voice routing and dogfood budget (decision 2026-10-01)
+
+Voice input works independently of the conversation model's native audio support. Otis checks verified capability for the selected exact provider/model/endpoint and recording format. A verified native path that supplies a usable transcript is preferred; otherwise it automatically uses the workspace's explicitly configured Groq speech-to-text provider and passes the persisted transcript to the selected conversation model. Members record and send normally; no per-message provider choice or repeated routing confirmation is required. Workspace setup and inspectable activity disclose the audio processor. If neither path is configured and verified, voice is unavailable with an explanation. A native authentication failure, outage or quota error is not permission to switch providers silently.
+
+Groq `whisper-large-v3` and `whisper-large-v3-turbo` are the selected transcription candidates; choose the default after testing English/Romanian/Hungarian names, dates, amounts and recordings from both phones and Telegram. Groq is an STT provider, not an automatic expansion of the conversation-model list. Text/tool models remain eligible even without native audio. Free-tier request and audio-duration caps apply; preserve accepted input, report rate/quota failures, and never silently upgrade or use paid fallback. Dogfood has no additional inference budget beyond the existing Go subscription and free Gemini/Groq access. No provider quota circumvention through key/account rotation. See plans/010-groq-stt-handoff.md for the implementation contract.
+
 `design.md` is the design guide for the web interface and the visual/copy treatment of agent messages. It specifies composition, type, spacing, surfaces, controls, mobile behavior, accessibility, and design review criteria. The former field-notebook, ink-and-pencil, green-paper, and ruled-ledger proposals are retired. Otis should feel precise, quiet, and easy to understand, with the conversation as the visual center.
 
 ## 14. Agent voice

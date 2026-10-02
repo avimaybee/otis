@@ -9,6 +9,10 @@ import type {
   EntityStateField,
   Task,
   DraftProjection,
+  MemoryEntry,
+  MemorySuppression,
+  MemoryScope,
+  MemoryCategory,
   LeadStatus,
   Provenance,
   TaskDue,
@@ -22,6 +26,8 @@ export interface LedgerProjectionState {
   fields: Map<string, EntityStateField>; // key: `${entity_id}:${field_name}`
   tasks: Map<string, Task>;
   drafts: Map<string, DraftProjection>;
+  memoryEntries: Map<string, MemoryEntry>; // key: `${id}`
+  memorySuppressions: Map<string, MemorySuppression>; // key: `${id}`
 }
 
 export interface CreateEntityArgs {
@@ -90,8 +96,29 @@ export interface RecordDraftArgs {
   content_text: string;
 }
 
+export interface MarkMessageSentArgs {
+  draft_id: string;
+  confirmed_by_user_id?: string;
+}
+
+export interface RememberContextArgs {
+  memory_id?: string;
+  scope: MemoryScope;
+  subject_id?: string | null;
+  category: MemoryCategory;
+  content: string;
+  provenance?: Provenance;
+  supersedes_memory_id?: string | null;
+}
+
+export interface ForgetMemoryArgs {
+  memory_id: string;
+  rationale?: string;
+}
+
 export interface LedgerCommandContext extends WorkspaceContext {
   action_id: string;
   expected_business_revision: number;
   resuming_clarification_id?: string;
+  max_daily_actions?: number;
 }

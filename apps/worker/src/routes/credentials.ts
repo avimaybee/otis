@@ -13,6 +13,7 @@ import {
 } from '@otis/identity';
 import type { Env } from '../index.js';
 import { jsonError, jsonSuccess } from '../middleware/errors.js';
+import { verifyWorkspaceCredential } from '../providers/service.js';
 import { readJsonBody, requireWorkspaceScope } from './scope.js';
 
 const PROVIDERS = ['gemini', 'opencode_go'] as const;
@@ -108,4 +109,49 @@ export async function handleGetCredentialStatus(
   });
   const responseBody: CredentialStatusResponse = { status: 'ok', credential };
   return jsonSuccess(responseBody, 200, { 'x-request-id': requestId });
+}
+
+/**
+ * Narrow bounded credential verification: one fixed synthetic probe per
+ * provider (Go models discovery; Gemini single model resource). No
+ * inference, no prompt bodies, no spending. Sanitized outcome only.
+ */
+export async function handleVerifyCredential(
+  request: Request,
+  env: Env,
+  workspaceId: string,
+  provider: string,
+  requestId: string,
+): Promise<Response> {
+  const scope = await requireWorkspaceScope(request, env.DB, workspaceId, requestId, { csrf: true });
+  if (scope instanceof Response) return scope;
+  if (!PROVIDERS.includes(provider as (typeof PROVIDERS)[number])) {
+    return jsonError(404, 'unknown_provider', 'Unknown provider.', requestId);
+  }
+  try {
+    const wrappingKey = await loadWrappingKey(env);
+    const result = await verifyWorkspaceCredential(env.DB, {
+      workspaceId,
+      provider: provider as (typeof PROVIDERS)[number],
+      wrappingKey,
+      actorUserId: scope.user.id,
+    });
+    if (!result.verified && result.reason === 'not_member') {
+      return jsonError(404, 'not_member', 'Caller is no longer a member of this workspace.', requestId);
+    }
+    return jsonSuccess(
+      { status: 'ok', provider, verified: result.verified, reason: result.reason ?? null },
+      200,
+      { 'x-request-id': requestId },
+    );
+  } catch (err) {
+    if (err instanceof CredentialError) {
+      return jsonError(credentialStatus(err), err.code, err.message, requestId);
+    }
+    if (err && typeof err === 'object' && 'status' in err) {
+      const e = err as { status: number; code: string; message: string };
+      return jsonError(e.status, e.code, e.message, requestId);
+    }
+    throw err;
+  }
 }

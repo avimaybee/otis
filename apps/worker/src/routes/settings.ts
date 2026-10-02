@@ -17,6 +17,7 @@ import {
 } from '@otis/identity';
 import type { Env } from '../index.js';
 import { jsonError, jsonSuccess } from '../middleware/errors.js';
+import { validateWorkspaceDefaultModel } from '../providers/service.js';
 import { readJsonBody, requireWorkspaceScope } from './scope.js';
 
 export async function handleGetWorkspaceSettings(
@@ -46,6 +47,16 @@ export async function handleUpdateWorkspaceSettings(
   }
   const body = parsed.body as UpdateWorkspaceSettingsRequest;
   try {
+    // Registry validation (Plan 005) happens before the committing path:
+    // unknown, retired, unverified, or uncredentialed keys are rejected and
+    // never stored. Null clears the default and stays valid.
+    if (body.default_model !== undefined && body.default_model !== null) {
+      await validateWorkspaceDefaultModel(env.DB, {
+        workspaceId,
+        actorUserId: scope.user.id,
+        commandKey: body.default_model,
+      });
+    }
     const settings = await setWorkspaceSettings(env.DB, {
       workspaceId,
       actorUserId: scope.user.id,

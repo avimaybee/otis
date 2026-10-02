@@ -12,8 +12,8 @@ Revised 2026-09-30; foundation baseline is commit `a3bd462`. [roadmap.md](../roa
 | [002](002-ledger.md) | Guarded ledger, projections, dispute and grouped undo | 003A, 004A | DONE |
 | [003B](003-identity.md) | Complete shared settings/lifecycle/provider configuration | 003A, 002 where integration needs it | DONE |
 | [004B](004-inbound-routing.md) | Actor leases, dispatch and recovery | 004A, 002, 003B | DONE; independently reviewed 2026-10-01; local evidence only |
-| [005](005-provider-spike.md) | Exact provider/model capability and budget evidence | 003B; fake work may start earlier | TODO |
-| [006](006-agent.md) | Bounded agent and durable sourced workspace memory | 002, 004B, 005 | TODO |
+| [005](005-provider-spike.md) | Exact provider/model capability and budget evidence | 003B; fake work may start earlier | DONE; [independently accepted 2026-10-01](005-review-followup.md); three primary models enabled, secondary/audio capabilities remain gated |
+| [006](006-agent.md) | Bounded agent and durable sourced workspace memory | 002, 004B, 005 | DONE; [independently accepted 2026-10-02](006-review-round6.md); local evidence only |
 | [007](007-web-chat-api.md) | Chat APIs, replay stream and shared commands | 006, 003B, 004A | TODO |
 | [008](008-conversation-ui.md) | Precise mobile/desktop conversation | 007; fixture prototypes can start earlier | TODO |
 | [009](009-telegram.md) | Complete linked private Telegram channel | 007, 004B | TODO |
@@ -31,6 +31,12 @@ Read assigned plan and relevant source docs; use [agent-handoff.md](../docs/agen
 Settled: Kerning scope, equal members/full history, neutral charcoal UI, private Go+Gemini, handpicked models, shared provider keys, /model chat overrides, workspace-only memory, text replies to voice, Android/iPhone, explicit missing-date/inferred-status clarification, same-run suffix undo, and chosen-time briefs without a default schedule. See [decision register](../docs/decisions.md).
 
 ## Engineering simplicity
+
+Gate 005 has a detailed [implementation-agent handoff](005-implementation-handoff.md), supplementing its original plan without changing gate order.
+
+Gate 006 has a detailed [agent/memory execution contract](006-implementation-handoff.md): current source baseline, typed tool ownership, checkpoints 006A–006D, pinned models, durable loop/receipt recovery, memory projections and exact acceptance tests. The checkpoints stay within 006; they are not new roadmap gates. Implemented work remains review pending until independently accepted.
+
+Gate 010 has a detailed [native-audio/Groq STT handoff](010-groq-stt-handoff.md). Gate 005 defines the capability/resolver boundary; gate 010 implements recording, transcription and encrypted Groq credentials. No new gate or parallel STT infrastructure is required. Dogfood adds no paid inference beyond the existing Go subscription.
 
 Keep Otis simple, modular and easy to maintain without weakening its working guarantees. Prefer a small set of explicit code paths and existing services. Add an abstraction only when it removes demonstrated duplication or owns a concrete responsibility; do not create generic frameworks, speculative extension points, or infrastructure for later phases.
 

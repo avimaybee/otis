@@ -14,6 +14,8 @@ import { handleCreateTask, handleUpdateTask } from '../commands/tasks.js';
 import { handleLogEvent } from '../commands/logEvent.js';
 import { handleRecordDraft } from '../commands/recordDraft.js';
 import { handleResolveConflict } from '../commands/resolveConflict.js';
+import { handleRememberContext, handleForgetMemory } from '../commands/memory.js';
+import { handleMarkMessageSent } from '../commands/markMessageSent.js';
 
 /**
  * Computes SHA-256 hash using Web standard SubtleCrypto API.
@@ -48,6 +50,9 @@ export const DEFAULT_COMMAND_HANDLERS: Record<string, AnyCommandHandler> = {
   log_event: handleLogEvent,
   record_draft: handleRecordDraft,
   resolve_conflict: handleResolveConflict,
+  remember_context: handleRememberContext,
+  forget_memory: handleForgetMemory,
+  mark_message_sent: handleMarkMessageSent,
 };
 
 /**
@@ -149,6 +154,12 @@ function createGuardStatement(
                 AND rs.run_id = ?
                 AND rs.workspace_id = w.id
             ))
+            -- 7. Daily action limit validation (if max_daily_actions provided):
+            AND (? IS NULL OR COALESCE((
+              SELECT action_count
+              FROM workspace_daily_actions
+              WHERE workspace_id = w.id AND date_utc = ?
+            ), 0) < ?)
          )
        )`
     )
@@ -192,6 +203,10 @@ function createGuardStatement(
       context.step_id || null,
       context.step_id || '',
       context.run_id || '',
+      // 7 (daily quota):
+      context.max_daily_actions !== undefined ? context.max_daily_actions : null,
+      new Date().toISOString().slice(0, 10),
+      context.max_daily_actions !== undefined ? context.max_daily_actions : 0,
     );
 }
 
@@ -230,6 +245,25 @@ async function handleBatchError(
         message: `Stale execution fence or expired lease: expected fence ${context.fence} (workspace fence is ${latestWs.lease_fence}, expires at ${latestWs.lease_expires_at}).`,
       },
     };
+  }
+
+  // Check daily action limit
+  if (context.max_daily_actions !== undefined) {
+    const todayUtc = new Date().toISOString().slice(0, 10);
+    const quotaRow = await db
+      .prepare(`SELECT action_count FROM workspace_daily_actions WHERE workspace_id = ? AND date_utc = ?`)
+      .bind(context.workspace_id, todayUtc)
+      .first<{ action_count: number }>();
+    if ((quotaRow?.action_count ?? 0) >= context.max_daily_actions) {
+      return {
+        status: 'rejected',
+        action_id: context.action_id,
+        error: {
+          code: 'daily_action_limit_exceeded',
+          message: `Workspace daily action limit (${context.max_daily_actions}) exceeded.`,
+        },
+      };
+    }
   }
 
   // Check membership
@@ -718,23 +752,21 @@ export async function executeLedgerCommand<TArgs>(
     statements.push(...extraStatements);
   }
 
-  // Step 1: Projection synchronization - DELETIONS
-  // Delete entities missing from nextState
-  for (const entityId of currentState.entities.keys()) {
-    if (!nextState.entities.has(entityId)) {
+  // Step 1: Projection synchronization - DELETIONS (children deleted before parents for FK safety)
+  // Delete drafts missing from nextState
+  for (const draftId of currentState.drafts.keys()) {
+    if (!nextState.drafts.has(draftId)) {
       statements.push(
-        db.prepare(`DELETE FROM entities WHERE workspace_id = ? AND id = ?`).bind(context.workspace_id, entityId)
+        db.prepare(`DELETE FROM draft_projections WHERE workspace_id = ? AND id = ?`).bind(context.workspace_id, draftId)
       );
     }
   }
 
-  // Delete aliases missing from nextState
-  for (const [key, alias] of currentState.aliases) {
-    if (!nextState.aliases.has(key)) {
+  // Delete tasks missing from nextState
+  for (const taskId of currentState.tasks.keys()) {
+    if (!nextState.tasks.has(taskId)) {
       statements.push(
-        db
-          .prepare(`DELETE FROM entity_aliases WHERE workspace_id = ? AND entity_id = ? AND alias = ?`)
-          .bind(context.workspace_id, alias.entity_id, alias.alias)
+        db.prepare(`DELETE FROM tasks WHERE workspace_id = ? AND id = ?`).bind(context.workspace_id, taskId)
       );
     }
   }
@@ -750,20 +782,65 @@ export async function executeLedgerCommand<TArgs>(
     }
   }
 
-  // Delete tasks missing from nextState
-  for (const taskId of currentState.tasks.keys()) {
-    if (!nextState.tasks.has(taskId)) {
+  // Delete aliases missing from nextState
+  for (const [key, alias] of currentState.aliases) {
+    if (!nextState.aliases.has(key)) {
       statements.push(
-        db.prepare(`DELETE FROM tasks WHERE workspace_id = ? AND id = ?`).bind(context.workspace_id, taskId)
+        db
+          .prepare(`DELETE FROM entity_aliases WHERE workspace_id = ? AND entity_id = ? AND alias = ?`)
+          .bind(context.workspace_id, alias.entity_id, alias.alias)
       );
     }
   }
 
-  // Delete drafts missing from nextState
-  for (const draftId of currentState.drafts.keys()) {
-    if (!nextState.drafts.has(draftId)) {
+  // Delete entities missing from nextState
+  for (const entityId of currentState.entities.keys()) {
+    if (!nextState.entities.has(entityId)) {
       statements.push(
-        db.prepare(`DELETE FROM draft_projections WHERE workspace_id = ? AND id = ?`).bind(context.workspace_id, draftId)
+        db.prepare(`DELETE FROM entities WHERE workspace_id = ? AND id = ?`).bind(context.workspace_id, entityId)
+      );
+    }
+  }
+
+  // Delete memory entries missing from nextState
+  for (const [memId, memEntry] of currentState.memoryEntries) {
+    if (!nextState.memoryEntries.has(memId)) {
+      statements.push(
+        db.prepare(`DELETE FROM memory_entries WHERE workspace_id = ? AND id = ?`).bind(context.workspace_id, memId),
+        db.prepare(`DELETE FROM memory_entries_fts WHERE entry_id = ?`).bind(memId)
+      );
+      const subjectKey = memEntry.subject_id || '__workspace__';
+      const jobId = `job_${crypto.randomUUID()}`;
+      statements.push(
+        db
+          .prepare(
+            `INSERT INTO memory_refresh_jobs (
+               id, workspace_id, scope, subject_key, target_revision, state, attempts,
+               next_attempt_at, created_at, updated_at
+             ) VALUES (?, ?, ?, ?, ?, 'pending', 0, ?, ?, ?)
+             ON CONFLICT(workspace_id, scope, subject_key, target_revision) DO UPDATE SET
+               state = 'pending',
+               updated_at = excluded.updated_at`
+          )
+          .bind(
+            jobId,
+            context.workspace_id,
+            memEntry.scope,
+            subjectKey,
+            committedRevision,
+            now,
+            now,
+            now,
+          )
+      );
+    }
+  }
+
+  // Delete memory suppressions missing from nextState
+  for (const supId of currentState.memorySuppressions.keys()) {
+    if (!nextState.memorySuppressions.has(supId)) {
+      statements.push(
+        db.prepare(`DELETE FROM memory_suppressions WHERE workspace_id = ? AND id = ?`).bind(context.workspace_id, supId)
       );
     }
   }
@@ -864,6 +941,20 @@ export async function executeLedgerCommand<TArgs>(
         committedRevision,
         now,
       )
+  );
+
+  // Step 4b: Atomic daily actions quota tracking (UTC-day scope)
+  const todayUtc = now.slice(0, 10);
+  statements.push(
+    db
+      .prepare(
+        `INSERT INTO workspace_daily_actions (workspace_id, date_utc, action_count, updated_at)
+         VALUES (?, ?, 1, ?)
+         ON CONFLICT(workspace_id, date_utc) DO UPDATE SET
+           action_count = action_count + 1,
+           updated_at = excluded.updated_at`
+      )
+      .bind(context.workspace_id, todayUtc, now)
   );
 
   // Step 5: Increment workspace revision and sequence
@@ -1013,6 +1104,116 @@ export async function executeLedgerCommand<TArgs>(
           draft.updated_at,
         )
     );
+  }
+
+  // Memory Entries, Suppressions, FTS, and Refresh Jobs (if memory events were emitted)
+  const hasMemoryEvents = events.some((e) => e.kind === 'memory_note' || e.kind === 'memory_forgotten' || e.kind === 'revert');
+  if (hasMemoryEvents) {
+    for (const mem of nextState.memoryEntries.values()) {
+      statements.push(
+        db
+          .prepare(
+            `INSERT INTO memory_entries (
+               id, workspace_id, scope, subject_id, category, content, status, provenance,
+               source_event_id, source_message_id, author_user_id, observed_at, created_at,
+               superseding_event_id, business_revision
+             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             ON CONFLICT(id) DO UPDATE SET
+               status = excluded.status,
+               superseding_event_id = excluded.superseding_event_id,
+               business_revision = excluded.business_revision`
+          )
+          .bind(
+            mem.id,
+            mem.workspace_id,
+            mem.scope,
+            mem.subject_id || null,
+            mem.category,
+            mem.content,
+            mem.status,
+            mem.provenance,
+            mem.source_event_id || null,
+            mem.source_message_id || null,
+            mem.author_user_id || null,
+            mem.observed_at,
+            mem.created_at,
+            mem.superseding_event_id || null,
+            mem.business_revision,
+          )
+      );
+    }
+
+    for (const sup of nextState.memorySuppressions.values()) {
+      statements.push(
+        db
+          .prepare(
+            `INSERT OR IGNORE INTO memory_suppressions (
+               id, workspace_id, target_memory_id, source_event_id, source_message_id,
+               suppression_event_id, revision, created_at
+             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+          )
+          .bind(
+            sup.id,
+            sup.workspace_id,
+            sup.target_memory_id,
+            sup.source_event_id || null,
+            sup.source_message_id || null,
+            sup.suppression_event_id,
+            sup.revision,
+            sup.created_at,
+          )
+      );
+    }
+
+    // FTS maintenance & refresh jobs: reconcile active notes to memory_entries_fts and schedule refresh jobs
+    const scheduledRefreshKeys = new Set<string>();
+
+    for (const mem of nextState.memoryEntries.values()) {
+      const currentMem = currentState.memoryEntries.get(mem.id);
+      if (mem.status === 'active') {
+        if (!currentMem || currentMem.status !== 'active' || currentMem.content !== mem.content) {
+          statements.push(
+            db.prepare(`DELETE FROM memory_entries_fts WHERE entry_id = ?`).bind(mem.id),
+            db.prepare(`INSERT INTO memory_entries_fts (entry_id, content) VALUES (?, ?)`).bind(mem.id, mem.content),
+          );
+        }
+      } else {
+        statements.push(
+          db.prepare(`DELETE FROM memory_entries_fts WHERE entry_id = ?`).bind(mem.id),
+        );
+      }
+
+      if (!currentMem || currentMem.status !== mem.status || currentMem.content !== mem.content) {
+        const subjectKey = mem.subject_id || '__workspace__';
+        const refreshKey = `${mem.scope}::${subjectKey}`;
+        if (!scheduledRefreshKeys.has(refreshKey)) {
+          scheduledRefreshKeys.add(refreshKey);
+          const jobId = `job_${crypto.randomUUID()}`;
+          statements.push(
+            db
+              .prepare(
+                `INSERT INTO memory_refresh_jobs (
+                   id, workspace_id, scope, subject_key, target_revision, state, attempts,
+                   next_attempt_at, created_at, updated_at
+                 ) VALUES (?, ?, ?, ?, ?, 'pending', 0, ?, ?, ?)
+                 ON CONFLICT(workspace_id, scope, subject_key, target_revision) DO UPDATE SET
+                   state = 'pending',
+                   updated_at = excluded.updated_at`
+              )
+              .bind(
+                jobId,
+                context.workspace_id,
+                mem.scope,
+                subjectKey,
+                committedRevision,
+                now,
+                now,
+                now,
+              )
+          );
+        }
+      }
+    }
   }
 
   // Step 7: Advance chat activity cursor and record public activity (if running in chat context)

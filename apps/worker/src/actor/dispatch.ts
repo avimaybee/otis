@@ -53,6 +53,7 @@ export type TurnOutcome =
       intendedOperation: string;
       missingFields: string[];
       candidates?: unknown;
+      pendingOperation?: unknown;
     }
   | { kind: 'continuation'; progressJson: string }
   | { kind: 'failed'; errorCode: string; errorMessage: string };
@@ -73,6 +74,7 @@ export interface TurnContext {
   sourceJobId: string | null;
   sourceText: string;
   channel: string;
+  sourceTrust?: 'member' | 'forwarded_client' | 'memory';
   /** Durable answer from the resolved clarification, if this turn resumes one. */
   answerText: string | null;
   answerMessageId: string | null;
@@ -284,17 +286,19 @@ async function resolveRunActor(db: D1Database, run: LoadedRun): Promise<string |
   return null;
 }
 
-async function loadSourceText(db: D1Database, run: LoadedRun): Promise<{ text: string; channel: string }> {
-  if (!run.source_message_id) return { text: '', channel: 'system' };
+async function loadSourceText(db: D1Database, run: LoadedRun): Promise<{ text: string; channel: string; sourceTrust?: 'member' | 'forwarded_client' | 'memory' }> {
+  if (!run.source_message_id) return { text: '', channel: 'system', sourceTrust: 'member' };
   const row = await db
     .prepare(
-      `SELECT content_text, channel FROM chat_messages
-       WHERE run_id = ? AND author_kind = 'member' ORDER BY sequence ASC LIMIT 1`,
+      `SELECT content_text, channel, author_kind FROM chat_messages
+       WHERE run_id = ? ORDER BY sequence ASC LIMIT 1`,
     )
     .bind(run.id)
     .first<Record<string, unknown>>();
-  if (!row) return { text: '', channel: 'web' };
-  return { text: String(row['content_text'] ?? ''), channel: String(row['channel'] ?? 'web') };
+  if (!row) return { text: '', channel: 'web', sourceTrust: 'member' };
+  const authorKind = row['author_kind'];
+  const sourceTrust: 'member' | 'forwarded_client' | 'memory' = authorKind === 'member' ? 'member' : 'forwarded_client';
+  return { text: String(row['content_text'] ?? ''), channel: String(row['channel'] ?? 'web'), sourceTrust };
 }
 
 /**
@@ -632,6 +636,7 @@ async function waitForInput(
     intendedOperation: string;
     missingFields: string[];
     candidates: unknown;
+    pendingOperation?: unknown;
     requesterUserId: string;
     outboxId: string | null;
     nowIso: string;
@@ -672,8 +677,8 @@ async function waitForInput(
         .prepare(
           `INSERT INTO pending_clarifications
              (id, workspace_id, chat_id, run_id, source_message_id, requester_user_id, question,
-              intended_operation, missing_fields, candidates_json, source_revision, status, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)`,
+              intended_operation, missing_fields, candidates_json, operation_payload_json, source_revision, status, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)`,
         )
         .bind(
           `clr_${crypto.randomUUID()}`,
@@ -686,6 +691,7 @@ async function waitForInput(
           params.intendedOperation,
           JSON.stringify(params.missingFields),
           params.candidates === undefined ? null : JSON.stringify(params.candidates),
+          params.pendingOperation === undefined ? null : JSON.stringify(params.pendingOperation),
           Number(revRow?.business_revision ?? 0),
           params.nowIso,
           params.nowIso,
@@ -1005,6 +1011,7 @@ export async function dispatchOutboxItem(
         sourceJobId: run.source_job_id,
         sourceText: source.text,
         channel: source.channel,
+        sourceTrust: source.sourceTrust,
         answerText: answer?.text ?? null,
         answerMessageId: answer?.messageId ?? null,
       });
@@ -1110,6 +1117,7 @@ export async function dispatchOutboxItem(
         intendedOperation: outcome.intendedOperation,
         missingFields: outcome.missingFields,
         candidates: outcome.candidates,
+        pendingOperation: outcome.pendingOperation,
         requesterUserId: requester?.user_id ?? '',
         outboxId,
         nowIso: now(),
@@ -1160,6 +1168,12 @@ export async function dispatchOutboxItem(
       }
       return { status: 'deferred', run_id: run.id, detail: requeued ? 'checkpoint' : 'stale_attempt' };
     }
+    const appliedReceipt = await db
+      .prepare(`SELECT 1 FROM action_receipts WHERE workspace_id = ? AND run_id = ? AND result_status = 'applied' LIMIT 1`)
+      .bind(run.workspace_id, run.id)
+      .first();
+    const finalRunStatus = appliedReceipt !== null ? 'partial' : 'failed';
+
     const failed = await failRunTerminal(db, {
       run,
       expectedStatus: 'running',
@@ -1167,7 +1181,7 @@ export async function dispatchOutboxItem(
       errorCode: outcome.errorCode,
       errorMessage: outcome.errorMessage,
       outboxId,
-      runStatus: 'failed',
+      runStatus: finalRunStatus,
       nowIso: now(),
     });
     return failed
@@ -1366,8 +1380,28 @@ export async function resumeRun(
     await params.testHooks.afterPrecheck({ clarId, authorUserId });
   }
 
-  // 4. If clarification has an operation_payload_json, execute ledger resumption
+  // 4. If clarification has a ledger operation_payload_json, execute ledger resumption.
+  // Non-ledger control clarifications (such as bulk_operation confirmation) route to
+  // standard resumption in section 5 so the agent loop can resume with approved scope.
+  let isLedgerCommand = false;
+  let pendingOpActionId: string | null = null;
   if (clar['operation_payload_json']) {
+    try {
+      const op = JSON.parse(String(clar['operation_payload_json']));
+      if (op && typeof op === 'object' && op.command_name) {
+        if (op.command_name !== 'bulk_operation') {
+          isLedgerCommand = true;
+        }
+        if (op.action_id) {
+          pendingOpActionId = String(op.action_id);
+        }
+      }
+    } catch {
+      // ignore
+    }
+  }
+
+  if (isLedgerCommand) {
     let resolvedFields = params.answer.resolvedFields;
     if (!resolvedFields) {
       let missingList: string[] = [];
@@ -1426,7 +1460,7 @@ export async function resumeRun(
       db,
       {
         workspace_id: params.workspaceId,
-        action_id: `act_resume_${crypto.randomUUID()}`,
+        action_id: pendingOpActionId ? `${pendingOpActionId}:resumed` : `act_resume_${crypto.randomUUID()}`,
         actor: { kind: 'member', user_id: authorUserId },
         membership_revision: Number(wsMeta?.membership_revision ?? 0),
         request_id: `req_resume_${crypto.randomUUID()}`,

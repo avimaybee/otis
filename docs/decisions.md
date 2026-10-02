@@ -26,10 +26,12 @@ Revised 2026-09-30. This register records user decisions and implementation defa
 | D20 | Plain prepared SQL for v1; no speculative ORM or vector infrastructure | Engineering choice; architecture |
 | D21 | Private file download through Worker membership check, not public presigned bearer access | Required consequence of revocation contract |
 | D22 | Identity → conversation/source → ledger schema order, independent of plan numbers | Engineering repair; architecture/roadmap |
+| D23 | Automatic voice routing: use the selected model's verified native transcription path for the actual format; otherwise use workspace-configured Groq STT. Unsupported/unverified native audio does not disqualify a text/tool model. | User 2026-10-01; architecture section 13 and Plan 010 handoff |
+| D24 | No additional inference spending for dogfood: existing Go subscription and free Gemini/Groq access only; no automatic paid fallback, upgrade, or quota evasion. | User 2026-10-01; provider/voice plans |
 
 ## Remaining measurements, not guessed decisions
 
-- Exact operator-handpicked model IDs and their endpoint/audio/tool/cache evidence.
+- The six initial model IDs are selected in provider-capabilities.md; their live endpoint/audio/tool/cache evidence remains to be measured. Groq Whisper Large V3 and Turbo are selected STT candidates; the production STT default follows accuracy/latency tests.
 - Provider budgets/timeouts and practical latency/cost targets from controlled tests.
 - Actual provisioned data locations and deployment-specific secrets/rotation configuration.
 - Real browser/device acceptance; existing DOM tests cannot supply it.

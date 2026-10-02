@@ -210,7 +210,7 @@ export async function getCredentialMetadata(
 export async function decryptWorkspaceCredential(
   db: D1Database,
   params: { workspaceId: string; provider: ProviderName; wrappingKey: CryptoKey },
-): Promise<{ rawKey: string; keyVersion: number }> {
+): Promise<{ rawKey: string; keyVersion: number; ciphertext: string; nonce: string }> {
   const row = await db
     .prepare(
       `SELECT encrypted_key, key_nonce, key_version
@@ -222,14 +222,16 @@ export async function decryptWorkspaceCredential(
     throw new CredentialError('credential_not_found', 'No credential is configured for this workspace/provider.');
   }
   const keyVersion = Number(row['key_version']);
+  const ciphertext = String(row['encrypted_key']);
+  const nonce = String(row['key_nonce']);
   const rawKey = await decryptProviderKey(params.wrappingKey, {
     workspaceId: params.workspaceId,
     provider: params.provider,
     keyVersion,
-    ciphertext_b64: String(row['encrypted_key']),
-    nonce_b64: String(row['key_nonce']),
+    ciphertext_b64: ciphertext,
+    nonce_b64: nonce,
   });
-  return { rawKey, keyVersion };
+  return { rawKey, keyVersion, ciphertext, nonce };
 }
 
 /**
@@ -300,26 +302,74 @@ export async function rotateCredentialWrappingKey(
 }
 
 /**
- * Marks credential verification status (used by future provider validation).
+ * Marks credential verification status (used by provider validation).
+ * When expectedKeyVersion is supplied, only the matching stored version is
+ * marked: a concurrent replacement keeps its own unverified status, so
+ * verifying key A can never mark replacement key B valid.
  */
 export async function markCredentialStatus(
   db: D1Database,
-  params: { workspaceId: string; provider: ProviderName; status: ProviderStatus },
-): Promise<ProviderCredentialMetadata> {
+  params: {
+    workspaceId: string;
+    provider: ProviderName;
+    status: ProviderStatus;
+    expectedKeyVersion?: number;
+    expectedCiphertext?: string;
+    actorUserId?: string;
+    testHooks?: {
+      afterPrecheck?: () => Promise<void>;
+    };
+  },
+): Promise<ProviderCredentialMetadata | null> {
   const nowIso = new Date().toISOString();
-  await db
+  if (params.actorUserId) {
+    const member = await db
+      .prepare(`SELECT 1 FROM workspace_users WHERE workspace_id = ? AND user_id = ?`)
+      .bind(params.workspaceId, params.actorUserId)
+      .first();
+    if (!member) {
+      throw new CredentialError('not_member', 'Caller is no longer a member of this workspace.');
+    }
+  }
+  if (params.testHooks?.afterPrecheck) {
+    await params.testHooks.afterPrecheck();
+  }
+  const result = await db
     .prepare(
       `UPDATE provider_credentials SET status = ?, last_verified_at = ?, updated_at = ?
-       WHERE workspace_id = ? AND provider = ?`
+       WHERE workspace_id = ? AND provider = ?
+         AND (? IS NULL OR key_version = ?)
+         AND (? IS NULL OR encrypted_key = ?)
+         AND (? IS NULL OR EXISTS (SELECT 1 FROM workspace_users WHERE workspace_id = ? AND user_id = ?))`,
     )
-    .bind(params.status, nowIso, nowIso, params.workspaceId, params.provider)
+    .bind(
+      params.status,
+      nowIso,
+      nowIso,
+      params.workspaceId,
+      params.provider,
+      params.expectedKeyVersion ?? null,
+      params.expectedKeyVersion ?? 0,
+      params.expectedCiphertext ?? null,
+      params.expectedCiphertext ?? '',
+      params.actorUserId ?? null,
+      params.workspaceId,
+      params.actorUserId ?? '',
+    )
     .run();
-  const meta = await getCredentialMetadata(db, {
-    workspaceId: params.workspaceId,
-    provider: params.provider,
-  });
-  if (!meta) throw new CredentialError('credential_not_found', 'No credential is configured.');
-  return meta;
+  if ((result.meta.changes ?? 0) !== 1) {
+    if (params.actorUserId) {
+      const stillMember = await db
+        .prepare(`SELECT 1 FROM workspace_users WHERE workspace_id = ? AND user_id = ?`)
+        .bind(params.workspaceId, params.actorUserId)
+        .first();
+      if (!stillMember) {
+        throw new CredentialError('not_member', 'Caller is no longer a member of this workspace.');
+      }
+    }
+    return null;
+  }
+  return getCredentialMetadata(db, { workspaceId: params.workspaceId, provider: params.provider });
 }
 
 async function storeEncryptedCredential(

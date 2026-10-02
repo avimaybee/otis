@@ -10,6 +10,8 @@ import type {
   EntityAlias,
   EntityStateField,
   LedgerEvent,
+  MemoryEntry,
+  MemorySuppression,
   Task,
 } from '@otis/contracts';
 import type { LedgerProjectionState } from '../types.js';
@@ -158,6 +160,8 @@ export async function getWorkspaceProjectionState(
     fields: new Map(),
     tasks: new Map(),
     drafts: new Map(),
+    memoryEntries: new Map(),
+    memorySuppressions: new Map(),
   };
 
   // 1. Entities
@@ -310,6 +314,74 @@ export async function getWorkspaceProjectionState(
       updated_at: String(r['updated_at']),
     };
     state.drafts.set(d.id, d);
+  }
+
+  // 6. Memory Entries
+  try {
+    const memoryRows = (
+      await db
+        .prepare(
+          `SELECT id, workspace_id, scope, subject_id, category, content, status, provenance,
+                  source_event_id, source_message_id, author_user_id, observed_at, created_at,
+                  superseding_event_id, business_revision
+           FROM memory_entries WHERE workspace_id = ?`
+        )
+        .bind(workspaceId)
+        .all<Record<string, unknown>>()
+    ).results || [];
+
+    for (const r of memoryRows) {
+      const m: MemoryEntry = {
+        id: String(r['id']),
+        workspace_id: String(r['workspace_id']),
+        scope: r['scope'] as MemoryEntry['scope'],
+        subject_id: r['subject_id'] ? String(r['subject_id']) : null,
+        category: r['category'] as MemoryEntry['category'],
+        content: String(r['content']),
+        status: r['status'] as MemoryEntry['status'],
+        provenance: r['provenance'] as MemoryEntry['provenance'],
+        source_event_id: r['source_event_id'] ? String(r['source_event_id']) : null,
+        source_message_id: r['source_message_id'] ? String(r['source_message_id']) : null,
+        author_user_id: r['author_user_id'] ? String(r['author_user_id']) : null,
+        observed_at: String(r['observed_at']),
+        created_at: String(r['created_at']),
+        superseding_event_id: r['superseding_event_id'] ? String(r['superseding_event_id']) : null,
+        business_revision: Number(r['business_revision']),
+      };
+      state.memoryEntries.set(m.id, m);
+    }
+  } catch (err) {
+    if (!String(err).includes('no such table')) throw err;
+  }
+
+  // 7. Memory Suppressions
+  try {
+    const suppressionRows = (
+      await db
+        .prepare(
+          `SELECT id, workspace_id, target_memory_id, source_event_id, source_message_id,
+                  suppression_event_id, revision, created_at
+           FROM memory_suppressions WHERE workspace_id = ?`
+        )
+        .bind(workspaceId)
+        .all<Record<string, unknown>>()
+    ).results || [];
+
+    for (const r of suppressionRows) {
+      const s: MemorySuppression = {
+        id: String(r['id']),
+        workspace_id: String(r['workspace_id']),
+        target_memory_id: String(r['target_memory_id']),
+        source_event_id: r['source_event_id'] ? String(r['source_event_id']) : null,
+        source_message_id: r['source_message_id'] ? String(r['source_message_id']) : null,
+        suppression_event_id: String(r['suppression_event_id']),
+        revision: Number(r['revision']),
+        created_at: String(r['created_at']),
+      };
+      state.memorySuppressions.set(s.id, s);
+    }
+  } catch (err) {
+    if (!String(err).includes('no such table')) throw err;
   }
 
   return state;

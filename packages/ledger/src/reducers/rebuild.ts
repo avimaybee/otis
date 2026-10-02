@@ -10,6 +10,7 @@ import { reduceEntity } from './entities.js';
 import { reduceFields } from './fields.js';
 import { reduceTasks } from './tasks.js';
 import { reduceDrafts } from './drafts.js';
+import { reduceMemory } from './memory.js';
 
 export function rebuildProjections(events: LedgerEvent[]): LedgerProjectionState {
   // 1. Identify all reverted event IDs from causal revert events
@@ -38,6 +39,8 @@ export function rebuildProjections(events: LedgerEvent[]): LedgerProjectionState
     fields: new Map(),
     tasks: new Map(),
     drafts: new Map(),
+    memoryEntries: new Map(),
+    memorySuppressions: new Map(),
   };
 
   // 4. Apply pure reducers in strict sequence order
@@ -46,6 +49,7 @@ export function rebuildProjections(events: LedgerEvent[]): LedgerProjectionState
     reduceFields(state.fields, evt);
     reduceTasks(state.tasks, evt);
     reduceDrafts(state.drafts, evt);
+    reduceMemory(state.memoryEntries, state.memorySuppressions, evt);
   }
 
   return state;
