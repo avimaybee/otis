@@ -39,7 +39,8 @@ export function ProviderConnection({ workspaceId, provider, name, onUpdated }: {
       <div>
         <h3>{name}</h3>
         <div className="flex items-center gap-2 mt-1">
-          <Badge variant={status === 'Connected' ? 'outline' : status === 'Needs checking' ? 'destructive' : 'secondary'} role="status">
+          <Badge variant={status === 'Connected' ? 'outline' : status === 'Needs checking' ? 'destructive' : 'secondary'} role="status" className="inline-flex items-center gap-1.5">
+            {status === 'Connected' && <span className="otis-status-dot" aria-hidden="true" />}
             {status}
           </Badge>
         </div>

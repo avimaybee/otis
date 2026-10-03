@@ -25,12 +25,13 @@ p { margin: 0; }
 .otis-shell { display: flex; height: var(--otis-viewport-height, 100dvh); min-height: 0; overflow: hidden; background: var(--otis-canvas); }
 .otis-main { position: relative; display: flex; flex: 1; min-width: 0; min-height: 0; flex-direction: column; }
 .otis-chat { display: flex; flex: 1; min-height: 0; flex-direction: column; }
-.otis-topbar { display: flex; flex: none; min-height: calc(var(--otis-topbar) + env(safe-area-inset-top)); align-items: center; gap: 8px; padding: env(safe-area-inset-top) 8px 0; }
+.otis-topbar { position: relative; z-index: 5; display: flex; flex: none; min-height: calc(var(--otis-topbar) + env(safe-area-inset-top)); align-items: center; gap: 8px; padding: env(safe-area-inset-top) 8px 0; background: rgba(24, 24, 24, 0.92); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); border-bottom: 1px solid rgba(56, 56, 56, 0.5); }
 .otis-topbar__identity { flex: 1; min-width: 0; }
 .otis-topbar__title { margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; font-weight: 500; line-height: 20px; }
 .otis-topbar__subtitle { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--otis-text-muted); font-size: 13px; line-height: 18px; }
-.otis-iconbutton { display: inline-flex; flex: none; width: 44px; height: 44px; align-items: center; justify-content: center; padding: 0; border: 0; border-radius: 8px; background: transparent; color: var(--otis-text-secondary); }
+.otis-iconbutton { display: inline-flex; flex: none; width: 44px; height: 44px; align-items: center; justify-content: center; padding: 0; border: 0; border-radius: 8px; background: transparent; color: var(--otis-text-secondary); transition: background var(--otis-duration), color var(--otis-duration), transform 0.1s ease; }
 .otis-iconbutton:hover { background: var(--otis-surface-hover); color: var(--otis-text-primary); }
+.otis-iconbutton:active { transform: scale(0.92); }
 /* A measured conversation column, aligned with the composer at every width. */
 .otis-transcript-region { position: relative; display: flex; flex: 1; min-height: 0; }
 .otis-transcript { flex: 1; min-width: 0; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-color: var(--otis-border) transparent; padding: 16px var(--otis-gutter) 20px; }
@@ -47,11 +48,13 @@ p { margin: 0; }
 .otis-turn--member .otis-turn__actions { justify-content: flex-end; }
 .otis-turn--agent .otis-turn__actions { justify-content: flex-start; }
 .otis-turn__time { font-size: 11px; line-height: 16px; color: var(--otis-text-muted); padding: 0 4px; user-select: none; }
-.otis-msg-action { display: inline-flex; align-items: center; justify-content: center; min-width: 28px; min-height: 28px; padding: 4px; border: 0; border-radius: 6px; background: transparent; color: var(--otis-text-muted); cursor: pointer; transition: background var(--otis-duration), color var(--otis-duration), transform var(--otis-duration); }
+.otis-msg-action { position: relative; display: inline-flex; align-items: center; justify-content: center; min-width: 32px; min-height: 32px; padding: 6px; border: 0; border-radius: 6px; background: transparent; color: var(--otis-text-muted); cursor: pointer; transition: background var(--otis-duration), color var(--otis-duration), transform 0.1s ease; }
+@media (pointer: coarse) { .otis-msg-action::after { content: ''; position: absolute; inset: -6px; } }
 .otis-msg-action:hover { background: var(--otis-surface-hover); color: var(--otis-text-primary); }
-.otis-msg-action:active { transform: scale(0.92); }
-.otis-msg-action--pill { gap: 5px; min-height: 24px; padding: 2px 8px; background: var(--otis-surface); border: 1px solid var(--otis-border); border-radius: 12px; font-size: 12px; font-weight: 500; color: var(--otis-text-secondary); }
+.otis-msg-action:active { transform: scale(0.90); }
+.otis-msg-action--pill { gap: 5px; min-height: 28px; padding: 2px 10px; background: var(--otis-surface); border: 1px solid var(--otis-border); border-radius: 14px; font-size: 12px; font-weight: 500; color: var(--otis-text-secondary); }
 .otis-msg-action--pill:hover { background: var(--otis-surface-hover); border-color: var(--otis-text-muted); color: var(--otis-text-primary); }
+.otis-msg-action--pill:active { transform: scale(0.94); }
 .otis-dayseparator { display: flex; gap: 12px; align-items: center; margin: 12px 0 16px; color: var(--otis-text-muted); font-size: 13px; line-height: 18px; }
 .otis-dayseparator::before, .otis-dayseparator::after { content: ''; flex: 1; height: 1px; background: var(--otis-border); }
 .otis-run { margin: 0 0 4px; }
@@ -98,10 +101,10 @@ p { margin: 0; }
 .otis-textbutton { display: inline-flex; min-height: 44px; align-items: center; gap: 8px; padding: 0 4px; border: 0; background: transparent; color: var(--otis-text-secondary); font-size: 14px; text-decoration: underline; text-underline-offset: 3px; }
 .otis-textbutton:hover { color: var(--otis-text-primary); }
 .otis-load-older { display: flex; margin: 0 auto 16px; }
-.otis-jump { position: absolute; left: 50%; bottom: 12px; transform: translateX(-50%); display: inline-flex; align-items: center; justify-content: center; width: 36px; height: 36px; border: 1px solid var(--otis-border); border-radius: 50%; background: var(--otis-surface-raised); color: var(--otis-text-primary); box-shadow: 0 4px 14px rgba(0, 0, 0, 0.45); cursor: pointer; z-index: 2; transition: transform var(--otis-duration), background var(--otis-duration); }
+.otis-jump { position: absolute; left: 50%; bottom: 16px; transform: translateX(-50%); display: inline-flex; align-items: center; justify-content: center; width: 40px; height: 40px; border: 1px solid var(--otis-border); border-radius: 50%; background: rgba(48, 48, 48, 0.92); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); color: var(--otis-text-primary); box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5); cursor: pointer; z-index: 2; transition: transform var(--otis-duration), background var(--otis-duration), box-shadow var(--otis-duration); }
 .otis-jump:hover { background: var(--otis-surface-hover); transform: translateX(-50%) scale(1.06); }
-.otis-jump:active { transform: translateX(-50%) scale(0.96); }
-.otis-jump:has(.otis-jump__badge) { width: auto; border-radius: 18px; padding: 0 10px; gap: 6px; }
+.otis-jump:active { transform: translateX(-50%) scale(0.92); }
+.otis-jump:has(.otis-jump__badge) { width: auto; border-radius: 20px; padding: 0 12px; gap: 6px; }
 .otis-jump__badge { display: inline-flex; align-items: center; justify-content: center; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 9px; background: var(--otis-action-bg); color: var(--otis-action-fg); font-size: 11px; font-weight: 600; }
 @keyframes otis-picker-enter { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
 .otis-connection, .otis-chat-error { flex: none; width: 100%; max-width: 792px; margin: auto; padding: 8px 16px; color: var(--otis-text-secondary); font-size: 13px; line-height: 18px; }

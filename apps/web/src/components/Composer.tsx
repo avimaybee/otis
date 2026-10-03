@@ -110,7 +110,7 @@ export function Composer({ disabled, disabledReason, running, commands, models =
         <ModelControls models={models} followsDefault={followsDefault} disabled={disabled} pending={controlPending} onCommand={text => command(text)}/>
         <div className="otis-composer__submit-controls">
           {running && onStop && <Button variant="ghost" size="icon" type="button" className="otis-composer__stop otis-iconbutton" aria-label="Stop Otis" disabled={stopping} onClick={() => void stop()}><StopIcon/></Button>}
-          <Button size="icon" type="button" className="otis-composer__send" aria-label="Send" aria-busy={sending} disabled={disabled || sending || tooLong || !value.trim() || controlPending || (!modelReady && !value.startsWith('/'))} onClick={() => void submit()}>{sending ? <span className="otis-spinner" aria-hidden="true"/> : <SendIcon/>}</Button>
+          {(!running || value.trim()) && <Button size="icon" type="button" className="otis-composer__send" aria-label="Send" aria-busy={sending} disabled={disabled || sending || tooLong || !value.trim() || controlPending || (!modelReady && !value.startsWith('/'))} onClick={() => void submit()}>{sending ? <span className="otis-spinner" aria-hidden="true"/> : <SendIcon/>}</Button>}
         </div>
       </div>
     </div>
