@@ -27,6 +27,27 @@ const message = (overrides: Partial<ChatMessage> & { id: string; content_text: s
 const activity = (id: string, cursor: number, type: PublicActivity['type'], payload: unknown): PublicActivity => ({ schema_version: 1, id, cursor, workspace_id: 'ws_1', chat_id: 'chat_1', run_id: 'run_1', type, payload, created_at: '2026-10-02T10:00:00.000Z' });
 
 describe('Composer', () => {
+  it('lists available models when typing /model and inserts the chosen key without submitting', async () => {
+    const onSend = vi.fn();
+    const models = [
+      { command_key: 'mimo-25', display_name: 'MiMo V2.5', provider: 'opencode_go', native_audio_supported: false, voice_available: false, available: true, is_current: false, is_default: true },
+      { command_key: 'deepseek-v4.1-flash', display_name: 'DeepSeek V4.1 Flash', provider: 'opencode_go', native_audio_supported: false, voice_available: false, available: true, is_current: false, is_default: false },
+      { command_key: 'muse-13', display_name: 'Muse Spark 1.3 Contributor', provider: 'opencode_go', native_audio_supported: false, voice_available: false, available: false, is_current: false, is_default: false },
+    ];
+    const view = await mount(<Composer running={false} queuedCount={0} commands={COMMANDS} models={models} onSend={onSend}/>);
+    await fill(view.host.querySelector('textarea')!, '/model');
+    const options = Array.from(view.host.querySelectorAll('[role="option"]')).map(el => el.textContent ?? '');
+    // Selectable entries appear by readable name; unavailable ones never do.
+    expect(options.some(text => text.includes('MiMo V2.5'))).toBe(true);
+    expect(options.some(text => text.includes('DeepSeek V4.1 Flash'))).toBe(true);
+    expect(options.some(text => text.includes('Muse Spark'))).toBe(false);
+    const mimo = Array.from(view.host.querySelectorAll('[role="option"]')).find(el => (el.textContent ?? '').includes('MiMo V2.5')) as HTMLButtonElement;
+    await React.act(async () => mimo.click());
+    // Choosing inserts editable text; it does not execute.
+    expect(view.host.querySelector('textarea')!.value).toBe('/model mimo-25');
+    expect(onSend).not.toHaveBeenCalled();
+    await view.unmount();
+  });
   it('opens slash suggestions and inserts editable text without submitting', async () => {
     const onSend = vi.fn(); const view = await mount(<Composer running={false} queuedCount={0} commands={COMMANDS} onSend={onSend}/>);
     await fill(view.host.querySelector('textarea')!, '/');
