@@ -1,5 +1,9 @@
 import { useEffect, useId, useState } from 'react';
 import { api } from '../api/client.js';
+import { Button } from './ui/button.js';
+import { Input } from './ui/input.js';
+import { Badge } from './ui/badge.js';
+import { Alert, AlertDescription } from './ui/alert.js';
 
 export function ProviderConnection({ workspaceId, provider, name, onUpdated }: {
   workspaceId: string; provider: 'gemini' | 'opencode_go'; name: string; onUpdated: () => void;
@@ -31,12 +35,27 @@ export function ProviderConnection({ workspaceId, provider, name, onUpdated }: {
     finally { setBusy(false); }
   };
   return <div className="otis-settings__provider">
-    <div className="otis-settings__row"><div><h3>{name}</h3><p className="otis-detail__label" role="status">{status}</p></div><button type="button" className="otis-button" disabled={busy} onClick={() => { setEditing(!editing); setKey(''); setError(''); }}>{editing ? 'Cancel' : status === 'Connected' ? 'Replace key' : 'Connect'}</button></div>
-    {editing && <form onSubmit={event => { event.preventDefault(); void save(); }}>
-      <label htmlFor={id}>{name} API key</label><input id={id} type="password" autoComplete="new-password" spellCheck={false} value={key} onChange={event => setKey(event.target.value)} disabled={busy}/>
+    <div className="otis-settings__row">
+      <div>
+        <h3>{name}</h3>
+        <div className="flex items-center gap-2 mt-1">
+          <Badge variant={status === 'Connected' ? 'outline' : status === 'Needs checking' ? 'destructive' : 'secondary'} role="status">
+            {status}
+          </Badge>
+        </div>
+      </div>
+      <Button variant="outline" size="sm" disabled={busy} onClick={() => { setEditing(!editing); setKey(''); setError(''); }}>
+        {editing ? 'Cancel' : status === 'Connected' ? 'Replace key' : 'Connect'}
+      </Button>
+    </div>
+    {editing && <form className="mt-3 flex flex-col gap-2" onSubmit={event => { event.preventDefault(); void save(); }}>
+      <label htmlFor={id} className="text-sm font-medium">{name} API key</label>
+      <Input id={id} type="password" autoComplete="new-password" spellCheck={false} value={key} onChange={event => setKey(event.target.value)} disabled={busy}/>
       <p className="otis-detail__label">Shared by this workspace. Saved keys cannot be displayed.</p>
-      <button type="submit" className="otis-button otis-button--primary" disabled={busy || !key.trim()}>{busy ? 'Connecting…' : 'Save and check key'}</button>
+      <Button type="submit" size="sm" disabled={busy || !key.trim()}>
+        {busy ? 'Connecting…' : 'Save and check key'}
+      </Button>
     </form>}
-    {error && <p className="otis-settings__error" role="alert">{error}</p>}
+    {error && <Alert variant="destructive" className="mt-2"><AlertDescription>{error}</AlertDescription></Alert>}
   </div>;
 }

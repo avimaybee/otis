@@ -5,6 +5,9 @@ import { CloseIcon } from './icons.js';
 import { Overlay } from './Overlay.js';
 import { ChoiceSelect } from './ui/select.js';
 import { ProviderConnection } from './ProviderConnection.js';
+import { Button } from './ui/button.js';
+import { Input } from './ui/input.js';
+import { Alert, AlertDescription } from './ui/alert.js';
 
 export function SettingsPane({ workspaceId, workspaceName, members = {}, onClose, onSignOut, onAccessLost, onUpdated }: {
   workspaceId: string; workspaceName: string; members?: Record<string, string>;
@@ -56,21 +59,21 @@ export function SettingsPane({ workspaceId, workspaceName, members = {}, onClose
     onUpdated?.();
   };
   return <Overlay label="Settings" className="otis-overlay--settings" onClose={onClose}><section className="otis-settings">
-    <header className="otis-pane-header"><h2>Settings</h2><button type="button" className="otis-iconbutton" aria-label="Close settings" onClick={onClose}><CloseIcon/></button></header>
+    <header className="otis-pane-header"><h2>Settings</h2><Button variant="ghost" size="icon" type="button" className="otis-iconbutton" aria-label="Close settings" onClick={onClose}><CloseIcon/></Button></header>
     <div className="otis-settings__tabs" role="tablist" aria-label="Settings sections">
       {(['personal', 'workspace'] as const).map((value, index) => <button id={`${id}-${value}-tab`} key={value} type="button" role="tab" aria-selected={tab === value} aria-controls={`${id}-${value}`} tabIndex={tab === value ? 0 : -1} onClick={() => setTab(value)} onKeyDown={event => { if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') { event.preventDefault(); const next = index === 0 ? 'workspace' : 'personal'; setTab(next); document.getElementById(`${id}-${next}-tab`)?.focus(); } }}>{value === 'personal' ? 'You' : workspaceName}</button>)}
     </div>
     <div className="otis-settings__content" id={`${id}-${tab}`} role="tabpanel" aria-labelledby={`${id}-${tab}-tab`}>
       {!loaded ? <p role="status">Loading settings…</p> : tab === 'personal' ? <>
-        <div className="otis-settings__section"><label htmlFor={`${id}-language`}>Reply language</label><ChoiceSelect id={`${id}-language`} label="Reply language" value={personal!.preferred_language} options={[{ value: 'en', label: 'English' }, { value: 'ro', label: 'Română' }, { value: 'hu', label: 'Magyar' }]} onChange={value => void savePersonal('language', { preferred_language: value })} disabled={Boolean(busy)}/></div>
-        <form className="otis-settings__section" onSubmit={event => { event.preventDefault(); void saveTimezone(); }}><label htmlFor={`${id}-timezone`}>Timezone</label><p className="otis-detail__label">Used for dates and reminders. Your brief stays on its existing schedule.</p><input id={`${id}-timezone`} value={timezone} placeholder="Not set" onChange={event => setTimezone(event.target.value)} autoComplete="off" spellCheck={false}/><div className="otis-settings__row"><button className="otis-button" type="button" disabled={Boolean(busy)} onClick={() => setTimezone(Intl.DateTimeFormat().resolvedOptions().timeZone)}>Use this device’s timezone</button><button className="otis-button otis-button--primary" type="submit" disabled={Boolean(busy) || timezone === (personal!.brief_timezone ?? '')}>{busy === 'timezone' ? 'Saving…' : 'Save timezone'}</button></div></form>
+        <div className="otis-settings__section"><label htmlFor={`${id}-language`}>Reply language</label><ChoiceSelect id={`${id}-language`} label="Reply language" value={personal!.preferred_language} options={[{ value: 'en', label: 'English' }, { value: 'ro', label: 'Română' }, { value: 'hu', label: 'Magyar' }]} onChange={(value: string) => void savePersonal('language', { preferred_language: value })} disabled={Boolean(busy)}/></div>
+        <form className="otis-settings__section" onSubmit={event => { event.preventDefault(); void saveTimezone(); }}><label htmlFor={`${id}-timezone`}>Timezone</label><p className="otis-detail__label">Used for dates and reminders. Your brief stays on its existing schedule.</p><Input id={`${id}-timezone`} value={timezone} placeholder="Not set" onChange={event => setTimezone(event.target.value)} autoComplete="off" spellCheck={false}/><div className="otis-settings__row mt-2"><Button variant="outline" size="sm" type="button" disabled={Boolean(busy)} onClick={() => setTimezone(Intl.DateTimeFormat().resolvedOptions().timeZone)}>Use this device’s timezone</Button><Button size="sm" type="submit" disabled={Boolean(busy) || timezone === (personal!.brief_timezone ?? '')}>{busy === 'timezone' ? 'Saving…' : 'Save timezone'}</Button></div></form>
       </> : <>
-        <div className="otis-settings__section"><label htmlFor={`${id}-model`}>Workspace model</label><p className="otis-detail__label">Chats follow this model unless you choose another in that chat.</p><ChoiceSelect id={`${id}-model`} label="Workspace model" value={defaultModel ?? 'none'} options={[{ value: 'none', label: 'No default model' }, ...models.filter(model => model.available || model.command_key === defaultModel).map(model => ({ value: model.command_key, label: model.display_name, disabled: !model.available }))]} onChange={value => void saveDefault(value)} disabled={Boolean(busy)}/></div>
+        <div className="otis-settings__section"><label htmlFor={`${id}-model`}>Workspace model</label><p className="otis-detail__label">Chats follow this model unless you choose another in that chat.</p><ChoiceSelect id={`${id}-model`} label="Workspace model" value={defaultModel ?? 'none'} options={[{ value: 'none', label: 'No default model' }, ...models.filter(model => model.available || model.command_key === defaultModel).map(model => ({ value: model.command_key, label: model.display_name, disabled: !model.available }))]} onChange={(value: string) => void saveDefault(value)} disabled={Boolean(busy)}/></div>
         <div className="otis-settings__section"><h3>Connections</h3><ProviderConnection workspaceId={workspaceId} provider="opencode_go" name="OpenCode Go" onUpdated={connectionsUpdated}/><ProviderConnection workspaceId={workspaceId} provider="gemini" name="Gemini" onUpdated={connectionsUpdated}/></div>
         <div className="otis-settings__section"><h3>Workspace members</h3><p className="otis-detail__label">Members can read all workspace chats and retained voice notes.</p>{Object.entries(members).map(([memberId, name]) => <p key={memberId}>{name}</p>)}</div>
       </>}
-      {message && <div className="otis-settings__error" role="alert"><p>{message}</p>{!loaded && <button type="button" className="otis-button" onClick={() => setReload(value => value + 1)}>Retry</button>}</div>}
+      {message && <Alert variant="destructive" className="my-2"><AlertDescription>{message}</AlertDescription>{!loaded && <Button variant="outline" size="sm" className="mt-2" onClick={() => setReload(value => value + 1)}>Retry</Button>}</Alert>}
     </div>
-    <footer className="otis-settings__footer"><span role="status">{saved}</span><button type="button" className="otis-button" onClick={onSignOut}>Sign out</button></footer>
+    <footer className="otis-settings__footer"><span role="status">{saved}</span><Button variant="ghost" size="sm" onClick={onSignOut}>Sign out</Button></footer>
   </section></Overlay>;
 }

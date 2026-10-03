@@ -9,6 +9,8 @@
 import { useState } from 'react';
 import { AUTH_BOUNDS } from '@otis/contracts';
 import { signInWithGoogle, getClientAuth } from '../firebase.js';
+import { Button } from './ui/button.js';
+import { Alert, AlertDescription } from './ui/alert.js';
 
 export function SignInView({ onSignedIn }: { onSignedIn: () => void }) {
   const [pending, setPending] = useState(false);
@@ -46,19 +48,19 @@ export function SignInView({ onSignedIn }: { onSignedIn: () => void }) {
         </p>
 
         {error && (
-          <p className="otis-entry__error" role="alert">
-            {error}
-          </p>
+          <Alert variant="destructive" className="otis-entry__error mb-4">
+            <AlertDescription>{error}</AlertDescription>
+          </Alert>
         )}
 
-        <button
+        <Button
           type="button"
           className="otis-entry__action"
           disabled={pending || !isConfigured}
           onClick={submit}
         >
           {pending ? 'Signing in…' : 'Continue with Google'}
-        </button>
+        </Button>
 
         {!isConfigured && (
           <p className="otis-entry__note">

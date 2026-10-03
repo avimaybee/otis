@@ -11,6 +11,7 @@ import type { User, WorkspaceSummary } from '@otis/contracts';
 import { clientSignOut } from './firebase.js';
 import { ConversationScreen } from './ConversationScreen.js';
 import { SignInView } from './components/SignInView.js';
+import { Button } from './components/ui/button.js';
 
 type State =
   | { status: 'loading' }
@@ -59,7 +60,7 @@ export function App() {
     );
   }
 
-  if (state.status === 'unavailable') return <div className="otis-entry"><div className="otis-entry__inner"><h1 className="otis-entry__title">Otis is unavailable</h1><p className="otis-entry__note">We could not check your session. Try again shortly.</p><button className="otis-entry__action" type="button" onClick={() => void loadSession()}>Try again</button></div></div>;
+  if (state.status === 'unavailable') return <div className="otis-entry"><div className="otis-entry__inner"><h1 className="otis-entry__title">Otis is unavailable</h1><p className="otis-entry__note">We could not check your session. Try again shortly.</p><Button className="otis-entry__action" type="button" onClick={() => void loadSession()}>Try again</Button></div></div>;
 
   if (state.status === 'signed_out') {
     return <SignInView onSignedIn={() => void loadSession()} />;
@@ -74,7 +75,7 @@ export function App() {
             Ask a workspace owner for an invite, then sign in again. Members of a workspace share its
             conversations and retained voice notes.
           </p>
-          <button
+          <Button
             type="button"
             className="otis-entry__action"
             onClick={async () => {
@@ -83,7 +84,7 @@ export function App() {
             }}
           >
             Sign out
-          </button>
+          </Button>
         </div>
       </div>
     );

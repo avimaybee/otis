@@ -4,6 +4,7 @@ import { DOMAIN_BOUNDS } from '@otis/contracts';
 import { useMediaQuery } from '../hooks/useMediaQuery.js';
 import { CloseIcon, SendIcon, StopIcon } from './icons.js';
 import { ModelControls } from './ModelControls.js';
+import { Button } from './ui/button.js';
 
 export interface ClarificationContext {
   id?: string; question: string; candidates?: string[] | null; missing_fields?: string[];
@@ -86,8 +87,8 @@ export function Composer({ disabled, disabledReason, running, commands, models =
   const stop = async () => { if (!onStop || stopping) return; setStopping(true); setError(''); try { await onStop(); } catch { setError('Could not stop yet. Try again.'); } finally { setStopping(false); } };
 
   return <div className="otis-composer"><div className="otis-composer__inner">
-    {replyTo && <div className="otis-reply-context"><span>Replying to Otis</span><button className="otis-iconbutton" type="button" aria-label="Dismiss question" onClick={replyTo.onCancel}><CloseIcon/></button></div>}
-    {replyTo?.candidates?.length ? <div className="otis-reply-choices" aria-label="Suggested responses">{replyTo.candidates.map(choice => <button key={choice} type="button" className="otis-button" onClick={() => { setValue(choice); input.current?.focus(); }}>{choice}</button>)}</div> : null}
+    {replyTo && <div className="otis-reply-context"><span>Replying to Otis</span><Button variant="ghost" size="icon-xs" type="button" aria-label="Dismiss question" onClick={replyTo.onCancel}><CloseIcon/></Button></div>}
+    {replyTo?.candidates?.length ? <div className="otis-reply-choices" aria-label="Suggested responses">{replyTo.candidates.map(choice => <Button key={choice} variant="outline" size="sm" type="button" className="otis-button" onClick={() => { setValue(choice); input.current?.focus(); }}>{choice}</Button>)}</div> : null}
     {pickerOpen && <div id={`${id}-picker`} className="otis-command-picker" role="listbox" aria-label={modelQuery ? 'Models' : thinkingQuery ? 'Thinking effort options' : 'Commands'}>
       {suggestions.map((row, rowIndex) => <button key={row.name} id={`${id}-option-${rowIndex}`} type="button" role="option" aria-selected={rowIndex === activeIndex} className="otis-command-picker__item" tabIndex={-1} disabled={controlPending} onMouseDown={event => event.preventDefault()} onClick={() => void select(rowIndex)}><span>{row.label}</span>{row.summary && <small>{row.summary}</small>}</button>)}
     </div>}
@@ -108,8 +109,8 @@ export function Composer({ disabled, disabledReason, running, commands, models =
       <div className="otis-composer__toolbar">
         <ModelControls models={models} followsDefault={followsDefault} disabled={disabled} pending={controlPending} onCommand={text => command(text)}/>
         <div className="otis-composer__submit-controls">
-          {running && onStop && <button type="button" className="otis-composer__stop otis-iconbutton" aria-label="Stop Otis" disabled={stopping} onClick={() => void stop()}><StopIcon/></button>}
-          <button type="button" className="otis-composer__send" aria-label="Send" aria-busy={sending} disabled={disabled || sending || tooLong || !value.trim() || controlPending || (!modelReady && !value.startsWith('/'))} onClick={() => void submit()}>{sending ? <span className="otis-spinner" aria-hidden="true"/> : <SendIcon/>}</button>
+          {running && onStop && <Button variant="ghost" size="icon" type="button" className="otis-composer__stop otis-iconbutton" aria-label="Stop Otis" disabled={stopping} onClick={() => void stop()}><StopIcon/></Button>}
+          <Button size="icon" type="button" className="otis-composer__send" aria-label="Send" aria-busy={sending} disabled={disabled || sending || tooLong || !value.trim() || controlPending || (!modelReady && !value.startsWith('/'))} onClick={() => void submit()}>{sending ? <span className="otis-spinner" aria-hidden="true"/> : <SendIcon/>}</Button>
         </div>
       </div>
     </div>

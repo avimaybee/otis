@@ -4,6 +4,10 @@ import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { toast } from 'sonner';
 import { ChevronDownIcon, CheckIcon, AlertCircleIcon, UndoIcon, TerminalIcon, FileTextIcon, SearchDocIcon, QuestionIcon, CopyIcon, ArrowDownIcon, PencilIcon } from './icons.js';
+import { Button } from './ui/button.js';
+import { Badge } from './ui/badge.js';
+import { Separator } from './ui/separator.js';
+import { Alert, AlertDescription } from './ui/alert.js';
 
 export interface WorkingStep { id: string; label: string; state: 'queued' | 'running' | 'succeeded' | 'failed' | 'skipped' | 'undone'; actionId?: string | null; summary?: string | null; }
 export const STATES: Record<WorkingStep['state'], string> = { queued: 'Queued', running: 'Working', succeeded: 'Done', failed: 'Failed', skipped: 'Skipped', undone: 'Undone' };
@@ -53,9 +57,9 @@ export function WorkingDisclosure({ steps, finished, expanded, onToggle, onInspe
                 {step.summary && <span className="otis-detail__label">{step.summary}</span>}
               </div>
               {step.actionId && step.state === 'succeeded' && onInspectAction && (
-                <button type="button" className="otis-textbutton otis-working__inspect" onClick={() => onInspectAction(step.actionId!)}>
+                <Button variant="link" size="sm" type="button" className="otis-textbutton otis-working__inspect" onClick={() => onInspectAction(step.actionId!)}>
                   Inspect / Undo
-                </button>
+                </Button>
               )}
             </li>
           ))}
@@ -84,22 +88,22 @@ function RunWork({ run, steps, activities, onInspectAction, onReply }: { run?: R
     {run?.pending_clarification && (
       <div className="otis-question" role="region" aria-label="Awaiting input">
         <div className="otis-question__header">
-          <span className="otis-question__badge">
+          <Badge variant="outline" className="otis-question__badge gap-1">
             <QuestionIcon />
             Awaiting input
-          </span>
+          </Badge>
           <span className="otis-question__tag">Question</span>
         </div>
         <p className="otis-question__text">{run.pending_clarification.question}</p>
         {onReply && (
-          <button type="button" className="otis-textbutton otis-question__reply-btn" onClick={() => onReply(run.pending_clarification!.id)}>
+          <Button variant="link" size="sm" type="button" className="otis-textbutton otis-question__reply-btn" onClick={() => onReply(run.pending_clarification!.id)}>
             Answer below
-          </button>
+          </Button>
         )}
       </div>
     )}
-    {run?.status === 'partial' && <p className="otis-run__status otis-run__status--error">Some changes were saved. The run could not finish; inspect the completed changes above.</p>}
-    {run?.status === 'failed' && <div><p className="otis-run__status otis-run__status--error" role="status">{failureMessage(run.run.error_code)}</p>{run.run.error_code && <details className="otis-provider-summary"><summary>Error details</summary><p>{run.run.error_code}{run.run.error_message ? `: ${run.run.error_message}` : ''}</p></details>}</div>}
+    {run?.status === 'partial' && <Alert variant="destructive" className="otis-run__status otis-run__status--error"><AlertDescription>Some changes were saved. The run could not finish; inspect the completed changes above.</AlertDescription></Alert>}
+    {run?.status === 'failed' && <div><Alert variant="destructive" className="otis-run__status otis-run__status--error" role="status"><AlertDescription>{failureMessage(run.run.error_code)}</AlertDescription>{run.run.error_code && <details className="otis-provider-summary mt-2"><summary>Error details</summary><p>{run.run.error_code}{run.run.error_message ? `: ${run.run.error_message}` : ''}</p></details>}</Alert></div>}
     {run?.status === 'cancelled' && <p className="otis-run__status">Stopped. Saved changes remain available to inspect or undo.</p>}
   </div>;
 }
@@ -138,7 +142,7 @@ export function Transcript({ messages, members, currentUserId, steps, run, runs 
   return <div className="otis-transcript-region">
     <div className="otis-transcript" ref={scrollRef} tabIndex={0} role="log" aria-label="Conversation" aria-live="off" aria-busy={loading} onScroll={() => { const node = scrollRef.current!; follow.current = node.scrollHeight - node.scrollTop - node.clientHeight < 100; setAway(!follow.current); }}>
       <div className={`otis-transcript__inner${!messages.length ? ' otis-transcript__inner--empty' : ''}`}>
-        {hasOlder && <button className="otis-textbutton otis-load-older" type="button" disabled={loadingOlder} onClick={() => { const node = scrollRef.current!; anchor.current = { height: node.scrollHeight, top: node.scrollTop }; onLoadOlder?.(); }}>{loadingOlder ? 'Loading…' : 'Load earlier messages'}</button>}
+        {hasOlder && <Button variant="link" size="sm" className="otis-textbutton otis-load-older" type="button" disabled={loadingOlder} onClick={() => { const node = scrollRef.current!; anchor.current = { height: node.scrollHeight, top: node.scrollTop }; onLoadOlder?.(); }}>{loadingOlder ? 'Loading…' : 'Load earlier messages'}</Button>}
         {loading && !messages.length ? <p className="otis-run__status">Opening conversation…</p> : !messages.length && !steps.length && <div className="otis-empty"><h2 className="otis-empty__title">What’s happening?</h2></div>}
         {messages.map((message, index) => {
           const isMember = message.author_kind === 'member'; const author = message.author_user_id ? message.author_display_name ?? members[message.author_user_id] ?? 'Teammate' : 'Otis';
@@ -149,26 +153,26 @@ export function Transcript({ messages, members, currentUserId, steps, run, runs 
           const noAnswerYet = isMember && runId && !messages.some(item => item.run_id === runId && item.author_kind !== 'member') && messages.filter(item => item.run_id === runId && item.author_kind === 'member').at(-1)?.id === message.id;
           const chunks = runActivities.filter(item => item.type === 'text_chunk').map(item => (item.payload as { text?: string }).text ?? '').join('');
           return <div key={message.id} className="otis-message-group">
-            {(index > 0 && dayKey(message.created_at) !== dayKey(messages[index - 1]!.created_at)) && <div className="otis-dayseparator">{formatDay(message.created_at)}</div>}
+            {(index > 0 && dayKey(message.created_at) !== dayKey(messages[index - 1]!.created_at)) && <div className="otis-dayseparator"><Separator className="flex-1" /><span>{formatDay(message.created_at)}</span><Separator className="flex-1" /></div>}
             {firstAgent && <RunWork run={runData} steps={runSteps} activities={runActivities} onInspectAction={onInspectAction} onReply={onReply}/>}
             <article className={`otis-turn otis-turn--${isMember ? 'member' : 'agent'}`} data-author-kind={message.author_kind}>
               {isMember && message.author_user_id !== currentUserId && <div className="otis-turn__meta">{author}</div>}
               <div className={isMember ? 'otis-turn__bubble' : 'otis-turn__body'}>{isMember ? message.content_text : <Markdown remarkPlugins={[remarkGfm]} skipHtml disallowedElements={['img']}>{message.content_text}</Markdown>}</div>
-              {!isMember && runData?.sources?.length && onInspectSource ? <div className="otis-sources" aria-label="Sources">{runData.sources.map(source => <button className="otis-source-link" type="button" key={source.memory_id} onClick={() => onInspectSource(source.memory_id)}>{source.label}{source.provenance === 'inferred' ? ' · inferred' : ''}</button>)}</div> : null}
+              {!isMember && runData?.sources?.length && onInspectSource ? <div className="otis-sources" aria-label="Sources">{runData.sources.map(source => <Button variant="outline" size="xs" className="otis-source-link" type="button" key={source.memory_id} onClick={() => onInspectSource(source.memory_id)}>{source.label}{source.provenance === 'inferred' ? ' · inferred' : ''}</Button>)}</div> : null}
               <div className="otis-turn__actions">
                 <time className="otis-turn__time" dateTime={message.created_at}>{new Date(message.created_at).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })}</time>
-                <button type="button" className="otis-msg-action" aria-label={isMember ? 'Copy message' : 'Copy response'} title="Copy" onClick={() => void handleCopy(message.id, message.content_text)}>
+                <Button variant="ghost" size="icon-xs" type="button" className="otis-msg-action" aria-label={isMember ? 'Copy message' : 'Copy response'} title="Copy" onClick={() => void handleCopy(message.id, message.content_text)}>
                   {copiedId === message.id ? <CheckIcon /> : <CopyIcon />}
-                </button>
+                </Button>
                 {isMember && message.author_user_id === currentUserId && onEditMessage && (
-                  <button type="button" className="otis-msg-action" aria-label="Use message as draft" title="Use as draft" onClick={() => onEditMessage(message.content_text)}>
+                  <Button variant="ghost" size="icon-xs" type="button" className="otis-msg-action" aria-label="Use message as draft" title="Use as draft" onClick={() => onEditMessage(message.content_text)}>
                     <PencilIcon />
-                  </button>
+                  </Button>
                 )}
                 {!isMember && runData?.actions?.length && onInspectAction ? (
-                  <button type="button" className="otis-msg-action otis-msg-action--pill" aria-label="Inspect or undo action" onClick={() => onInspectAction(runData.actions[0]!.action_id)}>
+                  <Button variant="outline" size="xs" type="button" className="otis-msg-action otis-msg-action--pill" aria-label="Inspect or undo action" onClick={() => onInspectAction(runData.actions[0]!.action_id)}>
                     <UndoIcon size={12}/><span>Undo</span>
-                  </button>
+                  </Button>
                 ) : null}
               </div>
             </article>
@@ -179,10 +183,10 @@ export function Transcript({ messages, members, currentUserId, steps, run, runs 
       </div>
     </div>
     {(away || pendingUnread > 0) && (
-      <button type="button" className="otis-jump" aria-label="Jump to latest messages" onClick={jump}>
+      <Button variant="secondary" size="icon" type="button" className="otis-jump" aria-label="Jump to latest messages" onClick={jump}>
         <ArrowDownIcon size={16}/>
-        {pendingUnread > 0 && <span className="otis-jump__badge">{pendingUnread}</span>}
-      </button>
+        {pendingUnread > 0 && <Badge variant="secondary" className="otis-jump__badge">{pendingUnread}</Badge>}
+      </Button>
     )}
   </div>;
 }
