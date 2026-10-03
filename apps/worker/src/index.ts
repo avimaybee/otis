@@ -58,6 +58,7 @@ import {
 } from './routes/settings.js';
 import { handleStopRun, handleGetRun } from './routes/runs.js';
 import { jsonError, jsonSuccess } from './middleware/errors.js';
+import { workerDebug } from './observability.js';
 
 export interface Env {
   DB: D1Database;
@@ -82,6 +83,7 @@ export interface Env {
 
 export async function createWorkerAgentHandler(env: Env): Promise<TurnHandler> {
   if (env.USE_ECHO_HANDLER === 'true') {
+    workerDebug('handler', 'echo handler selected; no agent inference will run', {});
     return EchoHandler;
   }
 
@@ -100,6 +102,15 @@ export async function createWorkerAgentHandler(env: Env): Promise<TurnHandler> {
                   parsedRounds !== undefined && !Number.isNaN(parsedRounds) && parsedRounds > 0)
     ? { maxDailyActions: parsedDaily, maxRoundsPerRun: parsedRounds }
     : undefined;
+
+  // Presence only — values stay out of logs.
+  workerDebug('handler', 'agent handler constructed', {
+    echo: false,
+    limitsConfigured: limits !== undefined,
+    dailyVarPresent: env.AGENT_MAX_DAILY_ACTIONS !== undefined && env.AGENT_MAX_DAILY_ACTIONS !== '',
+    roundsVarPresent: env.AGENT_MAX_ROUNDS_PER_RUN !== undefined && env.AGENT_MAX_ROUNDS_PER_RUN !== '',
+    wrappingKeyPresent: wrappingKey !== undefined,
+  });
 
   return new AgentHandler({
     wrappingKey,
@@ -527,8 +538,10 @@ export default {
    * needs recovery), then requeues stale work and dispatches a bounded slice.
    */
   async scheduled(_event: ScheduledEvent, env: Env): Promise<void> {
+    workerDebug('cron', 'scheduled sweep starting', {});
     const handler = await createWorkerAgentHandler(env);
     const workspaces = await listWorkspacesNeedingRecovery(env.DB);
+    workerDebug('cron', 'recovery scan complete', { workspaces: workspaces.length });
     for (const workspaceId of workspaces) {
       try {
         await recoverWorkspace(env.DB, workspaceId);
@@ -551,6 +564,7 @@ export default {
    * never retried blindly.
    */
   async queue(batch: MessageBatch<{ workspace_id?: unknown; kind?: unknown; job_id?: unknown }>, env: Env): Promise<void> {
+    workerDebug('queue', 'batch received', { messages: batch.messages.length });
     const handler = await createWorkerAgentHandler(env);
     for (const message of batch.messages) {
       const workspaceId = message.body?.workspace_id;

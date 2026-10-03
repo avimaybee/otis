@@ -15,6 +15,7 @@ import { resolveDateAnswer } from './clarificationFields.js';
  */
 
 import { claimWorkspaceLease, releaseWorkspaceLease, renewWorkspaceLease } from './leases.js';
+import { workerDebug } from '../observability.js';
 import {
   adoptStep,
   completeStep,
@@ -1230,6 +1231,7 @@ export async function dispatchWorkspace(
   options: DispatchOptions & { budget?: number } = {},
 ): Promise<{ processed: number; results: DispatchResult[] }> {
   const budget = options.budget ?? 5;
+  workerDebug('dispatch', 'workspace slice starting', { workspaceId, budget });
   const results: DispatchResult[] = [];
   for (let i = 0; i < budget; i++) {
     const next = await db
@@ -1243,8 +1245,16 @@ export async function dispatchWorkspace(
     if (!next) break;
     const result = await dispatchOutboxItem(db, next.id, workspaceId, options);
     results.push(result);
+    workerDebug('dispatch', 'outbox item settled', {
+      workspaceId,
+      outboxId: next.id,
+      run_id: result.run_id,
+      status: result.status,
+      ...(result.detail ? { detail: result.detail } : {}),
+    });
     if (result.status === 'deferred' || result.status === 'contended') break;
   }
+  workerDebug('dispatch', 'workspace slice complete', { workspaceId, processed: results.length });
   return { processed: results.length, results };
 }
 

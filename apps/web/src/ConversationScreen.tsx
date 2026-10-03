@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Toaster } from 'sonner';
 import type { Chat, ChatMessage, ChatDetailResponse, CommandDescriptor, ModelOption, PublicActivity, RunDetailResponse, ClarificationSummary } from '@otis/contracts';
 import { api, ApiError } from './api/client.js';
+import { debugLog, failureLog } from './api/log.js';
 import { mergeActivity, subscribeToActivity, type StreamStatus } from './hooks/useActivityStream.js';
 import { useMediaQuery } from './hooks/useMediaQuery.js';
 import { Composer } from './components/Composer.js';
@@ -63,11 +64,18 @@ export function ConversationScreen({ workspaceId: initialWorkspace, workspaces, 
       const cursor = firstActivity.latest_cursor;
       const runIds = [...new Set(page.messages.flatMap(message => message.run_id ? [message.run_id] : []))];
       const runData = await Promise.all(runIds.map(id => api.run(workspaceId, id)));
+      for (const run of runData) {
+        if (run.status === 'failed' || run.status === 'partial') {
+          failureLog('chat', 'run settled abnormally', { chatId, run_id: run.run.id, status: run.status, error_code: run.run.error_code });
+        } else {
+          debugLog('chat', 'run state', { chatId, run_id: run.run.id, status: run.status });
+        }
+      }
       const activities = [...new Map([...firstActivity.activities, ...runData.flatMap(run => run.activities)].map(activity => [activity.id, activity])).values()].sort((a, b) => a.cursor - b.cursor);
       if (generation !== epoch.current || selected.current.workspace !== workspaceId || selected.current.chat !== chatId) return;
       setView(current => ({ workspaceId, chatId, detail, messages: mergeMessages(current?.chatId === chatId && current.workspaceId === workspaceId ? current.messages : [], page.messages), activities, runs: Object.fromEntries(runData.map(run => [run.run.id, run])), older: current?.chatId === chatId && current.messages.length > page.messages.length ? current.older : page.next_before_sequence, questions: questions.clarifications, cursor }));
       setLoading(false);
-    } catch (err) { if (generation !== epoch.current) return; if (err instanceof ApiError && [401, 403, 404].includes(err.status)) loseAccess(); else { setError(safeError(err, 'Could not open this conversation. Try again.')); setLoading(false); } }
+    } catch (err) { if (generation !== epoch.current) return; debugLog('chat', 'load failed', { chatId, status: err instanceof ApiError ? err.status : null, code: err instanceof ApiError ? err.code : null }); if (err instanceof ApiError && [401, 403, 404].includes(err.status)) loseAccess(); else { setError(safeError(err, 'Could not open this conversation. Try again.')); setLoading(false); } }
   }, [workspaceId, loseAccess]);
   useEffect(() => { if (!activeChatId) { setView(null); setLoading(false); return; } setLoading(true); void loadChat(activeChatId); return () => { if (refreshTimer.current) clearTimeout(refreshTimer.current); }; }, [activeChatId, loadChat]);
   const readyChatId = view?.workspaceId === workspaceId && view.chatId === activeChatId ? view.chatId : null;
@@ -104,17 +112,19 @@ export function ConversationScreen({ workspaceId: initialWorkspace, workspaces, 
     try { if (!operation) operation = JSON.parse(sessionStorage.getItem(operationKey) ?? 'null'); } catch { /* a fresh operation is safe when nothing was persisted */ }
     if (!operation || operation.text !== text || (activeChatId !== null && operation.chatId !== activeChatId) || operation.clarificationId !== (activeClarification?.id ?? undefined)) { operation = { text, id: crypto.randomUUID(), chatId: activeChatId, clarificationId: activeClarification?.id }; sendOperation.current = operation; }
     try {
+      debugLog('send', 'starting', { operationId: operation.id, chatId: operation.chatId ?? null, chars: text.length, clarificationId: operation.clarificationId ?? null });
       let chatId = operation.chatId;
       try { sessionStorage.setItem(operationKey, JSON.stringify(operation)); } catch { /* keep the in-memory retry identity */ }
-      if (!chatId) { const created = await api.createChat(workspaceId, `new-${operation.id}`); chatId = created.chat.id; if (generation === epoch.current) setOwnChats(chats => [created.chat, ...chats.filter(chat => chat.id !== created.chat.id)]); operation.chatId = chatId; try { sessionStorage.setItem(operationKey, JSON.stringify(operation)); } catch { /* in-memory identity remains */ } }
+      if (!chatId) { const created = await api.createChat(workspaceId, `new-${operation.id}`); chatId = created.chat.id; debugLog('send', 'chat created', { chatId }); if (generation === epoch.current) setOwnChats(chats => [created.chat, ...chats.filter(chat => chat.id !== created.chat.id)]); operation.chatId = chatId; try { sessionStorage.setItem(operationKey, JSON.stringify(operation)); } catch { /* in-memory identity remains */ } }
       const accepted = await api.sendMessage(workspaceId, chatId, operation.id, text, operation.clarificationId);
+      debugLog('send', 'accepted; run queued server-side', { chatId, message_id: accepted.message_id, run_id: accepted.run_id, sequence: accepted.acceptance_sequence });
       sendOperation.current = null; try { sessionStorage.removeItem(operationKey); } catch { /* accepted response is authoritative */ }
       if (generation !== epoch.current) return true;
       setError(null); setReplyId(null); setDismissedClarificationId(null); setDraftValue(null);
       if (!activeChatId) navigate(workspaceId, chatId);
       if (accepted.selected_workspace_id && workspaces.some(workspace => workspace.id === accepted.selected_workspace_id)) { switchWorkspace(accepted.selected_workspace_id); return true; }
       await loadChat(chatId, epoch.current); return true;
-    } catch (err) { if (generation === epoch.current) { setError(safeError(err, 'Message not confirmed. Your draft is retained; send again to retry the same message.')); if (err instanceof ApiError && [401, 403, 404].includes(err.status)) loseAccess(); } return false; }
+    } catch (err) { debugLog('send', 'failed before acceptance', { operationId: operation.id, status: err instanceof ApiError ? err.status : null, code: err instanceof ApiError ? err.code : null }); if (generation === epoch.current) { setError(safeError(err, 'Message not confirmed. Your draft is retained; send again to retry the same message.')); if (err instanceof ApiError && [401, 403, 404].includes(err.status)) loseAccess(); } return false; }
   };
   const switchWorkspace = (id: string) => { if (!workspaces.some(workspace => workspace.id === id)) return; let last: string | null = null; try { last = sessionStorage.getItem(`otis:view:${userId}:${id}`); } catch { /* start new */ } navigate(id, last === 'new' ? null : last); };
   const loadOlder = async () => { if (!current?.older) return; setLoadingOlder(true); const generation = epoch.current; try { const page = await api.listMessages(workspaceId, current.chatId, current.older); const ids = [...new Set(page.messages.flatMap(message => message.run_id ? [message.run_id] : []))]; const runs = await Promise.all(ids.map(id => api.run(workspaceId, id))); if (generation !== epoch.current) return; setView(value => value ? { ...value, messages: mergeMessages(page.messages, value.messages), older: page.next_before_sequence, runs: { ...value.runs, ...Object.fromEntries(runs.map(run => [run.run.id, run])) } } : value); } catch { setError('Could not load earlier messages. Try again.'); } finally { setLoadingOlder(false); } };

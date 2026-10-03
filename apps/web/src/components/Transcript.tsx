@@ -93,7 +93,7 @@ function RunWork({ run, steps, activities, onInspectAction, onReply }: { run?: R
       </div>
     )}
     {run?.status === 'partial' && <p className="otis-run__status otis-run__status--error">Some changes were saved. The run could not finish; inspect the completed changes above.</p>}
-    {run?.status === 'failed' && <p className="otis-run__status otis-run__status--error">Otis could not finish this request. Your message is retained.</p>}
+    {run?.status === 'failed' && <p className="otis-run__status otis-run__status--error">Otis could not finish this request{run.run.error_code ? ` (${run.run.error_code})` : ''}. Your message is retained.{run.run.error_message ? ` ${run.run.error_message}` : ''}</p>}
     {run?.status === 'cancelled' && <p className="otis-run__status">Stopped. Saved changes remain available to inspect or undo.</p>}
   </div>;
 }

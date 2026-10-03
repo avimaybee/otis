@@ -99,7 +99,8 @@ p { margin: 0; }
 .otis-composer__disclaimer { font-size: 11px; line-height: 15px; color: var(--otis-text-muted); text-align: center; margin: 0 0 6px; user-select: none; letter-spacing: -0.01em; }
 .otis-composer__field { display: flex; align-items: center; gap: 6px; padding: 4px 6px; border: 1px solid var(--otis-border); border-radius: 9999px; background: var(--otis-surface); transition: border-color var(--otis-duration), border-radius var(--otis-duration), background var(--otis-duration); }
 .otis-composer__field:focus-within { border-color: #555555; }
-.otis-composer__field:has(.otis-composer__input:focus-visible) { outline: 2px solid var(--otis-focus-ring); outline-offset: 2px; }
+/* No focus ring on the composer: the subtle :focus-within border shift above
+   is the only focus indication. A bright outline here reads as a border. */
 .otis-composer__actions-bar { display: contents; }
 .otis-composer__plus { order: 1; display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; border-radius: 50%; background: rgba(255, 255, 255, 0.08); border: 0; color: #d4d4d4; cursor: pointer; flex-shrink: 0; margin-left: 2px; transition: background var(--otis-duration), color var(--otis-duration), transform var(--otis-duration); }
 .otis-composer__plus:hover:not(:disabled) { background: rgba(255, 255, 255, 0.16); color: #ffffff; }

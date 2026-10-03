@@ -10,6 +10,7 @@ import type { CommandResult, ProviderName } from '@otis/contracts';
 import type { TurnContext, TurnHandler, TurnOutcome } from '../actor/dispatch.js';
 import { completeStep, hashStepArguments, listRunSteps, persistStep } from '../actor/steps.js';
 import { resolveModelForChat, runProviderTurn } from '../providers/service.js';
+import { workerDebug, workerFailure } from '../observability.js';
 import { executeAgentTool } from './repository.js';
 import { getTurnContext } from './context.js';
 import { publishAgentActivity } from './activity.js';
@@ -81,6 +82,7 @@ export class AgentHandler implements TurnHandler {
   }
 
   async runTurn(ctx: TurnContext): Promise<TurnOutcome> {
+    workerDebug('agent', 'turn starting', { workspaceId: ctx.workspaceId, runId: ctx.runId });
     // 0. Enforce required execution limits (must be explicitly provided; no numeric production defaults)
     if (
       !this.options?.limits ||
@@ -89,6 +91,11 @@ export class AgentHandler implements TurnHandler {
       typeof this.options.limits.maxRoundsPerRun !== 'number' ||
       this.options.limits.maxRoundsPerRun <= 0
     ) {
+      workerFailure('agent', 'turn refused: execution limits missing or invalid', {
+        workspaceId: ctx.workspaceId,
+        runId: ctx.runId,
+        limitsConfigured: this.options?.limits !== undefined,
+      });
       return {
         kind: 'failed',
         errorCode: 'missing_budgets',
@@ -117,10 +124,16 @@ export class AgentHandler implements TurnHandler {
       }>();
 
     if (!runRow) {
+      workerFailure('agent', 'turn refused: run row missing', { workspaceId: ctx.workspaceId, runId: ctx.runId });
       return { kind: 'failed', errorCode: 'run_not_found', errorMessage: `Run '${ctx.runId}' not found.` };
     }
 
     if (runRow.status !== 'running') {
+      workerFailure('agent', 'turn refused: run not active', {
+        workspaceId: ctx.workspaceId,
+        runId: ctx.runId,
+        status: runRow.status,
+      });
       return { kind: 'failed', errorCode: 'run_inactive', errorMessage: `Run '${ctx.runId}' is '${runRow.status}', not running.` };
     }
 
@@ -191,12 +204,23 @@ export class AgentHandler implements TurnHandler {
         });
 
         if (!resolved.available) {
+          workerFailure('agent', 'turn failed: no available model', {
+            workspaceId: ctx.workspaceId,
+            runId: ctx.runId,
+            reason: resolved.reason,
+          });
           return {
             kind: 'failed',
             errorCode: 'model_unavailable',
             errorMessage: `No available model configured: ${resolved.reason}`,
           };
         }
+        workerDebug('agent', 'model pinned for run', {
+          workspaceId: ctx.workspaceId,
+          runId: ctx.runId,
+          commandKey: resolved.entry.commandKey,
+          provider: resolved.entry.provider,
+        });
         effectiveEntry = resolved.entry;
         modelSnapshot = {
           commandKey: resolved.entry.commandKey,

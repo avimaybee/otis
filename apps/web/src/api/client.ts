@@ -25,6 +25,7 @@ import type {
   UndoPreviewResponse,
 } from '@otis/contracts';
 import { AUTH_BOUNDS, DOMAIN_BOUNDS } from '@otis/contracts';
+import { debugLog, failureLog } from './log.js';
 
 export class ApiError extends Error {
   constructor(
@@ -39,20 +40,34 @@ export class ApiError extends Error {
 }
 
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
+  const method = init.method ?? 'GET';
+  const started = Date.now();
   const headers = new Headers(init.headers);
   if (init.method && init.method !== 'GET') {
     headers.set(AUTH_BOUNDS.CSRF_HEADER, '1');
   }
   if (init.body) headers.set('Content-Type', 'application/json');
 
-  const response = await fetch(path, { ...init, headers, credentials: 'same-origin' });
+  let response: Response;
+  try {
+    response = await fetch(path, { ...init, headers, credentials: 'same-origin' });
+  } catch (err) {
+    failureLog('api', 'network failure before HTTP', { method, path, ms: Date.now() - started, error: String(err) });
+    throw err;
+  }
   const text = await response.text();
   let payload: unknown = null;
-  try { payload = text.length > 0 ? JSON.parse(text) : null; } catch { throw new ApiError(response.status, 'service_unavailable', 'Otis is unavailable. Try again shortly.'); }
+  try { payload = text.length > 0 ? JSON.parse(text) : null; } catch {
+    failureLog('api', 'non-JSON response', { method, path, status: response.status, ms: Date.now() - started, bytes: text.length });
+    throw new ApiError(response.status, 'service_unavailable', 'Otis is unavailable. Try again shortly.');
+  }
 
   if (!response.ok) {
     const error = (payload as { error?: { code?: string; message?: string; request_id?: string } })
       ?.error;
+    failureLog('api', 'request rejected', {
+      method, path, status: response.status, code: error?.code ?? 'unknown_error', request_id: error?.request_id ?? null, ms: Date.now() - started,
+    });
     throw new ApiError(
       response.status,
       error?.code ?? 'unknown_error',
@@ -61,6 +76,7 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
     );
   }
 
+  debugLog('api', 'request ok', { method, path, status: response.status, ms: Date.now() - started });
   return payload as T;
 }
 
