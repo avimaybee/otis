@@ -5,6 +5,9 @@
 @import "shadcn/tailwind.css";
 @import "@fontsource-variable/geist";
 
+@source ".";
+@source "..";
+
 @custom-variant dark (&:is(.dark *));
 
 *, *::before, *::after { box-sizing: border-box; }
