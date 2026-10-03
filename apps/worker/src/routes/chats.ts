@@ -10,6 +10,7 @@ import {
   buildWorkspaceContext,
 } from '@otis/identity';
 import type { Env } from '../index.js';
+import { publishDispatchHint } from '../dispatchHint.js';
 import { jsonError, jsonSuccess } from '../middleware/errors.js';
 import {
   createChat,
@@ -211,6 +212,7 @@ export async function handleCreateMessage(
   workspaceId: string,
   chatId: string,
   requestId: string,
+  ctx?: ExecutionContext,
 ): Promise<Response> {
   if (!validateCsrfAndOrigin(request)) {
     return jsonError(403, 'csrf_violation', 'Invalid CSRF header or origin.', requestId);
@@ -234,7 +236,7 @@ export async function handleCreateMessage(
     if (body.clarification_id) {
       return handleReplyToClarification(new Request(request.url, {
         method: 'POST', headers: request.headers, body: JSON.stringify(body),
-      }), env, workspaceId, body.clarification_id, requestId, chatId);
+      }), env, workspaceId, body.clarification_id, requestId, chatId, ctx);
     }
     if (typeof body.text === 'string' && parseCommandText(body.text, 'web').kind !== 'text') {
       return handleExecuteCommand(new Request(request.url, {
@@ -253,10 +255,12 @@ export async function handleCreateMessage(
       steerRunId: active?.id,
     });
 
+    publishDispatchHint(ctx, env, workspaceId);
     return jsonSuccess(result, 202, { 'x-request-id': requestId });
   } catch (err) {
     if (err instanceof SteeringRunClosedError) {
       const result = await acceptWebMessage(env.DB, { workspaceId, chatId, userId: auth.userId, clientMessageId: body.client_message_id, text: parseCommandText(body.text ?? '', 'web').kind === 'text' ? (parseCommandText(body.text ?? '', 'web') as { text: string }).text : body.text, mediaId: body.media_id });
+      publishDispatchHint(ctx, env, workspaceId);
       return jsonSuccess(result, 202, { 'x-request-id': requestId });
     }
     if (err instanceof ConflictError) {

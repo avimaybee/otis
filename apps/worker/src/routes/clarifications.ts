@@ -14,6 +14,7 @@ import type {
   ClarificationSummary,
 } from '@otis/contracts';
 import type { Env } from '../index.js';
+import { publishDispatchHint } from '../dispatchHint.js';
 import { jsonError, jsonSuccess } from '../middleware/errors.js';
 import { acceptWebMessage } from '../inbox/repository.js';
 import { resumeRun } from '../actor/dispatch.js';
@@ -138,6 +139,7 @@ export async function handleReplyToClarification(
   clarificationId: string,
   requestId: string,
   expectedChatId?: string,
+  ctx?: ExecutionContext,
 ): Promise<Response> {
   const scope = await requireWorkspaceScope(request, env.DB, workspaceId, requestId, { csrf: true });
   if (scope instanceof Response) return scope;
@@ -221,5 +223,6 @@ export async function handleReplyToClarification(
     message_id: accepted.message_id,
     run_id: runId,
   };
+  publishDispatchHint(ctx, env, workspaceId);
   return jsonSuccess(body2, 202, { 'x-request-id': requestId });
 }

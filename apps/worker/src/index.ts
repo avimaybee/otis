@@ -172,7 +172,7 @@ export class WorkspaceActor {
 }
 
 export default {
-  async fetch(request: Request, env: Env, _ctx: ExecutionContext): Promise<Response> {
+  async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
     const requestId = request.headers.get('x-request-id') || crypto.randomUUID();
 
@@ -257,7 +257,7 @@ export default {
           return await handleGetMessages(request, env, workspaceId, chatId, requestId);
         }
         if (request.method === 'POST' && workspaceId && chatId) {
-          return await handleCreateMessage(request, env, workspaceId, chatId, requestId);
+          return await handleCreateMessage(request, env, workspaceId, chatId, requestId, ctx);
         }
         return jsonError(405, 'method_not_allowed', 'Method not allowed.', requestId);
       }
@@ -463,7 +463,7 @@ export default {
         const workspaceId = clarificationReplyMatch[1];
         const clarificationId = clarificationReplyMatch[2];
         if (request.method === 'POST' && workspaceId && clarificationId) {
-          return await handleReplyToClarification(request, env, workspaceId, clarificationId, requestId);
+          return await handleReplyToClarification(request, env, workspaceId, clarificationId, requestId, undefined, ctx);
         }
         return jsonError(405, 'method_not_allowed', 'Method not allowed.', requestId);
       }

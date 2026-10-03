@@ -32,6 +32,8 @@ import type {
 } from '@otis/contracts';
 import { acceptWebMessage, createChat } from '../src/inbox/repository.js';
 import { createActivityStream } from '../src/chat/stream.js';
+import { handleCreateMessage } from '../src/routes/chats.js';
+import { publishDispatchHint } from '../src/dispatchHint.js';
 import { executeLedgerCommand, getWorkspaceRevision, handleCreateEntity, handleCreateTask } from '@otis/ledger';
 import { PRODUCTION_REGISTRY } from '@otis/agent';
 import { sha256 } from '@otis/identity';
@@ -1299,5 +1301,68 @@ describe('007 acceptance transaction boundaries', () => {
     } finally {
       await env.DB.prepare(`INSERT INTO workspace_users (workspace_id, user_id, role, joined_at, created_at, updated_at) VALUES (?, ?, 'member', ?, ?, ?)`).bind(WS, HUNOR, now, now, now).run();
     }
+  });
+});
+
+describe('Dispatch wake-up hint on acceptance', () => {
+  const postMessage = (
+    chatId: string,
+    clientMessageId: string,
+    text: string,
+    ctx?: ExecutionContext,
+    queue?: { send: (body: unknown) => Promise<void> },
+  ) => {
+    const request = new Request(`http://localhost/api/workspaces/${WS}/chats/${chatId}/messages`, {
+      method: 'POST',
+      headers: { Cookie: aviCookie, ...CSRF },
+      body: JSON.stringify({ client_message_id: clientMessageId, text }),
+    });
+    const routeEnv = queue ? { ...env, DISPATCH_QUEUE: queue } : env;
+    return handleCreateMessage(request, routeEnv as typeof env, WS, chatId, 'req-wake-up', ctx);
+  };
+
+  it('publishes a workspace wake-up to the queue on accepted messages', async () => {
+    const sent: unknown[] = [];
+    const pending: Promise<unknown>[] = [];
+    const ctx = { waitUntil: (promise: Promise<unknown>) => { pending.push(promise); } } as unknown as ExecutionContext;
+    const queue = { send: async (body: unknown) => { sent.push(body); } };
+
+    const res = await postMessage(aviChat, 'cm-wake-up-1', 'Wake the dispatcher, please.', ctx, queue);
+    expect(res.status).toBe(202);
+    await Promise.all(pending);
+    expect(sent).toEqual([{ workspace_id: WS }]);
+  });
+
+  it('still accepts when no queue binding or context exists (cron remains the backstop)', async () => {
+    const res = await postMessage(aviChat, 'cm-wake-up-2', 'Acceptance must not depend on the hint.');
+    expect(res.status).toBe(202);
+
+    const resNoQueue = await postMessage(
+      aviChat,
+      'cm-wake-up-3',
+      'Acceptance with context but no queue binding.',
+      { waitUntil: () => undefined } as unknown as ExecutionContext,
+    );
+    expect(resNoQueue.status).toBe(202);
+  });
+
+  it('a failing queue publish never fails acceptance', async () => {
+    const pending: Promise<unknown>[] = [];
+    const ctx = { waitUntil: (promise: Promise<unknown>) => { pending.push(promise); } } as unknown as ExecutionContext;
+    const queue = {
+      send: async () => { throw new Error('queue exploded'); },
+    };
+    const res = await postMessage(aviChat, 'cm-wake-up-4', 'The hint may fail; the message must land.', ctx, queue);
+    expect(res.status).toBe(202);
+    await Promise.all(pending.map((promise) => promise.catch(() => undefined)));
+
+    const stored = await env.DB.prepare(`SELECT id FROM chat_messages WHERE chat_id = ? AND client_message_id = ?`)
+      .bind(aviChat, 'cm-wake-up-4')
+      .first<{ id: string }>();
+    expect(stored?.id).toBeTruthy();
+  });
+
+  it('publishDispatchHint is a silent no-op without context', () => {
+    expect(() => publishDispatchHint(undefined, env as never, WS)).not.toThrow();
   });
 });
