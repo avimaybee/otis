@@ -3,7 +3,7 @@
  *
  * A slash command is an attributed turn, not a side effect: it owns an inbound
  * message, a `command` run and public activity, so it survives restart and is
- * visible in history exactly like ordinary conversation.
+ * auditable. UI control actions retain those records without chat bubbles.
  */
 
 import { sha256 } from '@otis/identity';
@@ -16,9 +16,9 @@ import { sha256 } from '@otis/identity';
  */
 export async function ensureCommandSourceMessage(
   db: D1Database,
-  params: { workspaceId: string; userId: string; chatId: string; externalId: string; text: string; targetActionId: string; mode: string },
+  params: { workspaceId: string; userId: string; chatId: string; externalId: string; text: string; targetActionId: string; mode: string; presentation?: 'control' },
 ): Promise<{ messageInId: string; created: boolean }> {
-  const payload = JSON.stringify({ text: params.text.trim(), media_id: null });
+  const payload = JSON.stringify({ text: params.text.trim(), media_id: null, ...(params.presentation ? { presentation: params.presentation } : {}) });
   const fingerprint = await sha256(payload);
   const existing = await db.prepare(`SELECT id, workspace_id, user_id, chat_id, payload_fingerprint, raw_payload FROM messages_in WHERE channel = 'web' AND external_id = ?`).bind(params.externalId).first<Record<string, unknown>>();
   if (existing) {
@@ -31,7 +31,7 @@ export async function ensureCommandSourceMessage(
   await db.batch([
     db.prepare(`INSERT INTO acceptance_guards (id, guard_ok) VALUES (?, (SELECT 1 FROM workspace_users wu JOIN chats c ON c.workspace_id = wu.workspace_id AND c.author_user_id = wu.user_id WHERE wu.workspace_id = ? AND wu.user_id = ? AND c.id = ?))`).bind(`guard_${crypto.randomUUID()}`, params.workspaceId, params.userId, params.chatId),
     db.prepare(`UPDATE workspaces SET last_acceptance_sequence = last_acceptance_sequence + 1 WHERE id = ?`).bind(params.workspaceId),
-    db.prepare(`INSERT INTO messages_in (id, workspace_id, user_id, channel, external_id, payload_fingerprint, raw_payload, status, acceptance_sequence, chat_id, created_at, updated_at) VALUES (?, ?, ?, 'web', ?, ?, ?, 'processed', (SELECT last_acceptance_sequence FROM workspaces WHERE id = ?), ?, ?, ?)`).bind(id, params.workspaceId, params.userId, params.externalId, fingerprint, JSON.stringify({ text: params.text.trim(), media_id: null, undo_action_id: params.targetActionId, undo_mode: params.mode }), params.workspaceId, params.chatId, now, now),
+    db.prepare(`INSERT INTO messages_in (id, workspace_id, user_id, channel, external_id, payload_fingerprint, raw_payload, status, acceptance_sequence, chat_id, created_at, updated_at) VALUES (?, ?, ?, 'web', ?, ?, ?, 'processed', (SELECT last_acceptance_sequence FROM workspaces WHERE id = ?), ?, ?, ?)`).bind(id, params.workspaceId, params.userId, params.externalId, fingerprint, JSON.stringify({ ...JSON.parse(payload), undo_action_id: params.targetActionId, undo_mode: params.mode }), params.workspaceId, params.chatId, now, now),
   ]);
   return { messageInId: id, created: true };
 }

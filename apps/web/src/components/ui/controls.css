@@ -1,0 +1,69 @@
+/* Owned primitives and conversation controls. One rule owns each visual state. */
+:focus:not(:focus-visible) { outline: none; }
+.otis-menu { z-index: 100; min-width: 200px; max-width: min(340px, calc(100vw - 24px)); max-height: min(360px, var(--radix-dropdown-menu-content-available-height, 50dvh)); overflow-y: auto; padding: 5px; border: 1px solid var(--otis-border); border-radius: 12px; background: var(--otis-surface); color: var(--otis-text-primary); box-shadow: 0 8px 24px #0005; font: 400 14px/20px var(--otis-font-sans); scrollbar-width: thin; scrollbar-color: var(--otis-border) transparent; }
+.otis-menu__item { position: relative; display: flex; align-items: center; gap: 16px; min-height: 44px; padding: 9px 32px 9px 10px; border-radius: 7px; cursor: default; outline: none; user-select: none; }
+.otis-menu__item[data-highlighted] { background: var(--otis-surface-hover); }
+.otis-menu__item:focus-visible { outline: none; background: var(--otis-surface-hover); }
+.otis-menu__item[data-disabled] { opacity: .5; pointer-events: none; }
+.otis-menu__label { display: flex; flex-direction: column; min-width: 0; }
+.otis-menu small { color: var(--otis-text-muted); font-size: 12px; line-height: 18px; }
+.otis-menu__indicator { position: absolute; right: 10px; display: flex; align-items: center; color: var(--otis-text-primary); }
+.otis-select { display: flex; align-items: center; justify-content: space-between; gap: 12px; width: 100%; min-height: 44px; padding: 8px 12px; border: 1px solid var(--otis-border); border-radius: 8px; background: var(--otis-surface); color: var(--otis-text-primary); text-align: left; }
+.otis-select__menu { min-width: var(--radix-select-trigger-width); max-height: min(340px, var(--radix-select-content-available-height)); }
+.otis-nav .otis-select, .otis-nav__workspace.otis-select { border: 0; background: transparent; padding: 6px 12px; }
+.otis-nav__workspace-label { padding: 12px; margin: 0 0 6px; font-size: 14px; }
+
+.otis-composer { flex: none; padding: 8px var(--otis-gutter) calc(8px + env(safe-area-inset-bottom)); }
+.otis-composer__inner { position: relative; width: 100%; max-width: var(--otis-content-width); margin: auto; }
+.otis-composer__field { display: flex; flex-direction: column; gap: 6px; padding: 10px 10px 6px; border: 1px solid var(--otis-border); border-radius: 24px; background: var(--otis-surface); }
+.otis-composer__input { display: block; width: 100%; min-width: 0; min-height: 24px; max-height: 160px; padding: 2px 4px; border: 0; resize: none; background: transparent; font: 400 16px/24px var(--otis-font-sans); color: var(--otis-text-primary); overflow-y: auto; scrollbar-width: thin; scrollbar-color: var(--otis-border) transparent; }
+.otis-composer__input::placeholder { font: inherit; color: var(--otis-text-muted); }
+.otis-composer__input:focus-visible { outline: none; }
+.otis-composer__field:has(.otis-composer__input:focus-visible) { outline: 2px solid var(--otis-focus-ring); outline-offset: 2px; }
+.otis-composer__toolbar { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 44px; }
+.otis-model-controls { display: flex; align-items: center; flex-wrap: wrap; gap: 0 4px; min-width: 0; }
+.otis-model-control { display: inline-flex; align-items: center; gap: 4px; max-width: min(220px, 52vw); min-height: 44px; padding: 4px 6px; border: 0; border-radius: 8px; background: transparent; color: var(--otis-text-secondary); font-size: 12px; }
+.otis-model-control span { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.otis-model-control svg { flex: none; width: 12px; height: 12px; }
+.otis-model-control:hover:not(:disabled), .otis-model-control[data-state='open'] { background: var(--otis-surface-hover); color: var(--otis-text-primary); }
+.otis-composer__submit-controls { display: flex; align-items: center; flex: none; gap: 4px; }
+.otis-composer__send { display: inline-flex; flex: none; align-items: center; justify-content: center; width: 44px; height: 44px; padding: 0; border: 0; border-radius: 50%; background: var(--otis-action-bg); color: var(--otis-action-fg); }
+.otis-composer__send:hover:not(:disabled) { opacity: .9; }
+.otis-composer__send:disabled { background: var(--otis-surface-hover); color: var(--otis-text-muted); opacity: 1; }
+.otis-composer__status { min-height: 20px; margin-top: 4px; color: var(--otis-text-muted); font-size: 11px; line-height: 16px; text-align: center; }
+.otis-composer__status--error { color: var(--otis-danger); }
+.otis-spinner { display: block; width: 16px; height: 16px; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: otis-spin .8s linear infinite; }
+@keyframes otis-spin { to { transform: rotate(360deg); } }
+.otis-reply-context { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding-left: 8px; color: var(--otis-text-secondary); font-size: 12px; }
+.otis-reply-choices { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 6px; }
+.otis-command-picker { position: absolute; bottom: calc(100% + 8px); left: 0; z-index: 5; width: min(360px, 100%); max-height: min(300px, 40dvh); overflow: auto; padding: 5px; border: 1px solid var(--otis-border); border-radius: 12px; background: var(--otis-surface); box-shadow: 0 8px 24px #0005; scrollbar-width: thin; }
+.otis-command-picker__item { display: flex; width: 100%; min-height: 44px; flex-direction: column; align-items: flex-start; gap: 2px; padding: 8px 10px; border: 0; border-radius: 7px; background: transparent; text-align: left; font-size: 14px; }
+.otis-command-picker__item[aria-selected='true'], .otis-command-picker__item:hover { background: var(--otis-surface-hover); }
+.otis-command-picker__item small { font-size: 12px; line-height: 18px; color: var(--otis-text-muted); }
+
+.otis-overlay.otis-overlay--settings { width: min(640px, calc(100vw - 32px)); height: auto; max-height: calc(var(--otis-viewport-height, 100dvh) - 48px); margin: auto; border: 1px solid var(--otis-border); border-radius: 16px; background: var(--otis-canvas); overflow: visible; }
+.otis-settings { display: flex; width: 100%; max-height: calc(var(--otis-viewport-height, 100dvh) - 48px); min-height: 0; flex-direction: column; gap: 16px; padding: 16px 24px; overflow: hidden; }
+.otis-settings__tabs { display: flex; gap: 4px; flex: none; border-bottom: 1px solid var(--otis-border); }
+.otis-settings__tabs button { min-height: 44px; padding: 8px 12px; border: 0; border-bottom: 2px solid transparent; background: transparent; color: var(--otis-text-secondary); font-size: 14px; }
+.otis-settings__tabs button[aria-selected='true'] { border-bottom-color: var(--otis-text-primary); color: var(--otis-text-primary); }
+.otis-settings__content { flex: 1; min-height: 0; overflow-y: auto; scrollbar-width: thin; }
+.otis-settings__section { display: flex; flex-direction: column; gap: 8px; margin-bottom: 24px; font-size: 14px; }
+.otis-settings h3 { margin: 0; font-size: 14px; font-weight: 500; }
+.otis-settings label { font-size: 14px; font-weight: 500; }
+.otis-settings input { width: 100%; min-height: 44px; padding: 8px 12px; border: 1px solid var(--otis-border); border-radius: 8px; background: var(--otis-surface); font-size: 16px; }
+.otis-settings__row { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; }
+.otis-settings__provider { padding: 12px 0; }
+.otis-settings__provider + .otis-settings__provider { border-top: 1px solid var(--otis-border); }
+.otis-settings__provider form { display: flex; flex-direction: column; gap: 8px; margin-top: 12px; }
+.otis-settings__footer { display: flex; align-items: center; justify-content: space-between; flex: none; gap: 12px; padding-top: 8px; color: var(--otis-text-muted); font-size: 12px; }
+.otis-settings__error { margin: 8px 0; color: var(--otis-danger); font-size: 13px; }
+@media (max-width: 600px) {
+  .otis-overlay.otis-overlay--settings { width: 100%; height: var(--otis-viewport-height, 100dvh); max-height: none; border: 0; border-radius: 0; }
+  .otis-settings { padding: calc(12px + env(safe-area-inset-top)) 16px calc(12px + env(safe-area-inset-bottom)); }
+  .otis-overlay--settings .otis-settings { height: 100%; max-height: none; }
+}
+@media (min-width: 900px) and (pointer: fine) {
+  .otis-menu__item { min-height: 36px; }
+  .otis-model-control { min-height: 36px; }
+}
+@media (prefers-reduced-motion: reduce) { .otis-spinner { animation: none; } }

@@ -27,63 +27,45 @@ const message = (overrides: Partial<ChatMessage> & { id: string; content_text: s
 const activity = (id: string, cursor: number, type: PublicActivity['type'], payload: unknown): PublicActivity => ({ schema_version: 1, id, cursor, workspace_id: 'ws_1', chat_id: 'chat_1', run_id: 'run_1', type, payload, created_at: '2026-10-02T10:00:00.000Z' });
 
 describe('Composer', () => {
-  it('lists available models when typing /model and inserts the chosen key without submitting', async () => {
-    const onSend = vi.fn();
-    const models = [
-      { command_key: 'mimo-25', display_name: 'MiMo V2.5', provider: 'opencode_go', native_audio_supported: false, voice_available: false, available: true, is_current: false, is_default: true },
-      { command_key: 'deepseek-v4.1-flash', display_name: 'DeepSeek V4.1 Flash', provider: 'opencode_go', native_audio_supported: false, voice_available: false, available: true, is_current: false, is_default: false },
-      { command_key: 'muse-13', display_name: 'Muse Spark 1.3 Contributor', provider: 'opencode_go', native_audio_supported: false, voice_available: false, available: false, is_current: false, is_default: false },
-    ];
-    const view = await mount(<Composer running={false} queuedCount={0} commands={COMMANDS} models={models} onSend={onSend}/>);
-    await fill(view.host.querySelector('textarea')!, '/model');
-    const options = Array.from(view.host.querySelectorAll('[role="option"]')).map(el => el.textContent ?? '');
-    // Selectable entries appear by readable name; unavailable ones never do.
-    expect(options.some(text => text.includes('MiMo V2.5'))).toBe(true);
-    expect(options.some(text => text.includes('DeepSeek V4.1 Flash'))).toBe(true);
-    expect(options.some(text => text.includes('Muse Spark'))).toBe(false);
-    const mimo = Array.from(view.host.querySelectorAll('[role="option"]')).find(el => (el.textContent ?? '').includes('MiMo V2.5')) as HTMLButtonElement;
-    await React.act(async () => mimo.click());
-    // Choosing inserts editable text; it does not execute.
-    expect(view.host.querySelector('textarea')!.value).toBe('/model mimo-25');
-    expect(onSend).not.toHaveBeenCalled();
-    await view.unmount();
+  it('applies a model picked with a slash command without sending a chat message', async () => {
+    const onSend = vi.fn(); const onCommand = vi.fn().mockResolvedValue(true);
+    const models = [{ command_key: 'mimo-25', display_name: 'MiMo V2.5', provider: 'opencode_go', native_audio_supported: true, voice_available: false, available: true, is_current: true, is_default: true }];
+    const view = await mount(<Composer running={false} queuedCount={0} commands={COMMANDS} models={models} onCommand={onCommand} onSend={onSend}/>);
+    await fill(view.host.querySelector('textarea')!, '/model ');
+    expect(view.host.textContent).not.toContain('Text only');
+    const option = Array.from(view.host.querySelectorAll('[role="option"]')).find(item => item.textContent === 'MiMo V2.5') as HTMLElement;
+    await React.act(async () => option.click());
+    expect(onCommand).toHaveBeenCalledWith('/model mimo-25'); expect(onSend).not.toHaveBeenCalled();
+    expect(view.host.querySelector('textarea')!.value).toBe(''); await view.unmount();
   });
-  it('opens slash suggestions and inserts editable text without submitting', async () => {
-    const onSend = vi.fn(); const view = await mount(<Composer running={false} queuedCount={0} commands={COMMANDS} onSend={onSend}/>);
+  it('opens command arguments and dismisses suggestions without losing the draft', async () => {
+    const onCommand = vi.fn(); const view = await mount(<Composer running={false} queuedCount={0} commands={COMMANDS} onCommand={onCommand} onSend={vi.fn()}/>);
     await fill(view.host.querySelector('textarea')!, '/');
-    expect(view.host.querySelector('[role="listbox"]')).toBeTruthy();
-    await React.act(async () => (view.host.querySelector('[role="option"]') as HTMLButtonElement).click());
-    expect(view.host.querySelector('textarea')!.value).toBe('/model '); expect(onSend).not.toHaveBeenCalled(); await view.unmount();
-  });
-  it('opens real tools through Plus, preserves the draft, and dismisses slash suggestions safely', async () => {
-    const onSend = vi.fn(); const view = await mount(<Composer running={false} queuedCount={0} commands={COMMANDS} onSend={onSend}/>);
-    await fill(view.host.querySelector('textarea')!, 'Keep this draft.');
-    await React.act(async () => (view.host.querySelector('[aria-label="Chat tools"]') as HTMLButtonElement).click());
-    expect(view.host.querySelector('[role="listbox"][aria-label="Chat tools"]')).toBeTruthy();
-    await React.act(async () => (view.host.querySelector('[role="option"]') as HTMLButtonElement).click());
-    expect(view.host.querySelector('[aria-label="Models"]')).toBeTruthy(); expect(view.host.querySelector('textarea')!.value).toBe('Keep this draft.');
-    await React.act(async () => (view.host.querySelector('[role="option"]') as HTMLButtonElement).click());
-    expect(onSend).toHaveBeenCalledWith('/model default'); expect(view.host.querySelector('textarea')!.value).toBe('Keep this draft.');
-    await fill(view.host.querySelector('textarea')!, '/');
+    await React.act(async () => (view.host.querySelector('[role="option"]') as HTMLElement).click());
+    expect(view.host.querySelector('textarea')!.value).toBe('/model '); expect(onCommand).not.toHaveBeenCalled();
     await React.act(async () => view.host.querySelector('textarea')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })));
-    expect(view.host.querySelector('[role="listbox"]')).toBeNull(); expect(view.host.querySelector('textarea')!.value).toBe('/'); await view.unmount();
+    expect(view.host.querySelector('[role="listbox"]')).toBeNull(); expect(view.host.querySelector('textarea')!.value).toBe('/model '); await view.unmount();
   });
-  it('sends non-empty text, ignores an empty draft, and clears only accepted input', async () => {
-    const onSend = vi.fn().mockResolvedValue(true); const view = await mount(<Composer running={false} queuedCount={0} commands={COMMANDS} onSend={onSend}/>);
-    expect((view.host.querySelector('.otis-composer__send') as HTMLButtonElement).disabled).toBe(true);
-    await fill(view.host.querySelector('textarea')!, 'Restaurant 2 wants the website.');
-    await React.act(async () => (view.host.querySelector('.otis-composer__send') as HTMLButtonElement).click());
-    expect(onSend).toHaveBeenCalledWith('Restaurant 2 wants the website.'); expect(view.host.querySelector('textarea')!.value).toBe(''); await view.unmount();
+  it('keeps typing available while sending and preserves a newer draft', async () => {
+    let accept!: (ok: boolean) => void;
+    const onSend = vi.fn(() => new Promise<boolean>(resolve => { accept = resolve; }));
+    const view = await mount(<Composer running={false} queuedCount={0} commands={COMMANDS} onSend={onSend}/>);
+    const input = view.host.querySelector('textarea')!;
+    await fill(input, 'First note');
+    await React.act(async () => (view.host.querySelector('[aria-label="Send"]') as HTMLElement).click());
+    expect(input.disabled).toBe(false); expect(view.host.textContent).not.toContain('Sending…');
+    expect(view.host.querySelector('[aria-label="Send"]')!.getAttribute('aria-busy')).toBe('true');
+    await fill(input, 'Second note'); await React.act(async () => accept(true));
+    expect(input.value).toBe('Second note'); expect(onSend).toHaveBeenCalledTimes(1); await view.unmount();
   });
   it('retains a failed draft across remount and removes storage only after acceptance', async () => {
     const key = 'otis:draft:test-retry'; const onSend = vi.fn().mockResolvedValueOnce(false).mockResolvedValueOnce(true);
     let view = await mount(<Composer draftKey={key} running={false} queuedCount={0} commands={COMMANDS} onSend={onSend}/>);
     await fill(view.host.querySelector('textarea')!, 'Keep the price unchanged.');
-    await React.act(async () => (view.host.querySelector('.otis-composer__send') as HTMLButtonElement).click());
-    expect(view.host.querySelector('textarea')!.value).toBe('Keep the price unchanged.'); await view.unmount();
+    await React.act(async () => (view.host.querySelector('[aria-label="Send"]') as HTMLElement).click()); await view.unmount();
     view = await mount(<Composer draftKey={key} running={false} queuedCount={0} commands={COMMANDS} onSend={onSend}/>);
     expect(view.host.querySelector('textarea')!.value).toBe('Keep the price unchanged.');
-    await React.act(async () => (view.host.querySelector('.otis-composer__send') as HTMLButtonElement).click());
+    await React.act(async () => (view.host.querySelector('[aria-label="Send"]') as HTMLElement).click());
     expect(view.host.querySelector('textarea')!.value).toBe(''); expect(sessionStorage.getItem(key)).toBeNull(); await view.unmount();
   });
   it('does not submit an IME composition or mobile Enter', async () => {
@@ -93,190 +75,32 @@ describe('Composer', () => {
     await React.act(async () => { input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, isComposing: true })); input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })); });
     expect(onSend).not.toHaveBeenCalled(); expect(input.value).toBe('ș și ț, ő és ű'); await view.unmount();
   });
-  it('keeps the composer available to steer working runs without a separate Stop control', async () => {
-    const view = await mount(<Composer running queuedCount={0} commands={COMMANDS} onSend={vi.fn()}/>);
-    expect(view.host.querySelector('[aria-label="Steer Otis"]')).toBeTruthy(); expect(view.host.textContent).toContain('Steer the current work');
-    expect(view.host.querySelector('.otis-composer__stop')).toBeNull(); await view.unmount();
+  it('offers actual Stop without replacing the normal reply input', async () => {
+    const onStop = vi.fn().mockResolvedValue(undefined);
+    const view = await mount(<Composer running queuedCount={1} commands={COMMANDS} onStop={onStop} onSend={vi.fn()}/>);
+    await React.act(async () => (view.host.querySelector('[aria-label="Stop Otis"]') as HTMLElement).click());
+    expect(onStop).toHaveBeenCalledOnce(); expect(view.host.querySelector('textarea')).toBeTruthy();
+    expect(view.host.textContent).not.toContain('queued'); expect(view.host.textContent).not.toContain('Steer'); await view.unmount();
   });
-  it('renders Codex-style Question Card when replyTo is present, submits candidate on tap or keyboard', async () => {
-    const onSend = vi.fn().mockResolvedValue(true);
-    const onCancel = vi.fn();
-    const view = await mount(
-      <Composer
-        running={false}
-        queuedCount={0}
-        commands={COMMANDS}
-        replyTo={{
-          question: 'When should the offer be ready?',
-          missing_fields: ['due'],
-          onCancel,
-        }}
-        onSend={onSend}
-      />
-    );
-    expect(view.host.querySelector('.otis-question-card')).toBeTruthy();
-    expect(view.host.textContent).toContain('When should the offer be ready?');
-    const options = Array.from(view.host.querySelectorAll('.otis-question-card__option'));
-    expect(options.length).toBeGreaterThanOrEqual(2);
-    expect(options[0]?.textContent).toContain('Friday');
-    
-    // Tap candidate 1
-    await React.act(async () => (options[0] as HTMLButtonElement).click());
-    expect(onSend).toHaveBeenCalledWith('Friday');
-
-    // Test dismiss/cancel
-    await React.act(async () => (view.host.querySelector('.otis-question-card__close') as HTMLButtonElement).click());
-    expect(onCancel).toHaveBeenCalledOnce();
-    await view.unmount();
+  it('answers clarification conversationally without guessing dates or confirmation choices', async () => {
+    const onSend = vi.fn().mockResolvedValue(true); const onCancel = vi.fn();
+    const view = await mount(<Composer running={false} queuedCount={0} commands={COMMANDS} replyTo={{ question: 'When should the offer be ready?', onCancel }} onSend={onSend}/>);
+    expect(view.host.textContent).not.toContain('Tomorrow'); expect(view.host.textContent).not.toContain('No deadline needed');
+    expect(view.host.querySelector('.otis-question-card')).toBeNull();
+    await fill(view.host.querySelector('textarea')!, 'Friday at 4pm');
+    await React.act(async () => (view.host.querySelector('[aria-label="Send"]') as HTMLElement).click());
+    expect(onSend).toHaveBeenCalledWith('Friday at 4pm');
+    await React.act(async () => (view.host.querySelector('[aria-label="Dismiss question"]') as HTMLElement).click());
+    expect(onCancel).toHaveBeenCalledOnce(); await view.unmount();
   });
-  it('allows custom write-in response and skip in Question Card', async () => {
-    const onSend = vi.fn().mockResolvedValue(true);
-    const onCancel = vi.fn();
-    const view = await mount(
-      <Composer
-        running={false}
-        queuedCount={0}
-        commands={COMMANDS}
-        replyTo={{
-          question: 'Confirm deleting draft?',
-          candidates: ['Yes, delete', 'No, keep'],
-          onCancel,
-        }}
-        onSend={onSend}
-      />
-    );
-    const input = view.host.querySelector('.otis-question-card__custom-input') as HTMLInputElement;
-    expect(input).toBeTruthy();
-    await React.act(async () => {
-      Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')!.set!.call(input, 'Maybe next week');
-      input.dispatchEvent(new Event('input', { bubbles: true }));
-    });
-    const sendBtn = view.host.querySelector('.otis-question-card__send') as HTMLButtonElement;
-    expect(sendBtn.disabled).toBe(false);
-    await React.act(async () => sendBtn.click());
-    expect(onSend).toHaveBeenCalledWith('Maybe next week');
-
-    // Test skip
-    const skipBtn = view.host.querySelector('.otis-question-card__skip') as HTMLButtonElement;
-    await React.act(async () => skipBtn.click());
-    expect(onCancel).toHaveBeenCalledOnce();
-    await view.unmount();
+  it('hides unimplemented voice and attachment actions', async () => {
+    const view = await mount(<Composer running={false} queuedCount={0} commands={COMMANDS} onSend={vi.fn()}/>);
+    expect(view.host.querySelector('[aria-label="Record voice note"]')).toBeNull();
+    expect(view.host.querySelector('[aria-label="Chat tools"]')).toBeNull(); expect(view.host.querySelector('[aria-label="Send"]')).toBeTruthy(); await view.unmount();
   });
-  it('synchronizes draftValue prop into composer input', async () => {
-    const view = await mount(<Composer running={false} queuedCount={0} commands={COMMANDS} draftValue="Prior draft to edit" onSend={vi.fn()}/>);
-    expect(view.host.querySelector('textarea')!.value).toBe('Prior draft to edit');
-    await view.unmount();
-  });
-  it('renders modern ChatGPT-inspired composer capsule with Think toggle, Mic button, and disclaimer', async () => {
-    const onSend = vi.fn().mockResolvedValue(true);
-    const view = await mount(
-      <Composer
-        running={false}
-        queuedCount={0}
-        commands={COMMANDS}
-        models={[
-          {
-            command_key: 'gemini-3.1-flash-lite',
-            display_name: 'Gemini 3.1 Flash-Lite',
-            available: true,
-            is_current: true,
-            is_default: true,
-            voice_available: false,
-            native_audio_supported: false,
-            provider: 'gemini',
-            thinking: {
-              current_choice_id: null,
-              effective_choice_id: 'default',
-              is_default: true,
-              state: 'supported',
-              choices: [
-                { id: 'low', label: 'Low' },
-                { id: 'high', label: 'High' },
-              ],
-            },
-          },
-        ]}
-        onSend={onSend}
-      />
-    );
-    expect(view.host.querySelector('.otis-composer__disclaimer')).toBeTruthy();
-    expect(view.host.textContent).toContain('Otis can make mistakes');
-
-    // Think button
-    const thinkBtn = view.host.querySelector('.otis-composer__think-btn') as HTMLButtonElement;
-    expect(thinkBtn).toBeTruthy();
-    expect(thinkBtn.getAttribute('aria-expanded')).toBe('false');
-    await React.act(async () => thinkBtn.click());
-    expect(thinkBtn.getAttribute('aria-expanded')).toBe('true');
-
-    // Menu should be open with choices
-    const menu = view.host.querySelector('.otis-thinking-menu');
-    expect(menu).toBeTruthy();
-    expect(view.host.textContent).toContain('Provider default');
-    expect(view.host.textContent).toContain('High');
-
-    // Select High
-    const highOption = Array.from(view.host.querySelectorAll('.otis-thinking-menu__item')).find(el => el.textContent?.includes('High')) as HTMLButtonElement;
-    expect(highOption).toBeTruthy();
-    await React.act(async () => highOption.click());
-    expect(onSend).toHaveBeenCalledWith('/thinking high');
-
-    // Mic button
-    const micBtn = view.host.querySelector('.otis-composer__mic-btn') as HTMLButtonElement;
-    expect(micBtn).toBeTruthy();
-
-    // Plus button for tools
-    const plusBtn = view.host.querySelector('.otis-composer__plus') as HTMLButtonElement;
-    expect(plusBtn).toBeTruthy();
-
-    await view.unmount();
-  });
-  it('opens tool drawer on clicking + button, allowing model and command selection', async () => {
-    const onSend = vi.fn().mockResolvedValue(true);
-    const view = await mount(
-      <Composer
-        running={false}
-        queuedCount={0}
-        commands={COMMANDS}
-        models={[
-          { command_key: 'gemini-2.5-pro', display_name: 'Gemini 2.5 Pro', available: true, is_current: true, is_default: true, voice_available: true },
-        ]}
-        onSend={onSend}
-      />
-    );
-    const plusBtn = view.host.querySelector('.otis-composer__plus') as HTMLButtonElement;
-    await React.act(async () => plusBtn.click());
-
-    // Tool menu is open
-    const picker = view.host.querySelector('.otis-picker');
-    expect(picker).toBeTruthy();
-    expect(view.host.textContent).toContain('Model');
-    expect(view.host.textContent).toContain('Today’s Brief');
-
-    // Click Model to open models submenu
-    const modelOption = Array.from(view.host.querySelectorAll('.otis-picker__option')).find(el => el.textContent?.includes('Model')) as HTMLButtonElement;
-    expect(modelOption).toBeTruthy();
-    await React.act(async () => modelOption.click());
-
-    // In model submenu
-    expect(view.host.querySelector('.otis-picker__back')).toBeTruthy();
-    expect(view.host.textContent).toContain('Gemini 2.5 Pro');
-
-    // Choose Gemini 2.5 Pro
-    const geminiOption = Array.from(view.host.querySelectorAll('.otis-picker__option')).find(el => el.textContent?.includes('Gemini 2.5 Pro')) as HTMLButtonElement;
-    await React.act(async () => geminiOption.click());
-    expect(onSend).toHaveBeenCalledWith('/model gemini-2.5-pro');
-
-    await view.unmount();
-  });
-  it('toggles multiline layout when draft contains multiple lines or newlines', async () => {
-    const view = await mount(<Composer running={false} queuedCount={0} commands={COMMANDS} onSend={vi.fn()} />);
-    const textarea = view.host.querySelector('textarea')!;
-    expect(view.host.querySelector('.otis-composer__field--multiline')).toBeNull();
-
-    await fill(textarea, 'Line one\nLine two');
-    expect(view.host.querySelector('.otis-composer__field--multiline')).toBeTruthy();
-    await view.unmount();
+  it('synchronizes an explicitly selected prior message into the draft', async () => {
+    const view = await mount(<Composer running={false} queuedCount={0} commands={COMMANDS} draftValue="Prior note" onSend={vi.fn()}/>);
+    expect(view.host.querySelector('textarea')!.value).toBe('Prior note'); await view.unmount();
   });
 });
 
@@ -364,7 +188,7 @@ describe('Transcript', () => {
     await React.act(async () => (copyButtons[0] as HTMLButtonElement).click());
     expect(writeTextMock).toHaveBeenCalledWith('My business note');
 
-    const editBtn = view.host.querySelector('[aria-label="Edit message in composer"]') as HTMLButtonElement;
+    const editBtn = view.host.querySelector('[aria-label="Use message as draft"]') as HTMLButtonElement;
     expect(editBtn).toBeTruthy();
     await React.act(async () => editBtn.click());
     expect(onEdit).toHaveBeenCalledWith('My business note');

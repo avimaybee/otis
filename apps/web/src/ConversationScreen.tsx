@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Toaster } from 'sonner';
+import { Toaster, toast } from 'sonner';
+import Markdown from 'react-markdown';
 import type { Chat, ChatMessage, ChatDetailResponse, CommandDescriptor, ModelOption, PublicActivity, RunDetailResponse, ClarificationSummary } from '@otis/contracts';
 import { api, ApiError } from './api/client.js';
 import { debugLog, failureLog } from './api/log.js';
@@ -12,6 +13,7 @@ import { SourcePane } from './components/SourcePane.js';
 import { SettingsPane } from './components/SettingsPane.js';
 import { Transcript } from './components/Transcript.js';
 import { ComposeIcon, MenuIcon } from './components/icons.js';
+import { Overlay } from './components/Overlay.js';
 
 export interface ConversationScreenProps { workspaceId: string; workspaces: { id: string; name: string }[]; userId: string; members: Record<string, string>; onSignOut: () => void; }
 type View = { workspaceId: string; chatId: string; detail: ChatDetailResponse; messages: ChatMessage[]; activities: PublicActivity[]; runs: Record<string, RunDetailResponse>; older: number | null; questions: ClarificationSummary[]; cursor: number };
@@ -32,12 +34,20 @@ export function ConversationScreen({ workspaceId: initialWorkspace, workspaces, 
   const [loading, setLoading] = useState(false); const [loadingOlder, setLoadingOlder] = useState(false); const [navLoading, setNavLoading] = useState(true); const [replyId, setReplyId] = useState<string | null>(null);
   const [dismissedClarificationId, setDismissedClarificationId] = useState<string | null>(null);
   const [draftValue, setDraftValue] = useState<string | null>(null);
+  const [controlPending, setControlPending] = useState(false);
+  const [controlResult, setControlResult] = useState<string | null>(null);
+  const [modelRevision, setModelRevision] = useState(0);
+  const [followsDefault, setFollowsDefault] = useState(true);
+  const modelRequest = useRef(0);
+  const controlLock = useRef(false);
+  const controlOperation = useRef<{ text: string; id: string; chatId: string } | null>(null);
+  const preparedChat = useRef<{ workspaceId: string; promise: Promise<Chat> } | null>(null);
   const epoch = useRef(0); const selected = useRef(selection); selected.current = selection;
   const sendOperation = useRef<{ text: string; id: string; chatId: string | null; clarificationId?: string } | null>(null);
   const refreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const desktop = useMediaQuery('(min-width: 900px)');
   const navigate = useCallback((workspace: string, chat: string | null, replace = false) => {
-    sendOperation.current = null; epoch.current++; selected.current = { workspace, chat }; setSelection({ workspace, chat }); setDrawerOpen(false); setSettingsOpen(false); setDetailActionId(null); setSourceId(null); setReplyId(null); setDismissedClarificationId(null); setDraftValue(null); setError(null); setAccessLost(false); setView(null); setModels([]);
+    sendOperation.current = null; preparedChat.current = null; controlOperation.current = null; setControlResult(null); epoch.current++; selected.current = { workspace, chat }; setSelection({ workspace, chat }); setDrawerOpen(false); setSettingsOpen(false); setDetailActionId(null); setSourceId(null); setReplyId(null); setDismissedClarificationId(null); setDraftValue(null); setError(null); setAccessLost(false); setView(null); setModels([]);
     const url = new URL(location.href); url.searchParams.set('workspace', workspace); url.searchParams.set('chat', chat ?? 'new');
     history[replace ? 'replaceState' : 'pushState']({}, '', url);
     try { sessionStorage.setItem(`otis:view:${userId}:${workspace}`, chat ?? 'new'); } catch { /* URL remains authoritative */ }
@@ -92,7 +102,7 @@ export function ConversationScreen({ workspaceId: initialWorkspace, workspaces, 
     return () => subscription.close();
     // Cursor is the snapshot when this subscription opens; EventSource handles subsequent IDs.
   }, [readyChatId, workspaceId, loadChat, loseAccess, accessLost, streamGeneration]);
-  useEffect(() => { let cancelled = false; if (view && !view.detail.is_author) return; api.models(workspaceId, activeChatId ?? undefined).then(result => { if (!cancelled) setModels(result.models); }).catch(() => { if (!cancelled) setModels([]); }); return () => { cancelled = true; }; }, [workspaceId, activeChatId, view?.detail.chat.model_override, view?.detail.is_author]);
+  useEffect(() => { let cancelled = false; const request = ++modelRequest.current; if (view && !view.detail.is_author) return; api.models(workspaceId, activeChatId ?? undefined).then(result => { if (!cancelled && request === modelRequest.current) { setModels(result.models ?? []); setFollowsDefault(!view?.detail.chat.model_override); } }).catch(() => { if (!cancelled && request === modelRequest.current) setModels([]); }); return () => { cancelled = true; }; }, [workspaceId, activeChatId, view?.detail.chat.model_override, view?.detail.chat.thinking_override?.choice_id, view?.detail.chat.thinking_override?.model_key, view?.detail.is_author, modelRevision]);
   const current = view?.workspaceId === workspaceId && view.chatId === activeChatId ? view : null;
   const readOnly = Boolean(current && !current.detail.is_author);
   const workspaceName = workspaces.find(workspace => workspace.id === workspaceId)?.name ?? 'Workspace';
@@ -104,6 +114,46 @@ export function ConversationScreen({ workspaceId: initialWorkspace, workspaces, 
   const activeClarification = replyId
     ? current?.questions.find(question => question.id === replyId && question.answerable_by_caller)
     : pendingQuestion;
+  const ensureChat = async (clientId: string): Promise<string> => {
+    if (activeChatId) return activeChatId;
+    if (!preparedChat.current || preparedChat.current.workspaceId !== workspaceId) {
+      const promise = api.createChat(workspaceId, `new-${clientId}`).then(result => result.chat);
+      preparedChat.current = { workspaceId, promise };
+      promise.catch(() => { if (preparedChat.current?.promise === promise) preparedChat.current = null; });
+    }
+    return (await preparedChat.current.promise).id;
+  };
+  const applyCommand = async (text: string): Promise<boolean> => {
+    if (readOnly || accessLost || controlLock.current) return false;
+    modelRequest.current++;
+    controlLock.current = true; setControlPending(true);
+    const generation = epoch.current;
+    try {
+      const id = controlOperation.current?.text === text ? controlOperation.current.id : crypto.randomUUID();
+      const chatId = controlOperation.current?.text === text ? controlOperation.current.chatId : await ensureChat(id);
+      controlOperation.current = { id, text, chatId };
+      const applied = await api.executeCommand(workspaceId, chatId, id, text);
+      if (generation !== epoch.current) return true;
+      if (applied.selected_workspace_id && workspaces.some(workspace => workspace.id === applied.selected_workspace_id)) { switchWorkspace(applied.selected_workspace_id); return true; }
+      const [options, detail] = await Promise.all([api.models(workspaceId, chatId), api.getChat(workspaceId, chatId)]);
+      if (generation !== epoch.current) return true;
+      setModels(options.models ?? []); setFollowsDefault(!detail.chat.model_override);
+      setView(previous => previous?.chatId === chatId ? { ...previous, detail } : previous);
+      controlOperation.current = null;
+      if (!activeChatId) {
+        try { const draft = sessionStorage.getItem(`otis:draft:${userId}:${workspaceId}:new`); if (draft && draft.trim() !== text.trim()) sessionStorage.setItem(`otis:draft:${userId}:${workspaceId}:${chatId}`, draft); sessionStorage.removeItem(`otis:draft:${userId}:${workspaceId}:new`); } catch { /* Browser storage is optional. */ }
+        const created = await preparedChat.current?.promise;
+        if (generation !== epoch.current) return true;
+        if (created) setOwnChats(chats => [created, ...chats.filter(chat => chat.id !== created.id)]);
+        navigate(workspaceId, chatId, true);
+      }
+      if (!/^\/(model|thinking|workspace)\s+\S/i.test(text) && applied.reply) setControlResult(applied.reply);
+      return true;
+    } catch (err) {
+      if (generation === epoch.current) toast.error(err instanceof ApiError && err.status === 422 ? err.message : 'Could not apply the command. Try again.');
+      return false;
+    } finally { controlLock.current = false; setControlPending(false); }
+  };
   const send = async (text: string): Promise<boolean> => {
     if (readOnly || accessLost) return false;
     const generation = epoch.current;
@@ -115,15 +165,18 @@ export function ConversationScreen({ workspaceId: initialWorkspace, workspaces, 
       debugLog('send', 'starting', { operationId: operation.id, chatId: operation.chatId ?? null, chars: text.length, clarificationId: operation.clarificationId ?? null });
       let chatId = operation.chatId;
       try { sessionStorage.setItem(operationKey, JSON.stringify(operation)); } catch { /* keep the in-memory retry identity */ }
-      if (!chatId) { const created = await api.createChat(workspaceId, `new-${operation.id}`); chatId = created.chat.id; debugLog('send', 'chat created', { chatId }); if (generation === epoch.current) setOwnChats(chats => [created.chat, ...chats.filter(chat => chat.id !== created.chat.id)]); operation.chatId = chatId; try { sessionStorage.setItem(operationKey, JSON.stringify(operation)); } catch { /* in-memory identity remains */ } }
+      if (!chatId) { chatId = await ensureChat(operation.id); const created = await preparedChat.current?.promise; if (generation === epoch.current && created) setOwnChats(chats => [created, ...chats.filter(chat => chat.id !== chatId)]); operation.chatId = chatId; try { sessionStorage.setItem(operationKey, JSON.stringify(operation)); } catch { /* in-memory identity remains */ } }
       const accepted = await api.sendMessage(workspaceId, chatId, operation.id, text, operation.clarificationId);
       debugLog('send', 'accepted; run queued server-side', { chatId, message_id: accepted.message_id, run_id: accepted.run_id, sequence: accepted.acceptance_sequence });
       sendOperation.current = null; try { sessionStorage.removeItem(operationKey); } catch { /* accepted response is authoritative */ }
       if (generation !== epoch.current) return true;
       setError(null); setReplyId(null); setDismissedClarificationId(null); setDraftValue(null);
-      if (!activeChatId) navigate(workspaceId, chatId);
+      if (!activeChatId) {
+        try { const nextDraft = sessionStorage.getItem(`otis:draft:${userId}:${workspaceId}:new`); if (nextDraft && nextDraft.trim() !== text.trim()) sessionStorage.setItem(`otis:draft:${userId}:${workspaceId}:${chatId}`, nextDraft); sessionStorage.removeItem(`otis:draft:${userId}:${workspaceId}:new`); } catch { /* Browser storage is optional. */ }
+        navigate(workspaceId, chatId);
+      }
       if (accepted.selected_workspace_id && workspaces.some(workspace => workspace.id === accepted.selected_workspace_id)) { switchWorkspace(accepted.selected_workspace_id); return true; }
-      await loadChat(chatId, epoch.current); return true;
+      void loadChat(chatId, epoch.current); return true;
     } catch (err) { debugLog('send', 'failed before acceptance', { operationId: operation.id, status: err instanceof ApiError ? err.status : null, code: err instanceof ApiError ? err.code : null }); if (generation === epoch.current) { setError(safeError(err, 'Message not confirmed. Your draft is retained; send again to retry the same message.')); if (err instanceof ApiError && [401, 403, 404].includes(err.status)) loseAccess(); } return false; }
   };
   const switchWorkspace = (id: string) => { if (!workspaces.some(workspace => workspace.id === id)) return; let last: string | null = null; try { last = sessionStorage.getItem(`otis:view:${userId}:${id}`); } catch { /* start new */ } navigate(id, last === 'new' ? null : last); };
@@ -138,8 +191,9 @@ export function ConversationScreen({ workspaceId: initialWorkspace, workspaces, 
       {streamStatus === 'resyncing' && <p className="otis-connection" role="status">Reconnecting to activity… Your conversation is retained.</p>}
       <Transcript key={`${workspaceId}:${activeChatId ?? 'new'}`} messages={current?.messages ?? []} members={members} currentUserId={userId} runs={current?.runs ?? {}} activities={current?.activities ?? []} steps={[]} onInspectSource={setSourceId} onInspectAction={setDetailActionId} onReply={readOnly ? undefined : setReplyId} onEditMessage={readOnly ? undefined : setDraftValue} loading={loading} hasOlder={Boolean(current?.older)} loadingOlder={loadingOlder} onLoadOlder={() => void loadOlder()}/>
       {error && <div className="otis-chat-error" role="alert"><p>{error}</p>{activeChatId && !loading && <button type="button" className="otis-textbutton" onClick={() => void loadChat(activeChatId)}>Reload conversation</button>}</div>}
-      {readOnly ? <div className="otis-readonly"><p>This is {current!.detail.chat.author_display_name ?? members[current!.detail.chat.author_user_id] ?? 'a teammate'}’s conversation.</p><button className="otis-textbutton" type="button" onClick={() => navigate(workspaceId, ownChats[0]?.id ?? null)}>Continue in your own chat</button></div> : <Composer key={`${workspaceId}:${userId}:${activeChatId ?? 'new'}`} draftKey={`otis:draft:${userId}:${workspaceId}:${activeChatId ?? 'new'}`} draftValue={draftValue} disabled={Boolean(activeChatId && !current)} disabledReason="Opening conversation…" running={Boolean(running)} queuedCount={activeRuns.filter(run => run.status === 'queued').length} commands={commands} models={models} replyTo={activeClarification ? { id: activeClarification.id, question: activeClarification.question, candidates: activeClarification.candidates, missing_fields: activeClarification.missing_fields, intended_operation: activeClarification.intended_operation, onCancel: () => { setDismissedClarificationId(activeClarification.id); setReplyId(null); } } : undefined} onSend={send}/>} 
+      {readOnly ? <div className="otis-readonly"><p>This is {current!.detail.chat.author_display_name ?? members[current!.detail.chat.author_user_id] ?? 'a teammate'}’s conversation.</p><button className="otis-textbutton" type="button" onClick={() => navigate(workspaceId, ownChats[0]?.id ?? null)}>Continue in your own chat</button></div> : <Composer key={`${workspaceId}:${userId}:${activeChatId ?? 'new'}`} draftKey={`otis:draft:${userId}:${workspaceId}:${activeChatId ?? 'new'}`} draftValue={draftValue} disabled={Boolean(activeChatId && !current)} disabledReason="Opening conversation…" running={Boolean(running)} queuedCount={activeRuns.filter(run => run.status === 'queued').length} commands={commands} models={models} workspaces={workspaces} controlPending={controlPending} modelReady={models.some(model => model.is_current && model.available)} followsDefault={followsDefault} onCommand={applyCommand} onStop={running ? async () => { await api.stopRun(workspaceId, running.run.id); if (activeChatId) void loadChat(activeChatId); } : undefined} replyTo={activeClarification ? { id: activeClarification.id, question: activeClarification.question, candidates: activeClarification.candidates, missing_fields: activeClarification.missing_fields, intended_operation: activeClarification.intended_operation, onCancel: () => { setDismissedClarificationId(activeClarification.id); setReplyId(null); } } : undefined} onSend={send}/>}
     </div>}</main>
-    {sourceId && <SourcePane workspaceId={workspaceId} memoryId={sourceId} onClose={() => setSourceId(null)} onAccessLost={loseAccess} onOpenChat={id => navigate(workspaceId, id)}/>} {detailActionId && <DetailPane onAccessLost={loseAccess} workspaceId={workspaceId} chatId={readOnly ? '' : activeChatId ?? ''} actionId={detailActionId} onClose={() => setDetailActionId(null)} onUndone={() => { if (activeChatId) void loadChat(activeChatId); }}/>} {settingsOpen && <SettingsPane onAccessLost={loseAccess} workspaceId={workspaceId} workspaceName={workspaceName} onClose={() => setSettingsOpen(false)} onSignOut={onSignOut}/>}
+    {controlResult && <Overlay label="Command result" className="otis-overlay--settings" onClose={() => setControlResult(null)}><section className="otis-settings"><header className="otis-pane-header"><h2>Result</h2><button type="button" className="otis-button" onClick={() => setControlResult(null)}>Close</button></header><div className="otis-settings__content"><Markdown skipHtml disallowedElements={['img']}>{controlResult}</Markdown></div></section></Overlay>}
+    {sourceId && <SourcePane workspaceId={workspaceId} memoryId={sourceId} onClose={() => setSourceId(null)} onAccessLost={loseAccess} onOpenChat={id => navigate(workspaceId, id)}/>} {detailActionId && <DetailPane onAccessLost={loseAccess} workspaceId={workspaceId} chatId={readOnly ? '' : activeChatId ?? ''} actionId={detailActionId} onClose={() => setDetailActionId(null)} onUndone={() => { if (activeChatId) void loadChat(activeChatId); }}/>} {settingsOpen && <SettingsPane onAccessLost={loseAccess} workspaceId={workspaceId} workspaceName={workspaceName} members={members} onUpdated={() => setModelRevision(value => value + 1)} onClose={() => setSettingsOpen(false)} onSignOut={onSignOut}/>}
   </div>;
 }

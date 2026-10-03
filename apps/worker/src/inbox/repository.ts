@@ -313,6 +313,9 @@ export async function acceptWebMessage(
     /** Command completion is committed with acceptance, using the same dedupe/guard path. */
     command?: {
       reply: string;
+      /** Audited UI action; it must not become a conversational message. */
+      presentation?: 'control';
+      applied?: boolean;
       selectedWorkspaceId?: string;
       modelOverride?: string | null;
       thinkingOverride?: { model_key: string; choice_id: string } | null;
@@ -340,6 +343,7 @@ export async function acceptWebMessage(
   const canonicalPayload = JSON.stringify({
     text,
     media_id: mediaId,
+    ...(params.command?.presentation === 'control' ? { presentation: 'control' } : {}),
     ...(params.answerContext ? { answer: params.answerContext } : {}),
   });
   const fingerprint = await sha256(canonicalPayload);
@@ -375,16 +379,17 @@ export async function acceptWebMessage(
         .bind(inboundId)
         .first<{ id: string }>();
 
-      const linkedRun = await db
+      let linkedRun = await db
         .prepare(`SELECT run_id AS id FROM chat_messages WHERE inbound_message_id = ?`)
         .bind(inboundId)
         .first<{ id: string }>();
+      if (!linkedRun && params.command?.presentation === 'control') linkedRun = await db.prepare(`SELECT id FROM agent_runs WHERE source_message_id = ? AND workspace_id = ? AND chat_id = ? AND executor_kind = 'command'`).bind(inboundId, params.workspaceId, params.chatId).first<{ id: string }>();
 
       const steering = linkedMsg ? await db.prepare(`SELECT 1 FROM run_activity WHERE workspace_id = ? AND run_id = ? AND type = 'message_accepted' AND json_extract(payload_json, '$.steering_message_id') = ?`).bind(params.workspaceId, linkedRun?.id ?? '', linkedMsg.id).first() : null;
 
       return {
         status: 'accepted',
-        message_id: linkedMsg ? linkedMsg.id : '',
+        message_id: linkedMsg ? linkedMsg.id : params.command?.presentation === 'control' ? inboundId : '',
         run_id: linkedRun ? linkedRun.id : '',
         mode: steering ? 'steer' : params.answerContext ? 'clarification' : 'new_run',
         acceptance_sequence: Number(existingInbound['acceptance_sequence']),
@@ -559,7 +564,7 @@ export async function acceptWebMessage(
         .bind(runId, params.workspaceId, params.chatId, messageInId,
           params.command ? 'command' : 'agent', params.command ? 'succeeded' : 'queued', params.chatId, thinkingSnapshotJson, now, now)] : []),
 
-      db
+      ...(params.command?.presentation !== 'control' ? [db
         .prepare(
           `INSERT INTO chat_messages (id, workspace_id, chat_id, author_user_id, author_kind, channel, inbound_message_id, client_message_id, content_text, media_id, run_id, sequence, created_at, updated_at)
            VALUES (?, ?, ?, ?, 'member', 'web', ?, ?, ?, ?, ?, (SELECT COALESCE(MAX(sequence), 0) + 1 FROM chat_messages WHERE chat_id = ?), ?, ?)`
@@ -577,7 +582,7 @@ export async function acceptWebMessage(
           params.chatId,
           now,
           now,
-        ),
+        )] : []),
 
       db
         .prepare(
@@ -590,7 +595,7 @@ export async function acceptWebMessage(
           params.chatId,
           runId,
           params.chatId,
-          JSON.stringify({ client_message_id: params.clientMessageId, text, media_id: mediaId, ...(params.steerRunId ? { steering_message_id: chatMessageId } : {}) }),
+          JSON.stringify({ client_message_id: params.clientMessageId, text, media_id: mediaId, ...(params.command?.presentation === 'control' ? { presentation: 'control' } : {}), ...(params.steerRunId ? { steering_message_id: chatMessageId } : {}) }),
           now,
         ),
 
@@ -614,15 +619,15 @@ export async function acceptWebMessage(
       ...(params.steerRunId ? [db.prepare(`UPDATE messages_in SET status = 'processed' WHERE id = ?`).bind(messageInId)] : []),
       ...(params.command ? [
         db.prepare(`UPDATE messages_in SET status = 'processed' WHERE id = ?`).bind(messageInId),
-        db.prepare(`INSERT INTO chat_messages (id, workspace_id, chat_id, author_user_id, author_kind, channel,
+        ...(params.command.presentation !== 'control' ? [db.prepare(`INSERT INTO chat_messages (id, workspace_id, chat_id, author_user_id, author_kind, channel,
           inbound_message_id, client_message_id, content_text, media_id, run_id, sequence, created_at, updated_at)
           VALUES (?, ?, ?, NULL, 'system', 'system', NULL, NULL, ?, NULL, ?, (SELECT COALESCE(MAX(sequence), 0) + 1 FROM chat_messages WHERE chat_id = ?), ?, ?)`)
-          .bind(`msg_${crypto.randomUUID()}`, params.workspaceId, params.chatId, params.command.reply, runId, params.chatId, now, now),
+          .bind(`msg_${crypto.randomUUID()}`, params.workspaceId, params.chatId, params.command.reply, runId, params.chatId, now, now)] : []),
         db.prepare(`UPDATE chats SET activity_cursor = activity_cursor + 1 WHERE id = ?`).bind(params.chatId),
         db.prepare(`INSERT INTO run_activity (id, workspace_id, chat_id, run_id, cursor, type, payload_json, created_at)
           SELECT ?, ?, ?, ?, activity_cursor, 'answer_saved', ?, ? FROM chats WHERE id = ?`)
           .bind(`act_${crypto.randomUUID()}`, params.workspaceId, params.chatId, runId,
-            JSON.stringify({ reply: params.command.reply, selected_workspace_id: params.command.selectedWorkspaceId ?? null }), now, params.chatId),
+            JSON.stringify({ reply: params.command.reply, selected_workspace_id: params.command.selectedWorkspaceId ?? null, ...(params.command.presentation === 'control' ? { presentation: 'control', command_applied: params.command.applied ?? false } : {}) }), now, params.chatId),
       ] : []),
     ]);
   } catch (err) {
@@ -666,7 +671,7 @@ export async function acceptWebMessage(
 
   return {
     status: 'accepted',
-    message_id: chatMessageId,
+    message_id: params.command?.presentation === 'control' ? messageInId : chatMessageId,
     run_id: runId,
     mode: params.steerRunId ? 'steer' : params.answerRunId ? 'clarification' : 'new_run',
     acceptance_sequence: acceptanceSequence,

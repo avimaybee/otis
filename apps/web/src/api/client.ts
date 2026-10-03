@@ -20,6 +20,8 @@ import type {
   MemberSettings,
   MemorySourceResponse,
   WorkspaceSettings,
+  UpdateMemberSettingsRequest,
+  CredentialStatusResponse,
   RunDetailResponse,
   UndoCommitResponse,
   UndoPreviewResponse,
@@ -111,6 +113,11 @@ export const api = {
       body: JSON.stringify({ client_message_id: clientMessageId, text, clarification_id: clarificationId }),
     }),
 
+  executeCommand: (workspaceId: string, chatId: string, clientMessageId: string, text: string) =>
+    request<AcceptMessageResponse>(`/api/workspaces/${workspaceId}/chats/${chatId}/commands`, {
+      method: 'POST', body: JSON.stringify({ client_message_id: clientMessageId, text, presentation: 'control' }),
+    }),
+
   activity: (workspaceId: string, chatId: string, after: number) =>
     request<ActivityPageResponse>(
       `/api/workspaces/${workspaceId}/chats/${chatId}/activity?after=${after}`,
@@ -179,7 +186,11 @@ export const api = {
 
   settings: (workspaceId: string) => request<{ settings: WorkspaceSettings }>(`/api/workspaces/${workspaceId}/settings`),
   memberSettings: (workspaceId: string) => request<{ settings: MemberSettings }>(`/api/workspaces/${workspaceId}/me/settings`),
-  updateMemberSettings: (workspaceId: string, body: { preferred_language: string; brief_timezone: string }) => request<{ settings: MemberSettings }>(`/api/workspaces/${workspaceId}/me/settings`, { method: 'PUT', body: JSON.stringify(body) }),
+  updateMemberSettings: (workspaceId: string, body: UpdateMemberSettingsRequest) => request<{ settings: MemberSettings }>(`/api/workspaces/${workspaceId}/me/settings`, { method: 'PUT', body: JSON.stringify(body) }),
+  updateWorkspaceSettings: (workspaceId: string, body: { default_model: string | null }) => request<{ settings: WorkspaceSettings }>(`/api/workspaces/${workspaceId}/settings`, { method: 'PUT', body: JSON.stringify(body) }),
+  credentialStatus: (workspaceId: string, provider: 'gemini' | 'opencode_go') => request<CredentialStatusResponse>(`/api/workspaces/${workspaceId}/credentials/${provider}`),
+  putCredential: (workspaceId: string, provider: 'gemini' | 'opencode_go', key: string) => request<CredentialStatusResponse>(`/api/workspaces/${workspaceId}/credentials/${provider}`, { method: 'PUT', body: JSON.stringify({ key }) }),
+  verifyCredential: (workspaceId: string, provider: 'gemini' | 'opencode_go') => request<{ verified: boolean }>(`/api/workspaces/${workspaceId}/credentials/${provider}/verify`, { method: 'POST', body: JSON.stringify({}) }),
   activityStreamUrl: (workspaceId: string, chatId: string, after: number) =>
     `/api/workspaces/${workspaceId}/chats/${encodeURIComponent(chatId)}/activity?stream=sse&after=${after}`,
 };

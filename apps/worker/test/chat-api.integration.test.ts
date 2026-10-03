@@ -1430,3 +1430,52 @@ describe('Dispatch wake-up hint on acceptance', () => {
     expect(() => publishDispatchHint(undefined, env as never, WS)).not.toThrow();
   });
 });
+
+describe('UI command controls remain auditable without becoming chat messages', () => {
+  it('saves a model exactly once, returns its effect, and leaves transcript/context clean', async () => {
+    const now = new Date().toISOString();
+    await env.DB.prepare(`INSERT INTO provider_credentials (workspace_id, provider, encrypted_key, key_nonce, status, created_at, updated_at) VALUES (?, 'opencode_go', 'synthetic-test-only', 'synthetic', 'available', ?, ?) ON CONFLICT(workspace_id, provider) DO UPDATE SET status = 'available'`).bind(WS, now, now).run();
+    const model = PRODUCTION_REGISTRY.entries.find(entry => entry.provider === 'opencode_go' && entry.lifecycle === 'active')!;
+    const chat = await createChat(env.DB, { workspaceId: WS, authorUserId: AVI });
+    const endpoint = `/api/workspaces/${WS}/chats/${chat.id}/commands`;
+    const body = { text: `/model ${model.commandKey}`, client_message_id: 'ui-control-model', presentation: 'control' };
+    const first = await call(endpoint, { method: 'POST', cookie: aviCookie, headers: CSRF, body: JSON.stringify(body) });
+    expect(first.status).toBe(200);
+    const accepted = await first.json() as { run_id: string; command_applied: boolean };
+    expect(accepted.command_applied).toBe(true);
+    const replay = await call(endpoint, { method: 'POST', cookie: aviCookie, headers: CSRF, body: JSON.stringify(body) });
+    expect(await replay.json()).toMatchObject({ run_id: accepted.run_id, command_applied: true });
+    expect(await env.DB.prepare(`SELECT model_override FROM chats WHERE id = ?`).bind(chat.id).first()).toEqual({ model_override: model.commandKey });
+    expect(await env.DB.prepare(`SELECT COUNT(*) AS n FROM chat_messages WHERE chat_id = ?`).bind(chat.id).first()).toEqual({ n: 0 });
+    expect(await env.DB.prepare(`SELECT COUNT(*) AS n FROM messages_in WHERE external_id = 'ui-control-model'`).first()).toEqual({ n: 1 });
+    expect(await env.DB.prepare(`SELECT COUNT(*) AS n FROM outbox WHERE json_extract(payload_json, '$.run_id') = ?`).bind(accepted.run_id).first()).toEqual({ n: 0 });
+    const audit = await env.DB.prepare(`SELECT payload_json FROM run_activity WHERE run_id = ? AND type = 'answer_saved'`).bind(accepted.run_id).first<{ payload_json: string }>();
+    expect(JSON.parse(audit!.payload_json)).toMatchObject({ presentation: 'control', command_applied: true });
+    const collision = await call(endpoint, { method: 'POST', cookie: aviCookie, headers: CSRF, body: JSON.stringify({ ...body, presentation: undefined }) });
+    expect(collision.status).toBe(409);
+  });
+  it('applies thinking, replays an older action without reverting a newer selection, and rejects invalid levels', async () => {
+    const chat = await createChat(env.DB, { workspaceId: WS, authorUserId: AVI, modelOverride: 'gemini-3.1-flash-lite' });
+    const endpoint = `/api/workspaces/${WS}/chats/${chat.id}/commands`;
+    const invoke = (text: string, id: string, cookie = aviCookie) => call(endpoint, { method: 'POST', cookie, headers: CSRF, body: JSON.stringify({ text, client_message_id: id, presentation: 'control' }) });
+    expect((await invoke('/thinking high', 'ui-control-thinking-high')).status).toBe(200);
+    const selected = await callJson<ModelListResponse>(`/api/workspaces/${WS}/models?chat_id=${chat.id}`, { cookie: aviCookie });
+    expect(selected.models.find(model => model.is_current)?.thinking?.current_choice_id).toBe('high');
+    expect((await invoke('/thinking default', 'ui-control-thinking-reset')).status).toBe(200);
+    expect((await invoke('/thinking high', 'ui-control-thinking-high')).status).toBe(200);
+    expect(await env.DB.prepare(`SELECT thinking_override_json FROM chats WHERE id = ?`).bind(chat.id).first()).toEqual({ thinking_override_json: null });
+    expect((await invoke('/thinking imaginary', 'ui-control-thinking-invalid')).status).toBe(422);
+    expect((await invoke('/thinking high', 'ui-control-thinking-hunor', hunorCookie)).status).toBe(403);
+    expect(await env.DB.prepare(`SELECT COUNT(*) AS n FROM chat_messages WHERE chat_id = ?`).bind(chat.id).first()).toEqual({ n: 0 });
+    expect(await env.DB.prepare(`SELECT COUNT(*) AS n FROM messages_in WHERE external_id IN ('ui-control-thinking-invalid', 'ui-control-thinking-hunor')`).first()).toEqual({ n: 0 });
+  });
+  it('returns helpful command output directly without queuing an agent or inserting a chat bubble', async () => {
+    const chat = await createChat(env.DB, { workspaceId: WS, authorUserId: AVI });
+    const response = await call(`/api/workspaces/${WS}/chats/${chat.id}/commands`, { method: 'POST', cookie: aviCookie, headers: CSRF, body: JSON.stringify({ text: '/help', client_message_id: 'ui-control-help', presentation: 'control' }) });
+    expect(response.status).toBe(200); const result = await response.json() as { reply: string; command_applied: boolean; run_id: string };
+    expect(result.reply).toContain('/model'); expect(result.command_applied).toBe(false);
+    expect(await env.DB.prepare(`SELECT COUNT(*) AS n FROM chat_messages WHERE chat_id = ?`).bind(chat.id).first()).toEqual({ n: 0 });
+    expect(await env.DB.prepare(`SELECT executor_kind, status FROM agent_runs WHERE id = ?`).bind(result.run_id).first()).toEqual({ executor_kind: 'command', status: 'succeeded' });
+  });
+});
+

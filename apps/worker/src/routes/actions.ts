@@ -237,7 +237,7 @@ export async function handleCommitUndo(
   if (scope instanceof Response) return scope;
   const actionId = pathSegment(rawActionId);
 
-  let body: Partial<UndoCommitRequest> & { command_text?: string };
+  let body: Partial<UndoCommitRequest> & { command_text?: string; presentation?: 'control' };
   try {
     body = (await request.json()) as Partial<UndoCommitRequest>;
   } catch {
@@ -250,6 +250,7 @@ export async function handleCommitUndo(
     return jsonError(422, 'validation_error', 'mode must be "from_here" or "single".', requestId);
   }
 
+  if (body.presentation !== undefined && body.presentation !== 'control') return jsonError(422, 'validation_error', 'Invalid command presentation.', requestId);
   const clientOperationId =
     typeof body.client_operation_id === 'string' && body.client_operation_id.length > 0
       ? body.client_operation_id
@@ -309,7 +310,7 @@ export async function handleCommitUndo(
   const commandRunId = `run_cmd_${workspaceId}_${clientOperationId}`;
   let source: { messageInId: string; created: boolean };
   try {
-    source = await ensureCommandSourceMessage(env.DB, { workspaceId, userId: scope.user.id, chatId, externalId: body.command_text ? clientOperationId : `undo:${clientOperationId}`, text: body.command_text ?? `/undo ${actionId} ${mode}`, targetActionId: actionId, mode });
+    source = await ensureCommandSourceMessage(env.DB, { workspaceId, userId: scope.user.id, chatId, externalId: body.command_text ? clientOperationId : `undo:${clientOperationId}`, text: body.command_text ?? `/undo ${actionId} ${mode}`, targetActionId: actionId, mode, presentation: body.presentation });
   } catch { return jsonError(409, 'operation_conflict', 'This operation ID belongs to a different undo or conversation.', requestId); }
 
   // A retried undo carries the same client operation ID. The recorded receipt is
@@ -358,7 +359,7 @@ export async function handleCommitUndo(
          ON CONFLICT(id) DO NOTHING`,
       )
       .bind(commandRunId, workspaceId, chatId, source.messageInId, now, now),
-    env.DB.prepare(`INSERT INTO chat_messages (id, workspace_id, chat_id, author_user_id, author_kind, channel, inbound_message_id, client_message_id, content_text, run_id, sequence, created_at, updated_at) SELECT ?, ?, ?, ?, 'member', 'web', ?, ?, ?, ?, COALESCE(MAX(sequence), 0) + 1, ?, ? FROM chat_messages WHERE chat_id = ?`).bind(`msg_${crypto.randomUUID()}`, workspaceId, chatId, scope.user.id, sourceMessageId, body.command_text ? clientOperationId : `undo:${clientOperationId}`, body.command_text ?? `/undo ${actionId} ${mode}`, commandRunId, now, now, chatId),
+    ...(body.presentation !== 'control' ? [env.DB.prepare(`INSERT INTO chat_messages (id, workspace_id, chat_id, author_user_id, author_kind, channel, inbound_message_id, client_message_id, content_text, run_id, sequence, created_at, updated_at) SELECT ?, ?, ?, ?, 'member', 'web', ?, ?, ?, ?, COALESCE(MAX(sequence), 0) + 1, ?, ? FROM chat_messages WHERE chat_id = ?`).bind(`msg_${crypto.randomUUID()}`, workspaceId, chatId, scope.user.id, sourceMessageId, body.command_text ? clientOperationId : `undo:${clientOperationId}`, body.command_text ?? `/undo ${actionId} ${mode}`, commandRunId, now, now, chatId)] : []),
     env.DB
       .prepare(
         `UPDATE chats SET activity_cursor = activity_cursor + 1, last_activity_at = ?, updated_at = ? WHERE id = ?`,

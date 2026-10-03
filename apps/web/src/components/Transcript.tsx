@@ -9,6 +9,12 @@ export interface WorkingStep { id: string; label: string; state: 'queued' | 'run
 export const STATES: Record<WorkingStep['state'], string> = { queued: 'Queued', running: 'Working', succeeded: 'Done', failed: 'Failed', skipped: 'Skipped', undone: 'Undone' };
 const LABELS: Record<string, string> = { find_entities: 'Finding the business', query: 'Reading saved records', search_memory: 'Searching workspace memory', get_memory: 'Reading the source', upsert_entity: 'Saving the business', create_entity: 'Saving the business', set_fields: 'Updating the record', set_field: 'Updating the record', log_event: 'Saving the note', create_task: 'Saving the follow-up', update_task: 'Updating the follow-up', draft_message: 'Preparing the draft', record_draft: 'Saving the draft', remember_context: 'Saving workspace context', forget_memory: 'Forgetting saved context', undo: 'Reverting the change', update_preference: 'Updating your preference' };
 export const stepLabel = (name: string) => LABELS[name] ?? name.replace(/_/g, ' ');
+function failureMessage(code: string | null | undefined) {
+  if (code === 'model_unavailable') return 'Choose an available model to continue. Your message is saved.';
+  if (code === 'provider_stream_error') return 'The model connection failed. Your message is saved.';
+  if (code === 'missing_budgets') return 'Otis has a workspace setup problem. Your message is saved.';
+  return 'I couldn’t finish that request. Your message is saved.';
+}
 
 function StepIcon({ label, state }: { label: string; state: WorkingStep['state'] }) {
   if (state === 'failed') return <AlertCircleIcon />;
@@ -64,7 +70,7 @@ function RunWork({ run, steps, activities, onInspectAction, onReply }: { run?: R
   const expanded = manual ?? !finished;
   const summaries = activities.filter(item => item.type === 'reasoning_summary');
   return <div className="otis-run">
-    {run?.status === 'queued' && <p className="otis-run__status">Queued · waiting its turn</p>}
+    {run?.status === 'queued' && <p className="otis-run__status" role="status">Starting…</p>}
     {run?.status === 'running' && !steps.length && (
       <div className="otis-working otis-working--running">
         <div className="otis-working__disclosure">
@@ -93,7 +99,7 @@ function RunWork({ run, steps, activities, onInspectAction, onReply }: { run?: R
       </div>
     )}
     {run?.status === 'partial' && <p className="otis-run__status otis-run__status--error">Some changes were saved. The run could not finish; inspect the completed changes above.</p>}
-    {run?.status === 'failed' && <p className="otis-run__status otis-run__status--error">Otis could not finish this request{run.run.error_code ? ` (${run.run.error_code})` : ''}. Your message is retained.{run.run.error_message ? ` ${run.run.error_message}` : ''}</p>}
+    {run?.status === 'failed' && <div><p className="otis-run__status otis-run__status--error" role="status">{failureMessage(run.run.error_code)}</p>{run.run.error_code && <details className="otis-provider-summary"><summary>Error details</summary><p>{run.run.error_code}{run.run.error_message ? `: ${run.run.error_message}` : ''}</p></details>}</div>}
     {run?.status === 'cancelled' && <p className="otis-run__status">Stopped. Saved changes remain available to inspect or undo.</p>}
   </div>;
 }
@@ -116,7 +122,6 @@ export function Transcript({ messages, members, currentUserId, steps, run, runs 
     try {
       await navigator.clipboard.writeText(text);
       setCopiedId(id);
-      toast.success('Copied to clipboard');
       setTimeout(() => setCopiedId(current => (current === id ? null : current)), 2000);
     } catch {
       toast.error('Could not copy to clipboard');
@@ -156,7 +161,7 @@ export function Transcript({ messages, members, currentUserId, steps, run, runs 
                   {copiedId === message.id ? <CheckIcon /> : <CopyIcon />}
                 </button>
                 {isMember && message.author_user_id === currentUserId && onEditMessage && (
-                  <button type="button" className="otis-msg-action" aria-label="Edit message in composer" title="Edit in composer" onClick={() => { onEditMessage(message.content_text); toast.success('Draft loaded in composer'); }}>
+                  <button type="button" className="otis-msg-action" aria-label="Use message as draft" title="Use as draft" onClick={() => onEditMessage(message.content_text)}>
                     <PencilIcon />
                   </button>
                 )}
@@ -185,6 +190,7 @@ export function activityToSteps(activities: PublicActivity[], runActions: RunDet
   const steps: WorkingStep[] = [];
   for (const activity of activities) {
     const payload = (activity.payload ?? {}) as { tool_name?: string; status?: WorkingStep['state']; action_id?: string; command_name?: string; summary?: string; step_index?: number };
+    if (payload.tool_name === 'turn:agent') continue;
     if (activity.type === 'step_started') steps.push({ id: `${activity.run_id}:${payload.step_index ?? activity.id}`, label: stepLabel(payload.tool_name ?? 'Working'), state: 'running' });
     if (activity.type === 'step_finished') { const last = [...steps].reverse().find(step => step.state === 'running'); if (last) { last.state = payload.status ?? 'succeeded'; } }
     if (activity.type === 'action_applied') { const receipt = runActions.find(action => action.action_id === payload.action_id); steps.push({ id: activity.id, label: stepLabel(payload.command_name ?? 'Saved a change'), state: receipt ? 'succeeded' : 'running', actionId: receipt?.action_id, summary: receipt?.summary ?? null }); }
@@ -193,6 +199,7 @@ export function activityToSteps(activities: PublicActivity[], runActions: RunDet
   return steps;
 }
 export function stepsFromRun(run: RunDetailResponse, activities: PublicActivity[]): WorkingStep[] {
-  if (!run.steps.length) return activityToSteps(activities, run.actions);
-  return run.steps.map(step => { const receipt = run.actions.find(action => action.action_id === step.action_id && ['applied', 'already_applied'].includes(action.result_status)); const undone = activities.some(item => item.type === 'action_reverted' && (item.payload as { action_id?: string }).action_id === step.action_id); return { id: String(step.step_index), label: stepLabel(step.tool_name), state: undone ? 'undone' : step.status === 'planned' ? activities.some(item => item.type === 'step_started' && (item.payload as { step_index?: number }).step_index === step.step_index) ? 'running' : 'queued' : step.status, actionId: receipt?.action_id, summary: receipt?.summary ?? null }; });
+  const tools = run.steps.filter(step => step.tool_name !== 'turn:agent');
+  if (!tools.length) return activityToSteps(activities, run.actions);
+  return tools.map(step => { const receipt = run.actions.find(action => action.action_id === step.action_id && ['applied', 'already_applied'].includes(action.result_status)); const undone = activities.some(item => item.type === 'action_reverted' && (item.payload as { action_id?: string }).action_id === step.action_id); return { id: String(step.step_index), label: stepLabel(step.tool_name), state: undone ? 'undone' : step.status === 'planned' ? activities.some(item => item.type === 'step_started' && (item.payload as { step_index?: number }).step_index === step.step_index) ? 'running' : 'queued' : step.status, actionId: receipt?.action_id, summary: receipt?.summary ?? null }; });
 }

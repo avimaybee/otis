@@ -433,6 +433,8 @@ export interface AcceptMessageResponse {
   mode?: 'new_run' | 'steer' | 'clarification';
   reply?: string;
   selected_workspace_id?: string | null;
+  /** A deterministic control action committed its effect; no agent was queued. */
+  command_applied?: boolean;
 }
 
 export interface InboundMessage {

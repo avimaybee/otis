@@ -536,8 +536,10 @@ async function renderModelList(context: CommandExecutionContext, chat: Chat | nu
 export async function handleExecuteCommand(request: Request, env: Env, workspaceId: string, chatId: string, requestId: string): Promise<Response> {
   const scope = await requireWorkspaceScope(request, env.DB, workspaceId, requestId, { csrf: true });
   if (scope instanceof Response) return scope;
-  let body: { text?: unknown; client_message_id?: unknown };
+  let body: { text?: unknown; client_message_id?: unknown; presentation?: unknown };
   try { body = await request.json(); } catch { return jsonError(400, 'bad_request', 'Invalid JSON body.', requestId); }
+  if (body.presentation !== undefined && body.presentation !== 'control') return jsonError(422, 'validation_error', 'Invalid command presentation.', requestId);
+  const presentation = body.presentation === 'control' ? 'control' as const : undefined;
   const validated = validateChatMessageRequest(body);
   if (!validated.valid) return jsonError(422, 'validation_error', validated.message, requestId);
   const text = validated.value.text!; const clientMessageId = validated.value.client_message_id;
@@ -547,7 +549,7 @@ export async function handleExecuteCommand(request: Request, env: Env, workspace
   const prior = await env.DB.prepare(`SELECT 1 FROM messages_in WHERE channel = 'web' AND external_id = ?`).bind(clientMessageId).first();
   if (prior) {
     try {
-      const accepted = await acceptWebMessage(env.DB, { workspaceId, chatId, userId: scope.user.id, clientMessageId: clientMessageId, text: text, command: { reply: '' } });
+      const accepted = await acceptWebMessage(env.DB, { workspaceId, chatId, userId: scope.user.id, clientMessageId: clientMessageId, text: text, command: { reply: '', presentation } });
       const saved = await env.DB.prepare(`SELECT payload_json FROM run_activity WHERE run_id = ? AND type = 'answer_saved' ORDER BY cursor DESC LIMIT 1`).bind(accepted.run_id).first<{ payload_json: string }>();
       if (saved) return jsonSuccess({ ...accepted, ...JSON.parse(saved.payload_json), deduplicated: true }, request.url.includes('/commands') ? 200 : 202, { 'x-request-id': requestId });
     } catch { return jsonError(409, 'conflict', 'Message ID already used with different content or context.', requestId); }
@@ -556,10 +558,13 @@ export async function handleExecuteCommand(request: Request, env: Env, workspace
   if (outcome.kind === 'not_a_command') return jsonError(422, 'not_a_command', 'That text is not a command.', requestId);
   const command: {
     reply: string;
+    presentation?: 'control';
+    applied?: boolean;
     selectedWorkspaceId?: string;
     modelOverride?: string | null;
     thinkingOverride?: { model_key: string; choice_id: string } | null;
-  } = { reply: outcome.text };
+  } = { reply: outcome.text, presentation, applied: outcome.effects.length > 0 };
+  if (presentation && /^\/(model|thinking|workspace)\s+\S/i.test(text) && !outcome.effects.length) return jsonError(422, 'command_rejected', outcome.text, requestId);
   for (const effect of outcome.effects) {
     if (effect.type === 'set_chat_model') command.modelOverride = effect.commandKey;
     if (effect.type === 'set_chat_thinking') command.thinkingOverride = effect.thinkingOverride;
@@ -576,7 +581,7 @@ export async function handleExecuteCommand(request: Request, env: Env, workspace
       if (!previewResponse.ok) return previewResponse;
       const preview = await previewResponse.json() as { preview: { expected_revision: number } };
       const commitUrl = new URL(request.url); commitUrl.searchParams.set('chat_id', chatId);
-      const commit = await handleCommitUndo(new Request(commitUrl, { method: 'POST', headers: request.headers, body: JSON.stringify({ mode: effect.mode, client_operation_id: clientMessageId, expected_revision: preview.preview.expected_revision, command_text: text }) }), env, workspaceId, target, requestId);
+      const commit = await handleCommitUndo(new Request(commitUrl, { method: 'POST', headers: request.headers, body: JSON.stringify({ mode: effect.mode, client_operation_id: clientMessageId, expected_revision: preview.preview.expected_revision, command_text: text, presentation }) }), env, workspaceId, target, requestId);
       const result = await commit.json() as { status: string; summary: string };
       command.reply = result.summary;
       if (!commit.ok) return jsonSuccess(result, commit.status, { 'x-request-id': requestId });

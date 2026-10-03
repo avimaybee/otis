@@ -2,6 +2,7 @@ import { useId, useRef, useState } from 'react';
 import type { Chat } from '@otis/contracts';
 import { CloseIcon, ComposeIcon, SearchIcon, SettingsIcon } from './icons.js';
 import { Overlay } from './Overlay.js';
+import { ChoiceSelect } from './ui/select.js';
 
 export interface HistoryNavProps {
   workspaceName: string; workspaces: { id: string; name: string }[]; workspaceId: string;
@@ -19,7 +20,7 @@ export function HistoryNav(props: HistoryNavProps) {
   const content = <nav className={props.variant === 'drawer' ? 'otis-drawer' : 'otis-sidebar'} aria-label="History">
     <div className="otis-nav__brand"><span>Otis</span>{props.variant === 'drawer' && <button ref={closeButton} className="otis-iconbutton" type="button" aria-label="Close history" onClick={props.onClose}><CloseIcon /></button>}</div>
     <label className="otis-visually-hidden" htmlFor={`${id}-workspace`}>Workspace</label>
-    <select id={`${id}-workspace`} className="otis-nav__workspace" value={props.workspaceId} onChange={event => props.onSwitchWorkspace(event.target.value)}>{props.workspaces.map(workspace => <option key={workspace.id} value={workspace.id}>{workspace.name}</option>)}</select>
+    {props.workspaces.length > 1 ? <ChoiceSelect id={`${id}-workspace`} label="Workspace" className="otis-nav__workspace" value={props.workspaceId} options={props.workspaces.map(workspace => ({ value: workspace.id, label: workspace.name }))} onChange={props.onSwitchWorkspace}/> : <p className="otis-nav__workspace-label">{props.workspaceName}</p>}
     <button type="button" className="otis-nav__action" onClick={props.onNewChat}><ComposeIcon /><span>New chat</span></button>
     <button type="button" className="otis-nav__action" aria-expanded={searching} onClick={() => { setSearching(true); requestAnimationFrame(() => input.current?.focus()); }}><SearchIcon /><span>Search chats</span></button>
     {searching && <div className="otis-nav__search"><label className="otis-visually-hidden" htmlFor={`${id}-search`}>Filter chat titles</label><input ref={input} id={`${id}-search`} type="search" placeholder="Search chat titles" value={query} onChange={event => setQuery(event.target.value)} onKeyDown={event => { if (event.key === 'Escape') { setSearching(false); setQuery(''); } }} /></div>}

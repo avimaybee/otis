@@ -12,7 +12,8 @@ export default tseslint.config(
       '**/.wrangler/**',
       '**/node_modules/**',
       '**/.vite/**',
-      '**/eval-output/**'
+      '**/eval-output/**',
+      'UI-refs/**'
     ]
   },
   {
