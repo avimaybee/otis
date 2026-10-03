@@ -12,7 +12,7 @@ import { Alert, AlertDescription } from './ui/alert.js';
 export interface WorkingStep { id: string; label: string; state: 'queued' | 'running' | 'succeeded' | 'failed' | 'skipped' | 'undone'; actionId?: string | null; summary?: string | null; }
 export const STATES: Record<WorkingStep['state'], string> = { queued: 'Queued', running: 'Working', succeeded: 'Done', failed: 'Failed', skipped: 'Skipped', undone: 'Undone' };
 const LABELS: Record<string, string> = { find_entities: 'Finding the business', query: 'Reading saved records', search_memory: 'Searching workspace memory', get_memory: 'Reading the source', upsert_entity: 'Saving the business', create_entity: 'Saving the business', set_fields: 'Updating the record', set_field: 'Updating the record', log_event: 'Saving the note', create_task: 'Saving the follow-up', update_task: 'Updating the follow-up', draft_message: 'Preparing the draft', record_draft: 'Saving the draft', remember_context: 'Saving workspace context', forget_memory: 'Forgetting saved context', undo: 'Reverting the change', update_preference: 'Updating your preference' };
-export const stepLabel = (name: string) => LABELS[name] ?? name.replace(/_/g, ' ');
+export const stepLabel = (name?: string | null) => (name ? (LABELS[name] ?? name.replace(/_/g, ' ')) : 'Working');
 function failureMessage(code: string | null | undefined) {
   if (code === 'model_unavailable') return 'Choose an available model to continue. Your message is saved.';
   if (code === 'provider_stream_error') return 'The model connection failed. Your message is saved.';
