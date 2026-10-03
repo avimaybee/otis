@@ -41,6 +41,26 @@ const RESPONSES_STREAM = [
 ].join('');
 
 describe('OpenCode Go chat completions adapter', () => {
+  it('invokes transport without a receiver (Workers Illegal-invocation safe)', async () => {
+    let observedThis: unknown = 'unset';
+    async function receiverCheckingFetch(this: unknown, _url: string, _init: RequestInit): Promise<Response> {
+      // eslint-disable-next-line @typescript-eslint/no-this-alias -- observing the invocation receiver is the assertion.
+      observedThis = this;
+      return chunkedResponse([CHAT_STREAM]);
+    }
+    const events: ProviderEvent[] = [];
+    const adapter = new OpenCodeGoAdapter({
+      fetchFn: receiverCheckingFetch as unknown as ReturnType<typeof mockFetch>,
+      apiKey: 'test-go-key',
+      endpointFamily: 'go-chat-completions',
+    });
+    for await (const event of adapter.streamTurn(baseInput(goChatModel()))) events.push(event);
+    expect(events[events.length - 1]).toMatchObject({ type: 'finish' });
+    // A member invocation (this.fetchFn) would surface the adapter instance
+    // here and throw Illegal invocation against native Workers fetch.
+    expect(observedThis).toBeUndefined();
+  });
+
   it('sends the documented endpoint, headers, and OpenAI body shape', async () => {
     const fetchFn = mockFetch(() => chunkedResponse([CHAT_STREAM]));
     const events: ProviderEvent[] = [];

@@ -31,7 +31,7 @@ import {
   type ToolDeclaration,
   type TurnInput,
 } from './types.js';
-import { ProviderErrorException } from './types.js';
+import { ProviderErrorException, receiverSafeFetch } from './types.js';
 
 /** Pinned documented revision header (docs examples, checked 2026-10-01). */
 export const GEMINI_API_REVISION = '2026-05-20';
@@ -234,7 +234,7 @@ export class GeminiInteractionsAdapter implements ProviderAdapter {
   private readonly apiKey: string;
 
   constructor(options: GeminiAdapterOptions & { fetchFn: FetchFn }) {
-    this.fetchFn = options.fetchFn;
+    this.fetchFn = receiverSafeFetch(options.fetchFn);
     this.apiKey = options.apiKey;
   }
 
@@ -603,7 +603,8 @@ export async function probeGeminiCredential(
   modelId: string,
   timeoutMs = 15_000,
 ): Promise<{ ok: boolean; status: number }> {
-  const response = await fetchFn(`${GEMINI_ORIGIN}/v1beta/models/${modelId}`, {
+  const safeFetch = receiverSafeFetch(fetchFn);
+  const response = await safeFetch(`${GEMINI_ORIGIN}/v1beta/models/${modelId}`, {
     method: 'GET',
     headers: { 'x-goog-api-key': apiKey, 'Api-Revision': GEMINI_API_REVISION },
     signal: AbortSignal.timeout(timeoutMs),

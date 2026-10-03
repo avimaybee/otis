@@ -18,6 +18,7 @@ import {
 } from '@otis/identity';
 import {
   createRegistry,
+  receiverSafeFetch,
   type ModelEntry,
 } from '@otis/agent';
 import {
@@ -530,5 +531,41 @@ describe('Worker Providers Integration (workerd)', () => {
     expect(missing.status).toBe(404);
     const body = await missing.text();
     expect(body).not.toContain('sk-test');
+  });
+});
+
+describe('Provider transport receiver safety (workerd native fetch)', () => {
+  // Discrimination is synchronous: a detached native fetch called as a member
+  // throws Illegal invocation at call time, while the arrow wrapper always
+  // returns a promise (its later transport failure is settled and ignored).
+  // No real network is involved either way.
+  const DEAD_URL = 'http://127.0.0.1:1/otus-receiver-probe';
+  const freshOptions = (): RequestInit => ({ signal: AbortSignal.timeout(2000) });
+
+  it('documents the platform constraint: detached native fetch throws Illegal invocation', () => {
+    const holder = { fetchFn: fetch };
+    let syncThrow: unknown = 'none';
+    try {
+      holder.fetchFn(DEAD_URL, freshOptions());
+    } catch (err) {
+      syncThrow = err;
+    }
+    expect(String(syncThrow)).toContain('Illegal invocation');
+  });
+
+  it('receiverSafeFetch gets native fetch past invocation to transport (never Illegal invocation)', async () => {
+    let result: unknown = 'none';
+    let syncThrow: unknown = 'none';
+    try {
+      result = receiverSafeFetch(fetch)(DEAD_URL, freshOptions());
+    } catch (err) {
+      syncThrow = err;
+    }
+    expect(syncThrow).toBe('none');
+    expect(result).toBeInstanceOf(Promise);
+    await (result as Promise<Response>).then(
+      () => null,
+      () => null,
+    );
   });
 });

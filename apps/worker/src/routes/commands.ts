@@ -26,7 +26,7 @@ import {
 import { validateWorkspaceDefaultModel, workspaceCredentialStatuses } from '../providers/service.js';
 import { acceptWebMessage, getChat } from '../inbox/repository.js';
 import { handleCommitUndo, handleUndoPreview } from './actions.js';
-import { PRODUCTION_REGISTRY } from '@otis/agent';
+import { listAvailableModels, PRODUCTION_REGISTRY } from '@otis/agent';
 import type { ModelEntry, ThinkingChoice } from '@otis/agent';
 import type { Env } from '../index.js';
 import { jsonError, jsonSuccess } from '../middleware/errors.js';
@@ -88,9 +88,13 @@ export async function handleListModels(
     }
   }
 
+  // Availability uses the exact resolver rules (approval, lifecycle, verified
+  // text/tools/stream, credential health) so the picker never offers a model
+  // the run path would reject.
+  const usableKeys = new Set(
+    listAvailableModels(PRODUCTION_REGISTRY, credentialStatuses).map((entry) => entry.commandKey),
+  );
   const models: ModelOption[] = PRODUCTION_REGISTRY.entries.map((entry: ModelEntry) => {
-    const status = credentialStatuses[entry.provider] ?? null;
-    const credentialAvailable = status === 'available';
     const isCurrent = (currentKey ?? defaultKey) === entry.commandKey;
     // Native audio is capability evidence only; effective voice availability is
     // resolved separately and stays false until plan 010 supplies a verified
@@ -128,7 +132,7 @@ export async function handleListModels(
       provider: entry.provider,
       native_audio_supported: nativeAudio,
       voice_available: false,
-      available: credentialAvailable && entry.lifecycle === 'active',
+      available: usableKeys.has(entry.commandKey),
       is_current: isCurrent,
       is_default: entry.commandKey === defaultKey,
       thinking,
@@ -219,7 +223,14 @@ export async function executeCommand(
           effects.push({ type: 'set_chat_thinking', chatId: chat.id, thinkingOverride: null });
           text += ' Thinking effort was reset to Provider default.';
         }
-        text += ' Voice notes are not available yet.';
+        // Clearing the override is honest only with a usable landing state.
+        // Never announce readiness when nothing can run.
+        const landing = await describeUsableDefault(context);
+        if (landing.usableKey) {
+          text += ` The workspace model is ${landing.usableLabel}.`;
+        } else {
+          text += ` But ${landing.problem} Pick a working model with /model <key>:${landing.choices}`;
+        }
         return { kind: 'reply', text, effects };
       }
       try {
@@ -230,10 +241,10 @@ export async function executeCommand(
           effects.push({ type: 'set_chat_thinking', chatId: chat.id, thinkingOverride: null });
           text += ' Thinking effort was reset to Provider default.';
         }
-        text += ' Voice notes are not available yet.';
         return { kind: 'reply', text, effects };
       } catch {
-        return { kind: 'reply', text: `That model is unavailable here. Choose a configured key with /model.`, effects: [] };
+        const landing = await describeUsableDefault(context);
+        return { kind: 'reply', text: `That model is unavailable here.${landing.choices ? ` Working choices:${landing.choices}` : ' No usable model is configured yet — ask the workspace owner to connect a provider key.'}`, effects: [] };
       }
     }
 
@@ -440,6 +451,51 @@ export async function executeCommand(
   }
 }
 
+/**
+ * Usable workspace models under the exact resolver rules, plus a plain-language
+ * account of the landing state for replies that change model selection.
+ */
+async function describeUsableDefault(context: CommandExecutionContext): Promise<{
+  usableKey: string | null;
+  usableLabel: string | null;
+  problem: string;
+  choices: string;
+}> {
+  const credentialStatuses = await workspaceCredentialStatuses(context.db, context.workspaceId);
+  const usable = listAvailableModels(PRODUCTION_REGISTRY, credentialStatuses);
+  const settings = await context.db
+    .prepare(`SELECT default_model FROM workspace_settings WHERE workspace_id = ?`)
+    .bind(context.workspaceId)
+    .first<{ default_model: string | null }>();
+  const defaultKey = settings?.default_model ?? null;
+  const usableDefault = usable.find((entry) => entry.commandKey === defaultKey) ?? null;
+  const choices = usable.length > 0
+    ? `\n${usable.map((entry) => `- /model ${entry.commandKey} — ${entry.displayName}`).join('\n')}`
+    : '';
+  if (!defaultKey) {
+    return {
+      usableKey: null,
+      usableLabel: null,
+      problem: 'no workspace model is set yet.',
+      choices,
+    };
+  }
+  if (!usableDefault) {
+    return {
+      usableKey: null,
+      usableLabel: null,
+      problem: `the workspace model "${defaultKey}" is not usable here (missing key, retired, or unverified).`,
+      choices,
+    };
+  }
+  return {
+    usableKey: usableDefault.commandKey,
+    usableLabel: usableDefault.displayName,
+    problem: '',
+    choices,
+  };
+}
+
 async function renderModelList(context: CommandExecutionContext, chat: Chat | null): Promise<string> {
   const credentialStatuses = await workspaceCredentialStatuses(context.db, context.workspaceId);
   const settings = await context.db
@@ -448,16 +504,17 @@ async function renderModelList(context: CommandExecutionContext, chat: Chat | nu
     .first<{ default_model: string | null }>();
   const defaultKey = settings?.default_model ?? null;
 
+  const usableKeys = new Set(
+    listAvailableModels(PRODUCTION_REGISTRY, credentialStatuses).map((entry) => entry.commandKey),
+  );
   const lines: string[] = [];
   const available: string[] = [];
 
   for (const entry of PRODUCTION_REGISTRY.entries) {
-    const status = credentialStatuses[entry.provider] ?? null;
-    const usable = status === 'available' && entry.lifecycle === 'active';
+    const usable = usableKeys.has(entry.commandKey);
     const marker = entry.commandKey === (chat?.model_override ?? defaultKey) ? ' (current)' : '';
-    const voice = ', voice notes not available yet';
     if (usable) {
-      available.push(`${entry.commandKey}${marker}  ·  ${entry.displayName}${voice}`);
+      available.push(`${entry.commandKey}${marker}  ·  ${entry.displayName}`);
     } else {
       lines.push(`${entry.commandKey}  ·  ${entry.displayName} (not configured here)`);
     }

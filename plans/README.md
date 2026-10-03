@@ -4,6 +4,8 @@ Revised 2026-09-30; foundation baseline is commit `a3bd462`. [roadmap.md](../roa
 
 ## Order and current status
 
+**Current priority — deployed conversation repair:** [007-conversation-repair.md](007-conversation-repair.md) records independently reproduced native-fetch failures, queue/continuation latency, D1 stream query pressure, readiness gaps and misleading UI. Repair and prove the real send-to-reply path before expanding features. Earlier DONE rows describe their recorded local gate evidence, not deployed conversational acceptance.
+
 | Gate / plan | Outcome | Depends on | Status |
 |---|---|---|---|
 | [001](001-foundation.md) | Tooling/runtime foundation and browser acceptance | — | IMPLEMENTED; actual browser evidence pending |

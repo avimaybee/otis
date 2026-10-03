@@ -35,7 +35,7 @@ import {
   type ToolDeclaration,
   type TurnInput,
 } from './types.js';
-import { ProviderErrorException } from './types.js';
+import { ProviderErrorException, receiverSafeFetch } from './types.js';
 
 export const GO_CHAT_COMPLETIONS_URL = `${OPENCODE_GO_ORIGIN}/v1/chat/completions`;
 export const GO_RESPONSES_URL = `${OPENCODE_GO_ORIGIN}/v1/responses`;
@@ -1299,7 +1299,7 @@ export class OpenCodeGoAdapter implements ProviderAdapter {
   private readonly endpointFamily: 'go-chat-completions' | 'go-responses';
 
   constructor(options: GoAdapterOptions) {
-    this.fetchFn = options.fetchFn;
+    this.fetchFn = receiverSafeFetch(options.fetchFn);
     this.apiKey = options.apiKey;
     this.endpointFamily = options.endpointFamily;
   }
@@ -1478,7 +1478,8 @@ export async function probeGoCredential(
   sessionId: string,
   timeoutMs = 15_000,
 ): Promise<{ ok: boolean; status: number }> {
-  const response = await fetchFn(GO_MODELS_URL, {
+  const safeFetch = receiverSafeFetch(fetchFn);
+  const response = await safeFetch(GO_MODELS_URL, {
     method: 'GET',
     headers: {
       Authorization: `Bearer ${apiKey}`,

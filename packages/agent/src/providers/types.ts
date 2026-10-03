@@ -194,6 +194,17 @@ export interface ProviderAdapter {
 
 export type FetchFn = (url: string, init: RequestInit) => Promise<Response>;
 
+/**
+ * Normalizes any fetch implementation so invoking it never depends on its
+ * receiver. Native platform `fetch` detached from its global and called as a
+ * bare function or object member throws "Illegal invocation" inside
+ * Cloudflare Workers; the arrow wrapper invokes it lexically instead. Pass
+ * every injected transport through here at its owner boundary.
+ */
+export function receiverSafeFetch(fetchFn: FetchFn): FetchFn {
+  return (url, init) => fetchFn(url, init);
+}
+
 export interface AdapterEnv {
   fetchFn: FetchFn;
   apiKey: string;

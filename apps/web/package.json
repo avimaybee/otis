@@ -12,6 +12,8 @@
     "@otis/commands": "workspace:*",
     "@otis/contracts": "workspace:*",
     "@otis/design": "workspace:*",
+    "@radix-ui/react-dropdown-menu": "^2.1.24",
+    "@radix-ui/react-select": "^2.3.7",
     "firebase": "^12.19.0",
     "lucide-react": "^1.49.0",
     "react": "^19.0.0",

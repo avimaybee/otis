@@ -1304,6 +1304,70 @@ describe('007 acceptance transaction boundaries', () => {
   });
 });
 
+describe('/model default honesty and resolver-parity availability', () => {
+  const send = (chatId: string, text: string, id: string) =>
+    call(`/api/workspaces/ws-model-honesty/chats/${chatId}/messages`, {
+      method: 'POST',
+      cookie: aviCookie,
+      headers: CSRF,
+      body: JSON.stringify({ text, client_message_id: id }),
+    });
+
+  it('refuses false readiness and lists only resolver-usable models', async () => {
+    const now = new Date().toISOString();
+    const ws = 'ws-model-honesty';
+    await env.DB.batch([
+      env.DB.prepare(`INSERT INTO workspaces (id, name, owner_user_id, created_at, updated_at) VALUES (?, 'Honesty WS', ?, ?, ?)`)
+        .bind(ws, AVI, now, now),
+      env.DB.prepare(`INSERT INTO workspace_users (workspace_id, user_id, role, joined_at, created_at, updated_at) VALUES (?, ?, 'owner', ?, ?, ?)`)
+        .bind(ws, AVI, now, now, now),
+      env.DB.prepare(`INSERT INTO provider_credentials (workspace_id, provider, encrypted_key, key_nonce, status, created_at, updated_at) VALUES (?, 'opencode_go', 'synthetic-test-only', 'synthetic', 'available', ?, ?)`)
+        .bind(ws, now, now),
+      env.DB.prepare(`INSERT INTO provider_credentials (workspace_id, provider, encrypted_key, key_nonce, status, created_at, updated_at) VALUES (?, 'gemini', 'synthetic-test-only', 'synthetic', 'available', ?, ?)`)
+        .bind(ws, now, now),
+    ]);
+    const chatId = (await createChat(env.DB, { workspaceId: ws, authorUserId: AVI })).id;
+
+    // No workspace default: clearing the override must not announce readiness.
+    const noDefault = await send(chatId, '/model default', 'model-honest-no-default');
+    expect(noDefault.status).toBe(202);
+    const noDefaultBody = (await noDefault.json()) as { reply: string };
+    expect(noDefaultBody.reply).toContain('no workspace model is set yet');
+    expect(noDefaultBody.reply).toContain('/model mimo-25');
+    expect(await env.DB.prepare(`SELECT model_override FROM chats WHERE id = ?`).bind(chatId).first())
+      .toEqual({ model_override: null });
+
+    // Unverified entries stay unavailable even with a healthy credential (resolver parity).
+    const models = await callJson<ModelListResponse>(`/api/workspaces/${ws}/models?chat_id=${chatId}`, {
+      cookie: aviCookie,
+    });
+    const byKey = new Map(models.models.map((model) => [model.command_key, model]));
+    expect(byKey.get('mimo-25')?.available).toBe(true);
+    expect(byKey.get('gemini-3.1-flash-lite')?.available).toBe(true);
+    expect(byKey.get('muse-12')?.available).toBe(true);
+    expect(byKey.get('gemini-3.5-flash-lite')?.available).toBe(false);
+
+    // A default pointing at an unusable entry is reported, not confirmed.
+    await env.DB.prepare(
+      `INSERT INTO workspace_settings (workspace_id, default_model, created_at, updated_at) VALUES (?, 'gemini-3.5-flash-lite', ?, ?)`,
+    ).bind(ws, now, now).run();
+    const badDefault = await send(chatId, '/model default', 'model-honest-bad-default');
+    expect(badDefault.status).toBe(202);
+    const badDefaultBody = (await badDefault.json()) as { reply: string };
+    expect(badDefaultBody.reply).toContain('not usable here');
+    expect(badDefaultBody.reply).toContain('/model mimo-25');
+
+    // A usable default is confirmed by display name.
+    await env.DB.prepare(`UPDATE workspace_settings SET default_model = 'mimo-25', updated_at = ? WHERE workspace_id = ?`)
+      .bind(now, ws).run();
+    const goodDefault = await send(chatId, '/model default', 'model-honest-good-default');
+    expect(goodDefault.status).toBe(202);
+    const goodDefaultBody = (await goodDefault.json()) as { reply: string };
+    expect(goodDefaultBody.reply).toContain('MiMo V2.5');
+    expect(goodDefaultBody.reply).not.toContain('Voice notes are not available yet');
+  });
+});
+
 describe('Dispatch wake-up hint on acceptance', () => {
   const postMessage = (
     chatId: string,

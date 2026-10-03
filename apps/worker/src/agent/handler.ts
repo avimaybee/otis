@@ -16,6 +16,7 @@ import { getTurnContext } from './context.js';
 import { publishAgentActivity } from './activity.js';
 import { getWorkspaceRevision } from '@otis/ledger';
 import {
+  AgentStreamError,
   checkBulkOperationPolicy,
   collectAndValidateProviderStream,
   createInitialProgress,
@@ -618,6 +619,17 @@ export class AgentHandler implements TurnHandler {
           collectedRound = await collectAndValidateProviderStream(publicStream());
         } catch (streamErr) {
           const appliedCount = progress.completedToolResults.filter((r) => r.result.status === 'applied').length;
+          const providerCode = streamErr instanceof AgentStreamError ? streamErr.providerCode : undefined;
+          const agentCode = streamErr instanceof AgentStreamError ? streamErr.code : undefined;
+          workerFailure('agent', 'provider round failed', {
+            workspaceId: ctx.workspaceId,
+            runId: ctx.runId,
+            round: progress.roundIndex,
+            provider: modelSnapshot.provider,
+            model: modelSnapshot.commandKey,
+            agentCode,
+            ...(providerCode ? { providerCode } : {}),
+          });
           return {
             kind: 'failed',
             errorCode: 'provider_stream_error',

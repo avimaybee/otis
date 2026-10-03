@@ -93,6 +93,13 @@ export class AgentStreamError extends Error {
     | 'provider_error'
     | 'refusal'
     | 'length_exceeded';
+  /**
+   * The adapter's own typed code when `code` is 'provider_error', drawn from
+   * the closed provider-code union (transport/HTTP/decoding/limits). Survives
+   * collection so the handler can log the precise failure instead of a single
+   * blanket stream error. Never a raw upstream body.
+   */
+  public readonly providerCode?: string;
 
   constructor(
     code:
@@ -106,10 +113,12 @@ export class AgentStreamError extends Error {
       | 'refusal'
       | 'length_exceeded',
     message: string,
+    providerCode?: string,
   ) {
     super(message);
     this.name = 'AgentStreamError';
     this.code = code;
+    if (providerCode !== undefined) this.providerCode = providerCode;
   }
 }
 
@@ -178,7 +187,11 @@ export async function collectAndValidateProviderStream(
         break;
 
       case 'error':
-        throw new AgentStreamError('provider_error', event.error.message || `Provider returned error code: ${event.error.code}`);
+        throw new AgentStreamError(
+          'provider_error',
+          event.error.message || `Provider returned error code: ${event.error.code}`,
+          event.error.code,
+        );
     }
   }
 

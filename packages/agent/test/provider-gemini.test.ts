@@ -53,6 +53,25 @@ const TOOL_STREAM = [
 ].join('');
 
 describe('Gemini Interactions adapter', () => {
+  it('invokes transport without a receiver (Workers Illegal-invocation safe)', async () => {
+    let observedThis: unknown = 'unset';
+    async function receiverCheckingFetch(this: unknown, _url: string, _init: RequestInit): Promise<Response> {
+      // eslint-disable-next-line @typescript-eslint/no-this-alias -- observing the invocation receiver is the assertion.
+      observedThis = this;
+      return chunkedResponse([TEXT_STREAM]);
+    }
+    const adapter = new GeminiInteractionsAdapter({
+      fetchFn: receiverCheckingFetch as unknown as ReturnType<typeof mockFetch>,
+      apiKey: 'test-gemini-key',
+    });
+    const events: ProviderEvent[] = [];
+    for await (const event of adapter.streamTurn(baseInput(geminiModel()))) events.push(event);
+    expect(events[events.length - 1]).toMatchObject({ type: 'finish' });
+    // A member invocation (this.fetchFn) would surface the adapter instance
+    // here and throw Illegal invocation against native Workers fetch.
+    expect(observedThis).toBeUndefined();
+  });
+
   it('sends the documented endpoint, key header, tools, and streams text plus usage', async () => {
     const fetchFn = mockFetch(() => chunkedResponse(shred(TEXT_STREAM, [7, 53, 11])));
     const input = baseInput(geminiModel(), {
