@@ -16,6 +16,8 @@ import migration0006Sql from '../../../migrations/0006_actor_hardening.sql?raw';
 import migration0007Sql from '../../../migrations/0007_outbox_claim_owner.sql?raw';
 // @ts-expect-error vite raw import
 import migration0008Sql from '../../../migrations/0008_memory_and_agent_runs.sql?raw';
+// @ts-expect-error vite raw import
+import migration0009Sql from '../../../migrations/0009_thinking_controls.sql?raw';
 
 import { executeAgentTool } from '../src/agent/repository.js';
 import {
@@ -85,6 +87,7 @@ describe('Worker Agent Tools & Guarded Repositories D1 Integration (006A workerd
       migration0006Sql,
       migration0007Sql,
       migration0008Sql,
+      migration0009Sql,
     ]) {
       for (const stmt of splitSqlStatements(sql)) {
         await env.DB.prepare(stmt).run();

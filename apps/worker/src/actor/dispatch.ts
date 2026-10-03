@@ -1,3 +1,4 @@
+import { resolveDateAnswer } from './clarificationFields.js';
 /**
  * @otis/worker/actor/dispatch
  * Durable workspace dispatch with leases, step receipts, checkpoints, and
@@ -1419,6 +1420,13 @@ export async function resumeRun(
       } else {
         resolvedFields = {};
       }
+    }
+
+    if (resolvedFields && typeof resolvedFields['due'] === 'string') {
+      const settings = await db.prepare(`SELECT brief_timezone FROM member_settings WHERE workspace_id = ? AND user_id = ?`).bind(params.workspaceId, authorUserId).first<{ brief_timezone: string | null }>();
+      const due = resolveDateAnswer(resolvedFields['due'], nowIso, settings?.brief_timezone ?? null);
+      if (due === undefined) return { resumed: false };
+      resolvedFields = { ...resolvedFields, due };
     }
 
     const outboxStmt = db

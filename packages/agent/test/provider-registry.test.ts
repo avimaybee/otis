@@ -10,7 +10,7 @@ import {
 } from '../src/providers/registry.js';
 
 describe('operator model registry', () => {
-  it('ships exactly the six operator-selected models, with evidenced capabilities published for proven models', () => {
+  it('ships exactly the seven operator-selected models, with evidenced capabilities published for proven models', () => {
     expect(PRODUCTION_REGISTRY.version).toBe(1);
     expect(PRODUCTION_REGISTRY.entries.map((entry) => entry.commandKey)).toEqual([
       'gemini-3.5-flash-lite',
@@ -19,8 +19,16 @@ describe('operator model registry', () => {
       'mimo-26-pro',
       'muse-12',
       'muse-13',
+      'deepseek-v4.1-flash',
     ]);
-    const provenKeys = new Set(['gemini-3.1-flash-lite', 'mimo-25', 'mimo-26-pro']);
+    const provenVerifiedAt: Record<string, string> = {
+      'gemini-3.1-flash-lite': '2026-10-01',
+      'mimo-25': '2026-10-01',
+      'mimo-26-pro': '2026-10-01',
+      'muse-12': '2026-10-03',
+      'muse-13': '2026-10-03',
+      'deepseek-v4.1-flash': '2026-10-03',
+    };
     for (const entry of PRODUCTION_REGISTRY.entries) {
       expect(entry.approved).toBe(true);
       expect(entry.lifecycle).toBe('active');
@@ -29,12 +37,13 @@ describe('operator model registry', () => {
       expect(entry.capabilities.audio).toBe('unverified');
       expect(entry.capabilities.thoughtSummary).toBe('unverified');
 
-      if (provenKeys.has(entry.commandKey)) {
+      const verifiedAt = provenVerifiedAt[entry.commandKey];
+      if (verifiedAt) {
         expect(entry.capabilities.text).toBe('supported');
         expect(entry.capabilities.tools).toBe('supported');
         expect(entry.capabilities.stream).toBe('supported');
         expect(entry.evidenceRef).toBe('docs/005-live-provider-evidence.md');
-        expect(entry.verifiedAt).toBe('2026-10-01');
+        expect(entry.verifiedAt).toBe(verifiedAt);
       } else {
         expect(entry.capabilities.text).toBe('unverified');
         expect(entry.capabilities.tools).toBe('unverified');
@@ -47,6 +56,36 @@ describe('operator model registry', () => {
     expect(ids).toContain('gemini-3.5-flash-lite');
     expect(ids).toContain('mimo-v2.5');
     expect(ids).toContain('muse-spark-1.3-contributor');
+    expect(ids).toContain('deepseek-v4.1-flash');
+    // Both 2026-10-03 trial entries were removed: glm-5.3-flash failed its
+    // smoke on tool-less text, gpt-6-luna was blocked by account rate limits.
+    expect(ids).not.toContain('glm-5.3-flash');
+    expect(ids).not.toContain('gpt-6-luna');
+  });
+
+  it('keeps the surviving 2026-10-03 Go addition verbatim on the documented endpoint shape', () => {
+    const byKey = new Map(PRODUCTION_REGISTRY.entries.map((entry) => [entry.commandKey, entry]));
+    const deepseek = byKey.get('deepseek-v4.1-flash')!;
+    expect(deepseek.displayName).toBe('DeepSeek V4.1 Flash');
+    expect(deepseek.provider).toBe('opencode_go');
+    expect(deepseek.endpointFamily).toBe('go-chat-completions');
+    expect(deepseek.endpointUrl).toBe('https://opencode.ai/zen/go/v1/chat/completions');
+    expect(deepseek.trainingUse).toContain('Not used for training');
+    expect(deepseek.dataRetention).toContain('0 days');
+    expect(deepseek.dataRetention).toContain('2026-10-31');
+
+    // No thinking descriptors: provider default applies until verified.
+    expect(deepseek.capabilities.audio).toBe('unverified');
+    expect(deepseek.capabilities.thoughtSummary).toBe('unverified');
+    expect(deepseek.capabilities.thinking?.state).toBe('unverified');
+    expect(deepseek.capabilities.thinking?.choices).toEqual([]);
+
+    // Both trialed removals stay unknown, not resolvable.
+    expect(byKey.has('glm-5.3-flash')).toBe(false);
+    expect(byKey.has('gpt-6-luna')).toBe(false);
+    expect(() =>
+      resolveCommandKey(PRODUCTION_REGISTRY, 'gpt-6-luna', { credentialStatus: 'available' }),
+    ).toThrowError(/Unknown model/);
   });
 
   it('rejects endpoint families outside the fixed approved origins', () => {
@@ -76,9 +115,6 @@ describe('operator model registry', () => {
     expect(() =>
       resolveCommandKey(PRODUCTION_REGISTRY, 'gemini-3.5-flash-lite', { credentialStatus: 'available' }),
     ).toThrowError(/not verified/);
-    expect(() =>
-      resolveCommandKey(PRODUCTION_REGISTRY, 'muse-12', { credentialStatus: 'available' }),
-    ).toThrowError(/not verified/);
   });
 
   it('resolves evidenced entries with available credentials, rejects missing or invalid credentials', () => {
@@ -90,6 +126,16 @@ describe('operator model registry', () => {
     expect(resolveCommandKey(PRODUCTION_REGISTRY, 'mimo-25', { credentialStatus: 'available' }).modelId).toBe('mimo-v2.5');
     expect(resolveCommandKey(PRODUCTION_REGISTRY, 'mimo-26-pro', { credentialStatus: 'available' }).modelId).toBe('mimo-v2.6-pro');
     expect(resolveCommandKey(PRODUCTION_REGISTRY, 'gemini-3.1-flash-lite', { credentialStatus: 'available' }).modelId).toBe('gemini-3.1-flash-lite');
+    expect(resolveCommandKey(PRODUCTION_REGISTRY, 'deepseek-v4.1-flash', { credentialStatus: 'available' }).modelId).toBe(
+      'deepseek-v4.1-flash',
+    );
+    // Muse entries enabled 2026-10-03 after a fresh passing smoke.
+    expect(resolveCommandKey(PRODUCTION_REGISTRY, 'muse-12', { credentialStatus: 'available' }).modelId).toBe(
+      'muse-spark-1.2-contributor',
+    );
+    expect(resolveCommandKey(PRODUCTION_REGISTRY, 'muse-13', { credentialStatus: 'available' }).modelId).toBe(
+      'muse-spark-1.3-contributor',
+    );
   });
 
   it('rejects duplicate command keys at registry construction', () => {
@@ -98,17 +144,30 @@ describe('operator model registry', () => {
   });
 
   it('lists evidenced entries backed by available credentials in PRODUCTION_REGISTRY', () => {
-    // Both credentials available: lists exactly the 3 proven models
+    // Both credentials available: lists exactly the 6 proven models
     const allAvailable = listAvailableModels(PRODUCTION_REGISTRY, { gemini: 'available', opencode_go: 'available' });
-    expect(allAvailable.map((m) => m.commandKey)).toEqual(['gemini-3.1-flash-lite', 'mimo-25', 'mimo-26-pro']);
+    expect(allAvailable.map((m) => m.commandKey)).toEqual([
+      'gemini-3.1-flash-lite',
+      'mimo-25',
+      'mimo-26-pro',
+      'muse-12',
+      'muse-13',
+      'deepseek-v4.1-flash',
+    ]);
 
     // Only Gemini available: lists 1
     const geminiOnly = listAvailableModels(PRODUCTION_REGISTRY, { gemini: 'available', opencode_go: 'unverified' });
     expect(geminiOnly.map((m) => m.commandKey)).toEqual(['gemini-3.1-flash-lite']);
 
-    // Only OpenCode Go available: lists 2
+    // Only OpenCode Go available: lists 5
     const goOnly = listAvailableModels(PRODUCTION_REGISTRY, { gemini: 'unverified', opencode_go: 'available' });
-    expect(goOnly.map((m) => m.commandKey)).toEqual(['mimo-25', 'mimo-26-pro']);
+    expect(goOnly.map((m) => m.commandKey)).toEqual([
+      'mimo-25',
+      'mimo-26-pro',
+      'muse-12',
+      'muse-13',
+      'deepseek-v4.1-flash',
+    ]);
 
     // No credentials available: lists 0
     expect(listAvailableModels(PRODUCTION_REGISTRY, { gemini: 'unverified', opencode_go: 'unverified' })).toHaveLength(0);

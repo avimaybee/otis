@@ -903,3 +903,85 @@ describe('Go credential probe', () => {
     expect(fetchFn.requests[0]!.headers['authorization']).toBe('Bearer test-go-key');
   });
 });
+
+describe('OpenCode Go thinking controls', () => {
+  it('sends reasoning_effort in chat completions body when go_chat_effort is specified', async () => {
+    const fetchFn = mockFetch(() => chunkedResponse([CHAT_STREAM]));
+    const input = baseInput(goChatModel(), {
+      thinking: { kind: 'go_chat_effort', effort: 'high' },
+    });
+    for await (const event of chatAdapter(fetchFn).streamTurn(input)) {
+      void event;
+    }
+    expect(fetchFn.requests).toHaveLength(1);
+    const body = fetchFn.requests[0]!.body as Record<string, unknown>;
+    expect(body['reasoning_effort']).toBe('high');
+  });
+
+  it('omits reasoning_effort in chat completions body when provider_default is specified', async () => {
+    const fetchFn = mockFetch(() => chunkedResponse([CHAT_STREAM]));
+    const input = baseInput(goChatModel(), {
+      thinking: { kind: 'provider_default' },
+    });
+    for await (const event of chatAdapter(fetchFn).streamTurn(input)) {
+      void event;
+    }
+    expect(fetchFn.requests).toHaveLength(1);
+    const body = fetchFn.requests[0]!.body as Record<string, unknown>;
+    expect(body['reasoning_effort']).toBeUndefined();
+  });
+
+  it('chat adapter rejects incompatible thinking kind before fetch with 0 requests', async () => {
+    const fetchFn = mockFetch(() => chunkedResponse([CHAT_STREAM]));
+    const input = baseInput(goChatModel(), {
+      // @ts-expect-error test invalid kind
+      thinking: { kind: 'gemini_level', level: 'high' },
+    });
+    await expect(async () => {
+      for await (const event of chatAdapter(fetchFn).streamTurn(input)) {
+        void event;
+      }
+    }).rejects.toMatchObject({ detail: { code: 'invalid_request' } });
+    expect(fetchFn.requests).toHaveLength(0);
+  });
+
+  it('chat adapter rejects unsupported effort string before fetch with 0 requests', async () => {
+    const fetchFn = mockFetch(() => chunkedResponse([CHAT_STREAM]));
+    const input = baseInput(goChatModel(), {
+      thinking: { kind: 'go_chat_effort', effort: 'super_high' },
+    });
+    await expect(async () => {
+      for await (const event of chatAdapter(fetchFn).streamTurn(input)) {
+        void event;
+      }
+    }).rejects.toMatchObject({ detail: { code: 'invalid_request' } });
+    expect(fetchFn.requests).toHaveLength(0);
+  });
+
+  it('responses adapter permits provider_default and omits thinking parameters', async () => {
+    const fetchFn = mockFetch(() => chunkedResponse([RESPONSES_STREAM]));
+    const input = baseInput(goResponsesModel(), {
+      thinking: { kind: 'provider_default' },
+    });
+    for await (const event of responsesAdapter(fetchFn).streamTurn(input)) {
+      void event;
+    }
+    expect(fetchFn.requests).toHaveLength(1);
+    const body = fetchFn.requests[0]!.body as Record<string, unknown>;
+    expect(body['reasoning_effort']).toBeUndefined();
+    expect(body['reasoning']).toBeUndefined();
+  });
+
+  it('responses adapter rejects non-default thinking requests before fetch with 0 requests', async () => {
+    const fetchFn = mockFetch(() => chunkedResponse([RESPONSES_STREAM]));
+    const input = baseInput(goResponsesModel(), {
+      thinking: { kind: 'go_chat_effort', effort: 'high' },
+    });
+    await expect(async () => {
+      for await (const event of responsesAdapter(fetchFn).streamTurn(input)) {
+        void event;
+      }
+    }).rejects.toMatchObject({ detail: { code: 'invalid_request' } });
+    expect(fetchFn.requests).toHaveLength(0);
+  });
+});

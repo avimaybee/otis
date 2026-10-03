@@ -284,14 +284,42 @@ export class GeminiInteractionsAdapter implements ProviderAdapter {
       return;
     }
 
+    if (input.thinking) {
+      if (input.thinking.kind === 'gemini_level') {
+        const VALID_GEMINI_LEVELS = new Set(['minimal', 'low', 'medium', 'high']);
+        if (!VALID_GEMINI_LEVELS.has(input.thinking.level)) {
+          throw new ProviderErrorException({
+            code: 'invalid_request',
+            message: `Thinking level '${input.thinking.level}' is not supported by Gemini Interactions adapter.`,
+            retryable: false,
+            retryAfterMs: null,
+          });
+        }
+      } else if (input.thinking.kind === 'provider_default') {
+        // Provider default omits the thinking field
+      } else {
+        throw new ProviderErrorException({
+          code: 'invalid_request',
+          message: `Thinking request kind '${(input.thinking as { kind: string }).kind}' is not supported by Gemini Interactions adapter.`,
+          retryable: false,
+          retryAfterMs: null,
+        });
+      }
+    }
+
     const { systemInstruction, blocks } = toInteractionsInput(input);
+    const generationConfig: Record<string, unknown> = {
+      max_output_tokens: input.maxOutputTokens,
+    };
+    if (input.thinking?.kind === 'gemini_level') {
+      generationConfig['thinking_level'] = input.thinking.level;
+    }
+
     const body: Record<string, unknown> = {
       model: input.model.modelId,
       input: blocks,
       stream: true,
-      generation_config: {
-        max_output_tokens: input.maxOutputTokens,
-      },
+      generation_config: generationConfig,
     };
     if (systemInstruction !== undefined) body['system_instruction'] = systemInstruction;
     if (input.tools.length > 0) {

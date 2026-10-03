@@ -10,10 +10,22 @@ import { handleGetWorkspace } from './routes/workspaces.js';
 import {
   handleListChats,
   handleCreateChat,
-  handleGetChat,
-  handleListMessages,
   handleCreateMessage,
 } from './routes/chats.js';
+import { handleGetChatDetail, handleGetMessages } from './routes/chat.js';
+import { handleGetActivity } from './routes/activity.js';
+import { handleGetMemorySource } from './routes/sources.js';
+import {
+  handleGetAction,
+  handleUndoPreview,
+  handleCommitUndo,
+} from './routes/actions.js';
+import {
+  handleListClarifications,
+  handleGetClarification,
+  handleReplyToClarification,
+} from './routes/clarifications.js';
+import { handleListCommands, handleListModels, handleExecuteCommand } from './routes/commands.js';
 import { handleTelegramWebhook } from './routes/inbound.js';
 import {
   dispatchWorkspace,
@@ -44,7 +56,7 @@ import {
   handleUpdateMemberSettings,
   handleUpdateWorkspaceSettings,
 } from './routes/settings.js';
-import { handleStopRun } from './routes/runs.js';
+import { handleStopRun, handleGetRun } from './routes/runs.js';
 import { jsonError, jsonSuccess } from './middleware/errors.js';
 
 export interface Env {
@@ -218,7 +230,7 @@ export default {
         const workspaceId = singleChatMatch[1];
         const chatId = singleChatMatch[2];
         if (request.method === 'GET' && workspaceId && chatId) {
-          return await handleGetChat(request, env, workspaceId, chatId, requestId);
+          return await handleGetChatDetail(request, env, workspaceId, chatId, requestId);
         }
         return jsonError(405, 'method_not_allowed', 'Method not allowed.', requestId);
       }
@@ -231,10 +243,49 @@ export default {
         const workspaceId = chatMessagesMatch[1];
         const chatId = chatMessagesMatch[2];
         if (request.method === 'GET' && workspaceId && chatId) {
-          return await handleListMessages(request, env, workspaceId, chatId, requestId);
+          return await handleGetMessages(request, env, workspaceId, chatId, requestId);
         }
         if (request.method === 'POST' && workspaceId && chatId) {
           return await handleCreateMessage(request, env, workspaceId, chatId, requestId);
+        }
+        return jsonError(405, 'method_not_allowed', 'Method not allowed.', requestId);
+      }
+
+      // 7a. Chat activity route: /api/workspaces/:workspaceId/chats/:chatId/activity
+      const chatActivityMatch = url.pathname.match(
+        /^\/api\/workspaces\/([^/]+)\/chats\/([^/]+)\/activity$/,
+      );
+      if (chatActivityMatch) {
+        const workspaceId = chatActivityMatch[1];
+        const chatId = chatActivityMatch[2];
+        if (request.method === 'GET' && workspaceId && chatId) {
+          return await handleGetActivity(request, env, workspaceId, chatId, requestId);
+        }
+        return jsonError(405, 'method_not_allowed', 'Method not allowed.', requestId);
+      }
+
+      // 7b. Chat clarifications route: /api/workspaces/:workspaceId/chats/:chatId/clarifications
+      const chatClarificationsMatch = url.pathname.match(
+        /^\/api\/workspaces\/([^/]+)\/chats\/([^/]+)\/clarifications$/,
+      );
+      if (chatClarificationsMatch) {
+        const workspaceId = chatClarificationsMatch[1];
+        const chatId = chatClarificationsMatch[2];
+        if (request.method === 'GET' && workspaceId && chatId) {
+          return await handleListClarifications(request, env, workspaceId, chatId, requestId);
+        }
+        return jsonError(405, 'method_not_allowed', 'Method not allowed.', requestId);
+      }
+
+      // 7c. Command execution shortcut: /api/workspaces/:workspaceId/chats/:chatId/commands
+      const chatCommandsMatch = url.pathname.match(
+        /^\/api\/workspaces\/([^/]+)\/chats\/([^/]+)\/commands$/,
+      );
+      if (chatCommandsMatch) {
+        const workspaceId = chatCommandsMatch[1];
+        const chatId = chatCommandsMatch[2];
+        if (request.method === 'POST' && workspaceId && chatId) {
+          return await handleExecuteCommand(request, env, workspaceId, chatId, requestId);
         }
         return jsonError(405, 'method_not_allowed', 'Method not allowed.', requestId);
       }
@@ -338,13 +389,105 @@ export default {
         return jsonError(405, 'method_not_allowed', 'Method not allowed.', requestId);
       }
 
-      // 11. Run stop route: /api/workspaces/:workspaceId/runs/:runId/stop
+      // 11. Run routes: /api/workspaces/:workspaceId/runs/:runId and /stop
       const stopMatch = url.pathname.match(/^\/api\/workspaces\/([^/]+)\/runs\/([^/]+)\/stop$/);
       if (stopMatch) {
         const workspaceId = stopMatch[1];
         const runId = stopMatch[2];
         if (request.method === 'POST' && workspaceId && runId) {
           return await handleStopRun(request, env, workspaceId, runId, requestId);
+        }
+        return jsonError(405, 'method_not_allowed', 'Method not allowed.', requestId);
+      }
+
+      const runMatch = url.pathname.match(/^\/api\/workspaces\/([^/]+)\/runs\/([^/]+)$/);
+      if (runMatch) {
+        const workspaceId = runMatch[1];
+        const runId = runMatch[2];
+        if (request.method === 'GET' && workspaceId && runId) {
+          return await handleGetRun(request, env, workspaceId, runId, requestId);
+        }
+        return jsonError(405, 'method_not_allowed', 'Method not allowed.', requestId);
+      }
+
+      // 11a. Action detail route: /api/workspaces/:workspaceId/actions/:actionId
+      const actionMatch = url.pathname.match(/^\/api\/workspaces\/([^/]+)\/actions\/([^/]+)$/);
+      if (actionMatch) {
+        const workspaceId = actionMatch[1];
+        const actionId = actionMatch[2];
+        if (request.method === 'GET' && workspaceId && actionId) {
+          return await handleGetAction(request, env, workspaceId, actionId, requestId);
+        }
+        return jsonError(405, 'method_not_allowed', 'Method not allowed.', requestId);
+      }
+
+      // 11b. Undo preview/commit routes
+      const undoPreviewMatch = url.pathname.match(
+        /^\/api\/workspaces\/([^/]+)\/actions\/([^/]+)\/undo-preview$/,
+      );
+      if (undoPreviewMatch) {
+        const workspaceId = undoPreviewMatch[1];
+        const actionId = undoPreviewMatch[2];
+        if (request.method === 'POST' && workspaceId && actionId) {
+          return await handleUndoPreview(request, env, workspaceId, actionId, requestId);
+        }
+        return jsonError(405, 'method_not_allowed', 'Method not allowed.', requestId);
+      }
+
+      const undoMatch = url.pathname.match(/^\/api\/workspaces\/([^/]+)\/actions\/([^/]+)\/undo$/);
+      if (undoMatch) {
+        const workspaceId = undoMatch[1];
+        const actionId = undoMatch[2];
+        if (request.method === 'POST' && workspaceId && actionId) {
+          return await handleCommitUndo(request, env, workspaceId, actionId, requestId);
+        }
+        return jsonError(405, 'method_not_allowed', 'Method not allowed.', requestId);
+      }
+
+      // 11c. Clarification reply route: /api/workspaces/:workspaceId/clarifications/:id/reply
+      const clarificationReplyMatch = url.pathname.match(
+        /^\/api\/workspaces\/([^/]+)\/clarifications\/([^/]+)\/reply$/,
+      );
+      if (clarificationReplyMatch) {
+        const workspaceId = clarificationReplyMatch[1];
+        const clarificationId = clarificationReplyMatch[2];
+        if (request.method === 'POST' && workspaceId && clarificationId) {
+          return await handleReplyToClarification(request, env, workspaceId, clarificationId, requestId);
+        }
+        return jsonError(405, 'method_not_allowed', 'Method not allowed.', requestId);
+      }
+
+      const clarificationMatch = url.pathname.match(
+        /^\/api\/workspaces\/([^/]+)\/clarifications\/([^/]+)$/,
+      );
+      if (clarificationMatch) {
+        const workspaceId = clarificationMatch[1];
+        const clarificationId = clarificationMatch[2];
+        if (request.method === 'GET' && workspaceId && clarificationId) {
+          return await handleGetClarification(request, env, workspaceId, clarificationId, requestId);
+        }
+        return jsonError(405, 'method_not_allowed', 'Method not allowed.', requestId);
+      }
+
+      // 11d. Approved model choices: /api/workspaces/:workspaceId/models
+      const modelsMatch = url.pathname.match(/^\/api\/workspaces\/([^/]+)\/models$/);
+      if (modelsMatch) {
+        const workspaceId = modelsMatch[1];
+        if (request.method === 'GET' && workspaceId) {
+          return await handleListModels(request, env, workspaceId, requestId);
+        }
+        return jsonError(405, 'method_not_allowed', 'Method not allowed.', requestId);
+      }
+
+      // 11e. Command registry: /api/commands
+      const memorySourceMatch = url.pathname.match(/^\/api\/workspaces\/([^/]+)\/memory\/([^/]+)\/source$/);
+      if (memorySourceMatch) {
+        if (request.method === 'GET') return await handleGetMemorySource(request, env, memorySourceMatch[1]!, memorySourceMatch[2]!, requestId);
+        return jsonError(405, 'method_not_allowed', 'Method not allowed.', requestId);
+      }
+      if (url.pathname === '/api/commands') {
+        if (request.method === 'GET') {
+          return await handleListCommands(request, env, requestId);
         }
         return jsonError(405, 'method_not_allowed', 'Method not allowed.', requestId);
       }

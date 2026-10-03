@@ -1,13 +1,6 @@
 import { describe, it, expect, beforeAll } from 'vitest';
 import { SELF, env } from 'cloudflare:test';
-// @ts-expect-error vite raw import
-import migration0001Sql from '../../../migrations/0001_identity.sql?raw';
-// @ts-expect-error vite raw import
-import migration0002Sql from '../../../migrations/0002_conversations_sources.sql?raw';
-// @ts-expect-error vite raw import
-import migration0006Sql from '../../../migrations/0006_actor_hardening.sql?raw';
-// @ts-expect-error vite raw import
-import migration0007Sql from '../../../migrations/0007_outbox_claim_owner.sql?raw';
+import { applyMigrations } from './migrations.js';
 import { AUTH_BOUNDS } from '@otis/contracts';
 import type {
   AcceptMessageResponse,
@@ -30,16 +23,7 @@ describe('Worker Conversations & Inbound Integration (workerd runtime)', () => {
 
   beforeAll(async () => {
     // 1. Apply actual migration SQL files directly from disk
-    for (const sql of [migration0001Sql, migration0002Sql, migration0006Sql, migration0007Sql]) {
-      const statements = sql
-        .split(';')
-        .map((s: string) => s.trim())
-        .filter((s: string) => s.length > 0);
-
-      for (const stmt of statements) {
-        await env.DB.prepare(stmt).run();
-      }
-    }
+    await applyMigrations(env.DB);
 
     // Configure test environment
     env.ENVIRONMENT = 'test';

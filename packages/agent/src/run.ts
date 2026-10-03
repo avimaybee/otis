@@ -56,6 +56,8 @@ export interface DurableAgentProgress {
   completedToolResults: DurableToolResult[];
   nextToolIndex: number;
   finalAnswer?: string | null;
+  steeringInputs?: { messageId: string; sourceMessageId: string; text: string; sequence: number }[];
+  lastSteeringSequence?: number;
   approvedBulkScope?: string[];
   pendingClarification?: {
     question: string;

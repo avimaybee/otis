@@ -366,4 +366,59 @@ describe('Gemini Interactions adapter', () => {
     const resultsForCall = blocks.filter((b) => b['type'] === 'function_result' && b['call_id'] === 'call_dup_1');
     expect(resultsForCall).toHaveLength(1);
   });
+
+  describe('thinking controls', () => {
+    it('sets generation_config.thinking_level when gemini_level is specified', async () => {
+      const fetchFn = mockFetch(() => chunkedResponse([TEXT_STREAM]));
+      const input = baseInput(geminiModel(), {
+        thinking: { kind: 'gemini_level', level: 'high' },
+      });
+      await collect(input, fetchFn);
+      expect(fetchFn.requests).toHaveLength(1);
+      const body = fetchFn.requests[0]!.body as Record<string, unknown>;
+      const genConfig = body['generation_config'] as Record<string, unknown>;
+      expect(genConfig).toBeDefined();
+      expect(genConfig['thinking_level']).toBe('high');
+      expect(genConfig['max_output_tokens']).toBe(512);
+    });
+
+    it('omits thinking_level when provider_default is specified or omitted', async () => {
+      const fetchFn = mockFetch(() => chunkedResponse([TEXT_STREAM]));
+      const input = baseInput(geminiModel(), {
+        thinking: { kind: 'provider_default' },
+      });
+      await collect(input, fetchFn);
+      expect(fetchFn.requests).toHaveLength(1);
+      const body = fetchFn.requests[0]!.body as Record<string, unknown>;
+      const genConfig = body['generation_config'] as Record<string, unknown>;
+      expect(genConfig['thinking_level']).toBeUndefined();
+    });
+
+    it('rejects incompatible thinking kind before fetch with 0 network calls', async () => {
+      const fetchFn = mockFetch(() => chunkedResponse([TEXT_STREAM]));
+      const input = baseInput(geminiModel(), {
+        // @ts-expect-error test invalid request kind
+        thinking: { kind: 'go_chat_effort', effort: 'high' },
+      });
+      await expect(async () => {
+        for await (const event of adapterFor(fetchFn).streamTurn(input)) {
+          void event;
+        }
+      }).rejects.toMatchObject({ detail: { code: 'invalid_request' } });
+      expect(fetchFn.requests).toHaveLength(0);
+    });
+
+    it('rejects unverified level before fetch with 0 network calls', async () => {
+      const fetchFn = mockFetch(() => chunkedResponse([TEXT_STREAM]));
+      const input = baseInput(geminiModel(), {
+        thinking: { kind: 'gemini_level', level: 'xhigh' },
+      });
+      await expect(async () => {
+        for await (const event of adapterFor(fetchFn).streamTurn(input)) {
+          void event;
+        }
+      }).rejects.toMatchObject({ detail: { code: 'invalid_request' } });
+      expect(fetchFn.requests).toHaveLength(0);
+    });
+  });
 });

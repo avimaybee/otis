@@ -4,6 +4,10 @@
  * Defined in docs/contracts.md and architecture.md.
  */
 
+// --- Chat API DTOs (docs/contracts.md sections 7-9) ---
+// Re-exported so clients can import everything from the package root.
+export * from './chat.js';
+
 // --- Base Result & Error Types ---
 
 export type ResultStatus =
@@ -372,8 +376,12 @@ export interface Chat {
   id: string;
   workspace_id: string;
   author_user_id: string;
+  /** Display only; authorization uses the authenticated user ID. */
+  author_display_name?: string | null;
   title: string;
   model_override: string | null;
+  thinking_override?: { model_key: string; choice_id: string } | null;
+  thinking_override_json?: string | null;
   is_archived: boolean;
   activity_cursor: number;
   created_at: string;
@@ -397,6 +405,7 @@ export interface ChatMessage {
   workspace_id: string;
   chat_id: string;
   author_user_id: string | null;
+  author_display_name?: string | null;
   author_kind: 'member' | 'system';
   channel: ChannelType;
   inbound_message_id: string | null;
@@ -413,6 +422,7 @@ export interface CreateChatMessageRequest {
   client_message_id: string;
   text?: string;
   media_id?: string;
+  clarification_id?: string;
 }
 
 export interface AcceptMessageResponse {
@@ -420,6 +430,9 @@ export interface AcceptMessageResponse {
   message_id: string;
   run_id: string;
   acceptance_sequence: number;
+  mode?: 'new_run' | 'steer' | 'clarification';
+  reply?: string;
+  selected_workspace_id?: string | null;
 }
 
 export interface InboundMessage {

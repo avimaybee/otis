@@ -9,11 +9,16 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@otis/commands": "workspace:*",
     "@otis/contracts": "workspace:*",
     "@otis/design": "workspace:*",
     "firebase": "^12.19.0",
+    "lucide-react": "^1.49.0",
     "react": "^19.0.0",
-    "react-dom": "^19.0.0"
+    "react-dom": "^19.0.0",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1",
+    "sonner": "^2.0.8"
   },
   "devDependencies": {
     "@types/react": "^19.0.10",

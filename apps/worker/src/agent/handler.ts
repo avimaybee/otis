@@ -12,6 +12,7 @@ import { completeStep, hashStepArguments, listRunSteps, persistStep } from '../a
 import { resolveModelForChat, runProviderTurn } from '../providers/service.js';
 import { executeAgentTool } from './repository.js';
 import { getTurnContext } from './context.js';
+import { publishAgentActivity } from './activity.js';
 import { getWorkspaceRevision } from '@otis/ledger';
 import {
   checkBulkOperationPolicy,
@@ -30,6 +31,7 @@ import {
   type ProviderAdapter,
   type ProviderEvent,
   type ProviderMessage,
+  type ThinkingRequest,
   type TurnInput,
 } from '@otis/agent';
 
@@ -99,7 +101,7 @@ export class AgentHandler implements TurnHandler {
     // 1. Load run metadata and verify active status
     const runRow = await ctx.db
       .prepare(
-        `SELECT id, status, model_key, model_snapshot_json, agent_progress_json, source_message_id, chat_id
+        `SELECT id, status, model_key, model_snapshot_json, thinking_snapshot_json, agent_progress_json, source_message_id, chat_id
          FROM agent_runs WHERE id = ? AND workspace_id = ?`
       )
       .bind(ctx.runId, ctx.workspaceId)
@@ -108,6 +110,7 @@ export class AgentHandler implements TurnHandler {
         status: string;
         model_key: string | null;
         model_snapshot_json: string | null;
+        thinking_snapshot_json: string | null;
         agent_progress_json: string | null;
         source_message_id: string | null;
         chat_id: string | null;
@@ -182,6 +185,7 @@ export class AgentHandler implements TurnHandler {
         const resolved = await resolveModelForChat(ctx.db, {
           workspaceId: ctx.workspaceId,
           actorUserId,
+          selectedKey: runRow.model_key ?? undefined,
           chatId: ctx.chatId,
           registry: this.options?.registry,
         });
@@ -346,11 +350,38 @@ export class AgentHandler implements TurnHandler {
       }
     }
 
+    const originalText = ctx.sourceText;
+    const applySteeringContext = () => {
+      const inputs = progress.steeringInputs ?? [];
+      ctx.sourceText = originalText + inputs.map(input => `\n[Additional context from the same member]: ${input.text}`).join('');
+      if (inputs.length) ctx.sourceMessageId = inputs.at(-1)!.sourceMessageId;
+    };
+    const consumeSteering = async () => {
+      const inputs = (await ctx.db.prepare(`SELECT cm.id AS messageId, cm.inbound_message_id AS sourceMessageId, cm.content_text AS text, cm.sequence
+        FROM chat_messages cm WHERE cm.workspace_id = ? AND cm.run_id = ? AND cm.author_user_id = ? AND cm.sequence > ?
+        AND EXISTS (SELECT 1 FROM run_activity a WHERE a.workspace_id = cm.workspace_id AND a.run_id = cm.run_id AND a.type = 'message_accepted' AND json_extract(a.payload_json, '$.steering_message_id') = cm.id)
+        ORDER BY cm.sequence`).bind(ctx.workspaceId, ctx.runId, actorUserId, progress.lastSteeringSequence ?? 0).all<{ messageId: string; sourceMessageId: string; text: string; sequence: number }>()).results;
+      if (!inputs.length) { applySteeringContext(); return false; }
+      progress.steeringInputs = [...(progress.steeringInputs ?? []), ...inputs];
+      progress.lastSteeringSequence = inputs.at(-1)!.sequence;
+      if (progress.phase === 'tools_executing' && progress.currentRound) {
+        const round = progress.currentRound;
+        const results = round.assistantCalls.map((call, index) => progress.completedToolResults.find(result => result.callId === call.callId) ?? { callId: call.callId, actionId: `${ctx.runId}_r${progress.roundIndex}_t${index}`, name: call.name, args: call.args, result: { status: 'rejected' as const, error: { code: 'superseded_by_steering', message: 'This proposal was not executed because the member added new context.' } } });
+        progress.completedRounds = [...(progress.completedRounds ?? []), { roundIndex: progress.roundIndex, assistantCalls: round.assistantCalls, toolResults: results, continuation: round.continuation, usage: round.usage }];
+        progress.currentRound = undefined; progress.nextToolIndex = 0; progress.roundIndex++;
+      }
+      progress.phase = 'provider_pending'; progress.finalAnswer = undefined;
+      applySteeringContext();
+      if (!(await this.saveProgress(ctx, progress))) throw new Error('Lease lost before steering checkpoint.');
+      return true;
+    };
+    await consumeSteering();
+
     // 5. Bounded Slice Loop (Section 7.3)
     const maxRounds = this.options?.maxRoundsPerSlice ?? 2;
     let roundsExecutedThisTurn = 0;
 
-    while (roundsExecutedThisTurn < maxRounds) {
+    slice: while (roundsExecutedThisTurn < maxRounds) {
       if (progress.phase === 'completed') {
         return { kind: 'completed', replyText: progress.finalAnswer ?? '' };
       }
@@ -460,6 +491,18 @@ export class AgentHandler implements TurnHandler {
             ? progress.completedRounds[progress.completedRounds.length - 1]
             : null;
 
+        let thinkingRequest: ThinkingRequest = { kind: 'provider_default' };
+        if (runRow.thinking_snapshot_json) {
+          try {
+            const snap = JSON.parse(runRow.thinking_snapshot_json);
+            if (snap && snap.request) {
+              thinkingRequest = snap.request;
+            }
+          } catch {
+            thinkingRequest = { kind: 'provider_default' };
+          }
+        }
+
         const turnInput: Omit<TurnInput, 'model'> = {
           workspaceId: ctx.workspaceId,
           chatId: ctx.chatId,
@@ -479,6 +522,7 @@ export class AgentHandler implements TurnHandler {
           previousContinuation: lastCompletedRound?.continuation ?? null,
           maxOutputTokens: 4096,
           timeoutMs: 60000,
+          thinking: thinkingRequest,
         };
 
         // Stream from provider
@@ -525,7 +569,29 @@ export class AgentHandler implements TurnHandler {
         // Collect and validate round (throws AgentStreamError on incomplete/malformed stream)
         let collectedRound;
         try {
-          collectedRound = await collectAndValidateProviderStream(stream);
+          const publicStream = async function* () {
+            let buffer = ''; let chunk = 0; let summaries = 0;
+            // Bound both payload size and D1 writes. The authoritative final
+            // message remains complete even after the live preview reaches its cap.
+            const flush = async () => {
+              while (buffer && chunk < 32) {
+                const text = buffer.slice(0, 2048); buffer = buffer.slice(2048);
+                await publishAgentActivity(ctx, `r${progress.roundIndex}_text${chunk++}`, 'text_chunk', { text, round_index: progress.roundIndex });
+              }
+              buffer = '';
+            };
+            for await (const event of stream) {
+              if (event.type === 'text_delta') {
+                if (chunk < 32) buffer += event.text.slice(0, (32 - chunk) * 2048 - buffer.length);
+                if (buffer.length >= 2048) await flush();
+              } else if (event.type === 'provider_thought_summary' && summaries < 8) {
+                await publishAgentActivity(ctx, `r${progress.roundIndex}_summary${summaries++}`, 'reasoning_summary', { provider: modelSnapshot.provider, text: event.text.slice(0, 8000), round_index: progress.roundIndex });
+              }
+              yield event;
+            }
+            await flush();
+          };
+          collectedRound = await collectAndValidateProviderStream(publicStream());
         } catch (streamErr) {
           const appliedCount = progress.completedToolResults.filter((r) => r.result.status === 'applied').length;
           return {
@@ -535,6 +601,14 @@ export class AgentHandler implements TurnHandler {
               ? `Partial success: ${appliedCount} actions committed before stream error: ${streamErr instanceof Error ? streamErr.message : String(streamErr)}`
               : streamErr instanceof Error ? streamErr.message : String(streamErr),
           };
+        }
+
+        // An input accepted while the provider was streaming changes the next
+        // interpretation before any of that response's proposed writes execute.
+        if (await consumeSteering()) {
+          progress.roundIndex++; roundsExecutedThisTurn++;
+          if (!(await this.saveProgress(ctx, progress))) return { kind: 'failed', errorCode: 'lease_lost', errorMessage: 'Lease lost before steering continuation.' };
+          continue slice;
         }
 
         // Bulk operations check across proposed calls (F08)
@@ -596,7 +670,9 @@ export class AgentHandler implements TurnHandler {
           progress.phase = 'completed';
           progress.finalAnswer = collectedRound.text;
           if (!(await this.saveProgress(ctx, progress))) {
-            return { kind: 'failed', errorCode: 'lease_lost', errorMessage: 'Workspace lease lost or expired before saving progress.' };
+            progress.phase = 'provider_pending'; progress.finalAnswer = undefined;
+            if (!(await this.saveProgress(ctx, progress))) return { kind: 'failed', errorCode: 'lease_lost', errorMessage: 'Lease lost before finishing.' };
+            return { kind: 'continuation', progressJson: JSON.stringify(progress) };
           }
           return { kind: 'completed', replyText: collectedRound.text };
         }
@@ -625,6 +701,8 @@ export class AgentHandler implements TurnHandler {
           if (this.options?.testHooks?.beforeToolExecution) {
             await this.options.testHooks.beforeToolExecution(call, actionId);
           }
+
+          if (await consumeSteering()) { roundsExecutedThisTurn++; continue slice; }
 
           // Check if this action ID was already committed (crash recovery idempotency)
           const existingReceipt = await ctx.db
@@ -699,6 +777,7 @@ export class AgentHandler implements TurnHandler {
             });
 
             const currentRevision = (await getWorkspaceRevision(ctx.db, ctx.workspaceId))?.business_revision ?? 0;
+            await publishAgentActivity(ctx, `step${stepIndex}_started`, 'step_started', { tool_name: call.name, step_index: stepIndex });
 
             // Execute through repository
             result = await executeAgentTool({
@@ -726,6 +805,7 @@ export class AgentHandler implements TurnHandler {
               fence: ctx.fence,
               nowIso: this.nowIso(),
             });
+            await publishAgentActivity(ctx, `step${stepIndex}_finished`, 'step_finished', { tool_name: call.name, step_index: stepIndex, status: ['applied', 'already_applied'].includes(result.status) ? 'succeeded' : result.status === 'needs_clarification' ? 'skipped' : 'failed' });
 
             if (result.status === 'rejected' && result.error?.code === 'daily_action_limit_exceeded') {
               return {
@@ -835,7 +915,11 @@ export class AgentHandler implements TurnHandler {
              SELECT 1 FROM workspaces w
              WHERE w.id = agent_runs.workspace_id
                AND w.lease_owner = ? AND w.lease_attempt_id = ? AND w.lease_expires_at > ?
-           )`
+           ) AND (? <> 'completed' OR NOT EXISTS (
+             SELECT 1 FROM chat_messages cm JOIN run_activity a ON a.run_id = cm.run_id
+             WHERE cm.run_id = agent_runs.id AND cm.sequence > ? AND a.type = 'message_accepted'
+               AND json_extract(a.payload_json, '$.steering_message_id') = cm.id
+           ))`
       )
       .bind(
         JSON.stringify(progress),
@@ -847,6 +931,8 @@ export class AgentHandler implements TurnHandler {
         ctx.attemptId,
         ctx.attemptId,
         nowIso,
+        progress.phase,
+        progress.lastSteeringSequence ?? 0,
       )
       .run();
     return (res.meta.changes ?? 0) === 1;

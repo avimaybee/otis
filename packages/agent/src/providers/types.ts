@@ -89,6 +89,12 @@ export interface ResolvedModel {
   endpointUrl: string;
 }
 
+export type ThinkingRequest =
+  | { kind: 'provider_default' }
+  | { kind: 'gemini_level'; level: 'minimal' | 'low' | 'medium' | 'high' }
+  | { kind: 'go_chat_effort'; effort: 'low' | 'medium' | 'high' | 'xhigh' }
+  | { kind: 'go_responses_effort'; effort: string };
+
 export interface TurnInput {
   model: ResolvedModel;
   /** Stable per (workspace, chat); distinct chats never share one. */
@@ -106,6 +112,7 @@ export interface TurnInput {
   maxOutputTokens: number;
   timeoutMs: number;
   signal?: AbortSignal;
+  thinking?: ThinkingRequest;
 }
 
 export interface ProviderUsage {

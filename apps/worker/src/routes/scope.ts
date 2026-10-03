@@ -18,6 +18,18 @@ export interface WorkspaceScope {
   membership: WorkspaceMember;
 }
 
+/**
+ * Decodes a captured URL path segment. IDs are opaque strings, so a router
+ * that reads a percent-encoded segment would look up a different record.
+ */
+export function pathSegment(value: string): string {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
+}
+
 export async function requireWorkspaceScope(
   request: Request,
   db: D1Database,

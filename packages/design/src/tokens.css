@@ -1,0 +1,94 @@
+/**
+ * @otis/design tokens
+ *
+ * The single source of Otis's visual language, defined once as CSS custom
+ * properties per design.md section 5. Components reference semantic names, so
+ * no component carries its own hex literal or a parallel palette object.
+ *
+ * Surfaces have distinct jobs: `canvas` is the conversation ground, `sidebar`
+ * separates navigation, `surface` is for the composer and user turns, and
+ * `surface-raised` is reserved for transient overlays that need separation.
+ */
+
+:root {
+  /* Surfaces */
+  --otis-canvas: #181818;
+  --otis-sidebar: #141414;
+  --otis-surface: #242424;
+  --otis-surface-hover: #2c2c2c;
+  --otis-surface-raised: #303030;
+  --otis-border: #383838;
+
+  /* Text */
+  --otis-text-primary: #f3f3f3;
+  --otis-text-secondary: #b3b3b3;
+  --otis-text-muted: #929292;
+
+  /* Controls */
+  --otis-action-bg: #f3f3f3;
+  --otis-action-fg: #181818;
+  --otis-focus-ring: #d8d8d8;
+
+  /* Status: never the only state cue, always paired with a label or icon */
+  --otis-danger: #ff9c9c;
+  --otis-warning: #ebc67c;
+  --otis-success: #9dccaf;
+
+  /* Spacing: 4 / 8 / 12 / 16 / 24 / 32 / 48 */
+  --otis-space-1: 4px;
+  --otis-space-2: 8px;
+  --otis-space-3: 12px;
+  --otis-space-4: 16px;
+  --otis-space-6: 24px;
+  --otis-space-8: 32px;
+  --otis-space-12: 48px;
+
+  /* Radius: small controls, menus, then the composer/user turn */
+  --otis-radius-control: 8px;
+  --otis-radius-menu: 12px;
+  --otis-radius-turn: 20px;
+
+  /* Type */
+  --otis-font-sans: Inter, ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto,
+    'Helvetica Neue', Arial, sans-serif;
+  --otis-text-body: 15px;
+  --otis-leading-body: 23px;
+  --otis-text-ui: 14px;
+  --otis-leading-ui: 20px;
+  --otis-text-meta: 13px;
+  --otis-leading-meta: 18px;
+  --otis-text-title: 20px;
+  --otis-leading-title: 26px;
+  --otis-measure: 68ch;
+
+  /* Hit areas and motion */
+  --otis-hit: 44px;
+  --otis-duration: 160ms;
+  --otis-turn-gap: 16px;
+  --otis-section-gap: 16px;
+  --otis-control-height: 44px;
+  --otis-control-padding: 8px;
+  --otis-icon-size: 18px;
+}
+
+@media (min-width: 900px) and (pointer: fine) {
+  :root { --otis-control-height: 32px; --otis-control-padding: 6px; }
+}
+
+/*
+ * Layout constants shared by the shell. They are read by both the mobile
+ * composition and the desktop columns so a breakpoint change stays in one place.
+ */
+:root {
+  --otis-gutter: 16px;
+  --otis-topbar: 52px;
+  --otis-sidebar-width: 280px;
+  --otis-detail-width: 384px;
+  --otis-content-width: 760px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --otis-duration: 0ms;
+  }
+}

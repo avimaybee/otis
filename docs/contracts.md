@@ -203,3 +203,21 @@ Voice route contract (2026-10-01): resolve `native`, `groq_stt`, or `unavailable
 Change schemas, fixtures, serializers and both channel clients together. Additive wire fields may be backward compatible; removed enums, changed date meaning, renamed payload fields and altered tool authorization require versioned migration and replay tests. Do not repurpose old event kinds with new semantics. An older run checkpoint must either resume with its recorded adapter/schema version or fail visibly before any new write.
 
 Contract tests must include two workspaces, two members, conflicting IDs, duplicate requests, malformed dates, removed membership, stale revisions, lost responses, interrupted runs and provider-specific protocol continuation. No test may pass merely because the fake provider returned the exact expected prose.
+
+Implemented route shapes (2026-10-02, gate 007). DTOs live in `packages/contracts/src/chat.ts`.
+
+- `GET .../chats/:chatId` returns the chat plus `is_author`; `is_author: false` is the single signal a client uses for a read-only teammate transcript.
+- `GET .../chats/:chatId/messages` pages ascending with `next_before_sequence`; an unparsable cursor is a 422, never a widened query.
+- `GET .../chats/:chatId/activity?after=` returns `{activities, next_cursor, latest_cursor}`. A cursor beyond the chat's activity cursor is `409 cursor_superseded` with `latest_cursor`, which the client answers with an authoritative transcript fetch.
+- `GET .../chats/:chatId/activity?stream=sse&after=` emits named events `activity`, `resync_required`, `membership_revoked` and `heartbeat` over the same persisted rows, revalidating session and membership between polls.
+- `GET .../runs/:runId` is the authoritative run view: run, steps, action receipts, run activity and the pending clarification.
+- `POST .../actions/:actionId/undo` takes `mode`, `client_operation_id` and `expected_revision`, plus an optional `chat_id`. The undo's own action identity is derived from `client_operation_id`, so a retry replays the recorded receipt instead of reverting twice. An undo without `chat_id` is attributed to the requester's most recent conversation; a requester with no conversation cannot create an unattributed business event.
+- `POST .../clarifications/:id/reply` requires `client_message_id` and the requesting member; the answer is durably accepted as an ordinary message before the saved typed operation resumes.
+- `GET .../models?chat_id=` reports registry entries, current/default selection, voice capability separately from native audio support, and `thinking: ThinkingOptionDTO` (`state`, `current_choice_id`, `effective_choice_id`, `is_default`, `choices: [{ id, label }]`, `unavailability_reason`).
+- `POST .../chats/:chatId/commands` with command `thinking`:
+  - `/thinking`: Inspects effective model and returns verified choices without mutating settings.
+  - `/thinking <choice>`: Validates supported choice for effective model, updates chat's `thinking_override_json`, returns attributed confirmation.
+  - `/thinking default`: Clears chat's thinking override to Provider default.
+  - Switching model (`/model <new>`) resets any incompatible thinking override to Provider default and notes it in the command reply.
+- Agent tool `set_chat_thinking`: Exposes the same validated settings owner conversationally.
+- Accepted runs snapshot `thinking_snapshot_json` at acceptance for immutable run execution across queue delay, tool rounds, crashes, and clarification replies.

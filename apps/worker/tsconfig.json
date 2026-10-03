@@ -15,6 +15,7 @@
     { "path": "../../packages/identity" },
     { "path": "../../packages/channels" },
     { "path": "../../packages/ledger" },
-    { "path": "../../packages/agent" }
+    { "path": "../../packages/agent" },
+    { "path": "../../packages/commands" }
   ]
 }

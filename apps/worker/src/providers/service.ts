@@ -113,7 +113,7 @@ export type ModelAvailability =
  */
 export async function resolveModelForChat(
   db: D1Database,
-  params: { workspaceId: string; actorUserId: string; chatId?: string; registry?: ModelRegistry },
+  params: { workspaceId: string; actorUserId: string; chatId?: string; selectedKey?: string; registry?: ModelRegistry },
 ): Promise<ModelAvailability> {
   const registry = params.registry ?? PRODUCTION_REGISTRY;
   const member = await db
@@ -137,6 +137,7 @@ export async function resolveModelForChat(
       .first<{ default_model: string | null }>();
     key = settings?.default_model ?? null;
   }
+  if (params.selectedKey !== undefined) key = params.selectedKey;
   if (!key) return { available: false, reason: 'no_model_selected' };
 
   const found = registry.entries.find((item) => item.commandKey === key);

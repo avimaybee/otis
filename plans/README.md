@@ -14,7 +14,7 @@ Revised 2026-09-30; foundation baseline is commit `a3bd462`. [roadmap.md](../roa
 | [004B](004-inbound-routing.md) | Actor leases, dispatch and recovery | 004A, 002, 003B | DONE; independently reviewed 2026-10-01; local evidence only |
 | [005](005-provider-spike.md) | Exact provider/model capability and budget evidence | 003B; fake work may start earlier | DONE; [independently accepted 2026-10-01](005-review-followup.md); three primary models enabled, secondary/audio capabilities remain gated |
 | [006](006-agent.md) | Bounded agent and durable sourced workspace memory | 002, 004B, 005 | DONE; [independently accepted 2026-10-02](006-review-round6.md); local evidence only |
-| [007](007-web-chat-api.md) | Chat APIs, replay stream and shared commands | 006, 003B, 004A | TODO |
+| [007](007-web-chat-api.md) | Chat APIs, replay stream and shared commands | 006, 003B, 004A | DONE; [independently accepted 2026-10-03](007-review-round3.md); local evidence only |
 | [008](008-conversation-ui.md) | Precise mobile/desktop conversation | 007; fixture prototypes can start earlier | TODO |
 | [009](009-telegram.md) | Complete linked private Telegram channel | 007, 004B | TODO |
 | [010](010-voice.md) | Voice notes and authenticated retained audio | 005, 008, 009 | TODO |
@@ -33,6 +33,8 @@ Settled: Kerning scope, equal members/full history, neutral charcoal UI, private
 ## Engineering simplicity
 
 Gate 005 has a detailed [implementation-agent handoff](005-implementation-handoff.md), supplementing its original plan without changing gate order.
+
+The user-requested [thinking-controls handoff](005-thinking-controls-handoff.md) is IMPLEMENTED: verified per-model effort options, `/thinking` on both surfaces, a small model-adjacent selector, conversational `set_chat_thinking` tool, and immutable accepted-run configuration. It extends 005–009 without adding a new gate or changing prior acceptance. Provider default remains available while adjustable options operate on verified endpoint evidence.
 
 Gate 006 has a detailed [agent/memory execution contract](006-implementation-handoff.md): current source baseline, typed tool ownership, checkpoints 006A–006D, pinned models, durable loop/receipt recovery, memory projections and exact acceptance tests. The checkpoints stay within 006; they are not new roadmap gates. Implemented work remains review pending until independently accepted.
 

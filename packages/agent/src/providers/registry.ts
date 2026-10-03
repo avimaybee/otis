@@ -11,10 +11,26 @@
  */
 
 import type { ProviderName, ProviderStatus } from '@otis/contracts';
-import { GEMINI_ORIGIN, OPENCODE_GO_ORIGIN, type EndpointFamily } from './types.js';
+import { GEMINI_ORIGIN, OPENCODE_GO_ORIGIN, type EndpointFamily, type ThinkingRequest } from './types.js';
 
 export type CapabilityState = 'unverified' | 'supported' | 'unsupported';
 export type ModelLifecycle = 'active' | 'retired';
+
+export interface ThinkingChoice {
+  id: string;
+  label: string;
+  request: ThinkingRequest;
+  evidenceRef?: string | null;
+  verifiedAt?: string | null;
+}
+
+export interface ModelThinkingControl {
+  state: CapabilityState;
+  choices: ThinkingChoice[];
+  defaultChoiceId?: string;
+  documentationUrl?: string;
+  notes?: string;
+}
 
 export interface ModelCapabilities {
   text: CapabilityState;
@@ -22,6 +38,7 @@ export interface ModelCapabilities {
   stream: CapabilityState;
   thoughtSummary: CapabilityState;
   audio: CapabilityState;
+  thinking?: ModelThinkingControl;
   nativeAudioFormats?: Partial<Record<string, CapabilityState>>;
 }
 
@@ -35,6 +52,7 @@ export interface ModelEntry {
   approved: boolean;
   lifecycle: ModelLifecycle;
   capabilities: ModelCapabilities;
+  thinking?: ModelThinkingControl;
   /** Documented data-use behavior, so selectors never claim zero retention. */
   trainingUse: string;
   dataRetention: string;
@@ -79,6 +97,7 @@ function entry(
     verifiedAt?: string | null;
   },
 ): ModelEntry {
+  const thinking = overrides?.capabilities?.thinking ?? { state: 'unverified', choices: [] };
   return {
     commandKey,
     displayName,
@@ -94,7 +113,9 @@ function entry(
       stream: overrides?.capabilities?.stream ?? 'unverified',
       thoughtSummary: overrides?.capabilities?.thoughtSummary ?? 'unverified',
       audio: overrides?.capabilities?.audio ?? 'unverified',
+      thinking,
     },
+    thinking,
     trainingUse,
     dataRetention,
     evidenceRef: overrides?.evidenceRef ?? null,
@@ -103,11 +124,16 @@ function entry(
 }
 
 /**
- * Production allowlist: exactly the six operator-selected models from
- * 2026-10-01. Evidenced capabilities (text, tools, stream) for independently
+ * Production allowlist: the six operator-selected models from 2026-10-01 plus
+ * deepseek-v4.1-flash (proven 2026-10-03), with the two Muse entries enabled on
+ * 2026-10-03 after a fresh passing smoke. glm-5.3-flash and gpt-6-luna were
+ * trialed on 2026-10-03 and removed — see the note at the end of the entries.
+ * Evidenced capabilities (text, tools, stream, thinking) for independently
  * proven models (gemini-3.1-flash-lite, mimo-v2.5, mimo-v2.6-pro) are published
- * as supported with dated evidence references. Unproven audio, thought-summary,
- * and optional models remain unverified until accepted.
+ * as supported with dated evidence references. Audio and thought-summary stay
+ * unverified on every entry; new entries stay fully unverified until a
+ * controlled synthetic smoke proves their exact endpoint. New entries carry no
+ * thinking descriptor, so provider default applies.
  */
 export const PRODUCTION_REGISTRY: ModelRegistry = {
   version: 1,
@@ -121,6 +147,20 @@ export const PRODUCTION_REGISTRY: ModelRegistry = {
       `${GEMINI_ORIGIN}/v1beta/interactions`,
       'Paid tier: not used for training; free tier: used (see Gemini API terms)',
       'Tier-dependent; see https://ai.google.dev/gemini-api/terms',
+      {
+        capabilities: {
+          thinking: {
+            state: 'unverified',
+            documentationUrl: 'https://ai.google.dev/gemini-api/docs/thinking',
+            choices: [
+              { id: 'minimal', label: 'Minimal', request: { kind: 'gemini_level', level: 'minimal' }, verifiedAt: '2026-10-03', evidenceRef: 'docs/005-live-provider-evidence.md' },
+              { id: 'low', label: 'Low', request: { kind: 'gemini_level', level: 'low' }, verifiedAt: '2026-10-03', evidenceRef: 'docs/005-live-provider-evidence.md' },
+              { id: 'medium', label: 'Medium', request: { kind: 'gemini_level', level: 'medium' }, verifiedAt: '2026-10-03', evidenceRef: 'docs/005-live-provider-evidence.md' },
+              { id: 'high', label: 'High', request: { kind: 'gemini_level', level: 'high' }, verifiedAt: '2026-10-03', evidenceRef: 'docs/005-live-provider-evidence.md' },
+            ],
+          },
+        },
+      },
     ),
     entry(
       'gemini-3.1-flash-lite',
@@ -132,7 +172,22 @@ export const PRODUCTION_REGISTRY: ModelRegistry = {
       'Paid tier: not used for training; free tier: used (see Gemini API terms)',
       'Tier-dependent; see https://ai.google.dev/gemini-api/terms',
       {
-        capabilities: { text: 'supported', tools: 'supported', stream: 'supported' },
+        capabilities: {
+          text: 'supported',
+          tools: 'supported',
+          stream: 'supported',
+          thinking: {
+            state: 'supported',
+            defaultChoiceId: 'minimal',
+            documentationUrl: 'https://ai.google.dev/gemini-api/docs/thinking',
+            choices: [
+              { id: 'minimal', label: 'Minimal', request: { kind: 'gemini_level', level: 'minimal' }, verifiedAt: '2026-10-03', evidenceRef: 'docs/005-live-provider-evidence.md' },
+              { id: 'low', label: 'Low', request: { kind: 'gemini_level', level: 'low' }, verifiedAt: '2026-10-03', evidenceRef: 'docs/005-live-provider-evidence.md' },
+              { id: 'medium', label: 'Medium', request: { kind: 'gemini_level', level: 'medium' }, verifiedAt: '2026-10-03', evidenceRef: 'docs/005-live-provider-evidence.md' },
+              { id: 'high', label: 'High', request: { kind: 'gemini_level', level: 'high' }, verifiedAt: '2026-10-03', evidenceRef: 'docs/005-live-provider-evidence.md' },
+            ],
+          },
+        },
         evidenceRef: 'docs/005-live-provider-evidence.md',
         verifiedAt: '2026-10-01',
       },
@@ -147,7 +202,21 @@ export const PRODUCTION_REGISTRY: ModelRegistry = {
       'Not used for training (Go docs, checked 2026-10-01)',
       '0 days (Go docs, checked 2026-10-01)',
       {
-        capabilities: { text: 'supported', tools: 'supported', stream: 'supported' },
+        capabilities: {
+          text: 'supported',
+          tools: 'supported',
+          stream: 'supported',
+          thinking: {
+            state: 'supported',
+            defaultChoiceId: 'default',
+            choices: [
+              { id: 'low', label: 'Low', request: { kind: 'go_chat_effort', effort: 'low' }, verifiedAt: '2026-10-03', evidenceRef: 'docs/005-live-provider-evidence.md' },
+              { id: 'medium', label: 'Medium', request: { kind: 'go_chat_effort', effort: 'medium' }, verifiedAt: '2026-10-03', evidenceRef: 'docs/005-live-provider-evidence.md' },
+              { id: 'high', label: 'High', request: { kind: 'go_chat_effort', effort: 'high' }, verifiedAt: '2026-10-03', evidenceRef: 'docs/005-live-provider-evidence.md' },
+              { id: 'xhigh', label: 'Extra high', request: { kind: 'go_chat_effort', effort: 'xhigh' }, verifiedAt: '2026-10-03', evidenceRef: 'docs/005-live-provider-evidence.md' },
+            ],
+          },
+        },
         evidenceRef: 'docs/005-live-provider-evidence.md',
         verifiedAt: '2026-10-01',
       },
@@ -162,7 +231,20 @@ export const PRODUCTION_REGISTRY: ModelRegistry = {
       'Not used for training (Go docs, checked 2026-10-01)',
       '0 days (Go docs, checked 2026-10-01)',
       {
-        capabilities: { text: 'supported', tools: 'supported', stream: 'supported' },
+        capabilities: {
+          text: 'supported',
+          tools: 'supported',
+          stream: 'supported',
+          thinking: {
+            state: 'supported',
+            defaultChoiceId: 'default',
+            choices: [
+              { id: 'low', label: 'Low', request: { kind: 'go_chat_effort', effort: 'low' }, verifiedAt: '2026-10-03', evidenceRef: 'docs/005-live-provider-evidence.md' },
+              { id: 'medium', label: 'Medium', request: { kind: 'go_chat_effort', effort: 'medium' }, verifiedAt: '2026-10-03', evidenceRef: 'docs/005-live-provider-evidence.md' },
+              { id: 'high', label: 'High', request: { kind: 'go_chat_effort', effort: 'high' }, verifiedAt: '2026-10-03', evidenceRef: 'docs/005-live-provider-evidence.md' },
+            ],
+          },
+        },
         evidenceRef: 'docs/005-live-provider-evidence.md',
         verifiedAt: '2026-10-01',
       },
@@ -176,6 +258,20 @@ export const PRODUCTION_REGISTRY: ModelRegistry = {
       `${OPENCODE_GO_ORIGIN}/v1/responses`,
       'Submitted data may train future Meta models (Go privacy table, 2026-10-01)',
       'Not zero data retention (Go privacy table, 2026-10-01)',
+      {
+        capabilities: {
+          text: 'supported',
+          tools: 'supported',
+          stream: 'supported',
+          thinking: {
+            state: 'unsupported',
+            choices: [],
+            notes: 'OpenCode Go Responses endpoint does not support adjustable reasoning parameters.',
+          },
+        },
+        evidenceRef: 'docs/005-live-provider-evidence.md',
+        verifiedAt: '2026-10-03',
+      },
     ),
     entry(
       'muse-13',
@@ -186,7 +282,48 @@ export const PRODUCTION_REGISTRY: ModelRegistry = {
       `${OPENCODE_GO_ORIGIN}/v1/responses`,
       'Submitted data may train future Meta models (Go privacy table, 2026-10-01)',
       'Not zero data retention (Go privacy table, 2026-10-01)',
+      {
+        capabilities: {
+          text: 'supported',
+          tools: 'supported',
+          stream: 'supported',
+          thinking: {
+            state: 'unsupported',
+            choices: [],
+            notes: 'OpenCode Go Responses endpoint does not support adjustable reasoning parameters.',
+          },
+        },
+        evidenceRef: 'docs/005-live-provider-evidence.md',
+        verifiedAt: '2026-10-03',
+      },
     ),
+    entry(
+      'deepseek-v4.1-flash',
+      'DeepSeek V4.1 Flash',
+      'opencode_go',
+      'deepseek-v4.1-flash',
+      'go-chat-completions',
+      `${OPENCODE_GO_ORIGIN}/v1/chat/completions`,
+      'Not used for training (Go privacy table, checked 2026-10-03)',
+      '0 days (Go privacy table, checked 2026-10-03; DeepSeek ZDR agreement valid through 2026-10-31)',
+      {
+        capabilities: {
+          text: 'supported',
+          tools: 'supported',
+          stream: 'supported',
+        },
+        evidenceRef: 'docs/005-live-provider-evidence.md',
+        verifiedAt: '2026-10-03',
+      },
+    ),
+    // NOTE 2026-10-03: two trialed entries were removed here, docs record why:
+    // - GLM 5.3 Flash (`glm-5.3-flash`, chat/completions): live smoke rejects
+    //   every tool-less text request with HTTP 400 while tool-ful requests
+    //   succeed, so the required text/tools/stream triple is not established.
+    // - GPT 6 Luna (`gpt-6-luna`, responses): smoke blocked twice by per-model
+    //   account rate limits (HTTP 429) with no capability verdict either way.
+    // See docs/005-live-provider-evidence.md. Do not re-add either without a
+    // passing full smoke.
   ],
 };
 

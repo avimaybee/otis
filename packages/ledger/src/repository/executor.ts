@@ -132,7 +132,11 @@ function createGuardStatement(
                 AND w2.lease_attempt_id = ar.attempt_id
                 AND w2.lease_expires_at IS NOT NULL
                 AND unixepoch(w2.lease_expires_at) > unixepoch('now')
-                AND (? IS NULL OR ar.source_message_id = ?)
+                AND (? IS NULL OR ar.source_message_id = ? OR EXISTS (
+                  SELECT 1 FROM chat_messages cm JOIN messages_in original ON original.id = ar.source_message_id
+                  WHERE cm.run_id = ar.id AND cm.inbound_message_id = ? AND cm.workspace_id = ar.workspace_id
+                    AND cm.author_user_id = original.user_id AND cm.author_kind = 'member'
+                ))
                 AND (? IS NULL OR ar.source_job_id = ?)
                 AND (? IS NULL OR (ar.lease_fence = ? AND w2.lease_fence = ?))
             ))
@@ -186,6 +190,7 @@ function createGuardStatement(
       context.run_id || null,
       context.run_id || '',
       context.source_message_id || null,
+      context.source_message_id || '',
       context.source_message_id || '',
       context.source_job_id || null,
       context.source_job_id || '',

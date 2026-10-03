@@ -16,6 +16,8 @@ import migration0006Sql from '../../../migrations/0006_actor_hardening.sql?raw';
 import migration0007Sql from '../../../migrations/0007_outbox_claim_owner.sql?raw';
 // @ts-expect-error vite raw import
 import migration0008Sql from '../../../migrations/0008_memory_and_agent_runs.sql?raw';
+// @ts-expect-error vite raw import
+import migration0009Sql from '../../../migrations/0009_thinking_controls.sql?raw';
 
 import { AgentHandler } from '../src/agent/handler.js';
 import {
@@ -106,6 +108,7 @@ describe('Worker Agent Loop, Recovery & Clarification Integration (006B workerd)
       migration0006Sql,
       migration0007Sql,
       migration0008Sql,
+      migration0009Sql,
     ]) {
       for (const stmt of splitSqlStatements(sql)) {
         await env.DB.prepare(stmt).run();
@@ -1126,5 +1129,57 @@ describe('Worker Agent Loop, Recovery & Clarification Integration (006B workerd)
     expect(res2.status).toBe('failed');
     expect(res2.detail).toBe('max_rounds_exceeded');
   });
+  it('steers an in-flight provider response before its proposed writes, with one durable run and no extra outbox', async () => {
+    const accepted = await acceptWebMessage(env.DB, { workspaceId: ws, chatId: chatAvi, userId: aviId, clientMessageId: 'steer-stream-original', text: 'Create the old business' });
+    const fake = new FakeProviderAdapter({ provider: 'gemini', scripts: [
+      { kind: 'tool_calls', calls: [{ callId: 'stale', name: 'upsert_entity', args: { name: 'Steering stale business' } }] },
+      { kind: 'tool_calls', calls: [{ callId: 'correct', name: 'upsert_entity', args: { name: 'Steering correct business' } }] },
+      { kind: 'text', text: 'Saved the corrected business.' },
+    ] });
+    const inputs: TurnInput[] = []; let inputCount = 0; let steering: Awaited<ReturnType<typeof acceptWebMessage>> | undefined;
+    const adapter: ProviderAdapter = { provider: 'gemini', audioSupport: () => fake.audioSupport(), async *streamTurn(input) {
+      inputs.push(input); if (inputCount++ === 0) steering = await acceptWebMessage(env.DB, { workspaceId: ws, chatId: chatAvi, userId: aviId, clientMessageId: 'steer-stream-context', text: 'Actually use the correct business instead.', steerRunId: accepted.run_id });
+      yield* fake.streamTurn(input);
+    } };
+    const result = await dispatchOutboxItem(env.DB, await outboxIdForRun(accepted.run_id), ws, { handler: new AgentHandler({ providerAdapter: adapter, maxRoundsPerSlice: 4, limits: defaultTestLimits }) });
+    expect(result.status).toBe('completed'); expect(steering?.run_id).toBe(accepted.run_id); expect(steering?.mode).toBe('steer');
+    expect(inputs[1]!.messages.some(message => message.text?.includes('Actually use the correct business instead.'))).toBe(true);
+    expect(await env.DB.prepare(`SELECT id FROM entities WHERE workspace_id = ? AND name = 'Steering stale business'`).bind(ws).first()).toBeNull();
+    expect(await env.DB.prepare(`SELECT id FROM entities WHERE workspace_id = ? AND name = 'Steering correct business'`).bind(ws).first()).not.toBeNull();
+    const count = await env.DB.prepare(`SELECT COUNT(*) AS n FROM outbox WHERE json_extract(payload_json, '$.run_id') = ?`).bind(accepted.run_id).first<{ n: number }>(); expect(count?.n).toBe(1);
+    const retry = await acceptWebMessage(env.DB, { workspaceId: ws, chatId: chatAvi, userId: aviId, clientMessageId: 'steer-stream-context', text: 'Actually use the correct business instead.' });
+    expect(retry).toEqual(steering);
+  });
+
+  it('preserves an already committed action, supersedes later proposals, and attributes the steered write to the new input', async () => {
+    const accepted = await acceptWebMessage(env.DB, { workspaceId: ws, chatId: chatAvi, userId: aviId, clientMessageId: 'steer-between-original', text: 'Create two businesses' });
+    const fake = new FakeProviderAdapter({ provider: 'gemini', scripts: [
+      { kind: 'tool_calls', calls: [{ callId: 'saved', name: 'upsert_entity', args: { name: 'Quartz Apothecary' } }, { callId: 'discarded', name: 'upsert_entity', args: { name: 'Nebula Atelier' } }] },
+      { kind: 'tool_calls', calls: [{ callId: 'adjusted', name: 'upsert_entity', args: { name: 'Maple Fermentation' } }] },
+      { kind: 'text', text: 'Kept the first change and saved the corrected second business.' },
+    ] });
+    let injected = false;
+    const handler = new AgentHandler({ providerAdapter: fake, maxRoundsPerSlice: 4, limits: defaultTestLimits, testHooks: { afterToolExecution: async () => { if (!injected) { injected = true; await acceptWebMessage(env.DB, { workspaceId: ws, chatId: chatAvi, userId: aviId, clientMessageId: 'steer-between-context', text: 'Keep the first business; change the second one.', steerRunId: accepted.run_id }); } } } });
+    const result = await dispatchOutboxItem(env.DB, await outboxIdForRun(accepted.run_id), ws, { handler }); expect(result.status).toBe('completed');
+    const names = (await env.DB.prepare(`SELECT name FROM entities WHERE workspace_id = ? AND name IN ('Quartz Apothecary', 'Nebula Atelier', 'Maple Fermentation')`).bind(ws).all<{ name: string }>()).results.map(row => row.name);
+    expect(names).toContain('Quartz Apothecary'); expect(names).toContain('Maple Fermentation'); expect(names).not.toContain('Nebula Atelier');
+    const source = await env.DB.prepare(`SELECT id FROM messages_in WHERE external_id = 'steer-between-context'`).first<{ id: string }>();
+    const receipt = await env.DB.prepare(`SELECT source_message_id FROM action_receipts WHERE workspace_id = ? AND action_id = ?`).bind(ws, `${accepted.run_id}_r1_t0`).first<{ source_message_id: string }>(); expect(receipt?.source_message_id).toBe(source?.id);
+    const replay = await dispatchOutboxItem(env.DB, await outboxIdForRun(accepted.run_id), ws, { handler }); expect(replay.status).toBe('already_done');
+  });
+
+  it('retains steering across bounded continuation and rejects teammate injection without creating an input', async () => {
+    const accepted = await acceptWebMessage(env.DB, { workspaceId: ws, chatId: chatAvi, userId: aviId, clientMessageId: 'steer-restart-original', text: 'Create a record' });
+    await expect(acceptWebMessage(env.DB, { workspaceId: ws, chatId: chatAvi, userId: hunorId, clientMessageId: 'steer-forbidden', text: 'Change it', steerRunId: accepted.run_id })).rejects.toThrow('Only the chat author');
+    expect(await env.DB.prepare(`SELECT id FROM messages_in WHERE external_id = 'steer-forbidden'`).first()).toBeNull();
+    const fake = new FakeProviderAdapter({ provider: 'gemini', scripts: [{ kind: 'tool_calls', calls: [{ callId: 'abandoned', name: 'upsert_entity', args: { name: 'Steering restart abandoned' } }] }, { kind: 'text', text: 'No record is needed now.' }] });
+    let injected = false;
+    const first = new AgentHandler({ providerAdapter: fake, maxRoundsPerSlice: 1, limits: defaultTestLimits, testHooks: { beforeToolExecution: async () => { if (!injected) { injected = true; await acceptWebMessage(env.DB, { workspaceId: ws, chatId: chatAvi, userId: aviId, clientMessageId: 'steer-restart-context', text: 'Do not create anything. Just acknowledge.', steerRunId: accepted.run_id }); } } } });
+    const firstResult = await dispatchOutboxItem(env.DB, await outboxIdForRun(accepted.run_id), ws, { handler: first }); expect(firstResult.status).toBe('deferred'); expect(firstResult.detail).toBe('checkpoint');
+    const secondResult = await dispatchOutboxItem(env.DB, await outboxIdForRun(accepted.run_id), ws, { handler: new AgentHandler({ providerAdapter: fake, maxRoundsPerSlice: 3, limits: defaultTestLimits }) }); expect(secondResult.status).toBe('completed');
+    const checkpoint = await env.DB.prepare('SELECT agent_progress_json FROM agent_runs WHERE id = ?').bind(accepted.run_id).first<{ agent_progress_json: string }>(); expect(checkpoint?.agent_progress_json).toContain('Do not create anything. Just acknowledge.');
+    expect(await env.DB.prepare(`SELECT id FROM entities WHERE name = 'Steering restart abandoned'`).first()).toBeNull();
+  });
+
 });
 

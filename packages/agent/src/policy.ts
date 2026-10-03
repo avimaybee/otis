@@ -144,6 +144,7 @@ export function checkUntrustedContentPolicy(
     'update_preference',
     'forget_memory',
     'undo',
+    'set_chat_thinking',
   ]);
 
   if (sourceTrust !== 'member' && mutatingTools.has(toolName)) {

@@ -5,6 +5,7 @@
     { "path": "./packages/identity" },
     { "path": "./packages/ledger" },
     { "path": "./packages/agent" },
+    { "path": "./packages/commands" },
     { "path": "./packages/channels" },
     { "path": "./packages/sheet" },
     { "path": "./packages/design" },

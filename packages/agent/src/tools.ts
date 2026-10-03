@@ -964,6 +964,25 @@ export function validateUpdatePreferenceArgs(raw: unknown): ValidationResult<Upd
   };
 }
 
+export interface SetChatThinkingToolArgs {
+  level: string;
+}
+
+export function validateSetChatThinkingArgs(raw: unknown): ValidationResult<SetChatThinkingToolArgs> {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return fail('invalid_type', 'Expected object.');
+  const obj = raw as Record<string, unknown>;
+  const sec = checkNoForbiddenKeys(obj);
+  if (sec) return sec;
+  const unk = checkNoUnknownKeys(obj, new Set(['level']), 'set_chat_thinking');
+  if (unk) return unk;
+
+  if (typeof obj['level'] !== 'string' || !obj['level'].trim()) {
+    return fail('invalid_argument', "Field 'level' must be a non-empty string.");
+  }
+
+  return { ok: true, data: { level: obj['level'].trim().toLowerCase() } };
+}
+
 export function validateUndoArgs(raw: unknown): ValidationResult<UndoToolArgs> {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return fail('invalid_type', 'Expected object.');
   const obj = raw as Record<string, unknown>;
@@ -1052,6 +1071,8 @@ export function validateToolCall(
       return validateForgetMemoryArgs(rawArgs);
     case 'update_preference':
       return validateUpdatePreferenceArgs(rawArgs);
+    case 'set_chat_thinking':
+      return validateSetChatThinkingArgs(rawArgs);
     case 'undo':
       return validateUndoArgs(rawArgs);
     case 'request_clarification':
@@ -1365,6 +1386,21 @@ export const ALL_AGENT_TOOLS: ProviderToolDeclaration[] = [
         brief_channel: { type: 'string', enum: ['web', 'telegram'] },
       },
       required: [],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'set_chat_thinking',
+    description: 'Set the model thinking effort for future messages in this chat.',
+    parameters: {
+      type: 'object',
+      properties: {
+        level: {
+          type: 'string',
+          description: "Thinking effort level ('minimal', 'low', 'medium', 'high', 'xhigh', or 'default')",
+        },
+      },
+      required: ['level'],
       additionalProperties: false,
     },
   },

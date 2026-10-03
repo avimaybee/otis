@@ -20,6 +20,8 @@ import migration0006Sql from '../../migrations/0006_actor_hardening.sql?raw';
 import migration0007Sql from '../../migrations/0007_outbox_claim_owner.sql?raw';
 // @ts-expect-error vite raw import
 import migration0008Sql from '../../migrations/0008_memory_and_agent_runs.sql?raw';
+// @ts-expect-error vite raw import
+import migration0009Sql from '../../migrations/0009_thinking_controls.sql?raw';
 
 import { AgentHandler } from '../../apps/worker/src/agent/handler.js';
 import { dispatchOutboxItem } from '../../apps/worker/src/actor/dispatch.js';
@@ -72,7 +74,7 @@ describe('DIAG undo FK with quote+waiting pollution (review probe)', () => {
   }
 
   beforeAll(async () => {
-    for (const sql of [migration0001Sql, migration0002Sql, migration0003Sql, migration0004Sql, migration0005Sql, migration0006Sql, migration0007Sql, migration0008Sql]) {
+    for (const sql of [migration0001Sql, migration0002Sql, migration0003Sql, migration0004Sql, migration0005Sql, migration0006Sql, migration0007Sql, migration0008Sql, migration0009Sql]) {
       for (const stmt of splitSqlStatements(sql)) {
         await env.DB.prepare(stmt).run();
       }

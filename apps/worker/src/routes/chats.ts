@@ -21,8 +21,13 @@ import {
   ForbiddenError,
   NotFoundError,
   ValidationError,
+  SteeringRunClosedError,
 } from '../inbox/repository.js';
 import type { CreateChatRequest, CreateChatMessageRequest } from '@otis/contracts';
+import { validateChatMessageRequest } from '@otis/contracts';
+import { parseCommandText } from '@otis/commands';
+import { handleExecuteCommand } from './commands.js';
+import { handleReplyToClarification } from './clarifications.js';
 
 /**
  * Authenticates the request and verifies active membership in the workspace.
@@ -86,16 +91,19 @@ export async function handleListChats(
   if (auth.error) return auth.error;
 
   const url = new URL(request.url);
-  const filter = url.searchParams.get('filter') === 'mine' ? 'mine' : 'team';
+  const filter = url.searchParams.get('filter') ?? 'team';
+  if (filter !== 'mine' && filter !== 'team') return jsonError(422, 'validation_error', 'filter must be mine or team.', requestId);
   const cursor = url.searchParams.get('cursor') || undefined;
-  const limit = url.searchParams.get('limit') ? parseInt(url.searchParams.get('limit')!, 10) : 25;
+  const rawLimit = url.searchParams.get('limit'); const limit = rawLimit === null ? 25 : Number(rawLimit);
+  if (rawLimit !== null && (!/^\d+$/.test(rawLimit) || !Number.isSafeInteger(limit) || limit < 1 || limit > 100)) return jsonError(422, 'validation_error', 'limit must be an integer from 1 to 100.', requestId);
 
-  const result = await listChats(env.DB, workspaceId, {
+  let result;
+  try { result = await listChats(env.DB, workspaceId, {
     filter,
     userId: auth.userId,
     cursor,
     limit,
-  });
+  }); } catch (error) { if (error instanceof ValidationError) return jsonError(422, 'validation_error', error.message, requestId); throw error; }
 
   return jsonSuccess(result, 200, { 'x-request-id': requestId });
 }
@@ -123,6 +131,9 @@ export async function handleCreateChat(
     // Empty body is valid, creates chat with default title
   }
 
+  if (!body || typeof body !== 'object' || Array.isArray(body)) return jsonError(422, 'validation_error', 'Expected a JSON object.', requestId);
+  if (body.model_override != null) return jsonError(422, 'validation_error', 'Use /model after creating the chat to select an available model.', requestId);
+  try {
   const chat = await createChat(env.DB, {
     workspaceId,
     authorUserId: auth.userId,
@@ -132,6 +143,7 @@ export async function handleCreateChat(
   });
 
   return jsonSuccess({ chat }, 201, { 'x-request-id': requestId });
+  } catch (error) { if (error instanceof ValidationError) return jsonError(422, 'validation_error', error.message, requestId); if (error instanceof ConflictError) return jsonError(409, 'conflict', error.message, requestId); if (error instanceof NotFoundError) return jsonError(404, 'not_found', error.message, requestId); throw error; }
 }
 
 /**
@@ -214,22 +226,39 @@ export async function handleCreateMessage(
     return jsonError(400, 'bad_request', 'Invalid JSON body.', requestId);
   }
 
-  if (!body.client_message_id || typeof body.client_message_id !== 'string') {
-    return jsonError(422, 'validation_error', 'Missing or invalid client_message_id.', requestId);
-  }
+  const validated = validateChatMessageRequest(body);
+  if (!validated.valid) return jsonError(422, 'validation_error', validated.message, requestId);
+  body = validated.value;
 
   try {
+    if (body.clarification_id) {
+      return handleReplyToClarification(new Request(request.url, {
+        method: 'POST', headers: request.headers, body: JSON.stringify(body),
+      }), env, workspaceId, body.clarification_id, requestId, chatId);
+    }
+    if (typeof body.text === 'string' && parseCommandText(body.text, 'web').kind !== 'text') {
+      return handleExecuteCommand(new Request(request.url, {
+        method: 'POST', headers: request.headers, body: JSON.stringify(body),
+      }), env, workspaceId, chatId, requestId);
+    }
+    const parsed = parseCommandText(body.text ?? '', 'web');
+    const active = await env.DB.prepare(`SELECT id FROM agent_runs WHERE workspace_id = ? AND chat_id = ? AND executor_kind = 'agent' AND status IN ('running', 'queued') AND COALESCE(json_extract(agent_progress_json, '$.phase'), '') <> 'completed' ORDER BY CASE status WHEN 'running' THEN 0 ELSE 1 END, created_at DESC LIMIT 1`).bind(workspaceId, chatId).first<{ id: string }>();
     const result = await acceptWebMessage(env.DB, {
       workspaceId,
       chatId,
       userId: auth.userId,
       clientMessageId: body.client_message_id,
-      text: body.text,
+      text: parsed.kind === 'text' ? parsed.text : body.text,
       mediaId: body.media_id,
+      steerRunId: active?.id,
     });
 
     return jsonSuccess(result, 202, { 'x-request-id': requestId });
   } catch (err) {
+    if (err instanceof SteeringRunClosedError) {
+      const result = await acceptWebMessage(env.DB, { workspaceId, chatId, userId: auth.userId, clientMessageId: body.client_message_id, text: parseCommandText(body.text ?? '', 'web').kind === 'text' ? (parseCommandText(body.text ?? '', 'web') as { text: string }).text : body.text, mediaId: body.media_id });
+      return jsonSuccess(result, 202, { 'x-request-id': requestId });
+    }
     if (err instanceof ConflictError) {
       return jsonError(409, 'conflict', err.message, requestId);
     }
@@ -243,6 +272,6 @@ export async function handleCreateMessage(
       return jsonError(422, 'validation_error', err.message, requestId);
     }
 
-    return jsonError(500, 'internal_error', `Failed to accept message: ${String(err)}`, requestId);
+    return jsonError(500, 'internal_error', 'The message could not be accepted. Retry with the same message ID.', requestId);
   }
 }

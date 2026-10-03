@@ -1368,6 +1368,29 @@ export class OpenCodeGoAdapter implements ProviderAdapter {
   }
 
   private async *streamChat(input: TurnInput, signal: AbortSignal): AsyncGenerator<ProviderEvent> {
+    if (input.thinking) {
+      if (input.thinking.kind === 'go_chat_effort') {
+        const VALID_GO_EFFORTS = new Set(['low', 'medium', 'high', 'xhigh']);
+        if (!VALID_GO_EFFORTS.has(input.thinking.effort)) {
+          throw new ProviderErrorException({
+            code: 'invalid_request',
+            message: `Thinking effort '${input.thinking.effort}' is not supported by OpenCode Go chat adapter.`,
+            retryable: false,
+            retryAfterMs: null,
+          });
+        }
+      } else if (input.thinking.kind === 'provider_default') {
+        // Provider default omits the thinking field
+      } else {
+        throw new ProviderErrorException({
+          code: 'invalid_request',
+          message: `Thinking request kind '${(input.thinking as { kind: string }).kind}' is not supported by OpenCode Go chat adapter.`,
+          retryable: false,
+          retryAfterMs: null,
+        });
+      }
+    }
+
     const body: Record<string, unknown> = {
       model: input.model.modelId,
       messages: toChatMessages(input),
@@ -1376,6 +1399,9 @@ export class OpenCodeGoAdapter implements ProviderAdapter {
       stream_options: { include_usage: true },
       max_tokens: input.maxOutputTokens,
     };
+    if (input.thinking?.kind === 'go_chat_effort') {
+      body['reasoning_effort'] = input.thinking.effort;
+    }
     if (input.tools.length > 0) {
       body['tools'] = input.tools.map((tool) => ({
         type: 'function',
@@ -1402,6 +1428,15 @@ export class OpenCodeGoAdapter implements ProviderAdapter {
   }
 
   private async *streamResponses(input: TurnInput, signal: AbortSignal): AsyncGenerator<ProviderEvent> {
+    if (input.thinking && input.thinking.kind !== 'provider_default') {
+      throw new ProviderErrorException({
+        code: 'invalid_request',
+        message: `Thinking request kind '${(input.thinking as { kind: string }).kind}' is not supported by OpenCode Go responses adapter.`,
+        retryable: false,
+        retryAfterMs: null,
+      });
+    }
+
     const body: Record<string, unknown> = {
       model: input.model.modelId,
       input: toResponsesInput(input),

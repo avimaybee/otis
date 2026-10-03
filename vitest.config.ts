@@ -20,6 +20,9 @@ export default defineConfig({
         test: {
           name: 'worker',
           include: ['apps/worker/test/**/*.test.ts'],
+          // Real local D1/DO tests share CPU during the complete suite. Keep a
+          // bounded timeout that also accommodates multi-turn recovery cases.
+          testTimeout: 15_000,
         },
       },
       {

@@ -11,79 +11,141 @@ import { resolve } from 'path';
 // @ts-expect-error React act flag
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
-describe('Web App Shell Smoke & 360px Layout', () => {
-  beforeEach(() => {
-    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
-      new Response(JSON.stringify({ status: 'ok', timestamp: new Date().toISOString() }), {
+function mockJson(payload: unknown, status = 200): void {
+  const response = () =>
+    Promise.resolve(
+      new Response(JSON.stringify(payload), {
+        status,
         headers: { 'Content-Type': 'application/json' },
-      })
+      }),
     );
-    if (typeof window !== 'undefined') {
-      vi.spyOn(window, 'fetch').mockResolvedValue(
-        new Response(JSON.stringify({ status: 'ok', timestamp: new Date().toISOString() }), {
-          headers: { 'Content-Type': 'application/json' },
-        })
-      );
-    }
-  });
+  vi.spyOn(globalThis, 'fetch').mockImplementation(response as typeof fetch);
+}
 
+/** Routes each endpoint to its own shape so the shell exercises real contracts. */
+function mockApi(routes: Record<string, unknown>): void {
+  vi.spyOn(globalThis, 'fetch').mockImplementation(((input: RequestInfo | URL) => {
+    const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+    const key = Object.keys(routes).find((route) => url.includes(route));
+    const payload = key ? routes[key] : {};
+    return Promise.resolve(
+      new Response(JSON.stringify(payload), { status: 200, headers: { 'Content-Type': 'application/json' } }),
+    );
+  }) as typeof fetch);
+}
+
+async function render(container: HTMLElement) {
+  const root = createRoot(container);
+  await React.act(async () => {
+    root.render(<App />);
+  });
+  return {
+    async unmount() {
+      await React.act(async () => {
+        root.unmount();
+      });
+    },
+  };
+}
+
+function viewport(width: number): HTMLElement {
+  const container = document.createElement('div');
+  container.style.width = `${width}px`;
+  container.style.minHeight = '640px';
+  container.style.overflowX = 'auto';
+  document.body.appendChild(container);
+  return container;
+}
+
+describe('Signed-out entry', () => {
+  beforeEach(() => {
+    mockJson({ status: 'ok' }, 401);
+  });
   afterEach(() => {
     vi.restoreAllMocks();
   });
-  it('verifies index.html has accessible zoomable viewport without user-scalable restrictions', () => {
-    const htmlPath = resolve(__dirname, '../index.html');
-    const html = readFileSync(htmlPath, 'utf-8');
 
+  it('shows one title and one Google action, with no health badge', async () => {
+    const container = viewport(360);
+    const app = await render(container);
+
+    expect(container.textContent).toContain('Sign in to Otis');
+    const buttons = Array.from(container.querySelectorAll('button'));
+    const google = buttons.filter((button) => button.textContent?.includes('Google'));
+    expect(google).toHaveLength(1);
+    expect(container.textContent).not.toContain('Connected');
+    expect(container.textContent).not.toContain('firebase');
+
+    await app.unmount();
+    document.body.removeChild(container);
+  });
+});
+
+describe('Conversation shell', () => {
+  beforeEach(() => {
+    mockApi({
+      '/api/me': {
+        user: {
+          id: 'usr_1',
+          firebase_uid: 'fb',
+          email: null,
+          display_name: 'Avi',
+          created_at: '',
+          updated_at: '',
+        },
+        workspaces: [{ id: 'ws_1', name: 'Kerning', role: 'owner', joined_at: '' }],
+      },
+      '/api/commands': {
+        surface: 'web',
+        commands: [
+          { name: 'model', summary: 'Show or set the model for this chat.', usage: '/model', available: true, deterministic: true },
+        ],
+      },
+      '/chats': { chats: [], next_cursor: undefined },
+    });
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('renders the conversation without horizontal overflow at 360px', async () => {
+    const container = viewport(360);
+    const app = await render(container);
+    await React.act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(container.querySelector('.otis-topbar')).toBeTruthy();
+    expect(container.querySelector('.otis-composer')).toBeTruthy();
+    // Conversation-led, not a centered panel reduced to phone width.
+    expect(container.querySelector('.otis-transcript')).toBeTruthy();
+    expect(container.scrollWidth).toBeLessThanOrEqual(360);
+
+    await app.unmount();
+    document.body.removeChild(container);
+  });
+
+  it('renders the same composition at desktop width without overflow', async () => {
+    const container = viewport(1280);
+    const app = await render(container);
+    await React.act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(container.querySelector('.otis-shell')).toBeTruthy();
+    expect(container.scrollWidth).toBeLessThanOrEqual(1280);
+
+    await app.unmount();
+    document.body.removeChild(container);
+  });
+});
+
+describe('index.html', () => {
+  it('keeps a zoomable viewport', () => {
+    const html = readFileSync(resolve(__dirname, '../index.html'), 'utf-8');
     expect(html).toContain('name="viewport"');
     expect(html).not.toContain('user-scalable=no');
     expect(html).not.toContain('maximum-scale=1.0');
     expect(html).toContain('width=device-width');
-  });
-
-  it('renders Otis shell into 360px mobile viewport without horizontal overflow', async () => {
-    const container = document.createElement('div');
-    container.style.width = '360px';
-    container.style.minHeight = '640px';
-    container.style.overflowX = 'auto';
-    document.body.appendChild(container);
-
-    const root = createRoot(container);
-    await React.act(async () => {
-      root.render(<App />);
-    });
-
-    const header = container.querySelector('header');
-    const main = container.querySelector('main');
-    expect(header).toBeDefined();
-    expect(main).toBeDefined();
-    expect(container.querySelector('h1')?.textContent).toBe('Otis');
-
-    // Programmatic verification: no element exceeds the 360px container
-    expect(container.scrollWidth).toBeLessThanOrEqual(360);
-
-    await React.act(async () => {
-      root.unmount();
-    });
-    document.body.removeChild(container);
-  });
-
-  it('renders Otis shell into desktop viewport without horizontal overflow', async () => {
-    const container = document.createElement('div');
-    container.style.width = '1024px';
-    container.style.minHeight = '768px';
-    container.style.overflowX = 'auto';
-    document.body.appendChild(container);
-
-    const root = createRoot(container);
-    await React.act(async () => {
-      root.render(<App />);
-    });
-
-    expect(container.scrollWidth).toBeLessThanOrEqual(1024);
-
-    await React.act(async () => {
-      root.unmount();
-    });
-    document.body.removeChild(container);
   });
 });

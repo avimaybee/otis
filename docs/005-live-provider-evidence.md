@@ -56,3 +56,40 @@ All six operator-selected models from the production registry have completed liv
 ## Plan 006 Readiness
 All provider contracts and transport boundaries for Plan 005 are fulfilled. All 247 local tests across 20 suites pass. The three primary models (`gemini-3.1-flash-lite`, `mimo-v2.5`, `mimo-v2.6-pro`) are verified, published in `PRODUCTION_REGISTRY`, and resolve with workspace credentials. Otis is ready for independent review of Gate 005 and unblocked to begin fake-provider and memory work for Plan 006 (Agent orchestrator, context assembly, and persistent workspace memory).
 
+---
+
+## New Go models — 2026-10-03 (controlled synthetic smoke, `pnpm smoke:providers`)
+
+Operator-selected additions verified against the live Go docs the same day (endpoints table, usage pricing, privacy table; page last updated Oct 3, 2026). Key from the designated local `.dev.vars` `OPENCODE_API_KEY`; at most 6 synthetic requests per model; fabricated neutral fixture data only. No keys, prompts, or raw bodies are recorded here.
+
+### 1. DeepSeek V4.1 Flash — PASSED, published as supported
+- Registry: command key `deepseek-v4.1-flash` (= Go model ID), `go-chat-completions`, `POST https://opencode.ai/zen/go/v1/chat/completions`. Privacy per Go table: training not used, 0-day retention (DeepSeek ZDR agreement valid through 2026-10-31).
+- Live result: full strict-validator sequence passed twice (10–12s totals) — text `finish: success` with deltas and reported usage, `tool_handoff` with validated `echo_fixture` (`fixture_id: 'smoke-1'`), 1-step success continuation with text deltas, prefix-repeat comparison. No thinking descriptor; provider default applies.
+- Registry status: `text/tools/stream: 'supported'`, `evidenceRef: 'docs/005-live-provider-evidence.md'`, `verifiedAt: '2026-10-03'`. Audio stays unverified; voice notes transcribe via configured Groq STT with text replies.
+
+### 2. GLM 5.3 Flash — FAILED, removed from the registry
+- Registry (trialed, then removed): `glm-5.3-flash`, same chat/completions route. Privacy per Go table: training not used, 0-day retention.
+- Live result: every tool-less text request (`text`, `prefix_repeat` stages) rejected with HTTP 400 `invalid_request` in ~1s, twice consistently; tool-ful requests succeed (validated `echo_fixture` tool_handoff in 7859ms, 45-delta success continuation in 2977ms). A text-only turn is the normal Otis case, so the required text/tools/stream triple is not established.
+- Registry status: entry removed; a code comment at the entry site records the verdict. Do not re-add without a passing full smoke. No validation was weakened to accommodate it.
+
+### 3. GPT 6 Luna — BLOCKED by account rate limits, removed from the registry
+- Registry (trialed, then removed): command key `gpt-6-luna` (= Go model ID), `go-responses`, `POST https://opencode.ai/zen/go/v1/responses`. Privacy per Go table: training not used, 30-day abuse-monitoring log retention.
+- Live result: both smoke attempts (initial, then retry after a 120s wait) rejected every stage with HTTP 429 `rate_limited` in ~1s. Other Go models succeed on the same key, so this is a per-model account cap (Go lists a $15 monthly limit for this model), not a transport or capability verdict. No capability claim is made either way.
+- Registry status: entry removed at operator direction (it had been registered fail-closed as unverified). The verified ID/endpoint/privacy facts stay recorded here; re-add only after a passing full smoke when account quota allows.
+
+### 4. Muse Spark 1.2 / 1.3 Contributor — re-verified and enabled
+- Both Muse entries had passed the same strict-validator sequence on 2026-10-01 but stayed gated after the 005 review. At operator direction they were re-smoked on 2026-10-03 to produce current per-entry evidence before enabling.
+- `muse-spark-1.2-contributor` (`muse-12`): `text` 3530ms (`finish: success`, 1 delta, usage 91/481/0), `tool_initial` 2635ms (`tool_handoff`, validated `echo_fixture`), `continuation_step_1` 3139ms (`finish: success`, 4 deltas), `prefix_repeat` 4082ms. Total ~14s.
+- `muse-spark-1.3-contributor` (`muse-13`): `text` 4296ms (`finish: success`, 1 delta, usage 91/468/0), `tool_initial` 4188ms (`tool_handoff`, validated `echo_fixture`), `continuation_step_1` 5216ms (`finish: success`, 6 deltas), `prefix_repeat` 4892ms. Total ~19s.
+- Registry status: both enabled (`text/tools/stream: 'supported'`, `verifiedAt: '2026-10-03'`). Thinking stays `unsupported` on the Responses family (provider default applies). **Privacy caveat, unchanged:** both Muse Contributor variants use submitted data to train future Meta models and do not provide zero data retention; this is recorded in the registry entry so selectors never claim otherwise.
+
+### Updated capability summary matrix (2026-10-03 additions)
+
+| Command key | Model API ID | Provider / Family | Text & Usage | Tool invocation | Continuation | Live smoke outcome | Registry status |
+|---|---|---|---|---|---|---|---|
+| `deepseek-v4.1-flash` | `deepseek-v4.1-flash` | OpenCode Go Chat | Passed (strict validator + usage) | Passed (validated) | Passed (1 step, success) | **PASSED** (~10s) | **Published supported** |
+| `muse-12` | `muse-spark-1.2-contributor` | OpenCode Go Responses | Passed (re-run 2026-10-03, usage 91/481/0) | Passed (validated) | Passed (1 step, success) | **PASSED** (~14s) | **Enabled 2026-10-03** |
+| `muse-13` | `muse-spark-1.3-contributor` | OpenCode Go Responses | Passed (re-run 2026-10-03, usage 91/468/0) | Passed (validated) | Passed (1 step, success) | **PASSED** (~19s) | **Enabled 2026-10-03** |
+| `glm-5.3-flash` | `glm-5.3-flash` | OpenCode Go Chat | **Failed** (HTTP 400 on tool-less text) | Passed (validated) | Passed (1 step) | **FAILED** | Removed from registry |
+| `gpt-6-luna` | `gpt-6-luna` | OpenCode Go Responses | Not observed (HTTP 429) | Not observed (HTTP 429) | Not observed | **BLOCKED** by quota | Removed from registry |
+

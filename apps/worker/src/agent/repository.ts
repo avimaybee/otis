@@ -24,12 +24,14 @@ import {
   type RequestClarificationToolArgs,
   type ResolveConflictToolArgs,
   type SearchMemoryToolArgs,
+  type SetChatThinkingToolArgs,
   type SetFieldsToolArgs,
   type UndoToolArgs,
   type UpdateDraftToolArgs,
   type UpdatePreferenceToolArgs,
   type UpdateTaskToolArgs,
   type UpsertEntityToolArgs,
+  PRODUCTION_REGISTRY,
 } from '@otis/agent';
 import {
   DEFAULT_COMMAND_HANDLERS,
@@ -416,6 +418,99 @@ export async function executeAgentTool(
         }
         throw err;
       }
+    }
+
+    // --- Thinking Controls Tool ---
+    case 'set_chat_thinking': {
+      const stArgs = args as SetChatThinkingToolArgs;
+      if (!chatId) {
+        return {
+          status: 'rejected',
+          action_id: actionId,
+          error: { code: 'missing_chat', message: 'Chat ID required to set thinking effort.' },
+        };
+      }
+      const chatRow = await db
+        .prepare(
+          `SELECT c.author_user_id, c.model_override, s.default_model
+           FROM chats c
+           LEFT JOIN workspace_settings s ON s.workspace_id = c.workspace_id
+           WHERE c.id = ? AND c.workspace_id = ?`,
+        )
+        .bind(chatId, workspaceId)
+        .first<{ author_user_id: string; model_override: string | null; default_model: string | null }>();
+
+      if (!chatRow || chatRow.author_user_id !== actorUserId) {
+        return {
+          status: 'rejected',
+          action_id: actionId,
+          error: { code: 'unauthorized', message: 'Only the chat author can configure thinking controls for this conversation.' },
+        };
+      }
+
+      const effectiveModelKey = chatRow.model_override ?? chatRow.default_model ?? '';
+      const entry = PRODUCTION_REGISTRY.entries.find((e) => e.commandKey === effectiveModelKey);
+      if (!entry) {
+        return {
+          status: 'rejected',
+          action_id: actionId,
+          error: { code: 'model_not_found', message: `Model '${effectiveModelKey}' not found.` },
+        };
+      }
+
+      if (stArgs.level === 'default') {
+        await db
+          .prepare(
+            `UPDATE chats SET thinking_override_json = NULL WHERE id = ? AND workspace_id = ? AND author_user_id = ?`,
+          )
+          .bind(chatId, workspaceId, actorUserId)
+          .run();
+        return {
+          status: 'applied',
+          action_id: actionId,
+          summary: `Thinking level reset to Provider default for ${entry.displayName} in this chat.`,
+        };
+      }
+
+      if (entry.thinking?.state === 'unsupported') {
+        return {
+          status: 'rejected',
+          action_id: actionId,
+          error: { code: 'unsupported', message: `${entry.displayName} has no adjustable thinking control. It uses provider default.` },
+        };
+      }
+
+      if (entry.thinking?.state === 'unverified' || !entry.thinking) {
+        return {
+          status: 'rejected',
+          action_id: actionId,
+          error: { code: 'unverified', message: `Thinking controls have not been verified for ${entry.displayName}. It uses provider default.` },
+        };
+      }
+
+      const choice = entry.thinking.choices.find((c) => c.id.toLowerCase() === stArgs.level.toLowerCase());
+      if (!choice) {
+        const available = entry.thinking.choices.map((c) => c.label).join(', ');
+        return {
+          status: 'rejected',
+          action_id: actionId,
+          error: { code: 'invalid_choice', message: `Unknown thinking level '${stArgs.level}'. Available choices for ${entry.displayName}: ${available}.` },
+        };
+      }
+
+      const thinkingOverride = { model_key: entry.commandKey, choice_id: choice.id };
+      await db
+        .prepare(
+          `UPDATE chats SET thinking_override_json = ? WHERE id = ? AND workspace_id = ? AND author_user_id = ?`,
+        )
+        .bind(JSON.stringify(thinkingOverride), chatId, workspaceId, actorUserId)
+        .run();
+
+      return {
+        status: 'applied',
+        action_id: actionId,
+        summary: `Thinking set to ${choice.label} for ${entry.displayName} in this chat. It applies to your next message.`,
+      };
     }
 
     // --- Control Tool ---
