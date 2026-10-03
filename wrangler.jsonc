@@ -4,6 +4,10 @@
   "main": "apps/worker/src/index.ts",
   "compatibility_date": "2024-09-23",
   "compatibility_flags": ["nodejs_compat"],
+  "vars": {
+    "AGENT_MAX_DAILY_ACTIONS": "200",
+    "AGENT_MAX_ROUNDS_PER_RUN": "20"
+  },
   "assets": {
     "directory": "apps/web/dist",
     "binding": "ASSETS",

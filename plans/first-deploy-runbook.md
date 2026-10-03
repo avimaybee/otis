@@ -54,6 +54,14 @@ Why: deployed thinking/model code selects `thinking_override_json`; without
      handler refuses all inference without them. Dogfood starters: small
      explicit values (e.g. 50/day, 10/run); they are re-tunable without a
      deploy if set in the dashboard.
+   - **Recorded 2026-10-03: owner is `wrangler.jsonc [vars]`**
+     (`AGENT_MAX_DAILY_ACTIONS=200`, `AGENT_MAX_ROUNDS_PER_RUN=20`, matching
+     the dashboard values the operator chose). Reason: dashboard-set vars did
+     not reach the worker (runs failed `missing_budgets` despite correct
+     dashboard entries — suspected wrong environment), and Cloudflare flags
+     the config as out of sync. A `wrangler.jsonc` owner applies on every
+     deploy and removes the environment ambiguity. Changing values afterward
+     requires a commit + deploy instead of a dashboard edit.
 3. Forbid list — verify ABSENT remotely: `USE_ECHO_HANDLER=true`,
    `ENABLE_TEST_AUTH`, `TEST_JWKS`. Any of these silently replaces the real
    agent or disables auth. If present, delete before proceeding.
