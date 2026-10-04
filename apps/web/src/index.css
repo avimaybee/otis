@@ -130,7 +130,8 @@
 .otis-load-older { display: flex; margin: 0 auto; }
 
 /* Jump to latest: neutral icon-button treatment with a count extension. */
-.otis-jump { position: absolute; left: 50%; bottom: 16px; transform: translateX(-50%); z-index: 2; }
+.otis-jump { position: absolute; left: 50%; bottom: 16px; transform: translateX(-50%); z-index: 2; background: var(--card); border: 1px solid var(--border); box-shadow: var(--shadow-popover); }
+.otis-jump:hover { background: var(--accent); }
 .otis-jump:has(span) { width: auto; padding: 0 12px; border-radius: 9999px; gap: 8px; }
 
 .otis-connection, .otis-chat-error { flex: none; width: 100%; max-width: 760px; margin: 0 auto; padding: 8px 16px; color: var(--muted-foreground); }

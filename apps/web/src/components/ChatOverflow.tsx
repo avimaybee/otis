@@ -23,7 +23,7 @@ export function ChatOverflow({ models, onCommand, disabled, pending, followsDefa
   return <DropdownMenu modal={false}>
     <DropdownMenuTrigger asChild>
       <Button variant="ghost" size="icon" type="button" className="otis-iconbutton" aria-label="Chat options" disabled={disabled} aria-busy={pending}>
-        <OverflowIcon />
+        {pending ? <span className="otis-spinner" aria-hidden="true" /> : <OverflowIcon />}
       </Button>
     </DropdownMenuTrigger>
     <DropdownMenuContent align="end" side="bottom" aria-label="Chat options">
