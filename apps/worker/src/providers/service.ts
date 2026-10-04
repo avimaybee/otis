@@ -22,7 +22,9 @@ import {
   PRODUCTION_REGISTRY,
   probeGeminiCredential,
   probeGoCredential,
+  probeGroqCredential,
   resolveCommandKey,
+  resolveVoiceRoute,
   ResolverError,
   type FetchFn,
   type ModelEntry,
@@ -31,7 +33,10 @@ import {
   type ProviderEvent,
   type ResolvedModel,
   type TurnInput,
+  type VoiceRouteOutcome,
+  type WorkspaceSttConfig,
 } from '@otis/agent';
+import { getWorkspaceVoiceSettings, type StoredVoiceSettings } from '@otis/identity';
 
 export const VERIFY_TIMEOUT_MS = 15_000;
 /** Model resource fetched for Gemini key checks; no inference, no spending. */
@@ -59,6 +64,25 @@ async function requireMembership(db: D1Database, workspaceId: string, userId: st
   }
 }
 
+export interface PlatformKeys {
+  gemini?: string;
+  opencode_go?: string;
+  groq?: string;
+}
+
+export function extractPlatformKeys(env: {
+  GEMINI_API_KEY?: string;
+  OPENCODE_API_KEY?: string;
+  OPENCODE_GO_API_KEY?: string;
+  GROQ_API_KEY?: string;
+}): PlatformKeys {
+  return {
+    gemini: env.GEMINI_API_KEY?.trim() || undefined,
+    opencode_go: (env.OPENCODE_API_KEY?.trim() || env.OPENCODE_GO_API_KEY?.trim()) || undefined,
+    groq: env.GROQ_API_KEY?.trim() || undefined,
+  };
+}
+
 /**
  * Validates a workspace default-model selection against the operator
  * registry and the workspace's persisted credential metadata. Throws
@@ -72,6 +96,7 @@ export async function validateWorkspaceDefaultModel(
     actorUserId: string;
     commandKey: string;
     registry?: ModelRegistry;
+    platformKeys?: PlatformKeys;
   },
 ): Promise<ModelEntry> {
   await requireMembership(db, params.workspaceId, params.actorUserId).catch((err: unknown) => {
@@ -83,11 +108,13 @@ export async function validateWorkspaceDefaultModel(
   const registry = params.registry ?? PRODUCTION_REGISTRY;
   let entry: ModelEntry;
   try {
+    const provider = lookupProvider(registry, params.commandKey);
     const credential = await getCredentialMetadata(db, {
       workspaceId: params.workspaceId,
-      provider: lookupProvider(registry, params.commandKey),
+      provider,
     });
-    entry = resolveCommandKey(registry, params.commandKey, { credentialStatus: credential?.status ?? null });
+    const effectiveStatus = credential?.status ?? (params.platformKeys?.[provider] ? 'available' : null);
+    entry = resolveCommandKey(registry, params.commandKey, { credentialStatus: effectiveStatus });
   } catch (err) {
     if (err instanceof ResolverError) {
       throw new SettingsError('invalid_model', err.message);
@@ -113,7 +140,14 @@ export type ModelAvailability =
  */
 export async function resolveModelForChat(
   db: D1Database,
-  params: { workspaceId: string; actorUserId: string; chatId?: string; selectedKey?: string; registry?: ModelRegistry },
+  params: {
+    workspaceId: string;
+    actorUserId: string;
+    chatId?: string;
+    selectedKey?: string;
+    registry?: ModelRegistry;
+    platformKeys?: PlatformKeys;
+  },
 ): Promise<ModelAvailability> {
   const registry = params.registry ?? PRODUCTION_REGISTRY;
   const member = await db
@@ -144,7 +178,8 @@ export async function resolveModelForChat(
   if (!found) return { available: false, reason: 'unknown_model_key' };
   try {
     const credential = await getCredentialMetadata(db, { workspaceId: params.workspaceId, provider: found.provider });
-    const entry = resolveCommandKey(registry, key, { credentialStatus: credential?.status ?? null });
+    const effectiveStatus = credential?.status ?? (params.platformKeys?.[found.provider] ? 'available' : null);
+    const entry = resolveCommandKey(registry, key, { credentialStatus: effectiveStatus });
     return { available: true, entry };
   } catch (err) {
     if (err instanceof ResolverError) return { available: false, reason: err.code };
@@ -157,6 +192,10 @@ function adapterFor(
   apiKey: string,
   fetchFn: FetchFn,
 ): ProviderAdapter {
+  if (entry.provider === 'groq') {
+    // Groq is an STT-only integration; it can never run a conversation turn.
+    throw new ProviderServiceError('invalid_model', 'Groq is not a conversation provider.');
+  }
   if (entry.endpointFamily === 'gemini-interactions') {
     return new GeminiInteractionsAdapter({ fetchFn, apiKey });
   }
@@ -177,26 +216,43 @@ export interface RunTurnParams {
   workspaceId: string;
   actorUserId: string;
   entry: ModelEntry;
-  wrappingKey: CryptoKey;
+  wrappingKey?: CryptoKey | null;
+  platformKeys?: PlatformKeys;
   input: Omit<TurnInput, 'model'>;
   fetchFn?: FetchFn;
 }
 
 /**
- * Executes one provider turn with the workspace's decrypted credential. The
- * raw key is injected into the transport call and never attached to yielded
- * events. Callers stream or collect the AsyncIterable themselves.
+ * Executes one provider turn with the workspace's decrypted credential or
+ * platform fallback key. The raw key is injected into the transport call and
+ * never attached to yielded events. Callers stream or collect the AsyncIterable.
  */
 export async function* runProviderTurn(
   db: D1Database,
   params: RunTurnParams,
 ): AsyncGenerator<ProviderEvent> {
   await requireMembership(db, params.workspaceId, params.actorUserId);
-  const { rawKey } = await decryptWorkspaceCredential(db, {
-    workspaceId: params.workspaceId,
-    provider: params.entry.provider,
-    wrappingKey: params.wrappingKey,
-  });
+  let rawKey: string | null = null;
+  if (params.wrappingKey) {
+    try {
+      const decrypted = await decryptWorkspaceCredential(db, {
+        workspaceId: params.workspaceId,
+        provider: params.entry.provider,
+        wrappingKey: params.wrappingKey,
+      });
+      rawKey = decrypted.rawKey;
+    } catch (err) {
+      if (!params.platformKeys?.[params.entry.provider]) {
+        throw err;
+      }
+    }
+  }
+  if (!rawKey && params.platformKeys) {
+    rawKey = params.platformKeys[params.entry.provider] ?? null;
+  }
+  if (!rawKey) {
+    throw new ProviderServiceError('missing_credential', `No credential available for provider '${params.entry.provider}'.`);
+  }
   const adapter = adapterFor(params.entry, rawKey, params.fetchFn ?? fetch);
   yield* adapter.streamTurn({ ...params.input, model: toResolvedModel(params.entry) });
 }
@@ -254,6 +310,8 @@ export async function verifyWorkspaceCredential(
   try {
     if (params.probe) {
       probe = await params.probe(rawKey, keyVersion);
+    } else if (params.provider === 'groq') {
+      probe = await probeGroqCredential(fetchFn, rawKey, timeoutMs);
     } else if (params.provider === 'opencode_go') {
       probe = await probeGoCredential(fetchFn, rawKey, params.sessionId ?? `verify_${params.workspaceId}`, timeoutMs);
     } else {
@@ -308,15 +366,63 @@ export async function verifyWorkspaceCredential(
 
 export type CredentialStatusMap = Record<ProviderName, ProviderStatus | null>;
 
-/** Snapshot of persisted credential statuses for registry availability. */
+/** Snapshot of persisted credential statuses for registry availability, incorporating platform keys. */
 export async function workspaceCredentialStatuses(
   db: D1Database,
   workspaceId: string,
+  platformKeys?: PlatformKeys,
 ): Promise<CredentialStatusMap> {
-  const out: CredentialStatusMap = { gemini: null, opencode_go: null };
-  for (const provider of ['gemini', 'opencode_go'] as const) {
+  const out: CredentialStatusMap = { gemini: null, opencode_go: null, groq: null };
+  for (const provider of ['gemini', 'opencode_go', 'groq'] as const) {
     const meta = await getCredentialMetadata(db, { workspaceId, provider });
-    out[provider] = meta?.status ?? null;
+    if (meta?.status) {
+      out[provider] = meta.status;
+    } else if (platformKeys?.[provider]) {
+      out[provider] = 'available';
+    } else {
+      out[provider] = null;
+    }
   }
   return out;
+}
+
+/**
+ * Builds the resolver's STT configuration from persisted workspace settings
+ * plus current credential status. Absent/disabled/model-less settings stay
+ * null so the resolver reports voice unavailable.
+ */
+export function buildWorkspaceSttConfig(
+  stored: StoredVoiceSettings,
+  credentialStatus: ProviderStatus | null,
+): WorkspaceSttConfig | null {
+  if (!stored.enabled || !stored.model) return null;
+  return {
+    enabled: true,
+    provider: 'groq',
+    model: stored.model,
+    credentialStatus,
+    verifiedFormats: Object.fromEntries(
+      stored.verified_formats.map((format) => [format, true]),
+    ) as WorkspaceSttConfig['verifiedFormats'],
+    transcriptionVerified: stored.verified_formats.length === 3,
+  };
+}
+
+/**
+ * Resolves the effective voice route for one chat/format using the persisted
+ * workspace STT configuration and the selected registry entry. The route is
+ * snapshotted at acceptance; this helper performs no provider probe.
+ */
+export async function resolveVoiceRouteForWorkspace(
+  db: D1Database,
+  params: { workspaceId: string; model: ModelEntry | null; audioMimeOrExt: string; platformKeys?: PlatformKeys },
+): Promise<VoiceRouteOutcome> {
+  const stored = await getWorkspaceVoiceSettings(db, params.workspaceId);
+  const credential = await getCredentialMetadata(db, { workspaceId: params.workspaceId, provider: 'groq' });
+  const effectiveStatus = credential?.status ?? (params.platformKeys?.groq ? 'available' : null);
+  return resolveVoiceRoute({
+    model: params.model,
+    audioMimeOrExt: params.audioMimeOrExt,
+    sttConfig: buildWorkspaceSttConfig(stored, effectiveStatus),
+  });
 }

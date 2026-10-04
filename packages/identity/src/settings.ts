@@ -262,9 +262,10 @@ async function writeMemberSettings(
     db
       .prepare(
         `INSERT INTO lifecycle_guards (id, guard_ok)
-         VALUES (?, (SELECT 1 FROM workspace_users WHERE workspace_id = ? AND user_id = ?))`
+         VALUES (?, (SELECT 1 FROM workspace_users WHERE workspace_id = ? AND user_id = ?))
+         ON CONFLICT(id) DO UPDATE SET guard_ok = excluded.guard_ok`
       )
-      .bind(crypto.randomUUID(), params.workspaceId, params.actorUserId),
+      .bind(`guard_life_member_${params.workspaceId}`, params.workspaceId, params.actorUserId),
   );
 
   // If executing inside a fenced run, guard run, lease, and fence
@@ -289,10 +290,11 @@ async function writeMemberSettings(
                  FROM workspace_daily_actions
                  WHERE workspace_id = w.id AND date_utc = ?
                ), 0) < ?)
-           ))`
+           ))
+           ON CONFLICT(id) DO UPDATE SET guard_ok = excluded.guard_ok`
         )
         .bind(
-          crypto.randomUUID(),
+          `guard_life_fence_${params.workspaceId}`,
           params.fencedContext.runId,
           params.workspaceId,
           params.fencedContext.fence,
@@ -461,9 +463,10 @@ export async function setWorkspaceSettings(
       db
         .prepare(
           `INSERT INTO lifecycle_guards (id, guard_ok)
-           VALUES (?, (SELECT 1 FROM workspace_users WHERE workspace_id = ? AND user_id = ?))`
+           VALUES (?, (SELECT 1 FROM workspace_users WHERE workspace_id = ? AND user_id = ?))
+           ON CONFLICT(id) DO UPDATE SET guard_ok = excluded.guard_ok`
         )
-        .bind(crypto.randomUUID(), params.workspaceId, params.actorUserId),
+        .bind(`guard_life_ws_${params.workspaceId}`, params.workspaceId, params.actorUserId),
       db
         .prepare(
           `INSERT INTO workspace_settings (workspace_id, default_model, created_at, updated_at)

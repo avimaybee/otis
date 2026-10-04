@@ -41,9 +41,25 @@ export interface WorkspaceSttConfig {
 export type VoiceRouteReason =
   | 'no_model_selected'
   | 'unsupported_format'
+  | 'native_not_implemented'
   | 'native_unsupported_and_stt_disabled'
   | 'stt_credential_unavailable'
   | 'stt_unverified';
+
+/**
+ * The native audio transcription handoff is not implemented in this baseline:
+ * the provider turn pipeline consumes a text transcript, and no exact native
+ * endpoint/format has verified evidence. Until the handoff lands, verified
+ * native capability alone does not create an executable route; supported
+ * voice resolves through the configured/verified Groq STT path, and
+ * availability describes only implemented paths.
+ *
+ * The native outcome and per-format capability evidence remain part of this
+ * contract, and the registry keeps recording native capability, so the
+ * product target is preserved rather than relabeled as text-only. Flipping
+ * this flag requires the actual native handoff plus endpoint evidence.
+ */
+export const NATIVE_AUDIO_TRANSCRIPTION_IMPLEMENTED = false;
 
 export type VoiceRouteOutcome =
   | {
@@ -153,10 +169,12 @@ export function resolveVoiceRoute(params: {
     };
   }
 
-  // 1. Check if the conversation model has verified native transcription for this format.
-  // Explicit format capability is required: generic audio=supported does not enable unverified formats.
+  // 1. Native path only when the handoff is actually implemented AND the
+  // exact model/format has verified capability. Capability evidence alone
+  // must not accept audio into a job the pipeline cannot execute.
   const formatNativeState = params.model.capabilities.nativeAudioFormats?.[format];
-  const isNativeSupported = formatNativeState === 'supported';
+  const nativeCapable = formatNativeState === 'supported';
+  const isNativeSupported = NATIVE_AUDIO_TRANSCRIPTION_IMPLEMENTED && nativeCapable;
 
   if (isNativeSupported) {
     return {
@@ -195,7 +213,16 @@ export function resolveVoiceRoute(params: {
     };
   }
 
-  // 3. Neither native nor Groq STT available.
+  // 3. No executable route. A model with verified native capability is not
+  // relabeled as text-only: the honest reason is the missing native handoff.
+  if (nativeCapable) {
+    return {
+      route: 'unavailable',
+      reason: 'native_not_implemented',
+      message: `Model '${params.model.displayName}' has verified native audio for ${format}, but Otis has not implemented native transcription yet. Configure verified Groq STT or type the note.`,
+    };
+  }
+
   return {
     route: 'unavailable',
     reason: 'native_unsupported_and_stt_disabled',

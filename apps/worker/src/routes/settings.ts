@@ -17,7 +17,7 @@ import {
 } from '@otis/identity';
 import type { Env } from '../index.js';
 import { jsonError, jsonSuccess } from '../middleware/errors.js';
-import { validateWorkspaceDefaultModel } from '../providers/service.js';
+import { extractPlatformKeys, validateWorkspaceDefaultModel } from '../providers/service.js';
 import { readJsonBody, requireWorkspaceScope } from './scope.js';
 
 export async function handleGetWorkspaceSettings(
@@ -55,6 +55,7 @@ export async function handleUpdateWorkspaceSettings(
         workspaceId,
         actorUserId: scope.user.id,
         commandKey: body.default_model,
+        platformKeys: extractPlatformKeys(env),
       });
     }
     const settings = await setWorkspaceSettings(env.DB, {

@@ -18,6 +18,8 @@ import migration0007Sql from '../../../migrations/0007_outbox_claim_owner.sql?ra
 import migration0008Sql from '../../../migrations/0008_memory_and_agent_runs.sql?raw';
 // @ts-expect-error vite raw import
 import migration0009Sql from '../../../migrations/0009_thinking_controls.sql?raw';
+// @ts-expect-error vite raw import
+import migration0012Sql from '../../../migrations/0012_voice_media.sql?raw';
 
 import { AgentHandler } from '../src/agent/handler.js';
 import { dispatchOutboxItem, dispatchWorkspace } from '../src/actor/dispatch.js';
@@ -91,6 +93,7 @@ describe('Dispatch promptness and stream publication (008B workerd)', () => {
       migration0001Sql, migration0002Sql, migration0003Sql, migration0004Sql,
       migration0005Sql, migration0006Sql, migration0007Sql, migration0008Sql,
       migration0009Sql,
+      migration0012Sql,
     ]) {
       for (const stmt of splitSqlStatements(sql)) {
         await env.DB.prepare(stmt).run();

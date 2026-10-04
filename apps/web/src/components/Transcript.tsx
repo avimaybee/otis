@@ -252,7 +252,7 @@ export function Transcript({ messages, members, currentUserId, steps, run, runs 
             <article className={`otis-turn group otis-turn--${isMember ? 'member' : 'agent'}`} data-author-kind={message.author_kind}>
               {isMember && message.author_user_id !== currentUserId && <div className="otis-turn__meta text-xs text-subtle">{author}</div>}
               {isMember
-                ? <div className="otis-turn__bubble ml-auto w-fit max-w-[85%] rounded-2xl bg-card px-4 py-2 text-base text-card-foreground nav:max-w-[80%]">{message.content_text}</div>
+                ? <div className="otis-turn__bubble ml-auto w-fit max-w-[85%] rounded-2xl bg-card px-4 py-2 text-base text-card-foreground nav:max-w-[80%]">{message.content_text || (message.media_id ? 'Voice note' : '')}</div>
                 : <div className="otis-turn__body text-base text-foreground [&>p+p]:mt-3"><Markdown remarkPlugins={[remarkGfm]} skipHtml disallowedElements={['img']}>{message.content_text}</Markdown></div>}
               {!isMember && runData?.sources?.length && onInspectSource ? <div className="otis-sources" aria-label="Sources">{runData.sources.map(source => <Button variant="ghost" size="sm" type="button" key={source.memory_id} className="otis-source-link" onClick={() => onInspectSource(source.memory_id)}>{source.label}{source.provenance === 'inferred' ? ' · inferred' : ''}</Button>)}</div> : null}
               {localDelivery && localDelivery.state !== 'saved' && (
@@ -281,10 +281,12 @@ export function Transcript({ messages, members, currentUserId, steps, run, runs 
               )}
               <div className="otis-turn__actions">
                 <time className="text-xs text-subtle tabular-nums" dateTime={message.created_at}>{formatClockTime(message.created_at)}</time>
-                <Button variant="ghost" size="icon-xs" type="button" className="otis-msg-action" aria-label={isMember ? 'Copy message' : 'Copy response'} title="Copy" onClick={() => void handleCopy(message.id, message.content_text)}>
-                  {copiedId === message.id ? <CheckIcon /> : <CopyIcon />}
-                </Button>
-                {isMember && message.author_user_id === currentUserId && onEditMessage && (
+                {message.content_text && (
+                  <Button variant="ghost" size="icon-xs" type="button" className="otis-msg-action" aria-label={isMember ? 'Copy message' : 'Copy response'} title="Copy" onClick={() => void handleCopy(message.id, message.content_text)}>
+                    {copiedId === message.id ? <CheckIcon /> : <CopyIcon />}
+                  </Button>
+                )}
+                {isMember && message.author_user_id === currentUserId && onEditMessage && !message.media_id && (
                   <Button variant="ghost" size="icon-xs" type="button" className="otis-msg-action" aria-label="Use message as draft" title="Use as draft" onClick={() => onEditMessage(message.content_text)}>
                     <PencilIcon />
                   </Button>

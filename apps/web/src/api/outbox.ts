@@ -38,6 +38,11 @@ export interface OutboxEntry {
   newChatKey: string | null;
   /** Immutable submitted payload. Never edited in place. */
   text: string;
+  /**
+   * Validated private voice media attached to this message (010). Immutable,
+   * preserved across retry, so a retried recording keeps one message identity.
+   */
+  mediaId?: string;
   /** Immutable clarification linkage, preserved across retry. */
   clarificationId?: string;
   createdAt: string;
@@ -473,17 +478,22 @@ export function createOutboxEntry(input: {
   workspaceId: string;
   chatId: string | null;
   text: string;
+  /** Recording identity supplied by the recorder; one UUID per note. */
+  clientId?: string;
+  /** Validated media identity to attach through the acceptance path. */
+  mediaId?: string;
   clarificationId?: string;
 }): OutboxEntry {
   const now = new Date().toISOString();
   const entry: OutboxEntry = {
     schemaVersion: OUTBOX_SCHEMA_VERSION,
-    clientId: crypto.randomUUID(),
+    clientId: input.clientId ?? crypto.randomUUID(),
     userId: input.userId,
     workspaceId: input.workspaceId,
     chatId: input.chatId,
     newChatKey: input.chatId ? null : getOrCreatePendingNewChat(input.userId, input.workspaceId),
     text: input.text,
+    ...(input.mediaId ? { mediaId: input.mediaId } : {}),
     ...(input.clarificationId ? { clarificationId: input.clarificationId } : {}),
     createdAt: now,
     state: 'sending',
@@ -631,6 +641,32 @@ export function pruneReconciledEntries(reconciledClientIds: Set<string>): void {
     }
   }
   for (const userId of dirty) schedulePersist(userId);
+}
+
+/**
+ * Awaits one entry's first settled outcome (010 voice send): 'saved' once the
+ * server accepted it (or it was reconciled/pruned, which means the
+ * authoritative row exists), 'failed' on the first failed state. Used by the
+ * recorder before deleting local bytes; a retained recording retries through
+ * the same entry identity.
+ */
+export function awaitOutboxSettlement(clientId: string): Promise<'saved' | 'failed'> {
+  const current = entries.get(clientId);
+  if (!current) return Promise.resolve('saved');
+  if (current.state === 'saved') return Promise.resolve('saved');
+  if (current.state === 'failed') return Promise.resolve('failed');
+  return new Promise(resolve => {
+    const unsubscribe = subscribeOutbox(() => {
+      const entry = entries.get(clientId);
+      if (!entry || entry.state === 'saved') {
+        unsubscribe();
+        resolve('saved');
+      } else if (entry.state === 'failed') {
+        unsubscribe();
+        resolve('failed');
+      }
+    });
+  });
 }
 
 export function setNewChatMapping(newChatKey: string, chatId: string, userId: string): void {

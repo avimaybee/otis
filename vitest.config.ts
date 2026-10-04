@@ -16,6 +16,14 @@ export default defineConfig({
         plugins: [
           cloudflareTest({
             wrangler: { configPath: './wrangler.jsonc' },
+            miniflare: {
+              bindings: {
+                GEMINI_API_KEY: '',
+                OPENCODE_API_KEY: '',
+                OPENCODE_GO_API_KEY: '',
+                GROQ_API_KEY: '',
+              },
+            },
           }),
         ],
         test: {

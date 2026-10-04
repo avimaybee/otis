@@ -15,7 +15,7 @@ import type {
   ThinkingChoiceDTO,
   ThinkingOptionDTO,
 } from '@otis/contracts';
-import { validateChatMessageRequest } from '@otis/contracts';
+import { validateChatMessageRequest, VOICE_FORMATS } from '@otis/contracts';
 import {
   findCommand,
   listCommands,
@@ -23,10 +23,17 @@ import {
   renderHelp,
   renderUnknownCommand,
 } from '@otis/commands';
-import { validateWorkspaceDefaultModel, workspaceCredentialStatuses } from '../providers/service.js';
+import {
+  buildWorkspaceSttConfig,
+  extractPlatformKeys,
+  type PlatformKeys,
+  validateWorkspaceDefaultModel,
+  workspaceCredentialStatuses,
+} from '../providers/service.js';
+import { getCredentialMetadata, getWorkspaceVoiceSettings } from '@otis/identity';
 import { acceptWebMessage, getChat } from '../inbox/repository.js';
 import { handleCommitUndo, handleUndoPreview } from './actions.js';
-import { listAvailableModels, PRODUCTION_REGISTRY } from '@otis/agent';
+import { listAvailableModels, PRODUCTION_REGISTRY, resolveVoiceRoute } from '@otis/agent';
 import type { ModelEntry, ThinkingChoice } from '@otis/agent';
 import type { Env } from '../index.js';
 import { jsonError, jsonSuccess } from '../middleware/errors.js';
@@ -63,7 +70,10 @@ export async function handleListModels(
   const url = new URL(request.url);
   const chatId = url.searchParams.get('chat_id') ?? undefined;
 
-  const credentialStatuses = await workspaceCredentialStatuses(env.DB, workspaceId);
+  const platformKeys = extractPlatformKeys(env);
+  const credentialStatuses = await workspaceCredentialStatuses(env.DB, workspaceId, platformKeys);
+  const storedVoice = await getWorkspaceVoiceSettings(env.DB, workspaceId);
+  const sttConfig = buildWorkspaceSttConfig(storedVoice, credentialStatuses.groq);
   const settings = await env.DB
     .prepare(`SELECT default_model FROM workspace_settings WHERE workspace_id = ?`)
     .bind(workspaceId)
@@ -96,10 +106,13 @@ export async function handleListModels(
   );
   const models: ModelOption[] = PRODUCTION_REGISTRY.entries.map((entry: ModelEntry) => {
     const isCurrent = (currentKey ?? defaultKey) === entry.commandKey;
-    // Native audio is capability evidence only; effective voice availability is
-    // resolved separately and stays false until plan 010 supplies a verified
-    // transcription route.
+    // Native audio is capability evidence only; effective voice availability
+    // resolves through the exact route policy (verified native format or a
+    // configured/verified Groq STT route for the actual container).
     const nativeAudio = entry.capabilities.audio === 'supported';
+    const voiceAvailable = VOICE_FORMATS.some(
+      (format) => resolveVoiceRoute({ model: entry, audioMimeOrExt: format, sttConfig }).route !== 'unavailable',
+    );
 
     let thinking: ThinkingOptionDTO | undefined = undefined;
     if (entry.thinking) {
@@ -131,7 +144,7 @@ export async function handleListModels(
       display_name: entry.displayName,
       provider: entry.provider,
       native_audio_supported: nativeAudio,
-      voice_available: false,
+      voice_available: voiceAvailable,
       available: usableKeys.has(entry.commandKey),
       is_current: isCurrent,
       is_default: entry.commandKey === defaultKey,
@@ -156,6 +169,7 @@ export interface CommandExecutionContext {
   workspaceId: string;
   userId: string;
   surface: CommandSurface;
+  platformKeys?: PlatformKeys;
   /** Configured bot username for Telegram @suffix matching (without @).
    * Absent keeps the historical literal `@thisbot` fallback. */
   botUsername?: string;
@@ -230,16 +244,21 @@ export async function executeCommand(
         // Never announce readiness when nothing can run.
         const landing = await describeUsableDefault(context);
         if (landing.usableKey) {
-          text += ` The workspace model is ${landing.usableLabel}. ${voiceSentenceFor(landing.usableKey)}`;
+          text += ` The workspace model is ${landing.usableLabel}. ${await voiceSentenceFor(context, landing.usableKey)}`;
         } else {
           text += ` But ${landing.problem} Pick a working model with /model <key>:${landing.choices}`;
         }
         return { kind: 'reply', text, effects };
       }
       try {
-        const entry = await validateWorkspaceDefaultModel(context.db, { workspaceId: context.workspaceId, actorUserId: context.userId, commandKey: key });
+        const entry = await validateWorkspaceDefaultModel(context.db, {
+          workspaceId: context.workspaceId,
+          actorUserId: context.userId,
+          commandKey: key,
+          platformKeys: context.platformKeys,
+        });
         effects.push({ type: 'set_chat_model', chatId: chat.id, commandKey: key });
-        let text = `This chat now uses ${entry.displayName}. ${voiceSentenceFor(entry.commandKey)}`;
+        let text = `This chat now uses ${entry.displayName}. ${await voiceSentenceFor(context, entry.commandKey)}`;
         if (modelChanged && hadThinkingOverride) {
           effects.push({ type: 'set_chat_thinking', chatId: chat.id, thinkingOverride: null });
           text += ' Thinking effort was reset to Provider default.';
@@ -455,13 +474,27 @@ export async function executeCommand(
 }
 
 /**
- * Usable voice route for a model key, from verified capability evidence only.
- * Native audio is per-entry evidence; transcription routes arrive with 010,
- * so anything else reports voice unavailable. Never a blanket "text only".
+ * Usable voice route for a model key, from the exact resolver rules.
+ * Native audio is per-entry evidence; a configured/verified Groq STT route
+ * also makes voice available for a text-only model. Never a blanket
+ * "text only" claim.
  */
-function voiceSentenceFor(commandKey: string | null): string {
+async function voiceSentenceFor(context: CommandExecutionContext, commandKey: string | null): Promise<string> {
   const entry = PRODUCTION_REGISTRY.entries.find(candidate => candidate.commandKey === commandKey);
-  if (entry && entry.capabilities.audio === 'supported') return 'Voice notes can use native audio.';
+  if (!entry) return 'Voice notes are not available with this model yet.';
+  const stored = await getWorkspaceVoiceSettings(context.db, context.workspaceId);
+  const credential = await getCredentialMetadata(context.db, { workspaceId: context.workspaceId, provider: 'groq' });
+  const sttConfig = buildWorkspaceSttConfig(stored, credential?.status ?? null);
+  let nativePending = false;
+  for (const format of VOICE_FORMATS) {
+    const route = resolveVoiceRoute({ model: entry, audioMimeOrExt: format, sttConfig });
+    if (route.route === 'native') return 'Voice notes can use native audio.';
+    if (route.route === 'groq_stt') return 'Voice notes are transcribed with Groq Whisper.';
+    if (route.reason === 'native_not_implemented') nativePending = true;
+  }
+  if (nativePending) {
+    return 'This model has verified native audio, but Otis has not implemented native transcription yet; configure Groq STT to use voice notes.';
+  }
   return 'Voice notes are not available with this model yet.';
 }
 /**
@@ -474,7 +507,7 @@ async function describeUsableDefault(context: CommandExecutionContext): Promise<
   problem: string;
   choices: string;
 }> {
-  const credentialStatuses = await workspaceCredentialStatuses(context.db, context.workspaceId);
+  const credentialStatuses = await workspaceCredentialStatuses(context.db, context.workspaceId, context.platformKeys);
   const usable = listAvailableModels(PRODUCTION_REGISTRY, credentialStatuses);
   const settings = await context.db
     .prepare(`SELECT default_model FROM workspace_settings WHERE workspace_id = ?`)
@@ -567,7 +600,7 @@ export async function handleExecuteCommand(request: Request, env: Env, workspace
       if (saved) return jsonSuccess({ ...accepted, ...JSON.parse(saved.payload_json), deduplicated: true }, request.url.includes('/commands') ? 200 : 202, { 'x-request-id': requestId });
     } catch { return jsonError(409, 'conflict', 'Message ID already used with different content or context.', requestId); }
   }
-  const outcome = await executeCommand({ db: env.DB, workspaceId, userId: scope.user.id, surface: 'web' }, chat, text);
+  const outcome = await executeCommand({ db: env.DB, workspaceId, userId: scope.user.id, surface: 'web', platformKeys: extractPlatformKeys(env) }, chat, text);
   if (outcome.kind === 'not_a_command') return jsonError(422, 'not_a_command', 'That text is not a command.', requestId);
   const command: {
     reply: string;

@@ -233,9 +233,8 @@ beforeAll(async () => {
     .run();
   aviCookie = `${AUTH_BOUNDS.COOKIE_NAME}=${TOKEN}`;
   aviChat = (await createChat(env.DB, { workspaceId: WS, authorUserId: AVI, title: 'Eco chat' })).id;
-  // Parked workspace: a run waiting for input with no lease and no pending
-  // outbox rows. Recovery revisits it every cron tick; the revisit must
-  // change zero rows.
+  // Queued workspace: a run queued with no lease and no pending
+  // outbox rows. Recovery discovers it; the revisit must change zero rows.
   await env.DB.prepare(
     `INSERT INTO system_jobs (id, workspace_id, job_kind, status, scheduled_at, created_at, updated_at)
      VALUES ('job_eco_parked', ?, 'reminder', 'pending', ?, ?, ?)`,
@@ -312,8 +311,8 @@ describe('D1 zero-mutation read paths', () => {
     // Budget rotation, not time expiry (60s never reached) and not an error:
     // the stream ran to its query budget, closed cleanly, and never asked
     // for a full snapshot reload.
-    expect(counter.totals.statements).toBeGreaterThanOrEqual(40);
-    expect(counter.totals.statements).toBeLessThanOrEqual(44);
+    expect(counter.totals.statements).toBeGreaterThanOrEqual(15);
+    expect(counter.totals.statements).toBeLessThanOrEqual(25);
     expect(counter.totals.writeStatements).toBe(0);
     expect(counter.totals.rowsWritten).toBe(0);
     expect(body).not.toContain('resync_required');
@@ -350,7 +349,7 @@ describe('D1 zero-mutation idle recovery', () => {
   it('idle memory refresh and recovery discovery change zero rows', async () => {
     const { counter } = countedEnv();
     const listed = await listWorkspacesNeedingRecovery(counter.db);
-    expect(listed).toContain(WS_PARKED);
+    expect(listed).not.toContain(WS_PARKED);
     const memory = await processMemoryRefreshJobs(counter.db);
     expect(memory).toEqual({ processed: 0, completed: 0 });
     // The discovery read plus the unconditional cleanup UPDATE (zero matched

@@ -31,7 +31,7 @@ export class CredentialError extends Error {
   }
 }
 
-const PROVIDERS: ProviderName[] = ['gemini', 'opencode_go'];
+const PROVIDERS: ProviderName[] = ['gemini', 'opencode_go', 'groq'];
 const NONCE_BYTES = 12;
 const WRAPPING_KEY_BYTES = 32;
 
@@ -397,9 +397,10 @@ async function storeEncryptedCredential(
       db
         .prepare(
           `INSERT INTO lifecycle_guards (id, guard_ok)
-           VALUES (?, (SELECT 1 FROM workspace_users WHERE workspace_id = ? AND user_id = ?))`
+           VALUES (?, (SELECT 1 FROM workspace_users WHERE workspace_id = ? AND user_id = ?))
+           ON CONFLICT(id) DO UPDATE SET guard_ok = excluded.guard_ok`
         )
-        .bind(crypto.randomUUID(), params.workspaceId, params.actorUserId),
+        .bind(`guard_life_cred_${params.workspaceId}`, params.workspaceId, params.actorUserId),
       db
         .prepare(
           `INSERT INTO provider_credentials

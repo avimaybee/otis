@@ -227,6 +227,8 @@ importers:
         specifier: workspace:*
         version: link:../contracts
 
+  packages/brief: {}
+
   packages/channels:
     dependencies:
       '@otis/contracts':

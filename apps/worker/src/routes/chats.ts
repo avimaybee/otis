@@ -29,6 +29,8 @@ import { validateChatMessageRequest } from '@otis/contracts';
 import { parseCommandText } from '@otis/commands';
 import { handleExecuteCommand } from './commands.js';
 import { handleReplyToClarification } from './clarifications.js';
+import { processTranscriptionJobs } from '../media/transcription.js';
+import { extractPlatformKeys } from '../providers/service.js';
 
 /**
  * Authenticates the request and verifies active membership in the workspace.
@@ -253,7 +255,24 @@ export async function handleCreateMessage(
       text: parsed.kind === 'text' ? parsed.text : body.text,
       mediaId: body.media_id,
       steerRunId: active?.id,
+      platformKeys: extractPlatformKeys(env),
     });
+
+    // Voice acceptance creates a durable transcription intent. A bounded
+    // best-effort pass runs outside the workspace lease so the transcript
+    // usually lands in seconds; cron/queue recovery remains the backstop.
+    // Tests never dial providers from the route; they exercise the processor
+    // directly with a fake transport.
+    if (body.media_id && env.STORAGE && env.ENVIRONMENT !== 'test') {
+      const pass = processTranscriptionJobs(env.DB, env.STORAGE, {
+        workspaceId,
+        ...(env.CREDENTIALS_KEY ? { wrappingKeyMaterial: env.CREDENTIALS_KEY } : {}),
+        ...(env.GROQ_API_KEY ? { platformApiKey: env.GROQ_API_KEY } : {}),
+        limit: 2,
+      }).catch(() => undefined);
+      if (ctx) ctx.waitUntil(pass);
+      else void pass;
+    }
 
     publishDispatchHint(ctx, env, workspaceId);
     return jsonSuccess(result, 202, { 'x-request-id': requestId });

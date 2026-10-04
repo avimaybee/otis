@@ -379,6 +379,43 @@ export class GeminiInteractionsAdapter implements ProviderAdapter {
       return;
     }
     if (!response.ok || !response.body) {
+      if (response.status === 400 && prevId) {
+        // If stateful continuation failed (e.g. interaction expired or not found on Google servers),
+        // fallback to full stateless turn without previous_interaction_id.
+        const statelessInput: TurnInput = {
+          ...input,
+          previousContinuation: undefined,
+        };
+        const stateless = toInteractionsInput(statelessInput);
+        const retryBody: Record<string, unknown> = {
+          model: input.model.modelId,
+          input: stateless.blocks,
+          stream: true,
+          generation_config: generationConfig,
+        };
+        if (stateless.systemInstruction !== undefined) retryBody['system_instruction'] = stateless.systemInstruction;
+        if (input.tools.length > 0) {
+          retryBody['tools'] = body['tools'];
+        }
+        try {
+          const retryRes = await this.fetchFn(GEMINI_INTERACTIONS_URL, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'x-goog-api-key': this.apiKey,
+              'Api-Revision': GEMINI_API_REVISION,
+            },
+            body: JSON.stringify(retryBody),
+            signal,
+          });
+          if (retryRes.ok && retryRes.body) {
+            yield* this.readStream(retryRes.body, signal);
+            return;
+          }
+        } catch {
+          // Fall through to reporting original error if retry also threw
+        }
+      }
       yield { type: 'error', error: httpError(response.status, response.headers) };
       return;
     }

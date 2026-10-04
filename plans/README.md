@@ -52,6 +52,16 @@ Gate 006 has a detailed [agent/memory execution contract](006-implementation-han
 
 Gate 010 has a detailed [native-audio/Groq STT handoff](010-groq-stt-handoff.md). Gate 005 defines the capability/resolver boundary; gate 010 implements recording, transcription and encrypted Groq credentials. No new gate or parallel STT infrastructure is required. Dogfood adds no paid inference beyond the existing Go subscription.
 
+## Strict Anti-Overengineering Mandate (Cloudflare Free Tier First)
+
+Future agents working on Otis must follow these absolute rules:
+1. **Cloudflare Free Tier Limits are Hard Laws**: Worker CPU time < 10ms, D1 writes < 100,000/day, D1 reads < 5,000,000/day. Over-engineering that incurs multiple DB roundtrips or complex distributed locking will exhaust limits and break the app.
+2. **Never simulate distributed consensus on SQLite/D1**: D1 is single-writer atomic SQLite. Writes serialize automatically. Do not add artificial lease-fence tables, Raft consensus emulations, or multi-step guard tables that multiply writes. Use direct atomic SQL (`INSERT ... ON CONFLICT DO UPDATE`, `UPDATE ... WHERE ... RETURNING`).
+3. **No Database Polling for Live Streaming**: Live token streaming must flow directly in-memory to the client SSE stream; commit the final response and receipts atomically to D1 at turn completion.
+4. **Cloudflare Dashboard API Keys First**: Primary keys (`GEMINI_API_KEY`, `OPENCODE_API_KEY`, `GROQ_API_KEY`) live directly in Cloudflare Dashboard Worker secrets. Workspace encrypted BYOK is an optional override.
+5. **Clean Multi-Tenancy**: Zero hardcoded user IDs, emails, names, or tenant IDs anywhere in code.
+6. **shadcn UI with Design Tokens**: Build clean, modern, accessible UI using standard shadcn component primitives tailored to `design-tokens.md`. No bespoke reinvented UI frameworks.
+
 Keep Otis simple, modular and easy to maintain without weakening its working guarantees. Prefer a small set of explicit code paths and existing services. Add an abstraction only when it removes demonstrated duplication or owns a concrete responsibility; do not create generic frameworks, speculative extension points, or infrastructure for later phases.
 
 Durable acceptance, workspace isolation, authorization, idempotency, lease fencing and recovery are required correctness mechanisms. Enforce them at shared committing boundaries rather than duplicating prechecks in each caller. Test meaningful failure and concurrency scenarios; avoid tests that merely repeat implementation details. Split large modules by an existing responsibility when that makes ownership clearer, not to meet an arbitrary line count. Reviews must distinguish defects that can lose or corrupt data from optional cleanup, and must not turn optional cleanup into another release gate.

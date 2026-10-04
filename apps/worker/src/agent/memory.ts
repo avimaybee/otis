@@ -504,7 +504,7 @@ export async function replayWorkspaceMemory(
       .all<{ id: string }>()
   ).results || [];
 
-  const guardId = `guard_${crypto.randomUUID()}`;
+  const guardId = `guard_mem_${workspaceId}`;
   const statements: D1PreparedStatement[] = [
     db
       .prepare(
@@ -512,7 +512,8 @@ export async function replayWorkspaceMemory(
          VALUES (?, (
            SELECT 1 FROM workspaces
            WHERE id = ? AND business_revision = ? AND last_event_sequence = ?
-         ))`,
+         ))
+         ON CONFLICT(id) DO UPDATE SET guard_ok = excluded.guard_ok`,
       )
       .bind(guardId, workspaceId, expectedRevision, expectedSeq),
     db.prepare(`DELETE FROM memory_entries WHERE workspace_id = ?`).bind(workspaceId),

@@ -19,6 +19,7 @@ import type {
   CreateChatMessageRequest,
 } from './index.js';
 import { DOMAIN_BOUNDS } from './index.js';
+import { isValidMediaId } from './voice.js';
 
 export type DtoValidation<T> = { valid: true; value: T } | { valid: false; message: string };
 /** Runtime request boundary shared by ordinary messages and command shortcuts. */
@@ -27,10 +28,28 @@ export function validateChatMessageRequest(value: unknown): DtoValidation<Create
   const body = value as Record<string, unknown>;
   const id = body.client_message_id;
   if (typeof id !== 'string' || !/^[A-Za-z0-9_-]{1,128}$/.test(id)) return { valid: false, message: 'A valid client_message_id is required.' };
-  if (typeof body.text !== 'string' || !body.text.trim() || body.text.length > DOMAIN_BOUNDS.MAX_INPUT_CHARS) return { valid: false, message: `Text must contain 1–${DOMAIN_BOUNDS.MAX_INPUT_CHARS} characters.` };
-  if (body.media_id !== undefined && body.media_id !== null) return { valid: false, message: 'Media input is not available yet.' };
+  const mediaId = body.media_id;
+  if (mediaId !== undefined && mediaId !== null && !isValidMediaId(mediaId)) return { valid: false, message: 'Invalid media_id.' };
+  const hasMedia = typeof mediaId === 'string';
+  const text = body.text;
+  if (text !== undefined) {
+    if (typeof text !== 'string' || text.length > DOMAIN_BOUNDS.MAX_INPUT_CHARS) {
+      return { valid: false, message: `Text must contain 1–${DOMAIN_BOUNDS.MAX_INPUT_CHARS} characters.` };
+    }
+    if (!hasMedia && !text.trim()) return { valid: false, message: `Text must contain 1–${DOMAIN_BOUNDS.MAX_INPUT_CHARS} characters.` };
+  } else if (!hasMedia) {
+    return { valid: false, message: `Text must contain 1–${DOMAIN_BOUNDS.MAX_INPUT_CHARS} characters.` };
+  }
   if (body.clarification_id !== undefined && (typeof body.clarification_id !== 'string' || !/^[A-Za-z0-9_-]{1,128}$/.test(body.clarification_id))) return { valid: false, message: 'Invalid clarification_id.' };
-  return { valid: true, value: { client_message_id: id, text: body.text, ...(body.clarification_id ? { clarification_id: body.clarification_id as string } : {}) } };
+  return {
+    valid: true,
+    value: {
+      client_message_id: id,
+      ...(typeof text === 'string' ? { text } : {}),
+      ...(hasMedia ? { media_id: mediaId as string } : {}),
+      ...(body.clarification_id ? { clarification_id: body.clarification_id as string } : {}),
+    },
+  };
 }
 
 // --- Transcript & chat reads ---

@@ -30,8 +30,10 @@ function localMessage(entry: OutboxEntry, sequence: number): ChatMessage {
     channel: 'web',
     inbound_message_id: null,
     client_message_id: entry.clientId,
-    content_text: entry.text,
-    media_id: null,
+    // A voice note has no typed text until the transcript commits; the local
+    // echo carries a factual label so the bubble is not blank.
+    content_text: entry.text || (entry.mediaId ? 'Voice note' : ''),
+    media_id: entry.mediaId ?? null,
     run_id: entry.runId ?? null,
     sequence,
     created_at: entry.createdAt,

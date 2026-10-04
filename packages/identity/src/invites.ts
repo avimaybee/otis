@@ -54,9 +54,10 @@ export async function createInvite(
       db
         .prepare(
           `INSERT INTO lifecycle_guards (id, guard_ok)
-           VALUES (?, (SELECT 1 FROM workspace_users WHERE workspace_id = ? AND user_id = ?))`
+           VALUES (?, (SELECT 1 FROM workspace_users WHERE workspace_id = ? AND user_id = ?))
+           ON CONFLICT(id) DO UPDATE SET guard_ok = excluded.guard_ok`
         )
-        .bind(crypto.randomUUID(), params.workspaceId, params.invitedByUserId),
+        .bind(`guard_life_invite_${params.workspaceId}`, params.workspaceId, params.invitedByUserId),
       db
         .prepare(
           `INSERT INTO invites (id, token_hash, workspace_id, invited_email, invited_by_user_id, created_at, expires_at, accepted_at, accepted_by_user_id)

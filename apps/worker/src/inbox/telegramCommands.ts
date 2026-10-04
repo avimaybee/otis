@@ -292,8 +292,8 @@ export async function executeTelegramCommand(
     telegram: { result: 'accepted', reply },
   });
   const baseStatements: D1PreparedStatement[] = [
-    db.prepare(`INSERT INTO acceptance_guards (id, guard_ok) VALUES (?, (SELECT 1 FROM workspace_users wu JOIN chats c ON c.id = ? AND c.workspace_id = wu.workspace_id AND c.author_user_id = wu.user_id WHERE wu.workspace_id = ? AND wu.user_id = ?))`).bind(
-      `guard_${crypto.randomUUID()}`, input.chatId, workspaceId, input.userId,
+    db.prepare(`INSERT INTO acceptance_guards (id, guard_ok) VALUES (?, (SELECT 1 FROM workspace_users wu JOIN chats c ON c.id = ? AND c.workspace_id = wu.workspace_id AND c.author_user_id = wu.user_id WHERE wu.workspace_id = ? AND wu.user_id = ?)) ON CONFLICT(id) DO UPDATE SET guard_ok = excluded.guard_ok`).bind(
+      `guard_tg_cmd_${workspaceId}`, input.chatId, workspaceId, input.userId,
     ),
     db
       .prepare(
@@ -338,8 +338,8 @@ export async function executeTelegramCommand(
   }
   if (selectedWorkspaceId) {
     baseStatements.push(
-      db.prepare(`INSERT INTO acceptance_guards (id, guard_ok) VALUES (?, (SELECT 1 FROM workspace_users WHERE workspace_id = ? AND user_id = ?))`).bind(
-        `guard_${crypto.randomUUID()}`, selectedWorkspaceId, input.userId,
+      db.prepare(`INSERT INTO acceptance_guards (id, guard_ok) VALUES (?, (SELECT 1 FROM workspace_users WHERE workspace_id = ? AND user_id = ?)) ON CONFLICT(id) DO UPDATE SET guard_ok = excluded.guard_ok`).bind(
+        `guard_tg_ws_${selectedWorkspaceId}`, selectedWorkspaceId, input.userId,
       ),
       db
         .prepare(`UPDATE telegram_users SET selected_workspace_id = ?, active_chat_id = NULL, updated_at = ? WHERE telegram_user_id = ?`)

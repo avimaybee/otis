@@ -29,7 +29,7 @@ export async function ensureCommandSourceMessage(
   }
   const now = new Date().toISOString(); const id = `min_${crypto.randomUUID()}`;
   await db.batch([
-    db.prepare(`INSERT INTO acceptance_guards (id, guard_ok) VALUES (?, (SELECT 1 FROM workspace_users wu JOIN chats c ON c.workspace_id = wu.workspace_id AND c.author_user_id = wu.user_id WHERE wu.workspace_id = ? AND wu.user_id = ? AND c.id = ?))`).bind(`guard_${crypto.randomUUID()}`, params.workspaceId, params.userId, params.chatId),
+    db.prepare(`INSERT INTO acceptance_guards (id, guard_ok) VALUES (?, (SELECT 1 FROM workspace_users wu JOIN chats c ON c.workspace_id = wu.workspace_id AND c.author_user_id = wu.user_id WHERE wu.workspace_id = ? AND wu.user_id = ? AND c.id = ?)) ON CONFLICT(id) DO UPDATE SET guard_ok = excluded.guard_ok`).bind(`guard_cmd_${params.workspaceId}`, params.workspaceId, params.userId, params.chatId),
     db.prepare(`UPDATE workspaces SET last_acceptance_sequence = last_acceptance_sequence + 1 WHERE id = ?`).bind(params.workspaceId),
     db.prepare(`INSERT INTO messages_in (id, workspace_id, user_id, channel, external_id, payload_fingerprint, raw_payload, status, acceptance_sequence, chat_id, created_at, updated_at) VALUES (?, ?, ?, 'web', ?, ?, ?, 'processed', (SELECT last_acceptance_sequence FROM workspaces WHERE id = ?), ?, ?, ?)`).bind(id, params.workspaceId, params.userId, params.externalId, fingerprint, JSON.stringify({ ...JSON.parse(payload), undo_action_id: params.targetActionId, undo_mode: params.mode }), params.workspaceId, params.chatId, now, now),
   ]);

@@ -86,7 +86,7 @@ export async function removeMember(
     throw new LifecycleError('last_member', 'The last member cannot be removed.');
   }
 
-  const guardId = crypto.randomUUID();
+  const guardId = `guard_life_remove_${workspaceId}`;
   const auditId = crypto.randomUUID();
   try {
     await db.batch([
@@ -100,7 +100,8 @@ export async function removeMember(
              WHERE a.workspace_id = ? AND a.user_id = ?
                AND t.workspace_id = ? AND t.user_id = ? AND t.role = 'member'
                AND (SELECT COUNT(*) FROM workspace_users WHERE workspace_id = ?) > 1
-           ))`
+           ))
+           ON CONFLICT(id) DO UPDATE SET guard_ok = excluded.guard_ok`
         )
         .bind(guardId, workspaceId, actorUserId, workspaceId, targetUserId, workspaceId),
       db
@@ -204,7 +205,7 @@ export async function transferOwnership(
     throw new LifecycleError('target_not_member', 'New owner must be a current member.');
   }
 
-  const guardId = crypto.randomUUID();
+  const guardId = `guard_life_transfer_${workspaceId}`;
   const auditId = crypto.randomUUID();
   try {
     await db.batch([
@@ -218,7 +219,8 @@ export async function transferOwnership(
              WHERE w.id = ? AND w.owner_user_id = ?
                AND a.workspace_id = ? AND a.user_id = ?
                AND t.workspace_id = ? AND t.user_id = ?
-           ))`
+           ))
+           ON CONFLICT(id) DO UPDATE SET guard_ok = excluded.guard_ok`
         )
         .bind(guardId, workspaceId, actorUserId, workspaceId, actorUserId, workspaceId, newOwnerUserId),
       db

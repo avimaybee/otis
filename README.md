@@ -56,13 +56,28 @@ The approved web target uses one query cache, router, scroll owner and scoped In
 
 Inspect current packages/migrations before changing boundaries. Some feature packages may remain stubs. A package/binding's existence is not acceptance. Do not add unused libraries, ORM/vector infrastructure or another framework merely to match a diagram.
 
-## Configuration
+## Configuration and API keys
 
-Root .env supplies public VITE_FIREBASE_* values because the root Vite config owns envDir. Local Worker configuration belongs in .dev.vars; both are gitignored. Avoid conflicting copies. Production Worker runtime configuration and frontend build-time values are separate.
+Otis uses a clean dual-tier credential architecture designed for simplicity and zero-configuration hosting on Cloudflare:
 
-VITE_-prefixed values may enter the browser bundle. Private provider, session, encryption and Telegram credentials must never use that prefix. Workspace provider connections are shared, encrypted server-side and write-only from UI. Status reads never return credentials. Use synthetic stories/review data.
+1. **Platform Keys (Cloudflare Dashboard)**: Set your provider API keys directly as Worker Secrets / Environment Variables in the Cloudflare Dashboard:
+   - `GEMINI_API_KEY`: API key for Google Gemini models.
+   - `OPENCODE_API_KEY` or `OPENCODE_GO_API_KEY`: API key for OpenCode Go models.
+   - `GROQ_API_KEY`: API key for Groq Whisper STT voice transcription.
+   These provide out-of-the-box model access across the platform without requiring complex database encryption keys. For local dev, put these keys in `.dev.vars`.
 
-Configuration/credential/infrastructure changes are outside a documentation task. Check the implemented environment schema/runbook before provisioning or rotation.
+2. **Workspace BYOK (Bring Your Own Key)**: Workspaces can optionally supply their own encrypted keys in Settings if `CREDENTIALS_KEY` is configured. Workspace-level keys seamlessly take precedence over platform dashboard keys.
+
+3. **Multi-Tenancy**: The application is built for Avi and Hunor today, but engineered cleanly for anyone to sign up with Google and use. No user IDs, names, or emails are hardcoded anywhere in the codebase.
+
+4. **Frontend Configuration**: Root `.env` supplies public `VITE_FIREBASE_*` values for client authentication. Never use `VITE_` prefixes for private server keys.
+
+## Architecture Philosophy & Anti-Overengineering Mandate
+
+- **Cloudflare Free Limits First**: The entire application is architected to operate strictly within Cloudflare Free tier bounds (Worker CPU time < 10ms/req, D1 writes < 100k/day, D1 reads < 5M/day).
+- **No Emulated Distributed Consensus**: D1 is an ACID SQLite database. Writes serialize atomically. Do not add artificial lease-fences, multi-phase locking tables, or redundant pre-checks that multiply D1 writes.
+- **In-Memory Streaming**: Stream LLM tokens directly in-memory to the client SSE stream; commit the final response and receipts atomically to D1 in a single transaction.
+- **shadcn UI with Approved Tokens**: Fast, accessible, lightweight React components tailored to `design-tokens.md` rather than sprawling custom UI frameworks.
 
 ## Migrations and verification
 

@@ -13,13 +13,26 @@ Inspect git status/history and live source. Plans describe targets, not proof th
 - Ordinary work is conversational. Commands, settings and inspection controls are optional helpers.
 - Clear complete instructions save directly. Missing deadlines and uncertain details ask. Inferred lead-status changes ask before mutation.
 - Approved charcoal + muted Highlighter visual baseline in design-tokens.md; ChatGPT-like mobile composition, Codex-like desktop sidebar/chat/detail. Exact token recipes, Inter latin-ext, no composer toolbar, no dashboard/dead controls. Highlight has exactly the five approved uses.
-- One user identity, equal workspace members, protected owner lifecycle. Teammates read all historical chats and retained audio; only the author appends.
-- Gemini and OpenCode Go shared workspace credentials; handpicked model registry; /model changes the current chat.
+- Clean multi-tenancy: Built for Avi and Hunor today, but designed so anyone can use it. ZERO hardcoded identities, emails, or tenant IDs in business logic or database queries.
+- Dual-tier model credentials: API keys (Gemini, OpenCode, Groq) live directly on Cloudflare Dashboard (`env` secrets) for zero-setup platform usage. Workspaces can optionally provide their own encrypted keys (BYOK) via Settings, which cleanly take priority.
+- Lean UI architecture: Use shadcn UI components customized strictly to Otis design tokens (`design-tokens.md`). Avoid sprawling bespoke UI reinventing basic primitives.
 - Recorded voice notes, text reply default; Android/iPhone/Telegram formats need actual evidence.
 - Briefs start disabled and run at each member's chosen time/days/timezone. No 09:00 fallback.
 - Default Undo from here reverts the selected write and later writes of that run; single-action is secondary. Preserve unrelated teammate work.
 - All durable memory/preferences stay per workspace. No canonical mutable memory.md runtime file.
 - V1 outward messages are drafts; opening WhatsApp is not proof of sending.
+
+## Anti-overengineering mandate (Cloudflare Free Tier First)
+
+1. **Cloudflare Free Limits are strict invariants**: Code must operate comfortably within Cloudflare Free limits:
+   - Worker CPU execution time: < 10ms per request.
+   - D1 row writes: < 100,000 per day.
+   - D1 row reads: < 5,000,000 per day.
+   Avoid chatty roundtrips, heartbeat loops, or write multiplication.
+2. **Never simulate distributed consensus on SQLite/D1**: D1 is an ACID SQLite engine with atomic, serialized writes. Never implement artificial lease-fence tables, Raft consensus emulations, or multi-step guard tables that multiply writes. Use direct atomic SQL (`INSERT ... ON CONFLICT DO UPDATE`, `UPDATE ... WHERE ... RETURNING`).
+3. **Never poll the database for live streaming**: SSE response streaming must stream provider tokens directly in-memory to the client response. Persist the final turn and receipts atomically to D1 at completion in one batch.
+4. **No speculative abstractions**: No ORMs, no vector databases, no microservice splits. Use prepared SQL statements and direct TypeScript functions.
+5. **No custom wheel reinvention for UI**: Use shadcn UI primitives customized to design tokens. Keep state local, optimistic (<100ms), and simple.
 
 ## UI execution rules
 

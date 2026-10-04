@@ -123,10 +123,15 @@ export const api = {
     );
   },
 
-  sendMessage: (workspaceId: string, chatId: string, clientMessageId: string, text: string, clarificationId?: string) =>
+  sendMessage: (workspaceId: string, chatId: string, clientMessageId: string, text: string, clarificationId?: string, mediaId?: string) =>
     request<AcceptMessageResponse>(`/api/workspaces/${workspaceId}/chats/${chatId}/messages`, {
       method: 'POST',
-      body: JSON.stringify({ client_message_id: clientMessageId, text, clarification_id: clarificationId }),
+      body: JSON.stringify({
+        client_message_id: clientMessageId,
+        text,
+        clarification_id: clarificationId,
+        ...(mediaId ? { media_id: mediaId } : {}),
+      }),
     }),
 
   executeCommand: (workspaceId: string, chatId: string, clientMessageId: string, text: string) =>

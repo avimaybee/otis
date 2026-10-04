@@ -15,23 +15,60 @@ import type { Env } from './index.js';
 import { workerDebug, workerFailure } from './observability.js';
 
 export function publishDispatchHint(ctx: ExecutionContext | undefined, env: Env, workspaceId: string): void {
-  if (!ctx || !env.DISPATCH_QUEUE) {
-    workerDebug('dispatch', 'no queue binding; cron remains the backstop', { workspaceId });
+  if (env.DISPATCH_QUEUE && ctx) {
+    ctx.waitUntil(
+      (async () => {
+        try {
+          await env.DISPATCH_QUEUE!.send({ workspace_id: workspaceId });
+          workerDebug('dispatch', 'wake-up published', { workspaceId });
+        } catch (err) {
+          workerFailure('dispatch', 'wake-up publish failed; falling back to direct actor dispatch', {
+            workspaceId,
+            error: err instanceof Error ? err.message : String(err),
+          });
+          if (env.WORKSPACE_ACTOR) {
+            try {
+              const actorId = env.WORKSPACE_ACTOR.idFromName(workspaceId);
+              const stub = env.WORKSPACE_ACTOR.get(actorId);
+              await stub.fetch(new Request('http://actor/dispatch', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ action: 'dispatch', workspace_id: workspaceId }),
+              }));
+            } catch (actorErr) {
+              workerFailure('dispatch', 'fallback actor dispatch failed', { workspaceId, error: String(actorErr) });
+            }
+          }
+        }
+      })(),
+    );
     return;
   }
-  ctx.waitUntil(
-    (async () => {
-      try {
-        await env.DISPATCH_QUEUE!.send({ workspace_id: workspaceId });
-        workerDebug('dispatch', 'wake-up published', { workspaceId });
-      } catch (err) {
-        workerFailure('dispatch', 'wake-up publish failed; cron remains the backstop', {
-          workspaceId,
-          error: err instanceof Error ? err.message : String(err),
-        });
-      }
-    })(),
-  );
+
+  if (env.WORKSPACE_ACTOR && ctx) {
+    ctx.waitUntil(
+      (async () => {
+        try {
+          const actorId = env.WORKSPACE_ACTOR!.idFromName(workspaceId);
+          const stub = env.WORKSPACE_ACTOR!.get(actorId);
+          await stub.fetch(new Request('http://actor/dispatch', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'dispatch', workspace_id: workspaceId }),
+          }));
+          workerDebug('dispatch', 'wake-up dispatched via actor', { workspaceId });
+        } catch (err) {
+          workerFailure('dispatch', 'actor dispatch failed; cron remains backstop', {
+            workspaceId,
+            error: err instanceof Error ? err.message : String(err),
+          });
+        }
+      })(),
+    );
+    return;
+  }
+
+  workerDebug('dispatch', 'no queue binding; cron remains the backstop', { workspaceId });
 }
 
 /**
@@ -45,22 +82,55 @@ export function publishTelegramDeliveryHint(
   env: Env,
   workspaceId?: string,
 ): void {
-  if (!ctx || !env.DISPATCH_QUEUE) {
-    workerDebug('dispatch', 'no queue binding; cron remains the Telegram delivery backstop', {
-      workspaceId: workspaceId ?? '',
-    });
+  if (env.DISPATCH_QUEUE && ctx) {
+    ctx.waitUntil(
+      (async () => {
+        try {
+          await env.DISPATCH_QUEUE!.send({ kind: 'telegram_delivery', workspace_id: workspaceId ?? '' });
+        } catch (err) {
+          workerFailure('dispatch', 'Telegram delivery wake-up publish failed; falling back to actor', {
+            workspaceId: workspaceId ?? '',
+            error: err instanceof Error ? err.message : String(err),
+          });
+          if (env.WORKSPACE_ACTOR && workspaceId) {
+            try {
+              const actorId = env.WORKSPACE_ACTOR.idFromName(workspaceId);
+              const stub = env.WORKSPACE_ACTOR.get(actorId);
+              await stub.fetch(new Request('http://actor/dispatch', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ action: 'dispatch', workspace_id: workspaceId }),
+              }));
+            } catch {
+              // backstop
+            }
+          }
+        }
+      })(),
+    );
     return;
   }
-  ctx.waitUntil(
-    (async () => {
-      try {
-        await env.DISPATCH_QUEUE!.send({ kind: 'telegram_delivery', workspace_id: workspaceId ?? '' });
-      } catch (err) {
-        workerFailure('dispatch', 'Telegram delivery wake-up publish failed; cron remains the backstop', {
-          workspaceId: workspaceId ?? '',
-          error: err instanceof Error ? err.message : String(err),
-        });
-      }
-    })(),
-  );
+
+  if (env.WORKSPACE_ACTOR && ctx && workspaceId) {
+    ctx.waitUntil(
+      (async () => {
+        try {
+          const actorId = env.WORKSPACE_ACTOR!.idFromName(workspaceId);
+          const stub = env.WORKSPACE_ACTOR!.get(actorId);
+          await stub.fetch(new Request('http://actor/dispatch', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'dispatch', workspace_id: workspaceId }),
+          }));
+        } catch (err) {
+          workerFailure('dispatch', 'actor delivery trigger failed', { workspaceId, error: String(err) });
+        }
+      })(),
+    );
+    return;
+  }
+
+  workerDebug('dispatch', 'no queue binding; cron remains the Telegram delivery backstop', {
+    workspaceId: workspaceId ?? '',
+  });
 }

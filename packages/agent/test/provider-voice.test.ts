@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   canFallbackOnNativeRuntimeError,
+  NATIVE_AUDIO_TRANSCRIPTION_IMPLEMENTED,
   normalizeAudioFormat,
   resolveVoiceRoute,
   type WorkspaceSttConfig,
@@ -24,7 +25,7 @@ describe('voice capability and route resolution (D23 / D24)', () => {
     expect(normalizeAudioFormat('sample.flac')).toBeNull();
   });
 
-  it('selects native route when exact model has verified native audio for format', () => {
+  it('keeps verified native capability honest until the native handoff is implemented', () => {
     const verifiedNative: ModelEntry = {
       ...baseModel(),
       capabilities: {
@@ -37,20 +38,33 @@ describe('voice capability and route resolution (D23 / D24)', () => {
       },
     };
 
-    const routeWebm = resolveVoiceRoute({
+    // Capability evidence alone must not accept audio into a job the pipeline
+    // cannot execute: without Groq the honest reason is native_not_implemented.
+    const withoutStt = resolveVoiceRoute({
       model: verifiedNative,
       audioMimeOrExt: 'audio/webm',
       sttConfig: null,
     });
-    expect(routeWebm).toEqual({
-      route: 'native',
-      model: {
-        commandKey: verifiedNative.commandKey,
-        provider: verifiedNative.provider,
-        modelId: verifiedNative.modelId,
-        endpointFamily: verifiedNative.endpointFamily,
-        endpointUrl: verifiedNative.endpointUrl,
+    expect(withoutStt).toMatchObject({
+      route: 'unavailable',
+      reason: 'native_not_implemented',
+    });
+
+    // With verified Groq the implemented path carries supported voice; the
+    // conversation model stays selected and native capability is preserved.
+    const withStt = resolveVoiceRoute({
+      model: verifiedNative,
+      audioMimeOrExt: 'audio/webm',
+      sttConfig: {
+        enabled: true,
+        provider: 'groq',
+        model: 'whisper-large-v3-turbo',
+        credentialStatus: 'available',
+        transcriptionVerified: true,
       },
+    });
+    expect(withStt).toMatchObject({
+      route: 'groq_stt',
       format: 'audio/webm',
     });
   });
@@ -249,7 +263,8 @@ describe('voice capability and route resolution (D23 / D24)', () => {
     });
   });
 
-  it('prefers verified native audio over configured verified Groq STT', () => {
+  it('routes verified native-capable models through the implemented Groq path for this baseline', () => {
+    expect(NATIVE_AUDIO_TRANSCRIPTION_IMPLEMENTED).toBe(false);
     const nativeWebmModel: ModelEntry = {
       ...baseModel(),
       capabilities: {
@@ -273,8 +288,10 @@ describe('voice capability and route resolution (D23 / D24)', () => {
       audioMimeOrExt: 'audio/webm',
       sttConfig,
     });
+    // When the native handoff lands (flag flips), this becomes 'native'
+    // without touching the capability model or the registry entry.
     expect(route).toMatchObject({
-      route: 'native',
+      route: 'groq_stt',
       format: 'audio/webm',
     });
   });

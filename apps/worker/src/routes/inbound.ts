@@ -16,6 +16,7 @@ import type { Env } from '../index.js';
 import { jsonError, jsonSuccess } from '../middleware/errors.js';
 import { acceptTelegramInbound } from '../inbox/telegram.js';
 import { publishDispatchHint, publishTelegramDeliveryHint } from '../dispatchHint.js';
+import { processTranscriptionJobs } from '../media/transcription.js';
 
 export async function handleTelegramWebhook(
   request: Request,
@@ -66,7 +67,21 @@ export async function handleTelegramWebhook(
       // administrative exception. Test environments never contact Telegram:
       // synthetic transports are injected by tests that need that path.
       adminTransport: env.ENVIRONMENT === 'test' ? undefined : fetch,
+      storage: env.STORAGE,
+      fileTransport: env.ENVIRONMENT === 'test' ? undefined : fetch,
     });
+    // Voice acceptance creates a durable transcription intent; run a bounded
+    // best-effort pass so Telegram notes also land without waiting for cron.
+    if (result.status === 'accepted' && result.workspace_id && env.STORAGE && env.ENVIRONMENT !== 'test') {
+      const pass = processTranscriptionJobs(env.DB, env.STORAGE, {
+        workspaceId: result.workspace_id,
+        ...(env.CREDENTIALS_KEY ? { wrappingKeyMaterial: env.CREDENTIALS_KEY } : {}),
+        ...(env.GROQ_API_KEY ? { platformApiKey: env.GROQ_API_KEY } : {}),
+        limit: 2,
+      }).catch(() => undefined);
+      if (ctx) ctx.waitUntil(pass);
+      else void pass;
+    }
     // The work is already durable; hints are never load-bearing. A lost hint
     // is covered by the cron sweep, and delivery claims are idempotent.
     if (result.status === 'accepted' && result.run_id && result.workspace_id) {

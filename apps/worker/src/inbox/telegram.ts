@@ -14,6 +14,12 @@ import { resumeRun } from '../actor/dispatch.js';
 import { createChat, resolveThinkingSnapshot } from './repository.js';
 import { buildTelegramDeliveryInserts, sendTelegramText, type TelegramSendFetch } from './telegramDelivery.js';
 import { executeTelegramCommand } from './telegramCommands.js';
+import {
+  acceptTelegramVoiceMessage,
+  extractTelegramVoiceMetadata,
+  TelegramVoiceError,
+  type TelegramFileFetch,
+} from '../media/telegramVoice.js';
 
 export interface TelegramInboundResult {
   status:
@@ -281,9 +287,10 @@ async function acceptTelegramReply(
               FROM workspace_users wu
               JOIN chats c ON c.id = ? AND c.workspace_id = wu.workspace_id AND c.author_user_id = wu.user_id
               WHERE wu.workspace_id = ? AND wu.user_id = ?)
-           )`,
+           )
+           ON CONFLICT(id) DO UPDATE SET guard_ok = excluded.guard_ok`,
         )
-        .bind(`guard_${crypto.randomUUID()}`, input.chatId, input.workspaceId, input.userId),
+        .bind(`guard_tg_accept_${input.workspaceId}`, input.chatId, input.workspaceId, input.userId),
       db
         .prepare(
           `INSERT INTO messages_in (id, workspace_id, user_id, channel, external_id, payload_fingerprint, raw_payload, status, acceptance_sequence, chat_id, created_at, updated_at)
@@ -415,10 +422,11 @@ async function acceptTelegramTextMessage(
             FROM workspace_users wu
             JOIN chats c ON c.id = ? AND c.workspace_id = wu.workspace_id AND c.author_user_id = wu.user_id
             WHERE wu.workspace_id = ? AND wu.user_id = ?)
-         )`
+         )
+         ON CONFLICT(id) DO UPDATE SET guard_ok = excluded.guard_ok`
       )
       .bind(
-        `guard_${crypto.randomUUID()}`,
+        `guard_tg_clar_${input.workspaceId}`,
         input.chatId,
         input.workspaceId,
         input.userId,
@@ -599,7 +607,15 @@ export async function acceptTelegramInbound(
   db: D1Database,
   botInstallationId: string,
   update: unknown,
-  options?: { botUsername?: string; botToken?: string; adminTransport?: TelegramSendFetch },
+  options?: {
+    botUsername?: string;
+    botToken?: string;
+    adminTransport?: TelegramSendFetch;
+    /** Private R2 binding; voice ingest is skipped when absent. */
+    storage?: R2Bucket;
+    /** Bounded Telegram file transport; tests inject a fake, production passes global fetch. */
+    fileTransport?: TelegramFileFetch;
+  },
 ): Promise<TelegramInboundResult> {
   let normalized: NormalizedTelegramUpdate;
   try {
@@ -824,10 +840,11 @@ export async function acceptTelegramInbound(
                     AND (? IS NULL OR EXISTS (
                       SELECT 1 FROM workspace_users WHERE workspace_id = ? AND user_id = ?
                     )))
-               )`,
+               )
+               ON CONFLICT(id) DO UPDATE SET guard_ok = excluded.guard_ok`,
             )
             .bind(
-              `guard_${crypto.randomUUID()}`,
+              `guard_tg_redeem_${userId}`,
               normalized.telegramUserId,
               userId,
               workspaceId,
@@ -1338,6 +1355,68 @@ export async function acceptTelegramInbound(
 
   // 3. Handle Media Rules
   if (normalized.kind === 'voice') {
+    const metadata = extractTelegramVoiceMetadata(normalized.rawUpdate);
+    // Voice ingest requires a private storage binding and an explicit file
+    // transport. Tests without an injected transport keep the honest
+    // unsupported row and never dial Telegram.
+    if (metadata && options?.storage && options.botToken && options.fileTransport) {
+      try {
+        const accepted = await acceptTelegramVoiceMessage({
+          db,
+          storage: options.storage,
+          workspaceId,
+          userId,
+          chatId,
+          botToken: options.botToken,
+          externalId: normalized.externalId,
+          fingerprint,
+          persistedPayload,
+          telegramMessageId: normalized.telegramMessageId,
+          metadata,
+          nowIso: now,
+          fetchFn: options.fileTransport,
+        });
+        return {
+          status: 'accepted',
+          message_in_id: accepted.messageInId,
+          run_id: accepted.runId,
+          workspace_id: workspaceId,
+          user_id: userId,
+        };
+      } catch (err) {
+        const code = err instanceof TelegramVoiceError ? err.code : 'transport_failed';
+        const message = err instanceof TelegramVoiceError
+          ? err.message
+          : 'The voice note could not be processed.';
+        const minId = `min_${crypto.randomUUID()}`;
+        await db
+          .prepare(
+            `INSERT INTO messages_in (id, workspace_id, user_id, channel, external_id, payload_fingerprint, raw_payload, status, acceptance_sequence, chat_id, error_message, created_at, updated_at)
+             VALUES (?, ?, ?, 'telegram', ?, ?, ?, 'unsupported', NULL, ?, ?, ?, ?)`,
+          )
+          .bind(
+            minId,
+            workspaceId,
+            userId,
+            normalized.externalId,
+            fingerprint,
+            persistedPayload,
+            chatId,
+            `Voice note rejected (${code}): ${message}`,
+            now,
+            now,
+          )
+          .run();
+        return {
+          status: 'unsupported',
+          reason: message,
+          message_in_id: minId,
+          workspace_id: workspaceId,
+          user_id: userId,
+        };
+      }
+    }
+
     const minId = `min_${crypto.randomUUID()}`;
     await db
       .prepare(

@@ -28,7 +28,7 @@ import type { PublicActivityType } from '@otis/contracts';
 
 export const TEXT_CHUNK_CHARS = 2048;
 export const TEXT_MIN_FLUSH_CHARS = 64;
-export const TEXT_FLUSH_MS = 300;
+export const TEXT_FLUSH_MS = 400;
 export const TEXT_MAX_CHUNKS = 32;
 export const THINKING_BATCH_CHARS = 1000;
 export const THINKING_MIN_FLUSH_CHARS = 32;

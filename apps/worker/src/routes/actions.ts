@@ -372,7 +372,7 @@ export async function handleCommitUndo(
   const sourceMessageId = source.messageInId;
 
   extraStatements.push(
-    env.DB.prepare(`INSERT INTO acceptance_guards (id, guard_ok) VALUES (?, CASE WHEN NOT EXISTS (SELECT 1 FROM agent_runs WHERE id = ? AND workspace_id = ? AND status IN ('queued', 'running')) THEN 1 ELSE NULL END)`).bind(`guard_${crypto.randomUUID()}`, target.run_id ?? '', workspaceId),
+    env.DB.prepare(`INSERT INTO acceptance_guards (id, guard_ok) VALUES (?, CASE WHEN NOT EXISTS (SELECT 1 FROM agent_runs WHERE id = ? AND workspace_id = ? AND status IN ('queued', 'running')) THEN 1 ELSE NULL END) ON CONFLICT(id) DO UPDATE SET guard_ok = excluded.guard_ok`).bind(`guard_undo_${workspaceId}`, target.run_id ?? '', workspaceId),
     env.DB
       .prepare(
         `INSERT INTO agent_runs (id, workspace_id, chat_id, source_message_id, executor_kind, status, created_at, updated_at)

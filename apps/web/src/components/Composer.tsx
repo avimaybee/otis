@@ -1,10 +1,13 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import TextareaAutosize from 'react-textarea-autosize';
-import type { CommandDescriptor, ModelOption } from '@otis/contracts';
+import type { CommandDescriptor, ModelOption, VoiceMediaSummary } from '@otis/contracts';
 import { DOMAIN_BOUNDS } from '@otis/contracts';
 import { cancelDraftSave, deleteDraft, draftSession, flushDraftSaves, loadDraft, scheduleDraftSave } from '../api/drafts.js';
+import type { VoiceUploadAdapter } from '../api/voice.js';
 import { useMediaQuery } from '../hooks/useMediaQuery.js';
-import { CloseIcon, SendIcon, StopIcon } from './icons.js';
+import { useVoiceRecorder, type VoiceController, type VoiceRecorderEnvironment, type VoiceRecorderScope } from '../hooks/useVoiceRecorder.js';
+import { CloseIcon, MicIcon, SendIcon, StopIcon } from './icons.js';
+import { VoiceCapturePanel } from './VoiceCapturePanel.js';
 import { Button } from './ui/button.js';
 import { Command, CommandItem, CommandList } from './ui/command.js';
 
@@ -12,11 +15,23 @@ export interface ClarificationContext {
   id?: string; question: string; candidates?: string[] | null; missing_fields?: string[];
   intended_operation?: string; onCancel: () => void;
 }
+export interface VoiceComposerConfig {
+  /** True only when the server reports a usable route and an adapter is confirmed. */
+  available: boolean;
+  adapter?: VoiceUploadAdapter | null;
+  scope?: VoiceRecorderScope;
+  environment?: VoiceRecorderEnvironment;
+  /** Story/test seam: replaces the internal recorder hook entirely. */
+  controller?: VoiceController;
+  /** Resolves only after durable outbox acceptance; rejection retains local bytes. */
+  onSent?: (result: { clientMessageId: string; media: VoiceMediaSummary; durationMs: number; mimeType: string }) => Promise<void>;
+}
 export interface ComposerProps {
   disabled?: boolean; disabledReason?: string; running: boolean;
   commands: CommandDescriptor[]; models?: ModelOption[]; workspaces?: { id: string; name: string }[];
   placeholder?: string; draftKey?: string; draftValue?: string | null; replyTo?: ClarificationContext;
-  controlPending?: boolean; modelReady?: boolean; onCommand?: (text: string) => Promise<boolean>;
+  controlPending?: boolean; modelReady?: boolean; voice?: VoiceComposerConfig;
+  onCommand?: (text: string) => Promise<boolean>;
   onStop?: () => Promise<void>; onSend: (text: string) => void | boolean | Promise<boolean>;
 }
 export interface SuggestionItem { name: string; label?: string; summary: string; insert: string; hasSubmenu?: boolean; }
@@ -24,7 +39,7 @@ export interface SuggestionItem { name: string; label?: string; summary: string;
 export function deriveCandidates(_question: string, candidates?: string[] | null, _missingFields?: string[], _intendedOp?: string): string[] { return candidates ?? []; }
 
 export function Composer({ disabled, disabledReason, running, commands, models = [], workspaces = [],
-  placeholder = 'Message Otis', draftKey, draftValue, replyTo, controlPending, modelReady = true, onCommand, onStop, onSend }: ComposerProps) {
+  placeholder = 'Message Otis', draftKey, draftValue, replyTo, controlPending, modelReady = true, voice, onCommand, onStop, onSend }: ComposerProps) {
   const id = useId();
   const input = useRef<HTMLTextAreaElement>(null);
   const sendingRef = useRef(false);
@@ -54,6 +69,25 @@ export function Composer({ disabled, disabledReason, running, commands, models =
   const [dismissed, setDismissed] = useState(false);
   const [index, setIndex] = useState(0);
   const desktop = useMediaQuery('(min-width: 900px) and (pointer: fine)');
+  // The internal recorder only runs when the composer owns the capture scope
+  // and no story/test controller was injected. Capture never touches the
+  // typed draft: the field is swapped out visually, not cleared.
+  const internalVoice = useVoiceRecorder({
+    scope: voice?.scope ?? null,
+    adapter: voice?.adapter ?? null,
+    environment: voice?.environment,
+    enabled: Boolean(voice?.scope) && !voice?.controller,
+    onSent: voice?.onSent,
+  });
+  const voiceController = voice?.controller ?? internalVoice;
+  const voiceActive = voiceController.phase === 'recording'
+    || voiceController.phase === 'finalizing'
+    || voiceController.phase === 'review';
+  const micVisible = Boolean(voice?.available) && !voiceActive;
+  const voiceError = voiceActive ? null : voiceController.error;
+  const voiceStorageWarning = voiceController.phase === 'recording' && !voiceController.durable
+    ? 'This recording is not saved in the browser. Keep this tab open.'
+    : '';
   const tooLong = value.length > DOMAIN_BOUNDS.MAX_INPUT_CHARS;
   const current = models.find(model => model.is_current);
   const modelQuery = /^\/model\s+(.*)$/i.exec(value);
@@ -140,25 +174,39 @@ export function Composer({ disabled, disabledReason, running, commands, models =
       </CommandList>
     </Command>}
     <div className="otis-composer__field flex min-h-[52px] items-end gap-1 rounded-2xl bg-card py-2 pr-2 pl-4">
-      <label className="otis-visually-hidden" htmlFor={id}>{placeholder}</label>
-      <TextareaAutosize id={id} ref={input} name="message" minRows={1} maxRows={6} className="otis-composer__input my-1.5 max-h-36 min-h-6 flex-1 resize-none bg-transparent text-base leading-6 outline-none placeholder:text-muted-foreground" placeholder={disabled ? disabledReason ?? placeholder : placeholder} autoComplete="off" value={value} disabled={disabled}
-        aria-describedby={`${id}-status`} aria-haspopup="listbox" aria-controls={pickerOpen ? `${id}-picker` : undefined} aria-autocomplete="list"
-        onChange={event => { commitDraft(event.target.value); setDismissed(false); setIndex(0); }}
-        onKeyDown={event => {
-          if (event.nativeEvent.isComposing || event.keyCode === 229) return;
-          if (pickerOpen) {
-            if (event.key === 'ArrowDown' || event.key === 'ArrowUp') { event.preventDefault(); setIndex((activeIndex + (event.key === 'ArrowDown' ? 1 : -1) + suggestions.length) % suggestions.length); return; }
-            if (event.key === 'Escape') { event.preventDefault(); setDismissed(true); return; }
-            if (event.key === 'Tab' || event.key === 'Enter') { event.preventDefault(); void select(activeIndex); return; }
-          }
-          if (event.key === 'Enter' && desktop && !event.shiftKey) { event.preventDefault(); void submit(); }
-        }} />
-      {running && onStop && !value.trim() ? (
-        <button type="button" className="grid size-9 shrink-0 place-items-center rounded-full bg-primary text-primary-foreground" aria-label="Stop Otis" disabled={stopping} onClick={() => void stop()}><StopIcon/></button>
+      {voiceActive ? (
+        <VoiceCapturePanel
+          controller={voiceController}
+          canSend={Boolean(voice?.adapter) && Boolean(voice?.scope?.chatId)}
+          onCancel={() => voiceController.cancel()}
+          onSend={() => void voiceController.send()}
+        />
       ) : (
-        <button type="button" className={value.trim() && !disabled ? 'grid size-9 shrink-0 place-items-center rounded-full bg-highlight text-highlight-foreground hover:bg-highlight-hover active:bg-highlight-pressed' : 'grid size-9 shrink-0 place-items-center rounded-full bg-accent text-subtle'} aria-label="Send" aria-busy={sending} disabled={disabled || tooLong || !value.trim() || controlPending || (!modelReady && !(value.trim().startsWith('/') && !value.trim().startsWith('//')))} onClick={() => void submit()}>{sending ? <span className="otis-spinner" aria-hidden="true"/> : <SendIcon/>}</button>
+        <>
+          <label className="otis-visually-hidden" htmlFor={id}>{placeholder}</label>
+          <TextareaAutosize id={id} ref={input} name="message" minRows={1} maxRows={6} className="otis-composer__input my-1.5 max-h-36 min-h-6 flex-1 resize-none bg-transparent text-base leading-6 outline-none placeholder:text-muted-foreground" placeholder={disabled ? disabledReason ?? placeholder : placeholder} autoComplete="off" value={value} disabled={disabled}
+            aria-describedby={`${id}-status`} aria-haspopup="listbox" aria-controls={pickerOpen ? `${id}-picker` : undefined} aria-autocomplete="list"
+            onChange={event => { commitDraft(event.target.value); setDismissed(false); setIndex(0); }}
+            onKeyDown={event => {
+              if (event.nativeEvent.isComposing || event.keyCode === 229) return;
+              if (pickerOpen) {
+                if (event.key === 'ArrowDown' || event.key === 'ArrowUp') { event.preventDefault(); setIndex((activeIndex + (event.key === 'ArrowDown' ? 1 : -1) + suggestions.length) % suggestions.length); return; }
+                if (event.key === 'Escape') { event.preventDefault(); setDismissed(true); return; }
+                if (event.key === 'Tab' || event.key === 'Enter') { event.preventDefault(); void select(activeIndex); return; }
+              }
+              if (event.key === 'Enter' && desktop && !event.shiftKey) { event.preventDefault(); void submit(); }
+            }} />
+          {micVisible && (
+            <button type="button" className="grid size-9 shrink-0 place-items-center rounded-full text-muted-foreground hover:bg-accent hover:text-foreground" aria-label={voiceController.phase === 'requesting' ? 'Starting recording' : 'Record voice note'} aria-busy={voiceController.phase === 'requesting'} disabled={disabled || voiceController.phase === 'requesting'} onClick={() => void voiceController.start()}>{voiceController.phase === 'requesting' ? <span className="otis-spinner" aria-hidden="true"/> : <MicIcon/>}</button>
+          )}
+          {running && onStop && !value.trim() ? (
+            <button type="button" className="grid size-9 shrink-0 place-items-center rounded-full bg-primary text-primary-foreground" aria-label="Stop Otis" disabled={stopping} onClick={() => void stop()}><StopIcon/></button>
+          ) : (
+            <button type="button" className={value.trim() && !disabled ? 'grid size-9 shrink-0 place-items-center rounded-full bg-highlight text-highlight-foreground hover:bg-highlight-hover active:bg-highlight-pressed' : 'grid size-9 shrink-0 place-items-center rounded-full bg-accent text-subtle'} aria-label="Send" aria-busy={sending} disabled={disabled || tooLong || !value.trim() || controlPending || (!modelReady && !(value.trim().startsWith('/') && !value.trim().startsWith('//')))} onClick={() => void submit()}>{sending ? <span className="otis-spinner" aria-hidden="true"/> : <SendIcon/>}</button>
+          )}
+        </>
       )}
     </div>
-    <div id={`${id}-status`} className={`otis-composer__status text-xs${error || tooLong ? ' otis-composer__status--error' : ''}`} role="status">{tooLong ? `Keep the message under ${DOMAIN_BOUNDS.MAX_INPUT_CHARS.toLocaleString()} characters.` : error || (!modelReady ? 'Choose a model to start. Connections are in Settings.' : 'Otis can make mistakes. Verify important business info.')}<span className="otis-visually-hidden">{sending ? 'Sending your message.' : ''}</span></div>
+    <div id={`${id}-status`} className={`otis-composer__status text-xs${tooLong || voiceError || error ? ' otis-composer__status--error' : ''}`} role="status">{tooLong ? `Keep the message under ${DOMAIN_BOUNDS.MAX_INPUT_CHARS.toLocaleString()} characters.` : voiceError || error || (!modelReady ? 'Choose a model to start. Connections are in Settings.' : voiceStorageWarning || 'Otis can make mistakes. Verify important business info.')}<span className="otis-visually-hidden">{sending ? 'Sending your message.' : ''}</span></div>
   </div></div>;
 }

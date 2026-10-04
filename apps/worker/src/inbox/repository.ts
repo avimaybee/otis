@@ -13,6 +13,13 @@ import type {
 import { DOMAIN_BOUNDS, STEERING_BOUNDS } from '@otis/contracts';
 import { sha256 } from '@otis/identity';
 import { PRODUCTION_REGISTRY } from '@otis/agent';
+import { resolveModelForChat, resolveVoiceRouteForWorkspace, type PlatformKeys } from '../providers/service.js';
+import {
+  loadMediaRow,
+  markMediaTranscribingStatement,
+  mediaValidatedGuardStatement,
+  transcriptionIntentStatement,
+} from '../media/repository.js';
 
 export class ConflictError extends Error {
   constructor(message: string) {
@@ -72,7 +79,7 @@ export async function createChat(
   const existing = await checkExisting(); if (existing) return existing;
   try {
     await db.batch([
-      db.prepare(`INSERT INTO acceptance_guards (id, guard_ok) VALUES (?, (SELECT 1 FROM workspace_users WHERE workspace_id = ? AND user_id = ?))`).bind(`guard_${crypto.randomUUID()}`, params.workspaceId, params.authorUserId),
+      db.prepare(`INSERT INTO acceptance_guards (id, guard_ok) VALUES (?, (SELECT 1 FROM workspace_users WHERE workspace_id = ? AND user_id = ?)) ON CONFLICT(id) DO UPDATE SET guard_ok = excluded.guard_ok`).bind(`guard_chat_${params.workspaceId}`, params.workspaceId, params.authorUserId),
       db.prepare(`INSERT INTO chats (id, workspace_id, author_user_id, title, model_override, is_archived, activity_cursor, created_at, updated_at, last_activity_at) VALUES (?, ?, ?, ?, ?, 0, 0, ?, ?, ?)`).bind(id, params.workspaceId, params.authorUserId, title, params.modelOverride || null, now, now, now),
     ]);
   } catch (error) {
@@ -396,6 +403,7 @@ export async function acceptWebMessage(
     answerRunId?: string;
     steerRunId?: string;
     answerContext?: { clarificationId: string; fields?: Record<string, unknown> };
+    platformKeys?: PlatformKeys;
   },
 ): Promise<AcceptMessageResponse> {
   const text = (params.text || '').trim();
@@ -425,6 +433,60 @@ export async function acceptWebMessage(
   const authorChat = await getChat(db, params.workspaceId, params.chatId);
   if (!authorChat) throw new NotFoundError('Chat not found in this workspace.');
   if (authorChat.author_user_id !== params.userId) throw new ForbiddenError('Only the chat author can append messages to this conversation.');
+
+  // Voice attachment: the recording must be the caller's validated private
+  // object for this chat, and the route is snapshotted now. A steering voice
+  // note would attach to a run that is already executing, so it is refused
+  // until the active turn finishes.
+  let mediaContext: {
+    mediaId: string;
+    format: 'audio/webm' | 'audio/mp4' | 'audio/ogg';
+    route: 'native' | 'groq_stt';
+    sttModel: string | null;
+  } | null = null;
+  if (mediaId) {
+    if (params.steerRunId) {
+      throw new ValidationError('Voice notes cannot be added to a running turn yet. Wait for it to finish, then send the recording.');
+    }
+    const media = await loadMediaRow(db, params.workspaceId, mediaId);
+    if (
+      !media ||
+      media.chat_id !== params.chatId ||
+      media.uploader_user_id !== params.userId ||
+      // Claimed uploads are bound to their stable message UUID; media
+      // ingested by the server from a channel (Telegram) has no client UUID.
+      (media.client_message_id !== null && media.client_message_id !== params.clientMessageId)
+    ) {
+      throw new ValidationError('The voice recording is not available for this message.');
+    }
+    if (media.state !== 'validated') {
+      throw new ValidationError('The voice recording is not ready to send.');
+    }
+    if (media.expires_at <= new Date().toISOString()) {
+      throw new ValidationError('The voice recording expired before it was sent.');
+    }
+    const model = await resolveModelForChat(db, {
+      workspaceId: params.workspaceId,
+      actorUserId: params.userId,
+      chatId: params.chatId,
+      platformKeys: params.platformKeys,
+    });
+    const route = await resolveVoiceRouteForWorkspace(db, {
+      workspaceId: params.workspaceId,
+      model: model.available ? model.entry : null,
+      audioMimeOrExt: media.format ?? media.content_type ?? '',
+      platformKeys: params.platformKeys,
+    });
+    if (route.route === 'unavailable') {
+      throw new ValidationError(route.message);
+    }
+    mediaContext = {
+      mediaId,
+      format: (media.format ?? 'audio/webm') as 'audio/webm' | 'audio/mp4' | 'audio/ogg',
+      route: route.route,
+      sttModel: route.route === 'groq_stt' ? route.sttModel : null,
+    };
+  }
 
   // 1. Deduplication check on transport key: (channel = 'web', external_id = clientMessageId)
   const existingInbound = await db
@@ -517,12 +579,26 @@ export async function acceptWebMessage(
   // Step 7: Insert outbox for WorkspaceActor
   try {
     await db.batch([
-      ...(params.steerRunId ? [db.prepare(`INSERT INTO acceptance_guards (id, guard_ok) SELECT ?, CASE WHEN COUNT(*) < ? AND COALESCE(SUM(length(cm.content_text)), 0) + ? <= ? THEN 1 ELSE NULL END FROM chat_messages cm WHERE cm.workspace_id = ? AND cm.run_id = ? AND EXISTS (SELECT 1 FROM run_activity a WHERE a.workspace_id = cm.workspace_id AND a.run_id = cm.run_id AND a.type = 'message_accepted' AND json_extract(a.payload_json, '$.steering_message_id') = cm.id)`).bind(`guard_${crypto.randomUUID()}`, STEERING_BOUNDS.MAX_MESSAGES_PER_RUN, text.length, STEERING_BOUNDS.MAX_CHARS_PER_RUN, params.workspaceId, params.steerRunId)] : []),
-      ...(params.steerRunId ? [db.prepare(`INSERT INTO acceptance_guards (id, guard_ok) VALUES (?, (SELECT 1 FROM agent_runs WHERE id = ? AND workspace_id = ? AND chat_id = ? AND executor_kind = 'agent' AND status IN ('running', 'queued') AND COALESCE(json_extract(agent_progress_json, '$.phase'), '') <> 'completed'))`).bind(`guard_${crypto.randomUUID()}`, params.steerRunId, params.workspaceId, params.chatId)] : []),
+      ...(mediaContext ? [
+        mediaValidatedGuardStatement(db, {
+          workspaceId: params.workspaceId,
+          mediaId: mediaContext.mediaId,
+          uploaderUserId: params.userId,
+          nowIso: now,
+        }),
+        markMediaTranscribingStatement(db, {
+          workspaceId: params.workspaceId,
+          mediaId: mediaContext.mediaId,
+          nowIso: now,
+        }),
+      ] : []),
+      ...(params.steerRunId ? [db.prepare(`INSERT INTO acceptance_guards (id, guard_ok) SELECT ?, CASE WHEN COUNT(*) < ? AND COALESCE(SUM(length(cm.content_text)), 0) + ? <= ? THEN 1 ELSE NULL END FROM chat_messages cm WHERE cm.workspace_id = ? AND cm.run_id = ? AND EXISTS (SELECT 1 FROM run_activity a WHERE a.workspace_id = cm.workspace_id AND a.run_id = cm.run_id AND a.type = 'message_accepted' AND json_extract(a.payload_json, '$.steering_message_id') = cm.id) ON CONFLICT(id) DO UPDATE SET guard_ok = excluded.guard_ok`).bind(`guard_steer_b_${params.workspaceId}`, STEERING_BOUNDS.MAX_MESSAGES_PER_RUN, text.length, STEERING_BOUNDS.MAX_CHARS_PER_RUN, params.workspaceId, params.steerRunId)] : []),
+      ...(params.steerRunId ? [db.prepare(`INSERT INTO acceptance_guards (id, guard_ok) VALUES (?, (SELECT 1 FROM agent_runs WHERE id = ? AND workspace_id = ? AND chat_id = ? AND executor_kind = 'agent' AND status IN ('running', 'queued') AND COALESCE(json_extract(agent_progress_json, '$.phase'), '') <> 'completed')) ON CONFLICT(id) DO UPDATE SET guard_ok = excluded.guard_ok`).bind(`guard_steer_s_${params.workspaceId}`, params.steerRunId, params.workspaceId, params.chatId)] : []),
       ...(params.command?.selectedWorkspaceId ? [db.prepare(
         `INSERT INTO acceptance_guards (id, guard_ok) VALUES (?,
-          (SELECT 1 FROM workspace_users WHERE workspace_id = ? AND user_id = ?))`,
-      ).bind(`guard_${crypto.randomUUID()}`, params.command.selectedWorkspaceId, params.userId)] : []),
+          (SELECT 1 FROM workspace_users WHERE workspace_id = ? AND user_id = ?))
+         ON CONFLICT(id) DO UPDATE SET guard_ok = excluded.guard_ok`,
+      ).bind(`guard_cmd_ws_${params.workspaceId}`, params.command.selectedWorkspaceId, params.userId)] : []),
       ...(params.command && 'modelOverride' in params.command ? [db.prepare(
         `UPDATE chats SET model_override = ? WHERE id = ? AND workspace_id = ?`,
       ).bind(params.command.modelOverride ?? null, params.chatId, params.workspaceId)] : []),
@@ -538,10 +614,11 @@ export async function acceptWebMessage(
               FROM workspace_users wu
               JOIN chats c ON c.id = ? AND c.workspace_id = wu.workspace_id AND c.author_user_id = wu.user_id
               WHERE wu.workspace_id = ? AND wu.user_id = ?)
-           )`
+           )
+           ON CONFLICT(id) DO UPDATE SET guard_ok = excluded.guard_ok`
         )
         .bind(
-          `guard_${crypto.randomUUID()}`,
+          `guard_msg_${params.workspaceId}`,
           params.chatId,
           params.workspaceId,
           params.userId,
@@ -586,6 +663,22 @@ export async function acceptWebMessage(
         )
         .bind(runId, params.workspaceId, params.chatId, messageInId,
           params.command ? 'command' : 'agent', params.command ? 'succeeded' : 'queued', params.chatId, thinkingSnapshotJson, now, now)] : []),
+
+      // One logical transcription receipt for the attached recording. The
+      // unique media_id makes a replayed acceptance a conflict, never a fork.
+      ...(mediaContext ? [transcriptionIntentStatement(db, {
+        id: `mtr_${crypto.randomUUID()}`,
+        workspaceId: params.workspaceId,
+        mediaId: mediaContext.mediaId,
+        messageInId,
+        runId,
+        route: mediaContext.route,
+        provider: mediaContext.route === 'groq_stt' ? 'groq' : null,
+        model: mediaContext.sttModel,
+        format: mediaContext.format,
+        languageHint: null,
+        nowIso: now,
+      })] : []),
 
       ...(params.command?.presentation !== 'control' ? [db
         .prepare(

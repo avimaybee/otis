@@ -1615,6 +1615,12 @@ describe('009A Telegram text loop (workerd + D1)', () => {
   });
 
   it('cancels queued deliveries when membership or the source binding is revoked, with no send', async () => {
+    await env.DB
+      .prepare(`UPDATE outbox SET status = 'cancelled' WHERE destination = 'telegram' AND status = 'pending'`)
+      .run();
+    await env.DB
+      .prepare(`UPDATE outbox SET last_attempt_at = '2020-01-01T00:00:00.000Z' WHERE destination = 'telegram' AND last_attempt_at IS NOT NULL`)
+      .run();
     const source = await env.DB
       .prepare(`SELECT id FROM messages_in WHERE external_id = 'test_bot:7101'`)
       .first<{ id: string }>();
@@ -1640,13 +1646,16 @@ describe('009A Telegram text loop (workerd + D1)', () => {
         .run();
     };
     const okBody = { status: 200, json: { ok: true, result: { message_id: 901, chat: { id: 777002, type: 'private' } } } };
-    deliveryNowMs = Math.max(deliveryNowMs, Date.parse('2026-10-04T15:00:00.000Z'));
+    // Move the deterministic clock clear of any stamp written by earlier
+    // cases in this file (their frozen or live last_attempt_at can otherwise
+    // sit inside the one-second pacing window and hide these rows).
+    deliveryNowMs = Math.max(deliveryNowMs, Date.parse('2026-10-04T15:00:00.000Z'), Date.now() + 60_000) + 10_000;
 
     // Membership revoked before the send: cancelled, zero HTTP.
     await insertDelivery('dlv_revoke_member', 'membership revoked');
     await env.DB.prepare(`DELETE FROM workspace_users WHERE workspace_id = ? AND user_id = ?`).bind(WS, HUNOR).run();
     const revokedMember = fetchReplies([okBody]);
-    await deliverTelegramOutbox(env.DB, env, { fetchFn: revokedMember.fn, clock: deliveryClock });
+    await deliverTelegramOutbox(env.DB, env, { fetchFn: revokedMember.fn, clock: deliveryClock, workspaceId: WS });
     expect(revokedMember.count()).toBe(0);
     expect(
       (await env.DB.prepare(`SELECT status FROM outbox WHERE id = 'dlv_revoke_member'`).first<{ status: string }>())?.status,
@@ -1662,7 +1671,7 @@ describe('009A Telegram text loop (workerd + D1)', () => {
     await insertDelivery('dlv_revoke_binding', 'binding revoked');
     await env.DB.prepare(`DELETE FROM telegram_users WHERE telegram_user_id = '777002'`).run();
     const revokedBinding = fetchReplies([okBody]);
-    await deliverTelegramOutbox(env.DB, env, { fetchFn: revokedBinding.fn, clock: deliveryClock });
+    await deliverTelegramOutbox(env.DB, env, { fetchFn: revokedBinding.fn, clock: deliveryClock, workspaceId: WS });
     expect(revokedBinding.count()).toBe(0);
     expect(
       (await env.DB.prepare(`SELECT status FROM outbox WHERE id = 'dlv_revoke_binding'`).first<{ status: string }>())?.status,

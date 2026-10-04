@@ -42,9 +42,12 @@ import {
   type TurnHandler,
 } from './actor/dispatch.js';
 import { AgentHandler } from './agent/handler.js';
-import { PRODUCTION_REGISTRY } from '@otis/agent';
+import { PRODUCTION_REGISTRY, type FetchFn } from '@otis/agent';
 import { importWrappingKey } from '@otis/identity';
 import { processMemoryRefreshJobs } from './agent/memory.js';
+import { handleVoiceMediaRoute } from './media/routes.js';
+import { processTranscriptionJobs, type TranscriptionProcessResult } from './media/transcription.js';
+import { cleanupExpiredMedia } from './media/cleanup.js';
 import {
   handleCreateInvite,
   handleLeaveWorkspace,
@@ -64,6 +67,7 @@ import {
   handleUpdateWorkspaceSettings,
 } from './routes/settings.js';
 import { handleStopRun, handleGetRun } from './routes/runs.js';
+import { extractPlatformKeys } from './providers/service.js';
 import { jsonError, jsonSuccess } from './middleware/errors.js';
 import { workerDebug } from './observability.js';
 
@@ -76,6 +80,11 @@ export interface Env {
   USE_ECHO_HANDLER?: string;
   FIREBASE_PROJECT_ID?: string;
   CREDENTIALS_KEY?: string;
+  /** Cloudflare Dashboard secrets / platform fallback keys */
+  GEMINI_API_KEY?: string;
+  OPENCODE_API_KEY?: string;
+  OPENCODE_GO_API_KEY?: string;
+  GROQ_API_KEY?: string;
   BOOTSTRAP_WORKSPACE_ID?: string;
   BOOTSTRAP_WORKSPACE_NAME?: string;
   BOOTSTRAP_OWNER_UID?: string;
@@ -102,6 +111,13 @@ export interface Env {
    * checkpoint/contention slices through the real queue entrypoint.
    */
   DISPATCH_TEST_HANDLER?: TurnHandler;
+  /**
+   * Synthetic STT transport for tests only. Production leaves this unset and
+   * the bounded transcription processor uses the global fetch; tests inject a
+   * fake so the queue/cron entrypoints exercise the voice path without any
+   * real network call.
+   */
+  TRANSCRIPTION_TEST_FETCH?: FetchFn;
 }
 
 /**
@@ -169,6 +185,72 @@ async function deliverAndScheduleContinuation(env: Env, workspaceId?: string): P
   }
 }
 
+/**
+ * Advances due voice transcription work for one workspace inside a queue or
+ * cron wake-up. Bounded and due-only: the processor claims at most its limit
+ * and returns immediately when nothing is due. Test runtimes without an
+ * injected synthetic transport are skipped entirely so no provider is dialed.
+ * A lost or failed pass is never load-bearing: the durable retry instant and
+ * the five-minute cron sweep are backstops.
+ */
+async function advanceVoiceTranscriptions(
+  env: Env,
+  workspaceId: string,
+  jobId?: string,
+): Promise<TranscriptionProcessResult | null> {
+  if (!env.STORAGE) return null;
+  const transport = env.TRANSCRIPTION_TEST_FETCH;
+  if (env.ENVIRONMENT === 'test' && !transport) return null;
+  try {
+    return await processTranscriptionJobs(env.DB, env.STORAGE, {
+      workspaceId,
+      ...(jobId ? { jobId } : {}),
+      ...(transport ? { fetchFn: transport } : {}),
+      ...(env.CREDENTIALS_KEY ? { wrappingKeyMaterial: env.CREDENTIALS_KEY } : {}),
+      ...(env.GROQ_API_KEY ? { platformApiKey: env.GROQ_API_KEY } : {}),
+      limit: 2,
+    });
+  } catch (err) {
+    console.error(`voice transcription pass failed for workspace '${workspaceId}':`, err);
+    return null;
+  }
+}
+
+/** Longest retry wake the entrypoint schedules; beyond this cron is the backstop. */
+const TRANSCRIPTION_RETRY_WAKE_CEILING_SECONDS = 300;
+
+/**
+ * After an entrypoint transcription pass actually claimed work, schedules
+ * exactly one follow-up dispatch wake at the earliest remaining pending job's
+ * durable due time (its own next_attempt_at, or now for a not-yet-attempted
+ * job). Never a fixed poll: an early or duplicate wake-up finds nothing to
+ * claim and schedules nothing, and a due time beyond the ceiling is left to
+ * the five-minute cron sweep.
+ */
+async function scheduleNextTranscriptionWake(env: Env, workspaceId: string): Promise<void> {
+  if (!env.DISPATCH_QUEUE) return;
+  try {
+    const row = await env.DB
+      .prepare(
+        `SELECT MIN(COALESCE(next_attempt_at, ?)) AS due_at FROM media_transcriptions
+         WHERE workspace_id = ? AND state = 'pending'`,
+      )
+      .bind(new Date().toISOString(), workspaceId)
+      .first<{ due_at: string | null }>();
+    const dueAt = row?.due_at;
+    if (!dueAt) return;
+    const delayMs = new Date(dueAt).getTime() - Date.now();
+    if (!Number.isFinite(delayMs)) return;
+    const delaySeconds = Math.min(
+      TRANSCRIPTION_RETRY_WAKE_CEILING_SECONDS,
+      Math.max(1, Math.ceil(delayMs / 1000)),
+    );
+    await env.DISPATCH_QUEUE.send({ workspace_id: workspaceId }, { delaySeconds });
+  } catch (err) {
+    console.error(`voice transcription retry wake failed for workspace '${workspaceId}':`, err);
+  }
+}
+
 export async function createWorkerAgentHandler(env: Env): Promise<TurnHandler> {
   if (env.DISPATCH_TEST_HANDLER) {
     workerDebug('handler', 'scripted test handler selected', {});
@@ -206,6 +288,7 @@ export async function createWorkerAgentHandler(env: Env): Promise<TurnHandler> {
 
   return new AgentHandler({
     wrappingKey,
+    platformKeys: extractPlatformKeys(env),
     registry: PRODUCTION_REGISTRY,
     limits,
   });
@@ -629,6 +712,13 @@ export default {
         return jsonError(405, 'method_not_allowed', 'Method not allowed.', requestId);
       }
 
+      // 12c. Voice media surface: private upload claims, byte transport,
+      // finalize/status, streaming reads and shared voice settings. Mounted
+      // once; every route re-checks current membership itself and the outer
+      // try/catch remains the entrypoint error boundary.
+      const voiceMedia = await handleVoiceMediaRoute(request, env, requestId);
+      if (voiceMedia) return voiceMedia;
+
       // 9. Unknown API route
       if (url.pathname.startsWith('/api/')) {
         return jsonError(404, 'not_found', 'API endpoint not found.', requestId);
@@ -657,6 +747,33 @@ export default {
    */
   async scheduled(_event: ScheduledEvent, env: Env): Promise<void> {
     workerDebug('cron', 'scheduled sweep starting', {});
+
+    // Voice transcription recovery: queue wake-ups advance due jobs promptly;
+    // this bounded pass is the backstop for a workspace whose wake-up was
+    // lost or whose retry window elapsed. Ready runs are dispatched by the
+    // recovery sweep below in this same tick.
+    if (env.STORAGE) {
+      const transport = env.TRANSCRIPTION_TEST_FETCH;
+      if (env.ENVIRONMENT !== 'test' || transport) {
+        try {
+          const pass = await processTranscriptionJobs(env.DB, env.STORAGE, {
+            ...(transport ? { fetchFn: transport } : {}),
+            ...(env.CREDENTIALS_KEY ? { wrappingKeyMaterial: env.CREDENTIALS_KEY } : {}),
+            ...(env.GROQ_API_KEY ? { platformApiKey: env.GROQ_API_KEY } : {}),
+            limit: 3,
+          });
+          workerDebug('cron', 'voice transcription sweep complete', {
+            processed: pass.processed,
+            ready: pass.ready.length,
+            failed: pass.failed.length,
+            deferred: pass.deferred,
+          });
+        } catch (err) {
+          console.error('scheduled voice transcription recovery failed:', err);
+        }
+      }
+    }
+
     const handler = await createWorkerAgentHandler(env);
     const workspaces = await listWorkspacesNeedingRecovery(env.DB);
     workerDebug('cron', 'recovery scan complete', { workspaces: workspaces.length });
@@ -690,12 +807,43 @@ export default {
     } catch (err) {
       console.error('scheduled memory refresh failed:', err);
     }
+
+    // Housekeeping: bounded prune of legacy guard rows left by earlier migrations
+    try {
+      await env.DB.batch([
+        env.DB.prepare(`DELETE FROM acceptance_guards WHERE id IN (SELECT id FROM acceptance_guards WHERE length(id) > 40 LIMIT 500)`),
+        env.DB.prepare(`DELETE FROM ledger_guards WHERE id IN (SELECT id FROM ledger_guards WHERE length(id) > 40 LIMIT 500)`),
+        env.DB.prepare(`DELETE FROM lifecycle_guards WHERE id IN (SELECT id FROM lifecycle_guards WHERE length(id) > 40 LIMIT 500)`),
+      ]);
+    } catch {
+      // Best-effort legacy cleanup
+    }
+
+    // Retention: accepted audio expires after 14 days; abandoned quarantine
+    // uploads and orphaned validated media are removed. Idempotent; failures
+    // are reported instead of pretending success.
+    if (env.STORAGE) {
+      try {
+        const cleanup = await cleanupExpiredMedia(env.DB, env.STORAGE, { limit: 25 });
+        workerDebug('cron', 'media retention sweep complete', {
+          expired: cleanup.expired,
+          abandoned: cleanup.abandoned,
+          failed: cleanup.failed,
+        });
+      } catch (err) {
+        console.error('scheduled media retention failed:', err);
+      }
+    }
   },
 
   /**
    * Queue wake-ups are hints, not business order: each message names one
-   * workspace to dispatch. Malformed messages are acknowledged with a log,
-   * never retried blindly.
+   * workspace to dispatch. A wake-up for a workspace with a voice run parked
+   * on its transcription receipt advances due work once, re-dispatches when
+   * the receipt commits, and schedules a single follow-up wake at the job's
+   * durable retry instant; an attempt already in flight stays with the cron
+   * backstop. Malformed messages are acknowledged with a log, never retried
+   * blindly.
    */
   async queue(batch: MessageBatch<{ workspace_id?: unknown; kind?: unknown; job_id?: unknown }>, env: Env): Promise<void> {
     workerDebug('queue', 'batch received', { messages: batch.messages.length });
@@ -727,7 +875,20 @@ export default {
       }
 
       try {
-        const dispatchResult = await dispatchWorkspace(env.DB, workspaceId, { budget: 3, handler });
+        let dispatchResult = await dispatchWorkspace(env.DB, workspaceId, { budget: 3, handler });
+        // A voice run parked on its durable transcription receipt: advance due
+        // work once, re-dispatch the moment the receipt commits, and wake
+        // again only at the job's own durable retry instant, never a poll.
+        if (dispatchResult.results.some((result) => result.detail === 'transcript_pending')) {
+          const jobId = typeof message.body?.job_id === 'string' ? message.body.job_id : undefined;
+          const pass = await advanceVoiceTranscriptions(env, workspaceId, jobId);
+          if (pass && pass.processed > 0) {
+            if (pass.ready.length > 0) {
+              dispatchResult = await dispatchWorkspace(env.DB, workspaceId, { budget: 3, handler });
+            }
+            await scheduleNextTranscriptionWake(env, workspaceId);
+          }
+        }
         await deliverAndScheduleContinuation(env, workspaceId);
         await scheduleDispatchContinuation(env, workspaceId, dispatchResult.results, 3);
       } catch (err) {

@@ -27,7 +27,7 @@ export const TELEGRAM_SEND_PACING_MS = 1000;
 export const TELEGRAM_DELIVERY_TOPIC = 'send_message';
 export const TELEGRAM_DELIVERY_PAYLOAD_VERSION = 1;
 
-export type TelegramDeliveryKind = 'final' | 'question' | 'command' | 'failure' | 'admin';
+export type TelegramDeliveryKind = 'final' | 'question' | 'command' | 'failure' | 'admin' | 'brief';
 
 export interface TelegramDeliveryPayload {
   payload_version: 1;
@@ -49,6 +49,12 @@ export interface TelegramDeliveryPayload {
   text: string;
   /** Recorded Bot API message ID after a successful send (for reply routing). */
   telegram_message_id?: number | null;
+  /**
+   * Scheduled-brief reference (kind 'brief' only). The delivery row carries
+   * no inbound source message, so the consumer revalidates against this
+   * canonical brief row instead of a source update. Absent for reply kinds.
+   */
+  brief_id?: string | null;
 }
 
 export interface TelegramDeliveryTarget {
@@ -124,6 +130,69 @@ export async function resolveTelegramTarget(
   return { botInstallationId: installationId, telegramUserId: String(link.telegram_user_id), telegramChatId: String(chatRawId) };
 }
 
+/**
+ * Revalidates a scheduled-brief delivery row immediately before send.
+ * Briefs have no inbound source message, so there is no source update to
+ * resolve: instead every persisted reference is rechecked — the canonical
+ * brief row, current membership, the member's live Telegram binding, and
+ * the still-selected telegram schedule channel. Any drift cancels instead
+ * of sending. Returns the verified target or a bounded safe reason.
+ */
+export async function resolveBriefDeliveryTarget(
+  db: D1Database,
+  payload: TelegramDeliveryPayload,
+  installationId: string,
+): Promise<{ target: TelegramDeliveryTarget } | { error: string }> {
+  if (!payload.brief_id) return { error: 'brief reference missing' };
+  const brief = await db
+    .prepare(`SELECT workspace_id, user_id, chat_id, status FROM briefs WHERE id = ?`)
+    .bind(payload.brief_id)
+    .first<{ workspace_id: string; user_id: string; chat_id: string | null; status: string }>();
+  if (!brief || brief.workspace_id !== payload.workspace_id || brief.status !== 'ready') {
+    return { error: 'brief no longer available' };
+  }
+  // The delivery must name the brief's own owner and chat: a row retargeted
+  // to another member (or another chat) in the same workspace cancels here,
+  // before any binding or schedule check could pass it.
+  if (brief.user_id !== payload.user_id || brief.chat_id !== payload.chat_id) {
+    return { error: 'brief delivery identity mismatch' };
+  }
+  const member = await db
+    .prepare(`SELECT 1 FROM workspace_users WHERE workspace_id = ? AND user_id = ?`)
+    .bind(payload.workspace_id, payload.user_id)
+    .first();
+  if (!member) return { error: 'membership no longer valid' };
+  const link = await db
+    .prepare(
+      `SELECT telegram_user_id FROM telegram_users
+       WHERE telegram_user_id = ? AND user_id = ? AND selected_workspace_id = ?`,
+    )
+    .bind(payload.telegram_user_id, payload.user_id, payload.workspace_id)
+    .first<{ telegram_user_id: string }>();
+  if (!link) return { error: 'Telegram binding changed since this delivery was queued' };
+  // Private-chat invariant: a brief intent never addresses another chat.
+  if (payload.telegram_chat_id !== payload.telegram_user_id) {
+    return { error: 'brief delivery target mismatch' };
+  }
+  const settings = await db
+    .prepare(`SELECT brief_channel FROM member_settings WHERE workspace_id = ? AND user_id = ?`)
+    .bind(payload.workspace_id, payload.user_id)
+    .first<{ brief_channel: string }>();
+  if (!settings || settings.brief_channel !== 'telegram') {
+    return { error: 'telegram brief channel no longer selected' };
+  }
+  if (payload.bot_installation_id !== installationId) {
+    return { error: 'bot installation changed since this delivery was queued' };
+  }
+  return {
+    target: {
+      botInstallationId: installationId,
+      telegramUserId: payload.telegram_user_id,
+      telegramChatId: payload.telegram_chat_id,
+    },
+  };
+}
+
 export interface TelegramDeliveryInput {
   workspaceId: string;
   userId: string;
@@ -134,6 +203,11 @@ export interface TelegramDeliveryInput {
   key: string;
   text: string;
   clarificationId?: string | null;
+  /**
+   * Canonical brief reference (kind 'brief' only): the consumer revalidates
+   * scheduled delivery against this row instead of a source update.
+   */
+  briefId?: string | null;
   /**
    * Explicit routing target, for rows created in the same batch (link
    * redemption confirmation): resolution reads would not see uncommitted
@@ -175,6 +249,7 @@ export function buildTelegramDeliveryStatements(
       part_count: parts.length,
       previous_part_id: previousPartId,
       clarification_id: input.clarificationId ?? null,
+      brief_id: input.briefId ?? null,
       text,
       telegram_message_id: null,
     };
@@ -391,7 +466,7 @@ export async function nextTelegramDeliveryWake(
  */
 export async function deliverTelegramOutbox(
   db: D1Database,
-  env: { TELEGRAM_BOT_TOKEN?: string },
+  env: { TELEGRAM_BOT_TOKEN?: string; TELEGRAM_BOT_INSTALLATION_ID?: string },
   options: {
     workspaceId?: string;
     limit?: number;
@@ -544,7 +619,31 @@ export async function deliverTelegramOutbox(
     // Context-free administrative replies carry no workspace/user binding;
     // their destination is verified against the source update itself.
     let sendChatId = payload.telegram_chat_id;
-    if (payload.workspace_id && payload.user_id) {
+    if (payload.kind === 'brief') {
+      // Scheduled briefs carry no inbound source message: revalidate the
+      // canonical brief row, membership, live binding and chosen channel.
+      const installationId = env.TELEGRAM_BOT_INSTALLATION_ID ?? 'otis_bot';
+      const resolved = await resolveBriefDeliveryTarget(db, payload, installationId);
+      if ('error' in resolved) {
+        await db
+          .prepare(`UPDATE outbox SET status = 'cancelled', last_error = ?, updated_at = ? WHERE id = ? AND status = 'sending' AND claimed_by = ?`)
+          .bind(`Brief delivery no longer valid: ${resolved.error}`, clock(), id, claimId)
+          .run();
+        continue;
+      }
+      sendChatId = resolved.target.telegramChatId;
+    } else if (payload.workspace_id && payload.user_id) {
+      const member = await db
+        .prepare(`SELECT 1 FROM workspace_users WHERE workspace_id = ? AND user_id = ?`)
+        .bind(payload.workspace_id, payload.user_id)
+        .first();
+      if (!member) {
+        await db
+          .prepare(`UPDATE outbox SET status = 'cancelled', last_error = ?, updated_at = ? WHERE id = ? AND status = 'sending' AND claimed_by = ?`)
+          .bind('Workspace membership revoked since this delivery was queued', clock(), id, claimId)
+          .run();
+        continue;
+      }
       const target = await resolveTelegramTarget(db, payload.source_message_id);
       if (
         !target ||

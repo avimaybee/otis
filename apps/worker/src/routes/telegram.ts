@@ -163,8 +163,8 @@ export async function handleDeleteTelegramConnection(
   try {
     await env.DB.batch([
       env.DB
-        .prepare(`INSERT INTO acceptance_guards (id, guard_ok) VALUES (?, (SELECT 1 FROM workspace_users WHERE workspace_id = ? AND user_id = ?))`)
-        .bind(`guard_${crypto.randomUUID()}`, workspaceId, userId),
+        .prepare(`INSERT INTO acceptance_guards (id, guard_ok) VALUES (?, (SELECT 1 FROM workspace_users WHERE workspace_id = ? AND user_id = ?)) ON CONFLICT(id) DO UPDATE SET guard_ok = excluded.guard_ok`)
+        .bind(`guard_tg_disc_${workspaceId}`, workspaceId, userId),
       env.DB.prepare(`UPDATE link_codes SET consumed_at = ? WHERE user_id = ? AND consumed_at IS NULL`).bind(now, userId),
       env.DB
         .prepare(

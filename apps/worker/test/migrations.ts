@@ -20,8 +20,12 @@ import sql8 from '../../../migrations/0009_thinking_controls.sql?raw';
 import sql9 from '../../../migrations/0010_outbox_retry_at.sql?raw';
 // @ts-expect-error Vite raw SQL import
 import sql10 from '../../../migrations/0011_link_workspace_intent.sql?raw';
+// @ts-expect-error Vite raw SQL import
+import sql11 from '../../../migrations/0012_voice_media.sql?raw';
+// @ts-expect-error Vite raw SQL import
+import sql12 from '../../../migrations/0013_briefs.sql?raw';
 export async function applyMigrations(db: D1Database) {
-  for (const sql of [sql0, sql1, sql2, sql3, sql4, sql5, sql6, sql7, sql8, sql9, sql10]) {
+  for (const sql of [sql0, sql1, sql2, sql3, sql4, sql5, sql6, sql7, sql8, sql9, sql10, sql11, sql12]) {
     let statement = ''; let trigger = false;
     for (const line of sql.split('\n')) {
       if (!line.trim() || line.trim().startsWith('--')) continue;

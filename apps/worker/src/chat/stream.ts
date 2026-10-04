@@ -28,8 +28,8 @@ export interface StreamOptions {
 
 const encoder = new TextEncoder();
 
-/** Stream-internal D1 reads before a clean budget rotation (see above). */
-const STREAM_QUERY_BUDGET = 40;
+/** Stream-internal D1 reads before a clean budget rotation (reduced to 15 to stay strictly within Cloudflare Free 10ms CPU limits). */
+const STREAM_QUERY_BUDGET = 15;
 
 function formatEvent(name: StreamEventName, data: unknown, id?: number): Uint8Array {
   const lines: string[] = [];
@@ -58,7 +58,7 @@ const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve,
  */
 export function createActivityStream(db: D1Database, options: StreamOptions): Response {
   const now = options.now ?? (() => Date.now());
-  const pollIntervalMs = options.pollIntervalMs ?? ACTIVITY_BOUNDS.POLL_INTERVAL_MS;
+  const pollIntervalMs = options.pollIntervalMs ?? 1500;
   const maxStreamMs = options.maxStreamMs ?? ACTIVITY_BOUNDS.MAX_STREAM_MS;
   const heartbeatMs = options.heartbeatMs ?? ACTIVITY_BOUNDS.HEARTBEAT_MS;
 
@@ -68,6 +68,8 @@ export function createActivityStream(db: D1Database, options: StreamOptions): Re
   let closed = false;
   const startedAt = now();
   const queryCount = { count: 0 };
+  const sessionCache = { sessionVerifiedAt: 0, sessionValid: false };
+  let currentPollMs = pollIntervalMs;
 
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
@@ -92,7 +94,7 @@ export function createActivityStream(db: D1Database, options: StreamOptions): Re
         // Check membership on initial tick, on heartbeat cadence, or before new activity is delivered
         const shouldCheckMembership = lastMembershipCheck === 0 || now() - lastMembershipCheck >= heartbeatMs;
         if (shouldCheckMembership) {
-          const isMember = await verifyStreamMembership(db, options, queryCount);
+          const isMember = await verifyStreamMembership(db, options, queryCount, sessionCache, now());
           lastMembershipCheck = now();
           if (!isMember) {
             controller.enqueue(formatEvent('membership_revoked', { workspace_id: options.workspaceId }));
@@ -131,9 +133,10 @@ export function createActivityStream(db: D1Database, options: StreamOptions): Re
         }
 
         if (read.activities.length > 0) {
+          currentPollMs = pollIntervalMs;
           // If membership was not verified on this tick, verify before emitting new activity
           if (!shouldCheckMembership) {
-            const isMember = await verifyStreamMembership(db, options, queryCount);
+            const isMember = await verifyStreamMembership(db, options, queryCount, sessionCache, now());
             lastMembershipCheck = now();
             if (!isMember) {
               controller.enqueue(formatEvent('membership_revoked', { workspace_id: options.workspaceId }));
@@ -148,6 +151,8 @@ export function createActivityStream(db: D1Database, options: StreamOptions): Re
             cursor = activity.cursor;
             emitted = true;
           }
+        } else if (options.pollIntervalMs === undefined) {
+          currentPollMs = Math.min(Math.round(currentPollMs * 1.5), 5000);
         }
 
         if (emitted) return;
@@ -158,7 +163,7 @@ export function createActivityStream(db: D1Database, options: StreamOptions): Re
           return;
         }
 
-        await sleep(pollIntervalMs);
+        await sleep(currentPollMs);
       }
 
       if (!closed) {
@@ -181,16 +186,27 @@ export function createActivityStream(db: D1Database, options: StreamOptions): Re
   });
 }
 
-/** Rechecks session and membership as pure reads: zero D1 writes, so long-lived streams close on revocation without costing the write budget. */
+/** Rechecks session and membership as pure reads with short in-memory cache to prevent WebCrypto SHA-256 and duplicate D1 churn on every heartbeat. */
 async function verifyStreamMembership(
   db: D1Database,
   options: StreamOptions,
   queryCount: { count: number },
+  cache?: { sessionVerifiedAt: number; sessionValid: boolean },
+  nowMs: number = Date.now(),
 ): Promise<boolean> {
   if (!options.sessionToken) return false;
-  queryCount.count += 1;
-  const verified = await verifySession(db, options.sessionToken);
-  if (!verified || verified.user.id !== options.userId) return false;
+  if (!cache || !cache.sessionValid || nowMs - cache.sessionVerifiedAt > 30_000) {
+    queryCount.count += 1;
+    const verified = await verifySession(db, options.sessionToken);
+    if (!verified || verified.user.id !== options.userId) {
+      if (cache) cache.sessionValid = false;
+      return false;
+    }
+    if (cache) {
+      cache.sessionValid = true;
+      cache.sessionVerifiedAt = nowMs;
+    }
+  }
   queryCount.count += 1;
   const membership = await checkMembership(db, options.workspaceId, options.userId);
   return membership !== null;

@@ -65,6 +65,16 @@ export interface ModelRegistry {
   entries: ModelEntry[];
 }
 
+/**
+ * Providers that may appear as conversation models. `groq` is an STT-only
+ * credential/integration and must never enter model selection or run pinning.
+ */
+export const CONVERSATION_PROVIDERS = ['gemini', 'opencode_go'] as const;
+
+export function isConversationProvider(provider: ProviderName): boolean {
+  return (CONVERSATION_PROVIDERS as readonly string[]).includes(provider);
+}
+
 export type ResolverErrorCode =
   | 'unknown_model_key'
   | 'retired_model'
@@ -351,6 +361,12 @@ export function resolveCommandKey(
   if (!found) {
     throw new ResolverError('unknown_model_key', `Unknown model '${commandKey}'.`);
   }
+  if (!isConversationProvider(found.provider)) {
+    throw new ResolverError(
+      'unknown_model_key',
+      `Model '${commandKey}' is not a conversation model.`,
+    );
+  }
   if (!found.approved || found.lifecycle !== 'active') {
     throw new ResolverError(
       'retired_model',
@@ -380,6 +396,7 @@ export function listAvailableModels(
 ): ModelEntry[] {
   return registry.entries.filter((item) => {
     if (!item.approved || item.lifecycle !== 'active') return false;
+    if (!isConversationProvider(item.provider)) return false;
     const caps = item.capabilities;
     if (caps.text !== 'supported' || caps.tools !== 'supported' || caps.stream !== 'supported') return false;
     return credentialStatuses[item.provider] === 'available';

@@ -9,7 +9,7 @@
 import type { CommandResult, ProviderName } from '@otis/contracts';
 import type { TurnContext, TurnHandler, TurnOutcome } from '../actor/dispatch.js';
 import { completeStep, hashStepArguments, listRunSteps, persistStep } from '../actor/steps.js';
-import { resolveModelForChat, runProviderTurn } from '../providers/service.js';
+import { resolveModelForChat, runProviderTurn, type PlatformKeys } from '../providers/service.js';
 import { workerDebug, workerFailure } from '../observability.js';
 import { executeAgentTool } from './repository.js';
 import { getTurnContext } from './context.js';
@@ -55,6 +55,7 @@ export interface AgentLimitsConfig {
 
 export interface AgentHandlerOptions {
   wrappingKey?: CryptoKey;
+  platformKeys?: PlatformKeys;
   registry?: ModelRegistry;
   providerAdapter?: ProviderAdapter;
   fetchFn?: FetchFn;
@@ -203,6 +204,7 @@ export class AgentHandler implements TurnHandler {
           selectedKey: runRow.model_key ?? undefined,
           chatId: ctx.chatId,
           registry: this.options?.registry,
+          platformKeys: this.options?.platformKeys,
         });
 
         if (!resolved.available) {
@@ -607,6 +609,7 @@ export class AgentHandler implements TurnHandler {
               actorUserId,
               chatId: ctx.chatId,
               registry: this.options?.registry,
+              platformKeys: this.options?.platformKeys,
             });
             if (!resolved.available) {
               return { kind: 'failed', errorCode: 'model_unavailable', errorMessage: resolved.reason };
@@ -614,15 +617,17 @@ export class AgentHandler implements TurnHandler {
             effectiveEntry = resolved.entry;
           }
 
-          if (!this.options?.wrappingKey) {
-            return { kind: 'failed', errorCode: 'misconfigured', errorMessage: 'Missing wrapping key for provider decryption.' };
+          const hasPlatformKey = Boolean(this.options?.platformKeys?.[effectiveEntry.provider]);
+          if (!this.options?.wrappingKey && !hasPlatformKey) {
+            return { kind: 'failed', errorCode: 'misconfigured', errorMessage: `No credentials configured for provider '${effectiveEntry.provider}'.` };
           }
 
           stream = runProviderTurn(ctx.db, {
             workspaceId: ctx.workspaceId,
             actorUserId,
             entry: effectiveEntry,
-            wrappingKey: this.options.wrappingKey,
+            wrappingKey: this.options?.wrappingKey,
+            platformKeys: this.options?.platformKeys,
             input: turnInput,
             fetchFn: this.options?.fetchFn,
           });
@@ -648,7 +653,7 @@ export class AgentHandler implements TurnHandler {
         // lease loss, and the run terminal state resolves the rest.
         const publishTimer = setInterval(() => {
           void publisher.tick().catch(() => undefined);
-        }, 100);
+        }, 400);
         let streamOutcome: 'complete' | 'interrupted' = 'complete';
         try {
           const publicStream = async function* () {

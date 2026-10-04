@@ -242,8 +242,8 @@ export async function requeueAsHolder(
   try {
     await db.batch([
       db
-        .prepare(`INSERT INTO acceptance_guards (id, guard_ok) VALUES (?, ${guard})`)
-        .bind(`guard_${crypto.randomUUID()}`, params.runId, params.attemptId),
+        .prepare(`INSERT INTO acceptance_guards (id, guard_ok) VALUES (?, ${guard}) ON CONFLICT(id) DO UPDATE SET guard_ok = excluded.guard_ok`)
+        .bind(`guard_requeue_${params.runId}`, params.runId, params.attemptId),
       db
         .prepare(
           `UPDATE agent_runs SET status = 'queued', updated_at = ?
@@ -326,8 +326,8 @@ export async function pinRun(
       AND w.lease_fence = ? AND w.lease_expires_at > ?)`;
   const statements: D1PreparedStatement[] = [
     db
-      .prepare(`INSERT INTO acceptance_guards (id, guard_ok) VALUES (?, ${guard})`)
-      .bind(`guard_${crypto.randomUUID()}`, run.id, run.workspace_id, attemptId, attemptId, fence, nowIso),
+      .prepare(`INSERT INTO acceptance_guards (id, guard_ok) VALUES (?, ${guard}) ON CONFLICT(id) DO UPDATE SET guard_ok = excluded.guard_ok`)
+      .bind(`guard_pin_${run.workspace_id}`, run.id, run.workspace_id, attemptId, attemptId, fence, nowIso),
     db
       .prepare(
         `UPDATE agent_runs SET status = 'running', attempt_id = ?, lease_fence = ?, updated_at = ?
@@ -482,9 +482,9 @@ export async function completeRun(
 
   const batch: D1PreparedStatement[] = [
     db
-      .prepare(`INSERT INTO acceptance_guards (id, guard_ok) VALUES (?, ${holderGuardSql()})`)
+      .prepare(`INSERT INTO acceptance_guards (id, guard_ok) VALUES (?, ${holderGuardSql()}) ON CONFLICT(id) DO UPDATE SET guard_ok = excluded.guard_ok`)
       .bind(
-        `guard_${crypto.randomUUID()}`,
+        `guard_holder_${run.workspace_id}`,
         run.id,
         params.attemptId,
         params.fence,
@@ -589,7 +589,7 @@ async function classifyCommitFailure(db: D1Database, run: LoadedRun, attemptId: 
  * so a stale attempt can never fail its successor's run. Returns false when
  * the observed state no longer holds (nothing was written).
  */
-async function failRunTerminal(
+export async function failRunTerminal(
   db: D1Database,
   params: {
     run: LoadedRun;
@@ -611,8 +611,8 @@ async function failRunTerminal(
   if (params.expectedAttemptId !== null) guardBinds.push(params.expectedAttemptId);
   const batch: D1PreparedStatement[] = [
     db
-      .prepare(`INSERT INTO acceptance_guards (id, guard_ok) VALUES (?, ${guardPredicate})`)
-      .bind(`guard_${crypto.randomUUID()}`, ...guardBinds),
+      .prepare(`INSERT INTO acceptance_guards (id, guard_ok) VALUES (?, ${guardPredicate}) ON CONFLICT(id) DO UPDATE SET guard_ok = excluded.guard_ok`)
+      .bind(`guard_fail_${run.workspace_id}`, ...guardBinds),
     db
       .prepare(
         `UPDATE agent_runs SET status = ?, error_code = ?, error_message = ?, updated_at = ?
@@ -726,9 +726,9 @@ async function waitForInput(
 
   const batch: D1PreparedStatement[] = [
     db
-      .prepare(`INSERT INTO acceptance_guards (id, guard_ok) VALUES (?, ${holderGuardSql()})`)
+      .prepare(`INSERT INTO acceptance_guards (id, guard_ok) VALUES (?, ${holderGuardSql()}) ON CONFLICT(id) DO UPDATE SET guard_ok = excluded.guard_ok`)
       .bind(
-        `guard_${crypto.randomUUID()}`,
+        `guard_input_${run.workspace_id}`,
         run.id,
         params.attemptId,
         params.fence,
@@ -925,6 +925,29 @@ export async function dispatchOutboxItem(
       .bind(now(), outboxId, attemptId)
       .run();
     return { status: 'deferred', run_id: run.id };
+  }
+
+  // A voice run waits for its durable transcript. Transcription runs outside
+  // this turn lease; dispatching early would hand the agent empty media text
+  // and could fork a second logical run. The transcript handler wakes
+  // dispatch when ready; this gate makes recovery safe without a wake-up.
+  const transcriptPending = await db
+    .prepare(
+      `SELECT 1 FROM media_transcriptions t
+       JOIN chat_messages m ON m.media_id = t.media_id
+       WHERE m.run_id = ? AND t.state IN ('pending', 'running') LIMIT 1`,
+    )
+    .bind(run.id)
+    .first();
+  if (transcriptPending) {
+    await db
+      .prepare(
+        `UPDATE outbox SET status = 'pending', updated_at = ? WHERE id = ? AND status = 'sending'
+         AND (claimed_by IS NULL OR claimed_by = ?)`,
+      )
+      .bind(now(), outboxId, attemptId)
+      .run();
+    return { status: 'deferred', run_id: run.id, detail: 'transcript_pending' };
   }
 
   // Revoked membership denies dispatch: the actor is gone, so the run fails
@@ -1604,9 +1627,9 @@ export async function resumeRun(
   try {
     await db.batch([
       db
-        .prepare(`INSERT INTO acceptance_guards (id, guard_ok) VALUES (?, ${guard})`)
+        .prepare(`INSERT INTO acceptance_guards (id, guard_ok) VALUES (?, ${guard}) ON CONFLICT(id) DO UPDATE SET guard_ok = excluded.guard_ok`)
         .bind(
-          `guard_${crypto.randomUUID()}`,
+          `guard_answer_${params.workspaceId}`,
           params.answer.messageId,
           params.runId,
           params.workspaceId,
@@ -1688,8 +1711,8 @@ export async function stopRun(
   try {
     await db.batch([
       db
-        .prepare(`INSERT INTO acceptance_guards (id, guard_ok) VALUES (?, ${guard})`)
-        .bind(`guard_${crypto.randomUUID()}`, run.id),
+        .prepare(`INSERT INTO acceptance_guards (id, guard_ok) VALUES (?, ${guard}) ON CONFLICT(id) DO UPDATE SET guard_ok = excluded.guard_ok`)
+        .bind(`guard_stop_${run.workspace_id}`, run.id),
       db
         .prepare(
           `UPDATE agent_runs SET status = 'cancelled', error_code = 'stopped', updated_at = ?
@@ -1750,7 +1773,7 @@ export async function listWorkspacesNeedingRecovery(
            WHERE destination = 'workspace_actor' AND status IN ('pending', 'sending')
            UNION
            SELECT DISTINCT workspace_id FROM agent_runs
-           WHERE status IN ('queued', 'running') OR status = 'waiting_for_input'
+           WHERE status IN ('queued', 'running')
          )
          ORDER BY workspace_id ASC LIMIT ? OFFSET ?`,
       )
@@ -1819,8 +1842,8 @@ export async function recoverWorkspace(
       )`;
       const statements: D1PreparedStatement[] = [
         db
-          .prepare(`INSERT INTO acceptance_guards (id, guard_ok) VALUES (?, ${guard})`)
-          .bind(`guard_${crypto.randomUUID()}`, runId, nowIso),
+          .prepare(`INSERT INTO acceptance_guards (id, guard_ok) VALUES (?, ${guard}) ON CONFLICT(id) DO UPDATE SET guard_ok = excluded.guard_ok`)
+          .bind(`guard_recover_${workspaceId}`, runId, nowIso),
         db
           .prepare(`UPDATE agent_runs SET status = 'queued', updated_at = ? WHERE id = ? AND status = 'running'`)
           .bind(nowIso, runId),

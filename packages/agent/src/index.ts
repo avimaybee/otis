@@ -29,6 +29,7 @@ export * from './providers/fake.js';
 export * from './providers/gemini.js';
 export * from './providers/opencode-go.js';
 export * from './providers/voice.js';
+export * from './providers/groqStt.js';
 export * from './tools.js';
 export * from './policy.js';
 export * from './prompt.js';

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { Toaster, toast } from 'sonner';
 import Markdown from 'react-markdown';
-import type { CommandDescriptor, ModelOption } from '@otis/contracts';
+import type { CommandDescriptor, ModelOption, VoiceMediaSummary } from '@otis/contracts';
 import { api, ApiError } from './api/client.js';
 import { debugLog } from './api/log.js';
 import { subscribeToActivity, type StreamStatus } from './hooks/useActivityStream.js';
@@ -18,6 +18,7 @@ import { ComposeIcon, MenuIcon } from './components/icons.js';
 import { Overlay } from './components/Overlay.js';
 import { Button } from './components/ui/button.js';
 import {
+  awaitOutboxSettlement,
   claimDelivery,
   clearPendingNewChat,
   clearUserOutbox,
@@ -42,6 +43,8 @@ import {
 } from './api/outbox.js';
 import { classifySendError, computeBackoffMs, registerFlushOwner, requestFlush, unregisterFlushOwner } from './api/flush.js';
 import { deleteDraftsForUser, draftSession, moveDraft } from './api/drafts.js';
+import { voiceUploadAdapter } from './api/voice.js';
+import { deleteVoiceSessionsForUser } from './api/voiceSessions.js';
 import { deriveTranscript, reconciledClientIds } from './api/transcript.js';
 import {
   applyActivitySnapshot,
@@ -134,6 +137,7 @@ export function ConversationScreen({ workspaceId, chat: routeChat, chatParamPres
     clearUserQueries(queryClient, userId);
     clearUserOutbox(userId);
     void deleteDraftsForUser(userId);
+    void deleteVoiceSessionsForUser(userId);
     unregisterFlushOwner(userId);
     setDetailActionId(null); setSourceId(null); setDrawerOpen(false); setSettingsOpen(false); setAccessLost(true); setReplyId(null); setDismissedClarificationId(null);
   }, [queryClient, userId, clearRefreshTimers]);
@@ -197,6 +201,12 @@ export function ConversationScreen({ workspaceId, chat: routeChat, chatParamPres
   const followsDefault = snapshot ? !snapshot.detail.chat.model_override : true;
   const commandsQuery = useCommands(accessLost);
   const commands: CommandDescriptor[] = commandsQuery.data?.commands ?? [];
+  // Live voice requires the server-reported usable route plus a confirmed
+  // upload adapter, and an existing chat for the contract's chat_id. Until
+  // both exist the mic stays absent rather than shipping a dead action.
+  const voiceAdapter = voiceUploadAdapter();
+  const voiceAvailable = Boolean(voiceAdapter) && Boolean(activeChatId)
+    && models.some(model => model.is_current && model.available && model.voice_available);
 
   const chatOutbox = useMemo(
     () => entriesForChat(userId, workspaceId, activeChatId),
@@ -385,7 +395,7 @@ export function ConversationScreen({ workspaceId, chat: routeChat, chatParamPres
         }
       }
       debugLog('send', 'starting', { operationId: entry.clientId, chatId, chars: entry.text.length, clarificationId: entry.clarificationId ?? null });
-      const accepted = await api.sendMessage(entryWorkspaceId, chatId, entry.clientId, entry.text, entry.clarificationId);
+      const accepted = await api.sendMessage(entryWorkspaceId, chatId, entry.clientId, entry.text, entry.clarificationId, entry.mediaId);
       debugLog('send', 'accepted; run queued server-side', { chatId, message_id: accepted.message_id, run_id: accepted.run_id, sequence: accepted.acceptance_sequence });
       markOutboxSaved(entry.clientId, { messageId: accepted.message_id, runId: accepted.run_id, sequence: accepted.acceptance_sequence });
       if (!sameView(chatId)) return true;
@@ -455,6 +465,41 @@ export function ConversationScreen({ workspaceId, chat: routeChat, chatParamPres
     requestFlush('send');
     return true;
   }, [readOnly, accessLost, userId, workspaceId, activeChatId, activeClarification]);
+
+  /**
+   * Voice send owner (010): the recorder hands over the finalized media with
+   * one stable client UUID. The entry carries its own immutable scope, so a
+   * view move during delivery cannot reroute it; the recorder only deletes
+   * local bytes after this promise resolves on durable acceptance.
+   */
+  const voiceSend = useCallback(async (result: {
+    clientMessageId: string;
+    media: VoiceMediaSummary;
+  }): Promise<void> => {
+    if (accessLost) throw new Error('Voice send is unavailable.');
+    if (!activeChatId) throw new Error('Open a conversation before sending a voice note.');
+    const existing = getOutboxEntry(result.clientMessageId);
+    if (existing?.state === 'saved') return;
+    if (existing?.state === 'failed') {
+      // Same identity: retry the existing entry, never a second message.
+      retryOutboxEntry(result.clientMessageId);
+    } else if (!existing) {
+      createOutboxEntry({
+        clientId: result.clientMessageId,
+        userId,
+        workspaceId,
+        chatId: activeChatId,
+        text: '',
+        mediaId: result.media.media_id,
+      });
+      // Explicit send-triggered return to the newly sent message, taken at
+      // the local acceptance moment, exactly like the text path.
+      setFollowSignal(value => value + 1);
+    }
+    requestFlush('voice');
+    const outcome = await awaitOutboxSettlement(result.clientMessageId);
+    if (outcome === 'failed') throw new Error('Voice message not accepted.');
+  }, [accessLost, activeChatId, userId, workspaceId]);
 
   const retryMessage = useCallback((clientId: string): void => {
     if (!retryOutboxEntry(clientId)) return;
@@ -579,7 +624,7 @@ export function ConversationScreen({ workspaceId, chat: routeChat, chatParamPres
       {streamStatus === 'resyncing' && <p className="otis-connection text-xs" role="status">Reconnecting to activity… Your conversation is retained.</p>}
       <Transcript key={`${workspaceId}:${activeChatId ?? 'new'}`} messages={derived.messages} members={members} currentUserId={userId} runs={snapshot?.runs ?? {}} activities={snapshot?.activities ?? []} steps={[]} delivery={derived.delivery} onRetryMessage={(clientId) => void retryMessage(clientId)} onDiscardMessage={discardMessage} onInspectSource={setSourceId} onInspectAction={setDetailActionId} onReply={readOnly ? undefined : setReplyId} onEditMessage={readOnly ? undefined : setDraftValue} loading={loading} hasOlder={Boolean(snapshot?.older)} loadingOlder={loadingOlder} olderError={olderError} followSignal={followSignal} positionKey={`${userId}:${workspaceId}:${activeChatId ?? 'new'}`} onLoadOlder={() => void loadOlder()}/>
       {error && <div className="otis-chat-error text-sm" role="alert"><p>{error}</p>{activeChatId && !loading && snapshot && <Button variant="ghost" size="sm" type="button" onClick={() => void resyncChat(activeChatId)}>Reload conversation</Button>}</div>}
-      {readOnly ? <div className="otis-readonly text-sm"><p>This is {currentDetail!.chat.author_display_name ?? members[currentDetail!.chat.author_user_id] ?? 'a teammate'}’s conversation.</p><Button variant="ghost" size="sm" type="button" onClick={() => navigate(workspaceId, ownChats[0]?.id ?? null)}>Continue in your own chat</Button></div> : <div ref={composerRef} className="otis-composer-slot"><Composer key={`${workspaceId}:${userId}:${activeChatId ?? 'new'}`} draftKey={`otis:draft:${userId}:${workspaceId}:${activeChatId ?? 'new'}`} draftValue={draftValue} disabled={Boolean(activeChatId && !snapshot)} disabledReason="Opening conversation…" running={Boolean(running)} commands={commands} models={models} workspaces={workspaces} controlPending={controlPending} modelReady={models.some(model => model.is_current && model.available)} onCommand={applyCommand} onStop={running ? async () => { await api.stopRun(workspaceId, running.run.id); if (activeChatId) refreshRun(workspaceId, activeChatId, running.run.id); } : undefined} replyTo={activeClarification ? { id: activeClarification.id, question: activeClarification.question, candidates: activeClarification.candidates, missing_fields: activeClarification.missing_fields, intended_operation: activeClarification.intended_operation, onCancel: () => { setDismissedClarificationId(activeClarification.id); setReplyId(null); } } : undefined} onSend={send}/></div>}
+      {readOnly ? <div className="otis-readonly text-sm"><p>This is {currentDetail!.chat.author_display_name ?? members[currentDetail!.chat.author_user_id] ?? 'a teammate'}’s conversation.</p><Button variant="ghost" size="sm" type="button" onClick={() => navigate(workspaceId, ownChats[0]?.id ?? null)}>Continue in your own chat</Button></div> : <div ref={composerRef} className="otis-composer-slot"><Composer key={`${workspaceId}:${userId}:${activeChatId ?? 'new'}`} draftKey={`otis:draft:${userId}:${workspaceId}:${activeChatId ?? 'new'}`} draftValue={draftValue} disabled={Boolean(activeChatId && !snapshot)} disabledReason="Opening conversation…" running={Boolean(running)} commands={commands} models={models} workspaces={workspaces} controlPending={controlPending} modelReady={models.some(model => model.is_current && model.available)} voice={{ available: voiceAvailable, adapter: voiceAdapter, scope: { userId, workspaceId, chatId: activeChatId }, onSent: voiceSend }} onCommand={applyCommand} onStop={running ? async () => { await api.stopRun(workspaceId, running.run.id); if (activeChatId) refreshRun(workspaceId, activeChatId, running.run.id); } : undefined} replyTo={activeClarification ? { id: activeClarification.id, question: activeClarification.question, candidates: activeClarification.candidates, missing_fields: activeClarification.missing_fields, intended_operation: activeClarification.intended_operation, onCancel: () => { setDismissedClarificationId(activeClarification.id); setReplyId(null); } } : undefined} onSend={send}/></div>}
     </div>}</main>
     {controlResult && <Overlay label="Command result" className="otis-overlay--settings" onClose={() => setControlResult(null)}><section className="otis-settings"><header className="otis-pane-header"><h2 className="text-base font-medium">Result</h2><Button variant="outline" size="sm" type="button" onClick={() => setControlResult(null)}>Close</Button></header><div className="otis-settings__content text-sm"><Markdown skipHtml disallowedElements={['img']}>{controlResult}</Markdown></div></section></Overlay>}
     {sourceId && <SourcePane workspaceId={workspaceId} memoryId={sourceId} onClose={() => setSourceId(null)} onAccessLost={loseAccess} onOpenChat={id => navigate(workspaceId, id)}/>} {detailActionId && <DetailPane onAccessLost={loseAccess} workspaceId={workspaceId} chatId={readOnly ? '' : activeChatId ?? ''} actionId={detailActionId} onClose={() => setDetailActionId(null)} onUndone={() => { if (activeChatId) void resyncChat(activeChatId); }}/>} {settingsOpen && <SettingsPane onAccessLost={loseAccess} workspaceId={workspaceId} workspaceName={workspaceName} members={members} onUpdated={() => setModelRevision(value => value + 1)} onClose={() => setSettingsOpen(false)} onSignOut={onSignOut}/>}

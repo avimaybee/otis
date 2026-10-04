@@ -13,10 +13,13 @@ import {
 } from '@otis/identity';
 import type { Env } from '../index.js';
 import { jsonError, jsonSuccess } from '../middleware/errors.js';
-import { verifyWorkspaceCredential } from '../providers/service.js';
+import {
+  extractPlatformKeys,
+  verifyWorkspaceCredential,
+} from '../providers/service.js';
 import { readJsonBody, requireWorkspaceScope } from './scope.js';
 
-const PROVIDERS = ['gemini', 'opencode_go'] as const;
+const PROVIDERS = ['gemini', 'opencode_go', 'groq'] as const;
 
 async function loadWrappingKey(env: Env): Promise<CryptoKey> {
   if (!env.CREDENTIALS_KEY) {
@@ -107,7 +110,15 @@ export async function handleGetCredentialStatus(
     workspaceId,
     provider: provider as (typeof PROVIDERS)[number],
   });
-  const responseBody: CredentialStatusResponse = { status: 'ok', credential };
+  const platformKeys = extractPlatformKeys(env);
+  const provKey = provider as (typeof PROVIDERS)[number];
+  const effectiveCredential = credential ?? (platformKeys[provKey] ? {
+    provider: provKey,
+    status: 'available' as const,
+    key_version: 1,
+    last_verified_at: new Date().toISOString(),
+  } : null);
+  const responseBody: CredentialStatusResponse = { status: 'ok', credential: effectiveCredential };
   return jsonSuccess(responseBody, 200, { 'x-request-id': requestId });
 }
 
@@ -128,6 +139,7 @@ export async function handleVerifyCredential(
   if (!PROVIDERS.includes(provider as (typeof PROVIDERS)[number])) {
     return jsonError(404, 'unknown_provider', 'Unknown provider.', requestId);
   }
+
   try {
     const wrappingKey = await loadWrappingKey(env);
     const result = await verifyWorkspaceCredential(env.DB, {

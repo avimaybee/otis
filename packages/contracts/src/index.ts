@@ -7,6 +7,7 @@
 // --- Chat API DTOs (docs/contracts.md sections 7-9) ---
 // Re-exported so clients can import everything from the package root.
 export * from './chat.js';
+export * from './voice.js';
 
 // --- Base Result & Error Types ---
 
@@ -159,7 +160,8 @@ export interface LinkCode {
 
 // --- Provider & Settings Contracts ---
 
-export type ProviderName = 'gemini' | 'opencode_go';
+/** `groq` is an STT-only provider: it never appears as a conversation model. */
+export type ProviderName = 'gemini' | 'opencode_go' | 'groq';
 
 export type ProviderStatus =
   | 'unverified'

@@ -1,23 +1,6 @@
 import { describe, it, expect, beforeAll } from 'vitest';
 import { SELF, env } from 'cloudflare:test';
-// @ts-expect-error vite raw import
-import migration0001Sql from '../../../migrations/0001_identity.sql?raw';
-// @ts-expect-error vite raw import
-import migration0002Sql from '../../../migrations/0002_conversations_sources.sql?raw';
-// @ts-expect-error vite raw import
-import migration0003Sql from '../../../migrations/0003_ledger.sql?raw';
-// @ts-expect-error vite raw import
-import migration0004Sql from '../../../migrations/0004_lifecycle_settings.sql?raw';
-// @ts-expect-error vite raw import
-import migration0005Sql from '../../../migrations/0005_actor_dispatch.sql?raw';
-// @ts-expect-error vite raw import
-import migration0006Sql from '../../../migrations/0006_actor_hardening.sql?raw';
-// @ts-expect-error vite raw import
-import migration0007Sql from '../../../migrations/0007_outbox_claim_owner.sql?raw';
-// @ts-expect-error vite raw import
-import migration0008Sql from '../../../migrations/0008_memory_and_agent_runs.sql?raw';
-// @ts-expect-error vite raw import
-import migration0009Sql from '../../../migrations/0009_thinking_controls.sql?raw';
+import { applyMigrations } from './migrations.js';
 import { AUTH_BOUNDS } from '@otis/contracts';
 import type {
   ActionDetailResponse,
@@ -55,29 +38,6 @@ let outsiderCookie: string;
 let aviChat: string;
 let hunorChat: string;
 
-function splitSqlStatements(sql: string): string[] {
-  const statements: string[] = [];
-  let current = '';
-  let inTrigger = false;
-  for (const rawLine of sql.split('\n')) {
-    const line = rawLine.trim();
-    if (line.startsWith('--') || line.length === 0) continue;
-    current += rawLine + '\n';
-    if (/\bBEGIN\b/i.test(line)) inTrigger = true;
-    if (inTrigger) {
-      if (/\bEND;\s*$/i.test(line)) {
-        inTrigger = false;
-        statements.push(current.trim());
-        current = '';
-      }
-    } else if (line.endsWith(';')) {
-      statements.push(current.trim());
-      current = '';
-    }
-  }
-  if (current.trim().length > 0) statements.push(current.trim());
-  return statements;
-}
 
 async function call(
   path: string,
@@ -120,21 +80,7 @@ async function readAll(response: Response, deadlineMs = 3000): Promise<string> {
 }
 
 beforeAll(async () => {
-  for (const sql of [
-    migration0001Sql,
-    migration0002Sql,
-    migration0003Sql,
-    migration0004Sql,
-    migration0005Sql,
-    migration0006Sql,
-    migration0007Sql,
-    migration0008Sql,
-    migration0009Sql,
-  ]) {
-    for (const stmt of splitSqlStatements(sql)) {
-      await env.DB.prepare(stmt).run();
-    }
-  }
+  await applyMigrations(env.DB);
 
   const now = new Date().toISOString();
   for (const [id, fb, email, name] of [
