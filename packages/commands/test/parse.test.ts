@@ -53,6 +53,23 @@ describe('command parsing', () => {
     });
   });
 
+  it('matches the configured bot username case-insensitively and rejects cross-bot traffic', () => {
+    expect(parseCommandText('/model@OtisProdBot', 'telegram', 'otisprodbot')).toEqual({
+      kind: 'command',
+      name: 'model',
+      args: [],
+      addressed: true,
+    });
+    expect(parseCommandText('/model@otherbot', 'telegram', 'otisprodbot')).toEqual({
+      kind: 'text',
+      text: '/model@otherbot',
+    });
+    expect(parseCommandText('/model@thisbot', 'telegram', 'otisprodbot')).toEqual({
+      kind: 'text',
+      text: '/model@thisbot',
+    });
+  });
+
   it('hides telegram-only commands from web', () => {
     expect(parseCommandText('/start abc123', 'web')).toEqual({
       kind: 'unknown_command',

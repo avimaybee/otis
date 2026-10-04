@@ -1,0 +1,8 @@
+{
+  "scope": "actual current stream/activity modules, counted synthetic D1, virtual time, three route setup reads reserved",
+  "queries": 51,
+  "writes": 0,
+  "exceededFreeQueryCeiling": true,
+  "elapsedMs": 21000,
+  "resyncInsteadOfNormalRotation": true
+}

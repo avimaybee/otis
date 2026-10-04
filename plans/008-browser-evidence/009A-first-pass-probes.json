@@ -1,0 +1,27 @@
+{
+  "date": "2026-10-04T07:55:53.233Z",
+  "scope": "Pure current-source helpers, synthetic DB/fetch only, no network or credentials",
+  "reports": [
+    {
+      "case": "HTTP 500 carrying ok:true must not prove delivery",
+      "actual": {
+        "ok": true,
+        "chatId": 777,
+        "messageId": 123
+      },
+      "expected": "unknown"
+    },
+    {
+      "case": "Multiple own bindings must use source sender rather than arbitrary first user binding",
+      "actual": {
+        "botInstallationId": "test-bot",
+        "telegramUserId": "888",
+        "telegramChatId": "777"
+      },
+      "expected": {
+        "telegramUserId": "777",
+        "telegramChatId": "777"
+      }
+    }
+  ]
+}

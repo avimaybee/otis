@@ -28,10 +28,17 @@ import {
 import { handleListCommands, handleListModels, handleExecuteCommand } from './routes/commands.js';
 import { handleTelegramWebhook } from './routes/inbound.js';
 import {
+  handleDeleteTelegramConnection,
+  handleGetTelegramConnection,
+  handleIssueTelegramLink,
+} from './routes/telegram.js';
+import { deliverTelegramOutbox, scanTelegramDue, type TelegramSendFetch } from './inbox/telegramDelivery.js';
+import {
   dispatchWorkspace,
   EchoHandler,
   listWorkspacesNeedingRecovery,
   recoverWorkspace,
+  type DispatchResult,
   type TurnHandler,
 } from './actor/dispatch.js';
 import { AgentHandler } from './agent/handler.js';
@@ -76,12 +83,97 @@ export interface Env {
   TEST_JWKS?: string;
   TELEGRAM_WEBHOOK_SECRET?: string;
   TELEGRAM_BOT_INSTALLATION_ID?: string;
+  /** Server bot token for Telegram Bot API calls. Secret: never in vars files, logs, or output. */
+  TELEGRAM_BOT_TOKEN?: string;
+  /** Public bot username without @, used for command addressing and deep links. */
+  TELEGRAM_BOT_USERNAME?: string;
   DISPATCH_QUEUE?: Queue;
   AGENT_MAX_DAILY_ACTIONS?: string;
   AGENT_MAX_ROUNDS_PER_RUN?: string;
+  /**
+   * Synthetic Telegram transport for tests only. Production leaves this
+   * unset so the bounded adapter uses the global fetch; tests inject a fake
+   * to exercise entrypoint wiring without any real network call.
+   */
+  TELEGRAM_SEND_TRANSPORT?: TelegramSendFetch;
+  /**
+   * Scripted turn handler for tests only. Production leaves this unset and
+   * the agent/echo selection below decides; tests use it to drive
+   * checkpoint/contention slices through the real queue entrypoint.
+   */
+  DISPATCH_TEST_HANDLER?: TurnHandler;
+}
+
+/**
+ * Bounded dispatch continuation on the existing queue: a checkpoint slice or
+ * a full budget means more durable agent work is queued, so the next slice is
+ * woken without waiting for the five-minute cron. Genuine contention or lease
+ * loss backs off with a longer bounded delay instead of spinning; terminal
+ * slices and waiting_for_input schedule nothing.
+ */
+async function scheduleDispatchContinuation(
+  env: Env,
+  workspaceId: string,
+  results: DispatchResult[],
+  budget: number,
+): Promise<void> {
+  if (!env.DISPATCH_QUEUE) return;
+  const deferred = results.filter((result) => result.status === 'deferred' || result.status === 'contended');
+  const checkpointOrBudget =
+    deferred.some((result) => result.detail === 'checkpoint' || result.detail === 'retry') || results.length >= budget;
+  // Any other deferred shape is contention or a lost/stale lease: back off
+  // with a longer bounded delay instead of spinning an immediate hint.
+  const contention = deferred.some(
+    (result) =>
+      result.status === 'contended' ||
+      result.detail === undefined ||
+      result.detail === 'lease_lost' ||
+      result.detail === 'stale_attempt',
+  );
+  const delaySeconds = checkpointOrBudget ? 1 : contention ? 5 : null;
+  if (delaySeconds === null) return;
+  try {
+    // Awaited so the invocation cannot end before the hint is published.
+    await env.DISPATCH_QUEUE.send({ workspace_id: workspaceId }, { delaySeconds });
+  } catch {
+    // Best-effort hint: the durable work remains and cron is the backstop.
+  }
+}
+
+/**
+ * One bounded delivery pass plus a delayed continuation hint on the existing
+ * dispatch queue: later multipart parts, retry deadlines, per-chat pacing and
+ * batch-limit remainders must not wait for the five-minute cron. Hints are
+ * best-effort; the cron sweep stays the backstop.
+ *
+ * Test runtimes must never dial Telegram: without an injected synthetic
+ * transport the pass is skipped entirely (rows stay durable and pending).
+ */
+async function deliverAndScheduleContinuation(env: Env, workspaceId?: string): Promise<void> {
+  const transport = env.TELEGRAM_SEND_TRANSPORT;
+  if (env.ENVIRONMENT === 'test' && !transport) return;
+  try {
+    const summary = await deliverTelegramOutbox(env.DB, env, {
+      ...(workspaceId ? { workspaceId } : {}),
+      ...(transport ? { fetchFn: transport } : {}),
+    });
+    const delay = summary.continuation_delay_seconds;
+    if (delay !== null && env.DISPATCH_QUEUE) {
+      await env.DISPATCH_QUEUE.send(
+        { kind: 'telegram_delivery', workspace_id: workspaceId ?? '' },
+        { delaySeconds: delay },
+      );
+    }
+  } catch (err) {
+    console.error('Telegram delivery pass failed:', err);
+  }
 }
 
 export async function createWorkerAgentHandler(env: Env): Promise<TurnHandler> {
+  if (env.DISPATCH_TEST_HANDLER) {
+    workerDebug('handler', 'scripted test handler selected', {});
+    return env.DISPATCH_TEST_HANDLER;
+  }
   if (env.USE_ECHO_HANDLER === 'true') {
     workerDebug('handler', 'echo handler selected; no agent inference will run', {});
     return EchoHandler;
@@ -157,11 +249,15 @@ export class WorkspaceActor {
     try {
       if (body.action === 'dispatch') {
         const result = await dispatchWorkspace(this.env.DB, workspaceId, { budget, handler });
+        await deliverAndScheduleContinuation(this.env, workspaceId);
+        await scheduleDispatchContinuation(this.env, workspaceId, result.results, budget);
         return jsonSuccess({ status: 'ok', ...result }, 200);
       }
       if (body.action === 'recover') {
         const recovery = await recoverWorkspace(this.env.DB, workspaceId);
         const result = await dispatchWorkspace(this.env.DB, workspaceId, { budget, handler });
+        await deliverAndScheduleContinuation(this.env, workspaceId);
+        await scheduleDispatchContinuation(this.env, workspaceId, result.results, budget);
         return jsonSuccess({ status: 'ok', recovery, ...result }, 200);
       }
     } catch (err) {
@@ -503,10 +599,32 @@ export default {
         return jsonError(405, 'method_not_allowed', 'Method not allowed.', requestId);
       }
 
-      // 12. Telegram Inbound Webhook route: /api/inbound/telegram
+      // 12. Telegram connection routes (guided linking UX)
+      const telegramLinkMatch = url.pathname.match(/^\/api\/workspaces\/([^/]+)\/telegram\/link$/);
+      if (telegramLinkMatch) {
+        if (request.method === 'POST' && telegramLinkMatch[1]) {
+          return await handleIssueTelegramLink(request, env, telegramLinkMatch[1], requestId);
+        }
+        return jsonError(405, 'method_not_allowed', 'Method not allowed.', requestId);
+      }
+
+      const telegramConnectionMatch = url.pathname.match(
+        /^\/api\/workspaces\/([^/]+)\/telegram\/connection$/,
+      );
+      if (telegramConnectionMatch) {
+        if (request.method === 'GET' && telegramConnectionMatch[1]) {
+          return await handleGetTelegramConnection(request, env, telegramConnectionMatch[1], requestId);
+        }
+        if (request.method === 'DELETE' && telegramConnectionMatch[1]) {
+          return await handleDeleteTelegramConnection(request, env, telegramConnectionMatch[1], requestId);
+        }
+        return jsonError(405, 'method_not_allowed', 'Method not allowed.', requestId);
+      }
+
+      // 12b. Telegram Inbound Webhook route: /api/inbound/telegram
       if (url.pathname === '/api/inbound/telegram') {
         if (request.method === 'POST') {
-          return await handleTelegramWebhook(request, env, requestId);
+          return await handleTelegramWebhook(request, env, requestId, ctx);
         }
         return jsonError(405, 'method_not_allowed', 'Method not allowed.', requestId);
       }
@@ -546,9 +664,25 @@ export default {
       try {
         await recoverWorkspace(env.DB, workspaceId);
         await dispatchWorkspace(env.DB, workspaceId, { budget: 5, handler });
+        await deliverAndScheduleContinuation(env, workspaceId);
       } catch (err) {
         console.error(`scheduled recovery failed for workspace '${workspaceId}':`, err);
       }
+    }
+
+    // Telegram fallback: pending retries and stale sending rows a terminal
+    // run left behind (the run that created them will never deliver again).
+    try {
+      const deliveryWorkspaces = await scanTelegramDue(env.DB);
+      for (const workspaceId of deliveryWorkspaces) {
+        try {
+          await deliverAndScheduleContinuation(env, workspaceId || undefined);
+        } catch (err) {
+          console.error(`scheduled Telegram delivery failed for workspace '${workspaceId}':`, err);
+        }
+      }
+    } catch (err) {
+      console.error('scheduled Telegram delivery scan failed:', err);
     }
 
     try {
@@ -568,6 +702,13 @@ export default {
     const handler = await createWorkerAgentHandler(env);
     for (const message of batch.messages) {
       const workspaceId = message.body?.workspace_id;
+
+      if (message.body?.kind === 'telegram_delivery') {
+        const scopeId = typeof workspaceId === 'string' && workspaceId ? workspaceId : undefined;
+        await deliverAndScheduleContinuation(env, scopeId);
+        continue;
+      }
+
       if (typeof workspaceId !== 'string' || !workspaceId) {
         console.error('Ignoring malformed dispatch wake-up without workspace_id.');
         continue;
@@ -586,7 +727,9 @@ export default {
       }
 
       try {
-        await dispatchWorkspace(env.DB, workspaceId, { budget: 3, handler });
+        const dispatchResult = await dispatchWorkspace(env.DB, workspaceId, { budget: 3, handler });
+        await deliverAndScheduleContinuation(env, workspaceId);
+        await scheduleDispatchContinuation(env, workspaceId, dispatchResult.results, 3);
       } catch (err) {
         console.error(`queue dispatch failed for workspace '${workspaceId}':`, err);
       }

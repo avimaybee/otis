@@ -20,3 +20,4 @@ export interface NormalizedMessage {
 }
 
 export * from './telegram.js';
+export * from './telegramSend.js';

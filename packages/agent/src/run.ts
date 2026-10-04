@@ -58,6 +58,15 @@ export interface DurableAgentProgress {
   finalAnswer?: string | null;
   steeringInputs?: { messageId: string; sourceMessageId: string; text: string; sequence: number }[];
   lastSteeringSequence?: number;
+  /** How many steeringInputs were already sent to the provider in a request. */
+  sentSteeringCount?: number;
+  /**
+   * Source message id of the clarification answer already sent to the
+   * provider. Identity, not text: each distinct clarification answer must be
+   * sent once, and an already-sent answer is never repeated across rounds or
+   * restarts.
+   */
+  sentAnswerMessageId?: string;
   approvedBulkScope?: string[];
   pendingClarification?: {
     question: string;

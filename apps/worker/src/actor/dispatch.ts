@@ -25,6 +25,7 @@ import {
   StepError,
 } from './steps.js';
 import { resumePendingClarification } from '@otis/ledger';
+import { buildTelegramDeliveryInserts } from '../inbox/telegramDelivery.js';
 
 export type ActorErrorCode =
   | 'lease_unavailable'
@@ -410,6 +411,51 @@ async function appendActivity(
 }
 
 /**
+ * Builds the Telegram delivery statements for one run outcome. Returns []
+ * for non-Telegram sources (web runs), disconnected identities, removed
+ * bindings, or unresolvable destinations: buildTelegramDeliveryInserts
+ * resolves the exact source binding and yields nothing when it cannot be
+ * proven. Statements are pushed into the same fenced batch as the outcome
+ * they carry, so a committed reply always has its durable delivery and a
+ * rolled-back one never does.
+ */
+async function telegramDeliveryStatements(
+  db: D1Database,
+  params: {
+    run: LoadedRun;
+    kind: 'final' | 'question' | 'failure';
+    key: string;
+    text: string;
+    clarificationId?: string | null;
+  },
+): Promise<D1PreparedStatement[]> {
+  if (!params.run.source_message_id || !params.text) return [];
+  const source = await db
+    .prepare(`SELECT user_id, channel FROM messages_in WHERE id = ?`)
+    .bind(params.run.source_message_id)
+    .first<{ user_id: string | null; channel: string }>();
+  if (!source || source.channel !== 'telegram' || !source.user_id) return [];
+  return buildTelegramDeliveryInserts(db, {
+    workspaceId: params.run.workspace_id,
+    userId: String(source.user_id),
+    chatId: params.run.chat_id,
+    sourceMessageId: params.run.source_message_id,
+    runId: params.run.id,
+    kind: params.kind,
+    key: params.key,
+    text: params.text,
+    clarificationId: params.clarificationId ?? null,
+  });
+}
+
+/** Concise user-facing failure copy; never stack traces or provider detail. */
+function telegramFailureCopy(runStatus: 'failed' | 'partial'): string {
+  return runStatus === 'partial'
+    ? 'I saved your message, but I could only finish part of that task. Open Otis to see what changed, or reply here to continue.'
+    : 'I saved your message, but I couldn\u2019t finish that task. Reply here and I\u2019ll try again.';
+}
+
+/**
  * Fenced completion: system reply, activity, processed markers, outbox
  * delivery, and lease release commit atomically — or nothing commits.
  */
@@ -501,6 +547,16 @@ export async function completeRun(
       )
       .bind(run.workspace_id, params.attemptId, params.attemptId),
   );
+  if (params.channel === 'telegram') {
+    batch.push(
+      ...(await telegramDeliveryStatements(db, {
+        run,
+        kind: 'final',
+        key: run.id,
+        text: params.replyText,
+      })),
+    );
+  }
 
   try {
     await db.batch(batch);
@@ -615,6 +671,14 @@ async function failRunTerminal(
         .bind(run.workspace_id, params.expectedAttemptId, params.expectedAttemptId),
     );
   }
+  batch.push(
+    ...(await telegramDeliveryStatements(db, {
+      run,
+      kind: 'failure',
+      key: run.id,
+      text: telegramFailureCopy(params.runStatus),
+    })),
+  );
   try {
     await db.batch(batch);
     return true;
@@ -650,11 +714,15 @@ async function waitForInput(
     .bind(run.workspace_id)
     .first<{ business_revision: number }>();
   // Idempotent: a redispatch that reuses a recorded question must not create
-  // a duplicate pending clarification or a duplicate question activity.
-  const alreadyPending = await db
-    .prepare(`SELECT 1 AS ok FROM pending_clarifications WHERE run_id = ? AND status = 'pending'`)
+  // a duplicate pending clarification or a duplicate question activity. The
+  // canonical pending row is resolved in both branches so the question
+  // delivery always targets the actual pending clarification.
+  const existingPending = await db
+    .prepare(`SELECT id FROM pending_clarifications WHERE run_id = ? AND status = 'pending' ORDER BY created_at DESC LIMIT 1`)
     .bind(run.id)
-    .first();
+    .first<{ id: string }>();
+  const alreadyPending = existingPending !== null;
+  const clarificationId = existingPending ? String(existingPending.id) : `clr_${crypto.randomUUID()}`;
 
   const batch: D1PreparedStatement[] = [
     db
@@ -683,7 +751,7 @@ async function waitForInput(
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)`,
         )
         .bind(
-          `clr_${crypto.randomUUID()}`,
+          clarificationId,
           run.workspace_id,
           run.chat_id,
           run.id,
@@ -733,6 +801,18 @@ async function waitForInput(
         .bind(params.nowIso, params.nowIso, params.outboxId, params.attemptId),
     );
   }
+  // The parked question gets its delivery once, in the same parking
+  // transition, targeting the canonical pending clarification. A redispatch
+  // reuses the identical delivery key, so nothing is sent twice.
+  batch.push(
+    ...(await telegramDeliveryStatements(db, {
+      run,
+      kind: 'question',
+      key: clarificationId,
+      text: params.question,
+      clarificationId,
+    })),
+  );
   batch.push(
     db
       .prepare(

@@ -1,9 +1,12 @@
 /** Development-only composition reference. No session, provider, or production data. */
 import { createRoot } from 'react-dom/client';
+import { QueryClientProvider } from '@tanstack/react-query';
+import { RouterProvider, createMemoryHistory } from '@tanstack/react-router';
 import type { Chat, ChatMessage, PublicActivity, AgentRun, RunDetailResponse, ModelOption, ActionDetailResponse, MemberSettings } from '@otis/contracts';
 import { listCommands } from '@otis/commands';
 import { api } from '../api/client.js';
-import { ConversationScreen } from '../ConversationScreen.js';
+import { createAppQueryClient } from '../api/queries.js';
+import { SessionContext, createAppRouter } from '../router.js';
 import '../index.css';
 if (!import.meta.env.DEV) throw new Error('UI review is available only in local development.');
 Object.defineProperty(globalThis, 'EventSource', { value: undefined, configurable: true });
@@ -37,4 +40,19 @@ api.settings = async () => ({ settings: { workspace_id: workspace, default_model
 let preferences: MemberSettings = { workspace_id: workspace, user_id: user, brief_enabled: false, brief_local_time: null, brief_timezone: 'Europe/Bucharest', brief_weekdays: null, brief_channel: 'web', preferred_language: 'en', created_at: timestamp, updated_at: timestamp };
 api.memberSettings = async () => ({ settings: preferences });
 api.updateMemberSettings = async (_ws, body) => { preferences = { ...preferences, ...body }; return { settings: preferences }; };
-createRoot(document.getElementById('root')!).render(<ConversationScreen workspaceId={workspace} workspaces={[{ id: workspace, name: 'Kerning' }, { id: 'ws_other', name: 'Studio archive' }]} userId={user} members={{ [user]: 'Avi', usr_review_hunor: 'Hunor' }} onSignOut={() => { location.href = '/'; }}/>);
+createRoot(document.getElementById('root')!).render(
+  <QueryClientProvider client={createAppQueryClient()}>
+    <SessionContext.Provider
+      value={{
+        userId: user,
+        workspaces: [{ id: workspace, name: 'Kerning' }, { id: 'ws_other', name: 'Studio archive' }],
+        members: { [user]: 'Avi', usr_review_hunor: 'Hunor' },
+        onSignOut: () => { location.href = '/'; },
+      }}
+    >
+      <RouterProvider
+        router={createAppRouter({ history: createMemoryHistory({ initialEntries: [`${location.pathname}${location.search}`] }) })}
+      />
+    </SessionContext.Provider>
+  </QueryClientProvider>,
+);

@@ -1,0 +1,578 @@
+{
+  "capturedAt": "2026-10-04T09:37:16.192Z",
+  "scope": "Synthetic production-component Storybook, native Chrome CDP, no external bot navigation",
+  "results": [
+    {
+      "story": "disconnected",
+      "text": "Telegram\n\nMessage Otis from Telegram. Your messages are saved in Kerning.\n\nConnect Telegram",
+      "width": 390,
+      "scrollWidth": 390,
+      "buttons": [
+        {
+          "text": "Set string",
+          "label": null,
+          "color": "rgba(0, 0, 0, 0)",
+          "height": 0
+        },
+        {
+          "text": "Set string",
+          "label": null,
+          "color": "rgba(0, 0, 0, 0)",
+          "height": 0
+        },
+        {
+          "text": "Set string",
+          "label": null,
+          "color": "rgba(0, 0, 0, 0)",
+          "height": 0
+        },
+        {
+          "text": "Decorators documentation",
+          "label": null,
+          "color": "rgb(0, 0, 0)",
+          "height": 0
+        },
+        {
+          "text": "Webpack",
+          "label": null,
+          "color": "rgb(0, 0, 0)",
+          "height": 0
+        },
+        {
+          "text": "Vite",
+          "label": null,
+          "color": "rgb(0, 0, 0)",
+          "height": 0
+        },
+        {
+          "text": "Environment Variables documentation",
+          "label": null,
+          "color": "rgb(0, 0, 0)",
+          "height": 0
+        },
+        {
+          "text": "Connect Telegram",
+          "label": null,
+          "color": "rgb(24, 24, 24)",
+          "height": 44
+        }
+      ]
+    },
+    {
+      "story": "ready",
+      "text": "Telegram\n\nOpen Telegram, then tap Start to connect your account.\n\nOpen Telegram\nI’ve tapped Start\n\nThis link expires in 10 minutes.",
+      "width": 390,
+      "scrollWidth": 390,
+      "buttons": [
+        {
+          "text": "Set string",
+          "label": null,
+          "color": "rgba(0, 0, 0, 0)",
+          "height": 0
+        },
+        {
+          "text": "Set string",
+          "label": null,
+          "color": "rgba(0, 0, 0, 0)",
+          "height": 0
+        },
+        {
+          "text": "Set string",
+          "label": null,
+          "color": "rgba(0, 0, 0, 0)",
+          "height": 0
+        },
+        {
+          "text": "Decorators documentation",
+          "label": null,
+          "color": "rgb(0, 0, 0)",
+          "height": 0
+        },
+        {
+          "text": "Webpack",
+          "label": null,
+          "color": "rgb(0, 0, 0)",
+          "height": 0
+        },
+        {
+          "text": "Vite",
+          "label": null,
+          "color": "rgb(0, 0, 0)",
+          "height": 0
+        },
+        {
+          "text": "Environment Variables documentation",
+          "label": null,
+          "color": "rgb(0, 0, 0)",
+          "height": 0
+        },
+        {
+          "text": "Open Telegram",
+          "label": null,
+          "color": "rgb(243, 243, 243)",
+          "height": 44
+        },
+        {
+          "text": "I’ve tapped Start",
+          "label": null,
+          "color": "rgb(243, 243, 243)",
+          "height": 44
+        }
+      ]
+    },
+    {
+      "story": "connected",
+      "text": "Telegram\n\nConnected to Telegram.\n\nMessages go to Kerning.\n\nDisconnect",
+      "width": 390,
+      "scrollWidth": 390,
+      "buttons": [
+        {
+          "text": "Set string",
+          "label": null,
+          "color": "rgba(0, 0, 0, 0)",
+          "height": 0
+        },
+        {
+          "text": "Set string",
+          "label": null,
+          "color": "rgba(0, 0, 0, 0)",
+          "height": 0
+        },
+        {
+          "text": "Set string",
+          "label": null,
+          "color": "rgba(0, 0, 0, 0)",
+          "height": 0
+        },
+        {
+          "text": "Decorators documentation",
+          "label": null,
+          "color": "rgb(0, 0, 0)",
+          "height": 0
+        },
+        {
+          "text": "Webpack",
+          "label": null,
+          "color": "rgb(0, 0, 0)",
+          "height": 0
+        },
+        {
+          "text": "Vite",
+          "label": null,
+          "color": "rgb(0, 0, 0)",
+          "height": 0
+        },
+        {
+          "text": "Environment Variables documentation",
+          "label": null,
+          "color": "rgb(0, 0, 0)",
+          "height": 0
+        },
+        {
+          "text": "Disconnect",
+          "label": null,
+          "color": "rgb(243, 243, 243)",
+          "height": 44
+        }
+      ]
+    },
+    {
+      "story": "expired",
+      "text": "Telegram\n\nThis link expired. Get a new link to continue.\n\nGet a new link",
+      "width": 390,
+      "scrollWidth": 390,
+      "buttons": [
+        {
+          "text": "Set string",
+          "label": null,
+          "color": "rgba(0, 0, 0, 0)",
+          "height": 0
+        },
+        {
+          "text": "Set string",
+          "label": null,
+          "color": "rgba(0, 0, 0, 0)",
+          "height": 0
+        },
+        {
+          "text": "Set string",
+          "label": null,
+          "color": "rgba(0, 0, 0, 0)",
+          "height": 0
+        },
+        {
+          "text": "Decorators documentation",
+          "label": null,
+          "color": "rgb(0, 0, 0)",
+          "height": 0
+        },
+        {
+          "text": "Webpack",
+          "label": null,
+          "color": "rgb(0, 0, 0)",
+          "height": 0
+        },
+        {
+          "text": "Vite",
+          "label": null,
+          "color": "rgb(0, 0, 0)",
+          "height": 0
+        },
+        {
+          "text": "Environment Variables documentation",
+          "label": null,
+          "color": "rgb(0, 0, 0)",
+          "height": 0
+        },
+        {
+          "text": "Get a new link",
+          "label": null,
+          "color": "rgb(24, 24, 24)",
+          "height": 44
+        }
+      ]
+    },
+    {
+      "story": "routing-needed",
+      "text": "Telegram\n\nConnected to Telegram.\n\nChoose where Telegram messages go: send /workspace to the bot.\n\nDisconnect",
+      "width": 390,
+      "scrollWidth": 390,
+      "buttons": [
+        {
+          "text": "Set string",
+          "label": null,
+          "color": "rgba(0, 0, 0, 0)",
+          "height": 0
+        },
+        {
+          "text": "Set string",
+          "label": null,
+          "color": "rgba(0, 0, 0, 0)",
+          "height": 0
+        },
+        {
+          "text": "Set string",
+          "label": null,
+          "color": "rgba(0, 0, 0, 0)",
+          "height": 0
+        },
+        {
+          "text": "Decorators documentation",
+          "label": null,
+          "color": "rgb(0, 0, 0)",
+          "height": 0
+        },
+        {
+          "text": "Webpack",
+          "label": null,
+          "color": "rgb(0, 0, 0)",
+          "height": 0
+        },
+        {
+          "text": "Vite",
+          "label": null,
+          "color": "rgb(0, 0, 0)",
+          "height": 0
+        },
+        {
+          "text": "Environment Variables documentation",
+          "label": null,
+          "color": "rgb(0, 0, 0)",
+          "height": 0
+        },
+        {
+          "text": "Disconnect",
+          "label": null,
+          "color": "rgb(243, 243, 243)",
+          "height": 44
+        }
+      ]
+    },
+    {
+      "story": "disconnected",
+      "text": "Telegram\n\nMessage Otis from Telegram. Your messages are saved in Kerning.\n\nConnect Telegram",
+      "width": 1280,
+      "scrollWidth": 1280,
+      "buttons": [
+        {
+          "text": "Set string",
+          "label": null,
+          "color": "rgba(0, 0, 0, 0)",
+          "height": 0
+        },
+        {
+          "text": "Set string",
+          "label": null,
+          "color": "rgba(0, 0, 0, 0)",
+          "height": 0
+        },
+        {
+          "text": "Set string",
+          "label": null,
+          "color": "rgba(0, 0, 0, 0)",
+          "height": 0
+        },
+        {
+          "text": "Decorators documentation",
+          "label": null,
+          "color": "rgb(0, 0, 0)",
+          "height": 0
+        },
+        {
+          "text": "Webpack",
+          "label": null,
+          "color": "rgb(0, 0, 0)",
+          "height": 0
+        },
+        {
+          "text": "Vite",
+          "label": null,
+          "color": "rgb(0, 0, 0)",
+          "height": 0
+        },
+        {
+          "text": "Environment Variables documentation",
+          "label": null,
+          "color": "rgb(0, 0, 0)",
+          "height": 0
+        },
+        {
+          "text": "Connect Telegram",
+          "label": null,
+          "color": "rgb(24, 24, 24)",
+          "height": 44
+        }
+      ]
+    },
+    {
+      "story": "ready",
+      "text": "Telegram\n\nOpen Telegram, then tap Start to connect your account.\n\nOpen Telegram\nI’ve tapped Start\n\nThis link expires in 10 minutes.",
+      "width": 1280,
+      "scrollWidth": 1280,
+      "buttons": [
+        {
+          "text": "Set string",
+          "label": null,
+          "color": "rgba(0, 0, 0, 0)",
+          "height": 0
+        },
+        {
+          "text": "Set string",
+          "label": null,
+          "color": "rgba(0, 0, 0, 0)",
+          "height": 0
+        },
+        {
+          "text": "Set string",
+          "label": null,
+          "color": "rgba(0, 0, 0, 0)",
+          "height": 0
+        },
+        {
+          "text": "Decorators documentation",
+          "label": null,
+          "color": "rgb(0, 0, 0)",
+          "height": 0
+        },
+        {
+          "text": "Webpack",
+          "label": null,
+          "color": "rgb(0, 0, 0)",
+          "height": 0
+        },
+        {
+          "text": "Vite",
+          "label": null,
+          "color": "rgb(0, 0, 0)",
+          "height": 0
+        },
+        {
+          "text": "Environment Variables documentation",
+          "label": null,
+          "color": "rgb(0, 0, 0)",
+          "height": 0
+        },
+        {
+          "text": "Open Telegram",
+          "label": null,
+          "color": "rgb(243, 243, 243)",
+          "height": 44
+        },
+        {
+          "text": "I’ve tapped Start",
+          "label": null,
+          "color": "rgb(243, 243, 243)",
+          "height": 44
+        }
+      ]
+    },
+    {
+      "story": "connected",
+      "text": "Telegram\n\nConnected to Telegram.\n\nMessages go to Kerning.\n\nDisconnect",
+      "width": 1280,
+      "scrollWidth": 1280,
+      "buttons": [
+        {
+          "text": "Set string",
+          "label": null,
+          "color": "rgba(0, 0, 0, 0)",
+          "height": 0
+        },
+        {
+          "text": "Set string",
+          "label": null,
+          "color": "rgba(0, 0, 0, 0)",
+          "height": 0
+        },
+        {
+          "text": "Set string",
+          "label": null,
+          "color": "rgba(0, 0, 0, 0)",
+          "height": 0
+        },
+        {
+          "text": "Decorators documentation",
+          "label": null,
+          "color": "rgb(0, 0, 0)",
+          "height": 0
+        },
+        {
+          "text": "Webpack",
+          "label": null,
+          "color": "rgb(0, 0, 0)",
+          "height": 0
+        },
+        {
+          "text": "Vite",
+          "label": null,
+          "color": "rgb(0, 0, 0)",
+          "height": 0
+        },
+        {
+          "text": "Environment Variables documentation",
+          "label": null,
+          "color": "rgb(0, 0, 0)",
+          "height": 0
+        },
+        {
+          "text": "Disconnect",
+          "label": null,
+          "color": "rgb(243, 243, 243)",
+          "height": 44
+        }
+      ]
+    },
+    {
+      "story": "expired",
+      "text": "Telegram\n\nThis link expired. Get a new link to continue.\n\nGet a new link",
+      "width": 1280,
+      "scrollWidth": 1280,
+      "buttons": [
+        {
+          "text": "Set string",
+          "label": null,
+          "color": "rgba(0, 0, 0, 0)",
+          "height": 0
+        },
+        {
+          "text": "Set string",
+          "label": null,
+          "color": "rgba(0, 0, 0, 0)",
+          "height": 0
+        },
+        {
+          "text": "Set string",
+          "label": null,
+          "color": "rgba(0, 0, 0, 0)",
+          "height": 0
+        },
+        {
+          "text": "Decorators documentation",
+          "label": null,
+          "color": "rgb(0, 0, 0)",
+          "height": 0
+        },
+        {
+          "text": "Webpack",
+          "label": null,
+          "color": "rgb(0, 0, 0)",
+          "height": 0
+        },
+        {
+          "text": "Vite",
+          "label": null,
+          "color": "rgb(0, 0, 0)",
+          "height": 0
+        },
+        {
+          "text": "Environment Variables documentation",
+          "label": null,
+          "color": "rgb(0, 0, 0)",
+          "height": 0
+        },
+        {
+          "text": "Get a new link",
+          "label": null,
+          "color": "rgb(24, 24, 24)",
+          "height": 44
+        }
+      ]
+    },
+    {
+      "story": "routing-needed",
+      "text": "Telegram\n\nConnected to Telegram.\n\nChoose where Telegram messages go: send /workspace to the bot.\n\nDisconnect",
+      "width": 1280,
+      "scrollWidth": 1280,
+      "buttons": [
+        {
+          "text": "Set string",
+          "label": null,
+          "color": "rgba(0, 0, 0, 0)",
+          "height": 0
+        },
+        {
+          "text": "Set string",
+          "label": null,
+          "color": "rgba(0, 0, 0, 0)",
+          "height": 0
+        },
+        {
+          "text": "Set string",
+          "label": null,
+          "color": "rgba(0, 0, 0, 0)",
+          "height": 0
+        },
+        {
+          "text": "Decorators documentation",
+          "label": null,
+          "color": "rgb(0, 0, 0)",
+          "height": 0
+        },
+        {
+          "text": "Webpack",
+          "label": null,
+          "color": "rgb(0, 0, 0)",
+          "height": 0
+        },
+        {
+          "text": "Vite",
+          "label": null,
+          "color": "rgb(0, 0, 0)",
+          "height": 0
+        },
+        {
+          "text": "Environment Variables documentation",
+          "label": null,
+          "color": "rgb(0, 0, 0)",
+          "height": 0
+        },
+        {
+          "text": "Disconnect",
+          "label": null,
+          "color": "rgb(243, 243, 243)",
+          "height": 44
+        }
+      ]
+    }
+  ]
+}

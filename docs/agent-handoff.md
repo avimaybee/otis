@@ -7,7 +7,8 @@ Use this when assigning a gate to any coding agent. Keep the request concrete an
 ```text
 Implement gate <gate> from roadmap.md and plan <file>.
 Read AGENTS.md, product.md, architecture.md and docs/contracts.md sections relevant to this gate.
-For UI/copy work also read design.md; for verification read docs/verification.md.
+For UI/copy work read design-tokens.md, design.md and plans/008-ui-implementation-handoff.md;
+open docs/design/approved-reference.png and implement its approved production-scale recipes; for verification read docs/verification.md.
 Inspect git status/history and the actual code before assuming the plan's current-state notes still apply.
 Preserve unrelated work. Build only the assigned gate and its named prerequisites.
 Resolve routine implementation details yourself. Ask only when a material product/security/data decision is missing.
@@ -28,9 +29,9 @@ Add explicit deployment/push/PR authorization only when intended. These template
 | 005 providers | Architecture 9/11/13; provider evidence matrix and exact current provider docs |
 | 006 agent/memory | Product autonomy; architecture 7–11; memory implementation contract |
 | 007 API/commands | Contracts routes/activity/commands; architecture membership/reconnect |
-| 008 UI | Entire design.md and browser review procedure |
+| 008 UI | Entire design-tokens.md and design.md; approved reference; detailed 008 UI handoff; browser review procedure |
 | 009 Telegram | Shared command contract, linking/outbox behavior, official current Bot API |
-| 010 voice | Design voice states, architecture quarantine/private files, verified capability matrix |
+| 010 voice | Token recipes; design voice states; 010 voice UX supplement; shared IndexedDB contract; verified capability matrix |
 | 011 schedules | Chosen-time opt-in policy, date union, ranking/delivery contract |
 | 012 drafts/export | Explicit sent confirmation, ledger snapshots, authenticated private download |
 | 013 release | All open evidence and operations requirements |
@@ -51,6 +52,7 @@ Behavior now implemented:
 Files/contracts/migrations changed:
 Targeted verification: command, result, test count or evidence path
 Root checks: typecheck / lint / test / build, with actual results
+UI checks: executed design checker / Storybook build / covered fixture IDs / token section 12 comparison
 Browser/device/provider/staging checks: observed evidence or explicitly unverified
 Known limitations and exact user impact:
 Product choices made: routine decisions versus unresolved material decisions
@@ -58,6 +60,14 @@ Next eligible gate:
 ```
 
 Do not describe a stub as an implemented service. 'D1 binding exists' is not 'ledger works'; 'received audio bytes' is not 'transcription supported'; 'JSON downloaded' is not 'UI visually verified'; 'tool proposed' is not 'action saved'.
+
+## UI assignments must be bounded
+
+Assign one checkpoint from plans/008-ui-implementation-handoff.md. State its concrete outcome and tests. The token file is the visual authority; do not ask an agent to make it look more polished or more like shadcn. Shadcn supplies primitives; Otis recipes govern them.
+
+Require immediate optimistic echo, truthfully reconciled state and the actual interactions relevant to that checkpoint. A screenshot of the happy path is insufficient. A test called end-to-end is not real-browser proof when it mounts components in simulated DOM. Ask for a per-fixture observed result and exact evidence, not an all-good summary.
+
+Source current-state notes expire when the source changes. Inspect implementation; preserve existing durable acceptance/authorization/receipt boundaries. One query/route/scroll owner replaces the old one rather than layering another implementation over it.
 
 ## Review instructions
 

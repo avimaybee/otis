@@ -98,6 +98,78 @@ export async function createChat(
 }
 
 /**
+ * Resolves the effective model key and thinking snapshot for a chat exactly
+ * as web acceptance does, so Telegram runs pin the same values and a later
+ * /model or /thinking cannot change an already accepted run. Pure reads.
+ */
+export async function resolveThinkingSnapshot(
+  db: D1Database,
+  params: {
+    workspaceId: string;
+    chatId: string;
+    command?: {
+      modelOverride?: string | null;
+      thinkingOverride?: { model_key: string; choice_id: string } | null;
+    };
+  },
+): Promise<{ effectiveModelKey: string; thinkingSnapshotJson: string }> {
+  const chatRow = await db
+    .prepare(
+      `SELECT c.model_override, s.default_model, c.thinking_override_json
+       FROM chats c
+       LEFT JOIN workspace_settings s ON s.workspace_id = c.workspace_id
+       WHERE c.id = ? AND c.workspace_id = ?`
+    )
+    .bind(params.chatId, params.workspaceId)
+    .first<{
+      model_override: string | null;
+      default_model: string | null;
+      thinking_override_json: string | null;
+    }>();
+
+  let effectiveModelKey = chatRow?.model_override ?? chatRow?.default_model ?? '';
+  if (params.command && 'modelOverride' in params.command) {
+    effectiveModelKey = params.command.modelOverride ?? chatRow?.default_model ?? '';
+  }
+
+  let effectiveThinkingOverride: { model_key: string; choice_id: string } | null = null;
+  if (params.command && 'thinkingOverride' in params.command) {
+    effectiveThinkingOverride = params.command.thinkingOverride ?? null;
+  } else if (chatRow?.thinking_override_json) {
+    try {
+      const parsed = JSON.parse(chatRow.thinking_override_json);
+      if (parsed.model_key === effectiveModelKey) {
+        effectiveThinkingOverride = parsed;
+      }
+    } catch {
+      effectiveThinkingOverride = null;
+    }
+  }
+
+  const entry = PRODUCTION_REGISTRY.entries.find((e) => e.commandKey === effectiveModelKey);
+  const choice = entry?.thinking?.choices.find((c) => c.id === effectiveThinkingOverride?.choice_id);
+  const thinkingSnapshot = (entry && choice)
+    ? {
+        version: 1,
+        model_key: entry.commandKey,
+        endpoint_family: entry.endpointFamily,
+        choice_id: choice.id,
+        choice_label: choice.label,
+        request: choice.request,
+        evidence_ref: choice.evidenceRef ?? null,
+      }
+    : {
+        version: 1,
+        model_key: effectiveModelKey,
+        endpoint_family: entry?.endpointFamily ?? 'gemini-interactions',
+        choice_id: 'default',
+        choice_label: 'Provider default',
+        request: { kind: 'provider_default' },
+      };
+  return { effectiveModelKey, thinkingSnapshotJson: JSON.stringify(thinkingSnapshot) };
+}
+
+/**
  * Gets a chat by ID within a specific workspace.
  */
 export async function getChat(
@@ -428,60 +500,11 @@ export async function acceptWebMessage(
   const outboxId = `out_${crypto.randomUUID()}`;
   const activityId = `act_${crypto.randomUUID()}`;
 
-  const chatRow = await db
-    .prepare(
-      `SELECT c.model_override, s.default_model, c.thinking_override_json
-       FROM chats c
-       LEFT JOIN workspace_settings s ON s.workspace_id = c.workspace_id
-       WHERE c.id = ? AND c.workspace_id = ?`
-    )
-    .bind(params.chatId, params.workspaceId)
-    .first<{
-      model_override: string | null;
-      default_model: string | null;
-      thinking_override_json: string | null;
-    }>();
-
-  let effectiveModelKey = chatRow?.model_override ?? chatRow?.default_model ?? '';
-  if (params.command && 'modelOverride' in params.command) {
-    effectiveModelKey = params.command.modelOverride ?? chatRow?.default_model ?? '';
-  }
-
-  let effectiveThinkingOverride: { model_key: string; choice_id: string } | null = null;
-  if (params.command && 'thinkingOverride' in params.command) {
-    effectiveThinkingOverride = params.command.thinkingOverride ?? null;
-  } else if (chatRow?.thinking_override_json) {
-    try {
-      const parsed = JSON.parse(chatRow.thinking_override_json);
-      if (parsed.model_key === effectiveModelKey) {
-        effectiveThinkingOverride = parsed;
-      }
-    } catch {
-      effectiveThinkingOverride = null;
-    }
-  }
-
-  const entry = PRODUCTION_REGISTRY.entries.find((e) => e.commandKey === effectiveModelKey);
-  const choice = entry?.thinking?.choices.find((c) => c.id === effectiveThinkingOverride?.choice_id);
-  const thinkingSnapshot = (entry && choice)
-    ? {
-        version: 1,
-        model_key: entry.commandKey,
-        endpoint_family: entry.endpointFamily,
-        choice_id: choice.id,
-        choice_label: choice.label,
-        request: choice.request,
-        evidence_ref: choice.evidenceRef ?? null,
-      }
-    : {
-        version: 1,
-        model_key: effectiveModelKey,
-        endpoint_family: entry?.endpointFamily ?? 'gemini-interactions',
-        choice_id: 'default',
-        choice_label: 'Provider default',
-        request: { kind: 'provider_default' },
-      };
-  const thinkingSnapshotJson = JSON.stringify(thinkingSnapshot);
+  const { thinkingSnapshotJson } = await resolveThinkingSnapshot(db, {
+    workspaceId: params.workspaceId,
+    chatId: params.chatId,
+    ...(params.command ? { command: params.command } : {}),
+  });
 
   // Single D1 Batch:
   // Step 0: Transaction Guard (aborts batch if caller is no longer active member or not chat author)

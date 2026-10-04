@@ -105,6 +105,14 @@ export interface TurnInput {
   requestId: string;
   /** Complete message history in order; adapters map roles per endpoint. */
   messages: ProviderMessage[];
+  /**
+   * Messages that are genuinely new since a linked server continuation was
+   * created (steering context, clarification answers). Adapters that support
+   * stateful continuations send these as new input alongside the pending
+   * tool results; stored history is never replayed on the linked request.
+   * Ignored for stateless/initial requests.
+   */
+  continuationInput?: ProviderMessage[];
   /** Results for a previous handoff; empty on a fresh turn. */
   pendingToolResults: ToolResultBlock[];
   previousContinuation?: ServerContinuation | null;
@@ -171,7 +179,16 @@ export type ProviderEvent =
   | { type: 'tool_call_start'; callId: string; name: string }
   | { type: 'tool_call_arguments'; callId: string; argumentsChunk: string }
   | { type: 'tool_call_end'; callId: string; name: string; args: unknown }
-  | { type: 'provider_thought_summary'; text: string }
+  | {
+      type: 'provider_thought_summary';
+      text: string;
+      /** Step-scoped identity within one stream (`s{index}`); handler groups by run/round/block. */
+      blockId: string;
+      /** The documented wire channel: incremental thought-summary text. */
+      contentKind: 'summary';
+      /** `snapshot` replaces the block (step.start summary); `append` extends it (deltas). */
+      mode: 'snapshot' | 'append';
+    }
   | { type: 'usage'; usage: ProviderUsage }
   | {
       type: 'finish';

@@ -1,5 +1,7 @@
 # First deploy + dogfood runbook: Otis on real data
 
+**Historical runbook — do not execute its old state assumptions.** The reviewer-authored [2026-10-04 release preflight](2026-10-04-release-preflight.md) supersedes the instructions below. Current local changes include migrations 0010/0011 and a locally accepted Telegram text slice; remote schema/configuration and deployed browser acceptance require fresh evidence. The old migration counts, test counts, deployment date and unbuilt-feature list below are historical, not current release guidance.
+
 Status: TODO. Goal: a usable deployment Avi and Hunor can test with real
 Kerning outreach data. This is operations, not a product gate: it changes no
 product scope and re-verifies already-accepted behavior on real bindings.

@@ -36,7 +36,7 @@ import { handleCreateMessage } from '../src/routes/chats.js';
 import { publishDispatchHint } from '../src/dispatchHint.js';
 import { executeLedgerCommand, getWorkspaceRevision, handleCreateEntity, handleCreateTask } from '@otis/ledger';
 import { PRODUCTION_REGISTRY } from '@otis/agent';
-import { sha256 } from '@otis/identity';
+import { sha256, verifySession } from '@otis/identity';
 
 const CSRF = {
   origin: 'http://localhost',
@@ -475,6 +475,51 @@ describe('Chat API: transcript, activity and run status', () => {
     expect(body).toContain('event: membership_revoked');
   });
 
+  it('activity stream never writes to sessions.last_seen_at during polling (D1 write limit regression)', async () => {
+    const before = await env.DB.prepare(`SELECT last_seen_at FROM sessions WHERE id = 'sess_api_avi'`).first<{ last_seen_at: string }>();
+    expect(before?.last_seen_at).toBeDefined();
+
+    const response = createActivityStream(env.DB, {
+      workspaceId: WS,
+      chatId: aviChat,
+      afterCursor: 0,
+      sessionToken: 'api_token_avi',
+      userId: AVI,
+      pollIntervalMs: 5,
+      maxStreamMs: 50,
+      heartbeatMs: 20,
+    });
+    await readAll(response);
+
+    const after = await env.DB.prepare(`SELECT last_seen_at FROM sessions WHERE id = 'sess_api_avi'`).first<{ last_seen_at: string }>();
+    expect(after?.last_seen_at).toBe(before?.last_seen_at);
+  });
+
+  it('verifySession never writes: touches eliminated, verification is a pure read', async () => {
+    const testToken = 'api_token_no_touch_test';
+    const tokenHash = await sha256(testToken);
+    const initialLastSeen = '2026-01-01T00:00:00.000Z';
+    await env.DB.prepare(
+      `INSERT INTO sessions (id, token_hash, user_id, created_at, expires_at, revoked_at, last_seen_at)
+       VALUES ('sess_no_touch_test', ?, ?, ?, ?, NULL, ?)`,
+    )
+      .bind(tokenHash, AVI, initialLastSeen, new Date(Date.now() + 3600 * 1000).toISOString(), initialLastSeen)
+      .run();
+
+    // Repeated verification — including back-to-back — never updates
+    // last_seen_at: read paths (GET scope, SSE connect/poll/reconnect) cost
+    // zero D1 writes. last_seen_at has no readers, so touches were removed
+    // rather than debounced.
+    for (let i = 0; i < 3; i += 1) {
+      const verified = await verifySession(env.DB, testToken);
+      expect(verified).not.toBeNull();
+      expect(verified!.user.id).toBe(AVI);
+    }
+    await new Promise((r) => setTimeout(r, 10));
+    const after = await env.DB.prepare(`SELECT last_seen_at FROM sessions WHERE id = 'sess_no_touch_test'`).first<{ last_seen_at: string }>();
+    expect(after?.last_seen_at).toBe(initialLastSeen);
+  });
+
   it('answers a control clarification and commits exactly the saved operation', async () => {
     const chatId = (await createChat(env.DB, { workspaceId: WS, authorUserId: AVI, title: 'Task chat' })).id;
     const accepted = await acceptWebMessage(env.DB, {
@@ -745,16 +790,21 @@ describe('Chat API: action detail and undo', () => {
       throw new Error(`undo body: ${JSON.stringify(first)}`);
     }
 
-    const retry = await callJson<UndoCommitResponse>(
-      `/api/workspaces/${WS}/actions/${actionId}/undo`,
-      {
-        method: 'POST',
-        cookie: aviCookie,
-        headers: CSRF,
-        body: JSON.stringify({ mode: 'single', client_operation_id: 'undo-op-retry', expected_revision: (await getWorkspaceRevision(env.DB, WS))!.business_revision }),
-      },
-    );
-    expect(retry.status).toBe('already_applied');
+    const retryRes = await call(`/api/workspaces/${WS}/actions/${actionId}/undo`, {
+      method: 'POST',
+      cookie: aviCookie,
+      headers: CSRF,
+      body: JSON.stringify({ mode: 'single', client_operation_id: 'undo-op-retry', expected_revision: (await getWorkspaceRevision(env.DB, WS))!.business_revision }),
+    });
+    const retryText = await retryRes.text();
+    const retry = JSON.parse(retryText) as UndoCommitResponse;
+    if (retry.status !== 'already_applied') {
+      // Bounded diagnostic retention for the intermittent root-only failure:
+      // keep the exact synthetic HTTP status and error code, never just an
+      // undefined status from a 4xx error body.
+      const errorCode = (JSON.parse(retryText) as { error?: { code?: string } }).error?.code ?? 'none';
+      throw new Error(`undo retry HTTP ${retryRes.status} code ${errorCode} body ${retryText.slice(0, 300)}`);
+    }
     expect(retry.revert_event_ids).toEqual(first.revert_event_ids);
 
     const revertCount = await env.DB.prepare(
@@ -764,6 +814,67 @@ describe('Chat API: action detail and undo', () => {
       .first<{ n: number }>();
     // Exactly two undo commits happened in this workspace: Bistro and Cafe Latte.
     expect(Number(revertCount?.n)).toBe(2);
+  });
+
+  it('replays an omitted-chat undo in its recorded chat even when another own chat is more recent', async () => {
+    const actionId = await commitEntity('Implicit Chat Cafe', aviChat);
+    // The first undo omits chat_id and resolves the most recent own chat.
+    const settled = new Date().toISOString();
+    await env.DB.prepare(`UPDATE chats SET last_activity_at = ?, updated_at = ? WHERE id = ?`).bind(settled, settled, aviChat).run();
+    const firstRes = await call(`/api/workspaces/${WS}/actions/${actionId}/undo`, {
+      method: 'POST',
+      cookie: aviCookie,
+      headers: CSRF,
+      body: JSON.stringify({
+        mode: 'single',
+        client_operation_id: 'undo-op-implicit-chat',
+        expected_revision: (await getWorkspaceRevision(env.DB, WS))!.business_revision,
+      }),
+    });
+    const firstText = await firstRes.text();
+    const first = JSON.parse(firstText) as UndoCommitResponse;
+    if (first.status !== 'applied') {
+      throw new Error(`undo first HTTP ${firstRes.status} body ${firstText.slice(0, 300)}`);
+    }
+    expect(first.revert_event_ids.length).toBeGreaterThan(0);
+
+    // Another own chat becomes strictly more recent after the first undo.
+    const other = await createChat(env.DB, { workspaceId: WS, authorUserId: AVI, title: 'More recent chat' });
+    const future = new Date(Date.now() + 60_000).toISOString();
+    await env.DB.prepare(`UPDATE chats SET last_activity_at = ?, updated_at = ? WHERE id = ?`).bind(future, future, other.id).run();
+
+    // The exact same retry must replay the recorded receipt in the recorded
+    // chat — never resolve the newer chat, 409, or revert a second time.
+    const retryRes = await call(`/api/workspaces/${WS}/actions/${actionId}/undo`, {
+      method: 'POST',
+      cookie: aviCookie,
+      headers: CSRF,
+      body: JSON.stringify({
+        mode: 'single',
+        client_operation_id: 'undo-op-implicit-chat',
+        expected_revision: (await getWorkspaceRevision(env.DB, WS))!.business_revision,
+      }),
+    });
+    const retryText = await retryRes.text();
+    const retry = JSON.parse(retryText) as UndoCommitResponse;
+    if (retry.status !== 'already_applied') {
+      // Bounded synthetic HTTP status and error code for this exact retry.
+      const errorCode = (JSON.parse(retryText) as { error?: { code?: string } }).error?.code ?? 'none';
+      throw new Error(`undo retry HTTP ${retryRes.status} code ${errorCode} body ${retryText.slice(0, 300)}`);
+    }
+    expect(retry.revert_event_ids).toEqual(first.revert_event_ids);
+
+    // Exactly one revert event for this operation and one reverted entity.
+    const reverts = await env.DB
+      .prepare(`SELECT COUNT(*) AS n FROM events WHERE workspace_id = ? AND kind = 'revert' AND action_id = ?`)
+      .bind(WS, `undo_${WS}_undo-op-implicit-chat`)
+      .first<{ n: number }>();
+    expect(Number(reverts?.n)).toBe(1);
+    const entity = await env.DB
+      .prepare(`SELECT COUNT(*) AS n FROM entities WHERE workspace_id = ? AND name = 'Implicit Chat Cafe'`)
+      .bind(WS)
+      .first<{ n: number }>();
+    expect(Number(entity?.n)).toBe(0);
   });
 
   it('attributes a teammate-requested undo to the teammate chat', async () => {
@@ -1357,14 +1468,14 @@ describe('/model default honesty and resolver-parity availability', () => {
     expect(badDefaultBody.reply).toContain('not usable here');
     expect(badDefaultBody.reply).toContain('/model mimo-25');
 
-    // A usable default is confirmed by display name.
+    // A usable default is confirmed by display name plus the verified voice route.
     await env.DB.prepare(`UPDATE workspace_settings SET default_model = 'mimo-25', updated_at = ? WHERE workspace_id = ?`)
       .bind(now, ws).run();
     const goodDefault = await send(chatId, '/model default', 'model-honest-good-default');
     expect(goodDefault.status).toBe(202);
     const goodDefaultBody = (await goodDefault.json()) as { reply: string };
     expect(goodDefaultBody.reply).toContain('MiMo V2.5');
-    expect(goodDefaultBody.reply).not.toContain('Voice notes are not available yet');
+    expect(goodDefaultBody.reply).toContain('Voice notes are not available with this model yet.');
   });
 });
 

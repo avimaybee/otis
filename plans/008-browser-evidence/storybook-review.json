@@ -1,0 +1,1936 @@
+{
+  "scope": "Native Chrome isolated synthetic Storybook fixtures, not physical phone/authenticated server acceptance",
+  "capturedAt": "2026-10-03T21:37:18.017Z",
+  "results": [
+    {
+      "story": "composer--short",
+      "width": 360,
+      "viewport": 360,
+      "scrollWidth": 360,
+      "text": "Message Otis\nOtis can make mistakes. Verify important business info.",
+      "controls": [
+        {
+          "label": "Set string",
+          "x": 0,
+          "y": 0,
+          "width": 0,
+          "height": 0,
+          "color": "rgba(0, 0, 0, 0)",
+          "background": "rgba(0, 0, 0, 0.1)",
+          "font": "\"Nunito Sans\", -apple-system, \".SFNSText-Regular\", \"San Francisco\", BlinkMacSystemFont, \"Segoe UI\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+          "visible": false
+        },
+        {
+          "label": "Set string",
+          "x": 0,
+          "y": 0,
+          "width": 0,
+          "height": 0,
+          "color": "rgba(0, 0, 0, 0)",
+          "background": "rgba(0, 0, 0, 0.1)",
+          "font": "\"Nunito Sans\", -apple-system, \".SFNSText-Regular\", \"San Francisco\", BlinkMacSystemFont, \"Segoe UI\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+          "visible": false
+        },
+        {
+          "label": "Set string",
+          "x": 0,
+          "y": 0,
+          "width": 0,
+          "height": 0,
+          "color": "rgba(0, 0, 0, 0)",
+          "background": "rgba(0, 0, 0, 0.1)",
+          "font": "\"Nunito Sans\", -apple-system, \".SFNSText-Regular\", \"San Francisco\", BlinkMacSystemFont, \"Segoe UI\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+          "visible": false
+        },
+        {
+          "label": "Send",
+          "x": 300,
+          "y": 388,
+          "width": 36,
+          "height": 36,
+          "color": "rgb(24, 24, 24)",
+          "background": "rgb(226, 216, 107)",
+          "font": "\"Inter Variable\", Inter, system-ui, \"Segoe UI\", Roboto, sans-serif",
+          "visible": true
+        }
+      ]
+    },
+    {
+      "story": "command--model-long-names",
+      "width": 360,
+      "viewport": 360,
+      "scrollWidth": 360,
+      "text": "Models\nWorkspace default\nMiMo V2.5\nMiMo V2.5\nGemini 3.1 Flash Lite\nGemini Warehouse Triage Extended Context Preview With A Very Long Display Name\nMiMo Field Notes Multilingual Beta For Romanian And Hungarian Street Capture\nMessage Otis\nOtis can make mistakes. Verify important business info.",
+      "controls": [
+        {
+          "label": "Set string",
+          "x": 0,
+          "y": 0,
+          "width": 0,
+          "height": 0,
+          "color": "rgba(0, 0, 0, 0)",
+          "background": "rgba(0, 0, 0, 0.1)",
+          "font": "\"Nunito Sans\", -apple-system, \".SFNSText-Regular\", \"San Francisco\", BlinkMacSystemFont, \"Segoe UI\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+          "visible": false
+        },
+        {
+          "label": "Set string",
+          "x": 0,
+          "y": 0,
+          "width": 0,
+          "height": 0,
+          "color": "rgba(0, 0, 0, 0)",
+          "background": "rgba(0, 0, 0, 0.1)",
+          "font": "\"Nunito Sans\", -apple-system, \".SFNSText-Regular\", \"San Francisco\", BlinkMacSystemFont, \"Segoe UI\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+          "visible": false
+        },
+        {
+          "label": "Set string",
+          "x": 0,
+          "y": 0,
+          "width": 0,
+          "height": 0,
+          "color": "rgba(0, 0, 0, 0)",
+          "background": "rgba(0, 0, 0, 0.1)",
+          "font": "\"Nunito Sans\", -apple-system, \".SFNSText-Regular\", \"San Francisco\", BlinkMacSystemFont, \"Segoe UI\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+          "visible": false
+        },
+        {
+          "label": "ModelsWorkspace defaultMiMo V2.5MiMo V2.5Gemini 3.1 Flash LiteGemini Warehouse Triage Extended Context Preview With A Very Long Display NameMiMo Field Notes Multilingual Beta For Romanian And Hungarian Street Capture",
+          "x": 16,
+          "y": 184,
+          "width": 328,
+          "height": 188,
+          "color": "rgb(243, 243, 243)",
+          "background": "rgb(48, 48, 48)",
+          "font": "\"Inter Variable\", Inter, system-ui, \"Segoe UI\", Roboto, sans-serif",
+          "visible": true
+        },
+        {
+          "label": "Send",
+          "x": 300,
+          "y": 388,
+          "width": 36,
+          "height": 36,
+          "color": "rgb(24, 24, 24)",
+          "background": "rgb(226, 216, 107)",
+          "font": "\"Inter Variable\", Inter, system-ui, \"Segoe UI\", Roboto, sans-serif",
+          "visible": true
+        }
+      ]
+    },
+    {
+      "story": "work--thinking-live",
+      "width": 360,
+      "viewport": 360,
+      "scrollWidth": 360,
+      "text": "Is Thai Shop a good fit?\n04:24 PM\nWorking…\nThinking\n\ngemini · summary\n\nChecking the visit notes against Friday promises.",
+      "controls": [
+        {
+          "label": "Set string",
+          "x": 0,
+          "y": 0,
+          "width": 0,
+          "height": 0,
+          "color": "rgba(0, 0, 0, 0)",
+          "background": "rgba(0, 0, 0, 0.1)",
+          "font": "\"Nunito Sans\", -apple-system, \".SFNSText-Regular\", \"San Francisco\", BlinkMacSystemFont, \"Segoe UI\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+          "visible": false
+        },
+        {
+          "label": "Set string",
+          "x": 0,
+          "y": 0,
+          "width": 0,
+          "height": 0,
+          "color": "rgba(0, 0, 0, 0)",
+          "background": "rgba(0, 0, 0, 0.1)",
+          "font": "\"Nunito Sans\", -apple-system, \".SFNSText-Regular\", \"San Francisco\", BlinkMacSystemFont, \"Segoe UI\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+          "visible": false
+        },
+        {
+          "label": "Set string",
+          "x": 0,
+          "y": 0,
+          "width": 0,
+          "height": 0,
+          "color": "rgba(0, 0, 0, 0)",
+          "background": "rgba(0, 0, 0, 0.1)",
+          "font": "\"Nunito Sans\", -apple-system, \".SFNSText-Regular\", \"San Francisco\", BlinkMacSystemFont, \"Segoe UI\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+          "visible": false
+        },
+        {
+          "label": "Copy message",
+          "x": 312,
+          "y": 68,
+          "width": 32,
+          "height": 32,
+          "color": "rgb(243, 243, 243)",
+          "background": "rgba(0, 0, 0, 0)",
+          "font": "\"Inter Variable\", Inter, system-ui, \"Segoe UI\", Roboto, sans-serif",
+          "visible": true
+        },
+        {
+          "label": "Working…",
+          "x": 16,
+          "y": 124,
+          "width": 102.21875,
+          "height": 44,
+          "color": "rgb(168, 168, 168)",
+          "background": "rgba(0, 0, 0, 0)",
+          "font": "\"Inter Variable\", Inter, system-ui, \"Segoe UI\", Roboto, sans-serif",
+          "visible": true
+        },
+        {
+          "label": "Thinking",
+          "x": 16,
+          "y": 176,
+          "width": 328,
+          "height": 32,
+          "color": "rgb(168, 168, 168)",
+          "background": "rgba(0, 0, 0, 0)",
+          "font": "\"Inter Variable\", Inter, system-ui, \"Segoe UI\", Roboto, sans-serif",
+          "visible": true
+        }
+      ]
+    },
+    {
+      "story": "work--thinking-truncated",
+      "width": 360,
+      "viewport": 360,
+      "scrollWidth": 360,
+      "text": "Is Thai Shop a good fit?\n04:24 PM\nWorked\nThinking\n\ngemini · summary\n\nLong deliberation kept within budget.\n\nThinking truncated. The answer is unaffected.",
+      "controls": [
+        {
+          "label": "Set string",
+          "x": 0,
+          "y": 0,
+          "width": 0,
+          "height": 0,
+          "color": "rgba(0, 0, 0, 0)",
+          "background": "rgba(0, 0, 0, 0.1)",
+          "font": "\"Nunito Sans\", -apple-system, \".SFNSText-Regular\", \"San Francisco\", BlinkMacSystemFont, \"Segoe UI\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+          "visible": false
+        },
+        {
+          "label": "Set string",
+          "x": 0,
+          "y": 0,
+          "width": 0,
+          "height": 0,
+          "color": "rgba(0, 0, 0, 0)",
+          "background": "rgba(0, 0, 0, 0.1)",
+          "font": "\"Nunito Sans\", -apple-system, \".SFNSText-Regular\", \"San Francisco\", BlinkMacSystemFont, \"Segoe UI\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+          "visible": false
+        },
+        {
+          "label": "Set string",
+          "x": 0,
+          "y": 0,
+          "width": 0,
+          "height": 0,
+          "color": "rgba(0, 0, 0, 0)",
+          "background": "rgba(0, 0, 0, 0.1)",
+          "font": "\"Nunito Sans\", -apple-system, \".SFNSText-Regular\", \"San Francisco\", BlinkMacSystemFont, \"Segoe UI\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+          "visible": false
+        },
+        {
+          "label": "Copy message",
+          "x": 312,
+          "y": 68,
+          "width": 32,
+          "height": 32,
+          "color": "rgb(243, 243, 243)",
+          "background": "rgba(0, 0, 0, 0)",
+          "font": "\"Inter Variable\", Inter, system-ui, \"Segoe UI\", Roboto, sans-serif",
+          "visible": true
+        },
+        {
+          "label": "Worked",
+          "x": 16,
+          "y": 124,
+          "width": 71.4375,
+          "height": 44,
+          "color": "rgb(168, 168, 168)",
+          "background": "rgba(0, 0, 0, 0)",
+          "font": "\"Inter Variable\", Inter, system-ui, \"Segoe UI\", Roboto, sans-serif",
+          "visible": true
+        },
+        {
+          "label": "Thinking",
+          "x": 16,
+          "y": 176,
+          "width": 328,
+          "height": 32,
+          "color": "rgb(168, 168, 168)",
+          "background": "rgba(0, 0, 0, 0)",
+          "font": "\"Inter Variable\", Inter, system-ui, \"Segoe UI\", Roboto, sans-serif",
+          "visible": true
+        }
+      ]
+    },
+    {
+      "story": "settings--personal",
+      "width": 360,
+      "viewport": 360,
+      "scrollWidth": 360,
+      "text": "Settings\nYou\nKerning\nReply language\nRomână\nTimezone\n\nUsed for dates and reminders. Your brief stays on its existing schedule.\n\nUse this device’s timezone\nSave timezone\nSign out",
+      "controls": [
+        {
+          "label": "Set string",
+          "x": 0,
+          "y": 0,
+          "width": 0,
+          "height": 0,
+          "color": "rgba(0, 0, 0, 0)",
+          "background": "rgba(0, 0, 0, 0.1)",
+          "font": "\"Nunito Sans\", -apple-system, \".SFNSText-Regular\", \"San Francisco\", BlinkMacSystemFont, \"Segoe UI\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+          "visible": false
+        },
+        {
+          "label": "Set string",
+          "x": 0,
+          "y": 0,
+          "width": 0,
+          "height": 0,
+          "color": "rgba(0, 0, 0, 0)",
+          "background": "rgba(0, 0, 0, 0.1)",
+          "font": "\"Nunito Sans\", -apple-system, \".SFNSText-Regular\", \"San Francisco\", BlinkMacSystemFont, \"Segoe UI\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+          "visible": false
+        },
+        {
+          "label": "Set string",
+          "x": 0,
+          "y": 0,
+          "width": 0,
+          "height": 0,
+          "color": "rgba(0, 0, 0, 0)",
+          "background": "rgba(0, 0, 0, 0.1)",
+          "font": "\"Nunito Sans\", -apple-system, \".SFNSText-Regular\", \"San Francisco\", BlinkMacSystemFont, \"Segoe UI\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+          "visible": false
+        },
+        {
+          "label": "Close settings",
+          "x": 300,
+          "y": 12,
+          "width": 44,
+          "height": 44,
+          "color": "rgb(168, 168, 168)",
+          "background": "rgba(0, 0, 0, 0)",
+          "font": "\"Inter Variable\", Inter, system-ui, \"Segoe UI\", Roboto, sans-serif",
+          "visible": true
+        },
+        {
+          "label": "You",
+          "x": 16,
+          "y": 72,
+          "width": 49.109375,
+          "height": 44,
+          "color": "rgb(243, 243, 243)",
+          "background": "rgba(0, 0, 0, 0)",
+          "font": "\"Inter Variable\", Inter, system-ui, \"Segoe UI\", Roboto, sans-serif",
+          "visible": true
+        },
+        {
+          "label": "Kerning",
+          "x": 69.109375,
+          "y": 72,
+          "width": 75.03125,
+          "height": 44,
+          "color": "rgb(168, 168, 168)",
+          "background": "rgba(0, 0, 0, 0)",
+          "font": "\"Inter Variable\", Inter, system-ui, \"Segoe UI\", Roboto, sans-serif",
+          "visible": true
+        },
+        {
+          "label": "Reply language",
+          "x": 16,
+          "y": 161,
+          "width": 328,
+          "height": 44,
+          "color": "rgb(243, 243, 243)",
+          "background": "rgba(0, 0, 0, 0)",
+          "font": "\"Inter Variable\", Inter, system-ui, \"Segoe UI\", Roboto, sans-serif",
+          "visible": true
+        },
+        {
+          "label": "Use this device’s timezone",
+          "x": 16,
+          "y": 353,
+          "width": 190.875,
+          "height": 32,
+          "color": "rgb(243, 243, 243)",
+          "background": "rgba(0, 0, 0, 0)",
+          "font": "\"Inter Variable\", Inter, system-ui, \"Segoe UI\", Roboto, sans-serif",
+          "visible": true
+        },
+        {
+          "label": "Save timezone",
+          "x": 227.0625,
+          "y": 353,
+          "width": 116.9375,
+          "height": 32,
+          "color": "rgb(24, 24, 24)",
+          "background": "rgb(243, 243, 243)",
+          "font": "\"Inter Variable\", Inter, system-ui, \"Segoe UI\", Roboto, sans-serif",
+          "visible": true
+        },
+        {
+          "label": "Sign out",
+          "x": 266.875,
+          "y": 800,
+          "width": 77.125,
+          "height": 32,
+          "color": "rgb(140, 140, 140)",
+          "background": "rgba(0, 0, 0, 0)",
+          "font": "\"Inter Variable\", Inter, system-ui, \"Segoe UI\", Roboto, sans-serif",
+          "visible": true
+        }
+      ]
+    },
+    {
+      "story": "composer--short",
+      "width": 390,
+      "viewport": 390,
+      "scrollWidth": 390,
+      "text": "Message Otis\nOtis can make mistakes. Verify important business info.",
+      "controls": [
+        {
+          "label": "Set string",
+          "x": 0,
+          "y": 0,
+          "width": 0,
+          "height": 0,
+          "color": "rgba(0, 0, 0, 0)",
+          "background": "rgba(0, 0, 0, 0.1)",
+          "font": "\"Nunito Sans\", -apple-system, \".SFNSText-Regular\", \"San Francisco\", BlinkMacSystemFont, \"Segoe UI\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+          "visible": false
+        },
+        {
+          "label": "Set string",
+          "x": 0,
+          "y": 0,
+          "width": 0,
+          "height": 0,
+          "color": "rgba(0, 0, 0, 0)",
+          "background": "rgba(0, 0, 0, 0.1)",
+          "font": "\"Nunito Sans\", -apple-system, \".SFNSText-Regular\", \"San Francisco\", BlinkMacSystemFont, \"Segoe UI\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+          "visible": false
+        },
+        {
+          "label": "Set string",
+          "x": 0,
+          "y": 0,
+          "width": 0,
+          "height": 0,
+          "color": "rgba(0, 0, 0, 0)",
+          "background": "rgba(0, 0, 0, 0.1)",
+          "font": "\"Nunito Sans\", -apple-system, \".SFNSText-Regular\", \"San Francisco\", BlinkMacSystemFont, \"Segoe UI\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+          "visible": false
+        },
+        {
+          "label": "Send",
+          "x": 330,
+          "y": 404,
+          "width": 36,
+          "height": 36,
+          "color": "rgb(24, 24, 24)",
+          "background": "rgb(226, 216, 107)",
+          "font": "\"Inter Variable\", Inter, system-ui, \"Segoe UI\", Roboto, sans-serif",
+          "visible": true
+        }
+      ]
+    },
+    {
+      "story": "command--model-long-names",
+      "width": 390,
+      "viewport": 390,
+      "scrollWidth": 390,
+      "text": "Models\nWorkspace default\nMiMo V2.5\nMiMo V2.5\nGemini 3.1 Flash Lite\nGemini Warehouse Triage Extended Context Preview With A Very Long Display Name\nMiMo Field Notes Multilingual Beta For Romanian And Hungarian Street Capture\nMessage Otis\nOtis can make mistakes. Verify important business info.",
+      "controls": [
+        {
+          "label": "Set string",
+          "x": 0,
+          "y": 0,
+          "width": 0,
+          "height": 0,
+          "color": "rgba(0, 0, 0, 0)",
+          "background": "rgba(0, 0, 0, 0.1)",
+          "font": "\"Nunito Sans\", -apple-system, \".SFNSText-Regular\", \"San Francisco\", BlinkMacSystemFont, \"Segoe UI\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+          "visible": false
+        },
+        {
+          "label": "Set string",
+          "x": 0,
+          "y": 0,
+          "width": 0,
+          "height": 0,
+          "color": "rgba(0, 0, 0, 0)",
+          "background": "rgba(0, 0, 0, 0.1)",
+          "font": "\"Nunito Sans\", -apple-system, \".SFNSText-Regular\", \"San Francisco\", BlinkMacSystemFont, \"Segoe UI\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+          "visible": false
+        },
+        {
+          "label": "Set string",
+          "x": 0,
+          "y": 0,
+          "width": 0,
+          "height": 0,
+          "color": "rgba(0, 0, 0, 0)",
+          "background": "rgba(0, 0, 0, 0.1)",
+          "font": "\"Nunito Sans\", -apple-system, \".SFNSText-Regular\", \"San Francisco\", BlinkMacSystemFont, \"Segoe UI\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+          "visible": false
+        },
+        {
+          "label": "ModelsWorkspace defaultMiMo V2.5MiMo V2.5Gemini 3.1 Flash LiteGemini Warehouse Triage Extended Context Preview With A Very Long Display NameMiMo Field Notes Multilingual Beta For Romanian And Hungarian Street Capture",
+          "x": 16,
+          "y": 200,
+          "width": 358,
+          "height": 188,
+          "color": "rgb(243, 243, 243)",
+          "background": "rgb(48, 48, 48)",
+          "font": "\"Inter Variable\", Inter, system-ui, \"Segoe UI\", Roboto, sans-serif",
+          "visible": true
+        },
+        {
+          "label": "Send",
+          "x": 330,
+          "y": 404,
+          "width": 36,
+          "height": 36,
+          "color": "rgb(24, 24, 24)",
+          "background": "rgb(226, 216, 107)",
+          "font": "\"Inter Variable\", Inter, system-ui, \"Segoe UI\", Roboto, sans-serif",
+          "visible": true
+        }
+      ]
+    },
+    {
+      "story": "work--thinking-live",
+      "width": 390,
+      "viewport": 390,
+      "scrollWidth": 390,
+      "text": "Is Thai Shop a good fit?\n04:24 PM\nWorking…\nThinking\n\ngemini · summary\n\nChecking the visit notes against Friday promises.",
+      "controls": [
+        {
+          "label": "Set string",
+          "x": 0,
+          "y": 0,
+          "width": 0,
+          "height": 0,
+          "color": "rgba(0, 0, 0, 0)",
+          "background": "rgba(0, 0, 0, 0.1)",
+          "font": "\"Nunito Sans\", -apple-system, \".SFNSText-Regular\", \"San Francisco\", BlinkMacSystemFont, \"Segoe UI\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+          "visible": false
+        },
+        {
+          "label": "Set string",
+          "x": 0,
+          "y": 0,
+          "width": 0,
+          "height": 0,
+          "color": "rgba(0, 0, 0, 0)",
+          "background": "rgba(0, 0, 0, 0.1)",
+          "font": "\"Nunito Sans\", -apple-system, \".SFNSText-Regular\", \"San Francisco\", BlinkMacSystemFont, \"Segoe UI\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+          "visible": false
+        },
+        {
+          "label": "Set string",
+          "x": 0,
+          "y": 0,
+          "width": 0,
+          "height": 0,
+          "color": "rgba(0, 0, 0, 0)",
+          "background": "rgba(0, 0, 0, 0.1)",
+          "font": "\"Nunito Sans\", -apple-system, \".SFNSText-Regular\", \"San Francisco\", BlinkMacSystemFont, \"Segoe UI\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+          "visible": false
+        },
+        {
+          "label": "Copy message",
+          "x": 342,
+          "y": 68,
+          "width": 32,
+          "height": 32,
+          "color": "rgb(243, 243, 243)",
+          "background": "rgba(0, 0, 0, 0)",
+          "font": "\"Inter Variable\", Inter, system-ui, \"Segoe UI\", Roboto, sans-serif",
+          "visible": true
+        },
+        {
+          "label": "Working…",
+          "x": 16,
+          "y": 124,
+          "width": 102.21875,
+          "height": 44,
+          "color": "rgb(168, 168, 168)",
+          "background": "rgba(0, 0, 0, 0)",
+          "font": "\"Inter Variable\", Inter, system-ui, \"Segoe UI\", Roboto, sans-serif",
+          "visible": true
+        },
+        {
+          "label": "Thinking",
+          "x": 16,
+          "y": 176,
+          "width": 358,
+          "height": 32,
+          "color": "rgb(168, 168, 168)",
+          "background": "rgba(0, 0, 0, 0)",
+          "font": "\"Inter Variable\", Inter, system-ui, \"Segoe UI\", Roboto, sans-serif",
+          "visible": true
+        }
+      ]
+    },
+    {
+      "story": "work--thinking-truncated",
+      "width": 390,
+      "viewport": 390,
+      "scrollWidth": 390,
+      "text": "Is Thai Shop a good fit?\n04:24 PM\nWorked\nThinking\n\ngemini · summary\n\nLong deliberation kept within budget.\n\nThinking truncated. The answer is unaffected.",
+      "controls": [
+        {
+          "label": "Set string",
+          "x": 0,
+          "y": 0,
+          "width": 0,
+          "height": 0,
+          "color": "rgba(0, 0, 0, 0)",
+          "background": "rgba(0, 0, 0, 0.1)",
+          "font": "\"Nunito Sans\", -apple-system, \".SFNSText-Regular\", \"San Francisco\", BlinkMacSystemFont, \"Segoe UI\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+          "visible": false
+        },
+        {
+          "label": "Set string",
+          "x": 0,
+          "y": 0,
+          "width": 0,
+          "height": 0,
+          "color": "rgba(0, 0, 0, 0)",
+          "background": "rgba(0, 0, 0, 0.1)",
+          "font": "\"Nunito Sans\", -apple-system, \".SFNSText-Regular\", \"San Francisco\", BlinkMacSystemFont, \"Segoe UI\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+          "visible": false
+        },
+        {
+          "label": "Set string",
+          "x": 0,
+          "y": 0,
+          "width": 0,
+          "height": 0,
+          "color": "rgba(0, 0, 0, 0)",
+          "background": "rgba(0, 0, 0, 0.1)",
+          "font": "\"Nunito Sans\", -apple-system, \".SFNSText-Regular\", \"San Francisco\", BlinkMacSystemFont, \"Segoe UI\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+          "visible": false
+        },
+        {
+          "label": "Copy message",
+          "x": 342,
+          "y": 68,
+          "width": 32,
+          "height": 32,
+          "color": "rgb(243, 243, 243)",
+          "background": "rgba(0, 0, 0, 0)",
+          "font": "\"Inter Variable\", Inter, system-ui, \"Segoe UI\", Roboto, sans-serif",
+          "visible": true
+        },
+        {
+          "label": "Worked",
+          "x": 16,
+          "y": 124,
+          "width": 71.4375,
+          "height": 44,
+          "color": "rgb(168, 168, 168)",
+          "background": "rgba(0, 0, 0, 0)",
+          "font": "\"Inter Variable\", Inter, system-ui, \"Segoe UI\", Roboto, sans-serif",
+          "visible": true
+        },
+        {
+          "label": "Thinking",
+          "x": 16,
+          "y": 176,
+          "width": 358,
+          "height": 32,
+          "color": "rgb(168, 168, 168)",
+          "background": "rgba(0, 0, 0, 0)",
+          "font": "\"Inter Variable\", Inter, system-ui, \"Segoe UI\", Roboto, sans-serif",
+          "visible": true
+        }
+      ]
+    },
+    {
+      "story": "settings--personal",
+      "width": 390,
+      "viewport": 390,
+      "scrollWidth": 390,
+      "text": "Settings\nYou\nKerning\nReply language\nRomână\nTimezone\n\nUsed for dates and reminders. Your brief stays on its existing schedule.\n\nUse this device’s timezone\nSave timezone\nSign out",
+      "controls": [
+        {
+          "label": "Set string",
+          "x": 0,
+          "y": 0,
+          "width": 0,
+          "height": 0,
+          "color": "rgba(0, 0, 0, 0)",
+          "background": "rgba(0, 0, 0, 0.1)",
+          "font": "\"Nunito Sans\", -apple-system, \".SFNSText-Regular\", \"San Francisco\", BlinkMacSystemFont, \"Segoe UI\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+          "visible": false
+        },
+        {
+          "label": "Set string",
+          "x": 0,
+          "y": 0,
+          "width": 0,
+          "height": 0,
+          "color": "rgba(0, 0, 0, 0)",
+          "background": "rgba(0, 0, 0, 0.1)",
+          "font": "\"Nunito Sans\", -apple-system, \".SFNSText-Regular\", \"San Francisco\", BlinkMacSystemFont, \"Segoe UI\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+          "visible": false
+        },
+        {
+          "label": "Set string",
+          "x": 0,
+          "y": 0,
+          "width": 0,
+          "height": 0,
+          "color": "rgba(0, 0, 0, 0)",
+          "background": "rgba(0, 0, 0, 0.1)",
+          "font": "\"Nunito Sans\", -apple-system, \".SFNSText-Regular\", \"San Francisco\", BlinkMacSystemFont, \"Segoe UI\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+          "visible": false
+        },
+        {
+          "label": "Close settings",
+          "x": 330,
+          "y": 12,
+          "width": 44,
+          "height": 44,
+          "color": "rgb(168, 168, 168)",
+          "background": "rgba(0, 0, 0, 0)",
+          "font": "\"Inter Variable\", Inter, system-ui, \"Segoe UI\", Roboto, sans-serif",
+          "visible": true
+        },
+        {
+          "label": "You",
+          "x": 16,
+          "y": 72,
+          "width": 49.109375,
+          "height": 44,
+          "color": "rgb(243, 243, 243)",
+          "background": "rgba(0, 0, 0, 0)",
+          "font": "\"Inter Variable\", Inter, system-ui, \"Segoe UI\", Roboto, sans-serif",
+          "visible": true
+        },
+        {
+          "label": "Kerning",
+          "x": 69.109375,
+          "y": 72,
+          "width": 75.03125,
+          "height": 44,
+          "color": "rgb(168, 168, 168)",
+          "background": "rgba(0, 0, 0, 0)",
+          "font": "\"Inter Variable\", Inter, system-ui, \"Segoe UI\", Roboto, sans-serif",
+          "visible": true
+        },
+        {
+          "label": "Reply language",
+          "x": 16,
+          "y": 161,
+          "width": 358,
+          "height": 44,
+          "color": "rgb(243, 243, 243)",
+          "background": "rgba(0, 0, 0, 0)",
+          "font": "\"Inter Variable\", Inter, system-ui, \"Segoe UI\", Roboto, sans-serif",
+          "visible": true
+        },
+        {
+          "label": "Use this device’s timezone",
+          "x": 16,
+          "y": 353,
+          "width": 190.875,
+          "height": 32,
+          "color": "rgb(243, 243, 243)",
+          "background": "rgba(0, 0, 0, 0)",
+          "font": "\"Inter Variable\", Inter, system-ui, \"Segoe UI\", Roboto, sans-serif",
+          "visible": true
+        },
+        {
+          "label": "Save timezone",
+          "x": 257.0625,
+          "y": 353,
+          "width": 116.9375,
+          "height": 32,
+          "color": "rgb(24, 24, 24)",
+          "background": "rgb(243, 243, 243)",
+          "font": "\"Inter Variable\", Inter, system-ui, \"Segoe UI\", Roboto, sans-serif",
+          "visible": true
+        },
+        {
+          "label": "Sign out",
+          "x": 296.875,
+          "y": 800,
+          "width": 77.125,
+          "height": 32,
+          "color": "rgb(140, 140, 140)",
+          "background": "rgba(0, 0, 0, 0)",
+          "font": "\"Inter Variable\", Inter, system-ui, \"Segoe UI\", Roboto, sans-serif",
+          "visible": true
+        }
+      ]
+    },
+    {
+      "story": "composer--short",
+      "width": 900,
+      "viewport": 900,
+      "scrollWidth": 900,
+      "text": "Message Otis\nOtis can make mistakes. Verify important business info.",
+      "controls": [
+        {
+          "label": "Set string",
+          "x": 0,
+          "y": 0,
+          "width": 0,
+          "height": 0,
+          "color": "rgba(0, 0, 0, 0)",
+          "background": "rgba(0, 0, 0, 0.1)",
+          "font": "\"Nunito Sans\", -apple-system, \".SFNSText-Regular\", \"San Francisco\", BlinkMacSystemFont, \"Segoe UI\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+          "visible": false
+        },
+        {
+          "label": "Set string",
+          "x": 0,
+          "y": 0,
+          "width": 0,
+          "height": 0,
+          "color": "rgba(0, 0, 0, 0)",
+          "background": "rgba(0, 0, 0, 0.1)",
+          "font": "\"Nunito Sans\", -apple-system, \".SFNSText-Regular\", \"San Francisco\", BlinkMacSystemFont, \"Segoe UI\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+          "visible": false
+        },
+        {
+          "label": "Set string",
+          "x": 0,
+          "y": 0,
+          "width": 0,
+          "height": 0,
+          "color": "rgba(0, 0, 0, 0)",
+          "background": "rgba(0, 0, 0, 0.1)",
+          "font": "\"Nunito Sans\", -apple-system, \".SFNSText-Regular\", \"San Francisco\", BlinkMacSystemFont, \"Segoe UI\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+          "visible": false
+        },
+        {
+          "label": "Send",
+          "x": 786,
+          "y": 404,
+          "width": 36,
+          "height": 36,
+          "color": "rgb(24, 24, 24)",
+          "background": "rgb(226, 216, 107)",
+          "font": "\"Inter Variable\", Inter, system-ui, \"Segoe UI\", Roboto, sans-serif",
+          "visible": true
+        }
+      ]
+    },
+    {
+      "story": "command--model-long-names",
+      "width": 900,
+      "viewport": 900,
+      "scrollWidth": 900,
+      "text": "Models\nWorkspace default\nMiMo V2.5\nMiMo V2.5\nGemini 3.1 Flash Lite\nGemini Warehouse Triage Extended Context Preview With A Very Long Display Name\nMiMo Field Notes Multilingual Beta For Romanian And Hungarian Street Capture\nMessage Otis\nOtis can make mistakes. Verify important business info.",
+      "controls": [
+        {
+          "label": "Set string",
+          "x": 0,
+          "y": 0,
+          "width": 0,
+          "height": 0,
+          "color": "rgba(0, 0, 0, 0)",
+          "background": "rgba(0, 0, 0, 0.1)",
+          "font": "\"Nunito Sans\", -apple-system, \".SFNSText-Regular\", \"San Francisco\", BlinkMacSystemFont, \"Segoe UI\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+          "visible": false
+        },
+        {
+          "label": "Set string",
+          "x": 0,
+          "y": 0,
+          "width": 0,
+          "height": 0,
+          "color": "rgba(0, 0, 0, 0)",
+          "background": "rgba(0, 0, 0, 0.1)",
+          "font": "\"Nunito Sans\", -apple-system, \".SFNSText-Regular\", \"San Francisco\", BlinkMacSystemFont, \"Segoe UI\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+          "visible": false
+        },
+        {
+          "label": "Set string",
+          "x": 0,
+          "y": 0,
+          "width": 0,
+          "height": 0,
+          "color": "rgba(0, 0, 0, 0)",
+          "background": "rgba(0, 0, 0, 0.1)",
+          "font": "\"Nunito Sans\", -apple-system, \".SFNSText-Regular\", \"San Francisco\", BlinkMacSystemFont, \"Segoe UI\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+          "visible": false
+        },
+        {
+          "label": "ModelsWorkspace defaultMiMo V2.5MiMo V2.5Gemini 3.1 Flash LiteGemini Warehouse Triage Extended Context Preview With A Very Long Display NameMiMo Field Notes Multilingual Beta For Romanian And Hungarian Street Capture",
+          "x": 70,
+          "y": 200,
+          "width": 360,
+          "height": 188,
+          "color": "rgb(243, 243, 243)",
+          "background": "rgb(48, 48, 48)",
+          "font": "\"Inter Variable\", Inter, system-ui, \"Segoe UI\", Roboto, sans-serif",
+          "visible": true
+        },
+        {
+          "label": "Send",
+          "x": 786,
+          "y": 404,
+          "width": 36,
+          "height": 36,
+          "color": "rgb(24, 24, 24)",
+          "background": "rgb(226, 216, 107)",
+          "font": "\"Inter Variable\", Inter, system-ui, \"Segoe UI\", Roboto, sans-serif",
+          "visible": true
+        }
+      ]
+    },
+    {
+      "story": "work--thinking-live",
+      "width": 900,
+      "viewport": 900,
+      "scrollWidth": 900,
+      "text": "Is Thai Shop a good fit?\n04:24 PM\nWorking…\nThinking\n\ngemini · summary\n\nChecking the visit notes against Friday promises.",
+      "controls": [
+        {
+          "label": "Set string",
+          "x": 0,
+          "y": 0,
+          "width": 0,
+          "height": 0,
+          "color": "rgba(0, 0, 0, 0)",
+          "background": "rgba(0, 0, 0, 0.1)",
+          "font": "\"Nunito Sans\", -apple-system, \".SFNSText-Regular\", \"San Francisco\", BlinkMacSystemFont, \"Segoe UI\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+          "visible": false
+        },
+        {
+          "label": "Set string",
+          "x": 0,
+          "y": 0,
+          "width": 0,
+          "height": 0,
+          "color": "rgba(0, 0, 0, 0)",
+          "background": "rgba(0, 0, 0, 0.1)",
+          "font": "\"Nunito Sans\", -apple-system, \".SFNSText-Regular\", \"San Francisco\", BlinkMacSystemFont, \"Segoe UI\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+          "visible": false
+        },
+        {
+          "label": "Set string",
+          "x": 0,
+          "y": 0,
+          "width": 0,
+          "height": 0,
+          "color": "rgba(0, 0, 0, 0)",
+          "background": "rgba(0, 0, 0, 0.1)",
+          "font": "\"Nunito Sans\", -apple-system, \".SFNSText-Regular\", \"San Francisco\", BlinkMacSystemFont, \"Segoe UI\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+          "visible": false
+        },
+        {
+          "label": "Copy message",
+          "x": 774,
+          "y": 68,
+          "width": 32,
+          "height": 32,
+          "color": "rgb(243, 243, 243)",
+          "background": "rgba(0, 0, 0, 0)",
+          "font": "\"Inter Variable\", Inter, system-ui, \"Segoe UI\", Roboto, sans-serif",
+          "visible": true
+        },
+        {
+          "label": "Working…",
+          "x": 94,
+          "y": 124,
+          "width": 102.21875,
+          "height": 32,
+          "color": "rgb(168, 168, 168)",
+          "background": "rgba(0, 0, 0, 0)",
+          "font": "\"Inter Variable\", Inter, system-ui, \"Segoe UI\", Roboto, sans-serif",
+          "visible": true
+        },
+        {
+          "label": "Thinking",
+          "x": 94,
+          "y": 164,
+          "width": 712,
+          "height": 32,
+          "color": "rgb(168, 168, 168)",
+          "background": "rgba(0, 0, 0, 0)",
+          "font": "\"Inter Variable\", Inter, system-ui, \"Segoe UI\", Roboto, sans-serif",
+          "visible": true
+        }
+      ]
+    },
+    {
+      "story": "work--thinking-truncated",
+      "width": 900,
+      "viewport": 900,
+      "scrollWidth": 900,
+      "text": "Is Thai Shop a good fit?\n04:24 PM\nWorked\nThinking\n\ngemini · summary\n\nLong deliberation kept within budget.\n\nThinking truncated. The answer is unaffected.",
+      "controls": [
+        {
+          "label": "Set string",
+          "x": 0,
+          "y": 0,
+          "width": 0,
+          "height": 0,
+          "color": "rgba(0, 0, 0, 0)",
+          "background": "rgba(0, 0, 0, 0.1)",
+          "font": "\"Nunito Sans\", -apple-system, \".SFNSText-Regular\", \"San Francisco\", BlinkMacSystemFont, \"Segoe UI\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+          "visible": false
+        },
+        {
+          "label": "Set string",
+          "x": 0,
+          "y": 0,
+          "width": 0,
+          "height": 0,
+          "color": "rgba(0, 0, 0, 0)",
+          "background": "rgba(0, 0, 0, 0.1)",
+          "font": "\"Nunito Sans\", -apple-system, \".SFNSText-Regular\", \"San Francisco\", BlinkMacSystemFont, \"Segoe UI\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+          "visible": false
+        },
+        {
+          "label": "Set string",
+          "x": 0,
+          "y": 0,
+          "width": 0,
+          "height": 0,
+          "color": "rgba(0, 0, 0, 0)",
+          "background": "rgba(0, 0, 0, 0.1)",
+          "font": "\"Nunito Sans\", -apple-system, \".SFNSText-Regular\", \"San Francisco\", BlinkMacSystemFont, \"Segoe UI\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+          "visible": false
+        },
+        {
+          "label": "Copy message",
+          "x": 774,
+          "y": 68,
+          "width": 32,
+          "height": 32,
+          "color": "rgb(243, 243, 243)",
+          "background": "rgba(0, 0, 0, 0)",
+          "font": "\"Inter Variable\", Inter, system-ui, \"Segoe UI\", Roboto, sans-serif",
+          "visible": true
+        },
+        {
+          "label": "Worked",
+          "x": 94,
+          "y": 124,
+          "width": 71.4375,
+          "height": 32,
+          "color": "rgb(168, 168, 168)",
+          "background": "rgba(0, 0, 0, 0)",
+          "font": "\"Inter Variable\", Inter, system-ui, \"Segoe UI\", Roboto, sans-serif",
+          "visible": true
+        },
+        {
+          "label": "Thinking",
+          "x": 94,
+          "y": 164,
+          "width": 712,
+          "height": 32,
+          "color": "rgb(168, 168, 168)",
+          "background": "rgba(0, 0, 0, 0)",
+          "font": "\"Inter Variable\", Inter, system-ui, \"Segoe UI\", Roboto, sans-serif",
+          "visible": true
+        }
+      ]
+    },
+    {
+      "story": "settings--personal",
+      "width": 900,
+      "viewport": 900,
+      "scrollWidth": 900,
+      "text": "Settings\nYou\nKerning\nReply language\nRomână\nTimezone\n\nUsed for dates and reminders. Your brief stays on its existing schedule.\n\nUse this device’s timezone\nSave timezone\nSign out",
+      "controls": [
+        {
+          "label": "Set string",
+          "x": 0,
+          "y": 0,
+          "width": 0,
+          "height": 0,
+          "color": "rgba(0, 0, 0, 0)",
+          "background": "rgba(0, 0, 0, 0.1)",
+          "font": "\"Nunito Sans\", -apple-system, \".SFNSText-Regular\", \"San Francisco\", BlinkMacSystemFont, \"Segoe UI\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+          "visible": false
+        },
+        {
+          "label": "Set string",
+          "x": 0,
+          "y": 0,
+          "width": 0,
+          "height": 0,
+          "color": "rgba(0, 0, 0, 0)",
+          "background": "rgba(0, 0, 0, 0.1)",
+          "font": "\"Nunito Sans\", -apple-system, \".SFNSText-Regular\", \"San Francisco\", BlinkMacSystemFont, \"Segoe UI\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+          "visible": false
+        },
+        {
+          "label": "Set string",
+          "x": 0,
+          "y": 0,
+          "width": 0,
+          "height": 0,
+          "color": "rgba(0, 0, 0, 0)",
+          "background": "rgba(0, 0, 0, 0.1)",
+          "font": "\"Nunito Sans\", -apple-system, \".SFNSText-Regular\", \"San Francisco\", BlinkMacSystemFont, \"Segoe UI\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+          "visible": false
+        },
+        {
+          "label": "Close settings",
+          "x": 690,
+          "y": 52,
+          "width": 36,
+          "height": 36,
+          "color": "rgb(168, 168, 168)",
+          "background": "rgba(0, 0, 0, 0)",
+          "font": "\"Inter Variable\", Inter, system-ui, \"Segoe UI\", Roboto, sans-serif",
+          "visible": true
+        },
+        {
+          "label": "You",
+          "x": 174,
+          "y": 108,
+          "width": 49.109375,
+          "height": 44,
+          "color": "rgb(243, 243, 243)",
+          "background": "rgba(0, 0, 0, 0)",
+          "font": "\"Inter Variable\", Inter, system-ui, \"Segoe UI\", Roboto, sans-serif",
+          "visible": true
+        },
+        {
+          "label": "Kerning",
+          "x": 227.109375,
+          "y": 108,
+          "width": 75.03125,
+          "height": 44,
+          "color": "rgb(168, 168, 168)",
+          "background": "rgba(0, 0, 0, 0)",
+          "font": "\"Inter Variable\", Inter, system-ui, \"Segoe UI\", Roboto, sans-serif",
+          "visible": true
+        },
+        {
+          "label": "Reply language",
+          "x": 174,
+          "y": 197,
+          "width": 552,
+          "height": 44,
+          "color": "rgb(243, 243, 243)",
+          "background": "rgba(0, 0, 0, 0)",
+          "font": "\"Inter Variable\", Inter, system-ui, \"Segoe UI\", Roboto, sans-serif",
+          "visible": true
+        },
+        {
+          "label": "Use this device’s timezone",
+          "x": 174,
+          "y": 371,
+          "width": 190.875,
+          "height": 32,
+          "color": "rgb(243, 243, 243)",
+          "background": "rgba(0, 0, 0, 0)",
+          "font": "\"Inter Variable\", Inter, system-ui, \"Segoe UI\", Roboto, sans-serif",
+          "visible": true
+        },
+        {
+          "label": "Save timezone",
+          "x": 609.0625,
+          "y": 371,
+          "width": 116.9375,
+          "height": 32,
+          "color": "rgb(24, 24, 24)",
+          "background": "rgb(243, 243, 243)",
+          "font": "\"Inter Variable\", Inter, system-ui, \"Segoe UI\", Roboto, sans-serif",
+          "visible": true
+        },
+        {
+          "label": "Sign out",
+          "x": 648.875,
+          "y": 451,
+          "width": 77.125,
+          "height": 32,
+          "color": "rgb(140, 140, 140)",
+          "background": "rgba(0, 0, 0, 0)",
+          "font": "\"Inter Variable\", Inter, system-ui, \"Segoe UI\", Roboto, sans-serif",
+          "visible": true
+        }
+      ]
+    },
+    {
+      "story": "composer--short",
+      "width": 1280,
+      "viewport": 1280,
+      "scrollWidth": 1280,
+      "text": "Message Otis\nOtis can make mistakes. Verify important business info.",
+      "controls": [
+        {
+          "label": "Set string",
+          "x": 0,
+          "y": 0,
+          "width": 0,
+          "height": 0,
+          "color": "rgba(0, 0, 0, 0)",
+          "background": "rgba(0, 0, 0, 0.1)",
+          "font": "\"Nunito Sans\", -apple-system, \".SFNSText-Regular\", \"San Francisco\", BlinkMacSystemFont, \"Segoe UI\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+          "visible": false
+        },
+        {
+          "label": "Set string",
+          "x": 0,
+          "y": 0,
+          "width": 0,
+          "height": 0,
+          "color": "rgba(0, 0, 0, 0)",
+          "background": "rgba(0, 0, 0, 0.1)",
+          "font": "\"Nunito Sans\", -apple-system, \".SFNSText-Regular\", \"San Francisco\", BlinkMacSystemFont, \"Segoe UI\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+          "visible": false
+        },
+        {
+          "label": "Set string",
+          "x": 0,
+          "y": 0,
+          "width": 0,
+          "height": 0,
+          "color": "rgba(0, 0, 0, 0)",
+          "background": "rgba(0, 0, 0, 0.1)",
+          "font": "\"Nunito Sans\", -apple-system, \".SFNSText-Regular\", \"San Francisco\", BlinkMacSystemFont, \"Segoe UI\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+          "visible": false
+        },
+        {
+          "label": "Send",
+          "x": 976,
+          "y": 404,
+          "width": 36,
+          "height": 36,
+          "color": "rgb(24, 24, 24)",
+          "background": "rgb(226, 216, 107)",
+          "font": "\"Inter Variable\", Inter, system-ui, \"Segoe UI\", Roboto, sans-serif",
+          "visible": true
+        }
+      ]
+    },
+    {
+      "story": "command--model-long-names",
+      "width": 1280,
+      "viewport": 1280,
+      "scrollWidth": 1280,
+      "text": "Models\nWorkspace default\nMiMo V2.5\nMiMo V2.5\nGemini 3.1 Flash Lite\nGemini Warehouse Triage Extended Context Preview With A Very Long Display Name\nMiMo Field Notes Multilingual Beta For Romanian And Hungarian Street Capture\nMessage Otis\nOtis can make mistakes. Verify important business info.",
+      "controls": [
+        {
+          "label": "Set string",
+          "x": 0,
+          "y": 0,
+          "width": 0,
+          "height": 0,
+          "color": "rgba(0, 0, 0, 0)",
+          "background": "rgba(0, 0, 0, 0.1)",
+          "font": "\"Nunito Sans\", -apple-system, \".SFNSText-Regular\", \"San Francisco\", BlinkMacSystemFont, \"Segoe UI\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+          "visible": false
+        },
+        {
+          "label": "Set string",
+          "x": 0,
+          "y": 0,
+          "width": 0,
+          "height": 0,
+          "color": "rgba(0, 0, 0, 0)",
+          "background": "rgba(0, 0, 0, 0.1)",
+          "font": "\"Nunito Sans\", -apple-system, \".SFNSText-Regular\", \"San Francisco\", BlinkMacSystemFont, \"Segoe UI\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+          "visible": false
+        },
+        {
+          "label": "Set string",
+          "x": 0,
+          "y": 0,
+          "width": 0,
+          "height": 0,
+          "color": "rgba(0, 0, 0, 0)",
+          "background": "rgba(0, 0, 0, 0.1)",
+          "font": "\"Nunito Sans\", -apple-system, \".SFNSText-Regular\", \"San Francisco\", BlinkMacSystemFont, \"Segoe UI\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+          "visible": false
+        },
+        {
+          "label": "ModelsWorkspace defaultMiMo V2.5MiMo V2.5Gemini 3.1 Flash LiteGemini Warehouse Triage Extended Context Preview With A Very Long Display NameMiMo Field Notes Multilingual Beta For Romanian And Hungarian Street Capture",
+          "x": 260,
+          "y": 200,
+          "width": 360,
+          "height": 188,
+          "color": "rgb(243, 243, 243)",
+          "background": "rgb(48, 48, 48)",
+          "font": "\"Inter Variable\", Inter, system-ui, \"Segoe UI\", Roboto, sans-serif",
+          "visible": true
+        },
+        {
+          "label": "Send",
+          "x": 976,
+          "y": 404,
+          "width": 36,
+          "height": 36,
+          "color": "rgb(24, 24, 24)",
+          "background": "rgb(226, 216, 107)",
+          "font": "\"Inter Variable\", Inter, system-ui, \"Segoe UI\", Roboto, sans-serif",
+          "visible": true
+        }
+      ]
+    },
+    {
+      "story": "work--thinking-live",
+      "width": 1280,
+      "viewport": 1280,
+      "scrollWidth": 1280,
+      "text": "Is Thai Shop a good fit?\n04:24 PM\nWorking…\nThinking\n\ngemini · summary\n\nChecking the visit notes against Friday promises.",
+      "controls": [
+        {
+          "label": "Set string",
+          "x": 0,
+          "y": 0,
+          "width": 0,
+          "height": 0,
+          "color": "rgba(0, 0, 0, 0)",
+          "background": "rgba(0, 0, 0, 0.1)",
+          "font": "\"Nunito Sans\", -apple-system, \".SFNSText-Regular\", \"San Francisco\", BlinkMacSystemFont, \"Segoe UI\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+          "visible": false
+        },
+        {
+          "label": "Set string",
+          "x": 0,
+          "y": 0,
+          "width": 0,
+          "height": 0,
+          "color": "rgba(0, 0, 0, 0)",
+          "background": "rgba(0, 0, 0, 0.1)",
+          "font": "\"Nunito Sans\", -apple-system, \".SFNSText-Regular\", \"San Francisco\", BlinkMacSystemFont, \"Segoe UI\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+          "visible": false
+        },
+        {
+          "label": "Set string",
+          "x": 0,
+          "y": 0,
+          "width": 0,
+          "height": 0,
+          "color": "rgba(0, 0, 0, 0)",
+          "background": "rgba(0, 0, 0, 0.1)",
+          "font": "\"Nunito Sans\", -apple-system, \".SFNSText-Regular\", \"San Francisco\", BlinkMacSystemFont, \"Segoe UI\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+          "visible": false
+        },
+        {
+          "label": "Copy message",
+          "x": 964,
+          "y": 68,
+          "width": 32,
+          "height": 32,
+          "color": "rgb(243, 243, 243)",
+          "background": "rgba(0, 0, 0, 0)",
+          "font": "\"Inter Variable\", Inter, system-ui, \"Segoe UI\", Roboto, sans-serif",
+          "visible": true
+        },
+        {
+          "label": "Working…",
+          "x": 284,
+          "y": 124,
+          "width": 102.21875,
+          "height": 32,
+          "color": "rgb(168, 168, 168)",
+          "background": "rgba(0, 0, 0, 0)",
+          "font": "\"Inter Variable\", Inter, system-ui, \"Segoe UI\", Roboto, sans-serif",
+          "visible": true
+        },
+        {
+          "label": "Thinking",
+          "x": 284,
+          "y": 164,
+          "width": 712,
+          "height": 32,
+          "color": "rgb(168, 168, 168)",
+          "background": "rgba(0, 0, 0, 0)",
+          "font": "\"Inter Variable\", Inter, system-ui, \"Segoe UI\", Roboto, sans-serif",
+          "visible": true
+        }
+      ]
+    },
+    {
+      "story": "work--thinking-truncated",
+      "width": 1280,
+      "viewport": 1280,
+      "scrollWidth": 1280,
+      "text": "Is Thai Shop a good fit?\n04:24 PM\nWorked\nThinking\n\ngemini · summary\n\nLong deliberation kept within budget.\n\nThinking truncated. The answer is unaffected.",
+      "controls": [
+        {
+          "label": "Set string",
+          "x": 0,
+          "y": 0,
+          "width": 0,
+          "height": 0,
+          "color": "rgba(0, 0, 0, 0)",
+          "background": "rgba(0, 0, 0, 0.1)",
+          "font": "\"Nunito Sans\", -apple-system, \".SFNSText-Regular\", \"San Francisco\", BlinkMacSystemFont, \"Segoe UI\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+          "visible": false
+        },
+        {
+          "label": "Set string",
+          "x": 0,
+          "y": 0,
+          "width": 0,
+          "height": 0,
+          "color": "rgba(0, 0, 0, 0)",
+          "background": "rgba(0, 0, 0, 0.1)",
+          "font": "\"Nunito Sans\", -apple-system, \".SFNSText-Regular\", \"San Francisco\", BlinkMacSystemFont, \"Segoe UI\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+          "visible": false
+        },
+        {
+          "label": "Set string",
+          "x": 0,
+          "y": 0,
+          "width": 0,
+          "height": 0,
+          "color": "rgba(0, 0, 0, 0)",
+          "background": "rgba(0, 0, 0, 0.1)",
+          "font": "\"Nunito Sans\", -apple-system, \".SFNSText-Regular\", \"San Francisco\", BlinkMacSystemFont, \"Segoe UI\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+          "visible": false
+        },
+        {
+          "label": "Copy message",
+          "x": 964,
+          "y": 68,
+          "width": 32,
+          "height": 32,
+          "color": "rgb(243, 243, 243)",
+          "background": "rgba(0, 0, 0, 0)",
+          "font": "\"Inter Variable\", Inter, system-ui, \"Segoe UI\", Roboto, sans-serif",
+          "visible": true
+        },
+        {
+          "label": "Worked",
+          "x": 284,
+          "y": 124,
+          "width": 71.4375,
+          "height": 32,
+          "color": "rgb(168, 168, 168)",
+          "background": "rgba(0, 0, 0, 0)",
+          "font": "\"Inter Variable\", Inter, system-ui, \"Segoe UI\", Roboto, sans-serif",
+          "visible": true
+        },
+        {
+          "label": "Thinking",
+          "x": 284,
+          "y": 164,
+          "width": 712,
+          "height": 32,
+          "color": "rgb(168, 168, 168)",
+          "background": "rgba(0, 0, 0, 0)",
+          "font": "\"Inter Variable\", Inter, system-ui, \"Segoe UI\", Roboto, sans-serif",
+          "visible": true
+        }
+      ]
+    },
+    {
+      "story": "settings--personal",
+      "width": 1280,
+      "viewport": 1280,
+      "scrollWidth": 1280,
+      "text": "Settings\nYou\nKerning\nReply language\nRomână\nTimezone\n\nUsed for dates and reminders. Your brief stays on its existing schedule.\n\nUse this device’s timezone\nSave timezone\nSign out",
+      "controls": [
+        {
+          "label": "Set string",
+          "x": 0,
+          "y": 0,
+          "width": 0,
+          "height": 0,
+          "color": "rgba(0, 0, 0, 0)",
+          "background": "rgba(0, 0, 0, 0.1)",
+          "font": "\"Nunito Sans\", -apple-system, \".SFNSText-Regular\", \"San Francisco\", BlinkMacSystemFont, \"Segoe UI\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+          "visible": false
+        },
+        {
+          "label": "Set string",
+          "x": 0,
+          "y": 0,
+          "width": 0,
+          "height": 0,
+          "color": "rgba(0, 0, 0, 0)",
+          "background": "rgba(0, 0, 0, 0.1)",
+          "font": "\"Nunito Sans\", -apple-system, \".SFNSText-Regular\", \"San Francisco\", BlinkMacSystemFont, \"Segoe UI\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+          "visible": false
+        },
+        {
+          "label": "Set string",
+          "x": 0,
+          "y": 0,
+          "width": 0,
+          "height": 0,
+          "color": "rgba(0, 0, 0, 0)",
+          "background": "rgba(0, 0, 0, 0.1)",
+          "font": "\"Nunito Sans\", -apple-system, \".SFNSText-Regular\", \"San Francisco\", BlinkMacSystemFont, \"Segoe UI\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+          "visible": false
+        },
+        {
+          "label": "Close settings",
+          "x": 880,
+          "y": 52,
+          "width": 36,
+          "height": 36,
+          "color": "rgb(168, 168, 168)",
+          "background": "rgba(0, 0, 0, 0)",
+          "font": "\"Inter Variable\", Inter, system-ui, \"Segoe UI\", Roboto, sans-serif",
+          "visible": true
+        },
+        {
+          "label": "You",
+          "x": 364,
+          "y": 108,
+          "width": 49.109375,
+          "height": 44,
+          "color": "rgb(243, 243, 243)",
+          "background": "rgba(0, 0, 0, 0)",
+          "font": "\"Inter Variable\", Inter, system-ui, \"Segoe UI\", Roboto, sans-serif",
+          "visible": true
+        },
+        {
+          "label": "Kerning",
+          "x": 417.109375,
+          "y": 108,
+          "width": 75.03125,
+          "height": 44,
+          "color": "rgb(168, 168, 168)",
+          "background": "rgba(0, 0, 0, 0)",
+          "font": "\"Inter Variable\", Inter, system-ui, \"Segoe UI\", Roboto, sans-serif",
+          "visible": true
+        },
+        {
+          "label": "Reply language",
+          "x": 364,
+          "y": 197,
+          "width": 552,
+          "height": 44,
+          "color": "rgb(243, 243, 243)",
+          "background": "rgba(0, 0, 0, 0)",
+          "font": "\"Inter Variable\", Inter, system-ui, \"Segoe UI\", Roboto, sans-serif",
+          "visible": true
+        },
+        {
+          "label": "Use this device’s timezone",
+          "x": 364,
+          "y": 371,
+          "width": 190.875,
+          "height": 32,
+          "color": "rgb(243, 243, 243)",
+          "background": "rgba(0, 0, 0, 0)",
+          "font": "\"Inter Variable\", Inter, system-ui, \"Segoe UI\", Roboto, sans-serif",
+          "visible": true
+        },
+        {
+          "label": "Save timezone",
+          "x": 799.0625,
+          "y": 371,
+          "width": 116.9375,
+          "height": 32,
+          "color": "rgb(24, 24, 24)",
+          "background": "rgb(243, 243, 243)",
+          "font": "\"Inter Variable\", Inter, system-ui, \"Segoe UI\", Roboto, sans-serif",
+          "visible": true
+        },
+        {
+          "label": "Sign out",
+          "x": 838.875,
+          "y": 451,
+          "width": 77.125,
+          "height": 32,
+          "color": "rgb(140, 140, 140)",
+          "background": "rgba(0, 0, 0, 0)",
+          "font": "\"Inter Variable\", Inter, system-ui, \"Segoe UI\", Roboto, sans-serif",
+          "visible": true
+        }
+      ]
+    },
+    {
+      "story": "composer--short",
+      "width": 1440,
+      "viewport": 1440,
+      "scrollWidth": 1440,
+      "text": "Message Otis\nOtis can make mistakes. Verify important business info.",
+      "controls": [
+        {
+          "label": "Set string",
+          "x": 0,
+          "y": 0,
+          "width": 0,
+          "height": 0,
+          "color": "rgba(0, 0, 0, 0)",
+          "background": "rgba(0, 0, 0, 0.1)",
+          "font": "\"Nunito Sans\", -apple-system, \".SFNSText-Regular\", \"San Francisco\", BlinkMacSystemFont, \"Segoe UI\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+          "visible": false
+        },
+        {
+          "label": "Set string",
+          "x": 0,
+          "y": 0,
+          "width": 0,
+          "height": 0,
+          "color": "rgba(0, 0, 0, 0)",
+          "background": "rgba(0, 0, 0, 0.1)",
+          "font": "\"Nunito Sans\", -apple-system, \".SFNSText-Regular\", \"San Francisco\", BlinkMacSystemFont, \"Segoe UI\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+          "visible": false
+        },
+        {
+          "label": "Set string",
+          "x": 0,
+          "y": 0,
+          "width": 0,
+          "height": 0,
+          "color": "rgba(0, 0, 0, 0)",
+          "background": "rgba(0, 0, 0, 0.1)",
+          "font": "\"Nunito Sans\", -apple-system, \".SFNSText-Regular\", \"San Francisco\", BlinkMacSystemFont, \"Segoe UI\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+          "visible": false
+        },
+        {
+          "label": "Send",
+          "x": 1056,
+          "y": 404,
+          "width": 36,
+          "height": 36,
+          "color": "rgb(24, 24, 24)",
+          "background": "rgb(226, 216, 107)",
+          "font": "\"Inter Variable\", Inter, system-ui, \"Segoe UI\", Roboto, sans-serif",
+          "visible": true
+        }
+      ]
+    },
+    {
+      "story": "command--model-long-names",
+      "width": 1440,
+      "viewport": 1440,
+      "scrollWidth": 1440,
+      "text": "Models\nWorkspace default\nMiMo V2.5\nMiMo V2.5\nGemini 3.1 Flash Lite\nGemini Warehouse Triage Extended Context Preview With A Very Long Display Name\nMiMo Field Notes Multilingual Beta For Romanian And Hungarian Street Capture\nMessage Otis\nOtis can make mistakes. Verify important business info.",
+      "controls": [
+        {
+          "label": "Set string",
+          "x": 0,
+          "y": 0,
+          "width": 0,
+          "height": 0,
+          "color": "rgba(0, 0, 0, 0)",
+          "background": "rgba(0, 0, 0, 0.1)",
+          "font": "\"Nunito Sans\", -apple-system, \".SFNSText-Regular\", \"San Francisco\", BlinkMacSystemFont, \"Segoe UI\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+          "visible": false
+        },
+        {
+          "label": "Set string",
+          "x": 0,
+          "y": 0,
+          "width": 0,
+          "height": 0,
+          "color": "rgba(0, 0, 0, 0)",
+          "background": "rgba(0, 0, 0, 0.1)",
+          "font": "\"Nunito Sans\", -apple-system, \".SFNSText-Regular\", \"San Francisco\", BlinkMacSystemFont, \"Segoe UI\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+          "visible": false
+        },
+        {
+          "label": "Set string",
+          "x": 0,
+          "y": 0,
+          "width": 0,
+          "height": 0,
+          "color": "rgba(0, 0, 0, 0)",
+          "background": "rgba(0, 0, 0, 0.1)",
+          "font": "\"Nunito Sans\", -apple-system, \".SFNSText-Regular\", \"San Francisco\", BlinkMacSystemFont, \"Segoe UI\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+          "visible": false
+        },
+        {
+          "label": "ModelsWorkspace defaultMiMo V2.5MiMo V2.5Gemini 3.1 Flash LiteGemini Warehouse Triage Extended Context Preview With A Very Long Display NameMiMo Field Notes Multilingual Beta For Romanian And Hungarian Street Capture",
+          "x": 340,
+          "y": 200,
+          "width": 360,
+          "height": 188,
+          "color": "rgb(243, 243, 243)",
+          "background": "rgb(48, 48, 48)",
+          "font": "\"Inter Variable\", Inter, system-ui, \"Segoe UI\", Roboto, sans-serif",
+          "visible": true
+        },
+        {
+          "label": "Send",
+          "x": 1056,
+          "y": 404,
+          "width": 36,
+          "height": 36,
+          "color": "rgb(24, 24, 24)",
+          "background": "rgb(226, 216, 107)",
+          "font": "\"Inter Variable\", Inter, system-ui, \"Segoe UI\", Roboto, sans-serif",
+          "visible": true
+        }
+      ]
+    },
+    {
+      "story": "work--thinking-live",
+      "width": 1440,
+      "viewport": 1440,
+      "scrollWidth": 1440,
+      "text": "Is Thai Shop a good fit?\n04:24 PM\nWorking…\nThinking\n\ngemini · summary\n\nChecking the visit notes against Friday promises.",
+      "controls": [
+        {
+          "label": "Set string",
+          "x": 0,
+          "y": 0,
+          "width": 0,
+          "height": 0,
+          "color": "rgba(0, 0, 0, 0)",
+          "background": "rgba(0, 0, 0, 0.1)",
+          "font": "\"Nunito Sans\", -apple-system, \".SFNSText-Regular\", \"San Francisco\", BlinkMacSystemFont, \"Segoe UI\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+          "visible": false
+        },
+        {
+          "label": "Set string",
+          "x": 0,
+          "y": 0,
+          "width": 0,
+          "height": 0,
+          "color": "rgba(0, 0, 0, 0)",
+          "background": "rgba(0, 0, 0, 0.1)",
+          "font": "\"Nunito Sans\", -apple-system, \".SFNSText-Regular\", \"San Francisco\", BlinkMacSystemFont, \"Segoe UI\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+          "visible": false
+        },
+        {
+          "label": "Set string",
+          "x": 0,
+          "y": 0,
+          "width": 0,
+          "height": 0,
+          "color": "rgba(0, 0, 0, 0)",
+          "background": "rgba(0, 0, 0, 0.1)",
+          "font": "\"Nunito Sans\", -apple-system, \".SFNSText-Regular\", \"San Francisco\", BlinkMacSystemFont, \"Segoe UI\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+          "visible": false
+        },
+        {
+          "label": "Copy message",
+          "x": 1044,
+          "y": 68,
+          "width": 32,
+          "height": 32,
+          "color": "rgb(243, 243, 243)",
+          "background": "rgba(0, 0, 0, 0)",
+          "font": "\"Inter Variable\", Inter, system-ui, \"Segoe UI\", Roboto, sans-serif",
+          "visible": true
+        },
+        {
+          "label": "Working…",
+          "x": 364,
+          "y": 124,
+          "width": 102.21875,
+          "height": 32,
+          "color": "rgb(168, 168, 168)",
+          "background": "rgba(0, 0, 0, 0)",
+          "font": "\"Inter Variable\", Inter, system-ui, \"Segoe UI\", Roboto, sans-serif",
+          "visible": true
+        },
+        {
+          "label": "Thinking",
+          "x": 364,
+          "y": 164,
+          "width": 712,
+          "height": 32,
+          "color": "rgb(168, 168, 168)",
+          "background": "rgba(0, 0, 0, 0)",
+          "font": "\"Inter Variable\", Inter, system-ui, \"Segoe UI\", Roboto, sans-serif",
+          "visible": true
+        }
+      ]
+    },
+    {
+      "story": "work--thinking-truncated",
+      "width": 1440,
+      "viewport": 1440,
+      "scrollWidth": 1440,
+      "text": "Is Thai Shop a good fit?\n04:24 PM\nWorked\nThinking\n\ngemini · summary\n\nLong deliberation kept within budget.\n\nThinking truncated. The answer is unaffected.",
+      "controls": [
+        {
+          "label": "Set string",
+          "x": 0,
+          "y": 0,
+          "width": 0,
+          "height": 0,
+          "color": "rgba(0, 0, 0, 0)",
+          "background": "rgba(0, 0, 0, 0.1)",
+          "font": "\"Nunito Sans\", -apple-system, \".SFNSText-Regular\", \"San Francisco\", BlinkMacSystemFont, \"Segoe UI\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+          "visible": false
+        },
+        {
+          "label": "Set string",
+          "x": 0,
+          "y": 0,
+          "width": 0,
+          "height": 0,
+          "color": "rgba(0, 0, 0, 0)",
+          "background": "rgba(0, 0, 0, 0.1)",
+          "font": "\"Nunito Sans\", -apple-system, \".SFNSText-Regular\", \"San Francisco\", BlinkMacSystemFont, \"Segoe UI\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+          "visible": false
+        },
+        {
+          "label": "Set string",
+          "x": 0,
+          "y": 0,
+          "width": 0,
+          "height": 0,
+          "color": "rgba(0, 0, 0, 0)",
+          "background": "rgba(0, 0, 0, 0.1)",
+          "font": "\"Nunito Sans\", -apple-system, \".SFNSText-Regular\", \"San Francisco\", BlinkMacSystemFont, \"Segoe UI\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+          "visible": false
+        },
+        {
+          "label": "Copy message",
+          "x": 1044,
+          "y": 68,
+          "width": 32,
+          "height": 32,
+          "color": "rgb(243, 243, 243)",
+          "background": "rgba(0, 0, 0, 0)",
+          "font": "\"Inter Variable\", Inter, system-ui, \"Segoe UI\", Roboto, sans-serif",
+          "visible": true
+        },
+        {
+          "label": "Worked",
+          "x": 364,
+          "y": 124,
+          "width": 71.4375,
+          "height": 32,
+          "color": "rgb(168, 168, 168)",
+          "background": "rgba(0, 0, 0, 0)",
+          "font": "\"Inter Variable\", Inter, system-ui, \"Segoe UI\", Roboto, sans-serif",
+          "visible": true
+        },
+        {
+          "label": "Thinking",
+          "x": 364,
+          "y": 164,
+          "width": 712,
+          "height": 32,
+          "color": "rgb(168, 168, 168)",
+          "background": "rgba(0, 0, 0, 0)",
+          "font": "\"Inter Variable\", Inter, system-ui, \"Segoe UI\", Roboto, sans-serif",
+          "visible": true
+        }
+      ]
+    },
+    {
+      "story": "settings--personal",
+      "width": 1440,
+      "viewport": 1440,
+      "scrollWidth": 1440,
+      "text": "Settings\nYou\nKerning\nReply language\nRomână\nTimezone\n\nUsed for dates and reminders. Your brief stays on its existing schedule.\n\nUse this device’s timezone\nSave timezone\nSign out",
+      "controls": [
+        {
+          "label": "Set string",
+          "x": 0,
+          "y": 0,
+          "width": 0,
+          "height": 0,
+          "color": "rgba(0, 0, 0, 0)",
+          "background": "rgba(0, 0, 0, 0.1)",
+          "font": "\"Nunito Sans\", -apple-system, \".SFNSText-Regular\", \"San Francisco\", BlinkMacSystemFont, \"Segoe UI\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+          "visible": false
+        },
+        {
+          "label": "Set string",
+          "x": 0,
+          "y": 0,
+          "width": 0,
+          "height": 0,
+          "color": "rgba(0, 0, 0, 0)",
+          "background": "rgba(0, 0, 0, 0.1)",
+          "font": "\"Nunito Sans\", -apple-system, \".SFNSText-Regular\", \"San Francisco\", BlinkMacSystemFont, \"Segoe UI\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+          "visible": false
+        },
+        {
+          "label": "Set string",
+          "x": 0,
+          "y": 0,
+          "width": 0,
+          "height": 0,
+          "color": "rgba(0, 0, 0, 0)",
+          "background": "rgba(0, 0, 0, 0.1)",
+          "font": "\"Nunito Sans\", -apple-system, \".SFNSText-Regular\", \"San Francisco\", BlinkMacSystemFont, \"Segoe UI\", \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+          "visible": false
+        },
+        {
+          "label": "Close settings",
+          "x": 960,
+          "y": 52,
+          "width": 36,
+          "height": 36,
+          "color": "rgb(168, 168, 168)",
+          "background": "rgba(0, 0, 0, 0)",
+          "font": "\"Inter Variable\", Inter, system-ui, \"Segoe UI\", Roboto, sans-serif",
+          "visible": true
+        },
+        {
+          "label": "You",
+          "x": 444,
+          "y": 108,
+          "width": 49.109375,
+          "height": 44,
+          "color": "rgb(243, 243, 243)",
+          "background": "rgba(0, 0, 0, 0)",
+          "font": "\"Inter Variable\", Inter, system-ui, \"Segoe UI\", Roboto, sans-serif",
+          "visible": true
+        },
+        {
+          "label": "Kerning",
+          "x": 497.109375,
+          "y": 108,
+          "width": 75.03125,
+          "height": 44,
+          "color": "rgb(168, 168, 168)",
+          "background": "rgba(0, 0, 0, 0)",
+          "font": "\"Inter Variable\", Inter, system-ui, \"Segoe UI\", Roboto, sans-serif",
+          "visible": true
+        },
+        {
+          "label": "Reply language",
+          "x": 444,
+          "y": 197,
+          "width": 552,
+          "height": 44,
+          "color": "rgb(243, 243, 243)",
+          "background": "rgba(0, 0, 0, 0)",
+          "font": "\"Inter Variable\", Inter, system-ui, \"Segoe UI\", Roboto, sans-serif",
+          "visible": true
+        },
+        {
+          "label": "Use this device’s timezone",
+          "x": 444,
+          "y": 371,
+          "width": 190.875,
+          "height": 32,
+          "color": "rgb(243, 243, 243)",
+          "background": "rgba(0, 0, 0, 0)",
+          "font": "\"Inter Variable\", Inter, system-ui, \"Segoe UI\", Roboto, sans-serif",
+          "visible": true
+        },
+        {
+          "label": "Save timezone",
+          "x": 879.0625,
+          "y": 371,
+          "width": 116.9375,
+          "height": 32,
+          "color": "rgb(24, 24, 24)",
+          "background": "rgb(243, 243, 243)",
+          "font": "\"Inter Variable\", Inter, system-ui, \"Segoe UI\", Roboto, sans-serif",
+          "visible": true
+        },
+        {
+          "label": "Sign out",
+          "x": 918.875,
+          "y": 451,
+          "width": 77.125,
+          "height": 32,
+          "color": "rgb(140, 140, 140)",
+          "background": "rgba(0, 0, 0, 0)",
+          "font": "\"Inter Variable\", Inter, system-ui, \"Segoe UI\", Roboto, sans-serif",
+          "visible": true
+        }
+      ]
+    }
+  ]
+}

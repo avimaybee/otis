@@ -13,6 +13,8 @@ Hunor may capture from Telegram while walking. The bot must identify him through
 
 ## Scope
 
+Field-capture acknowledgment addition (2026-10-03): distinguish durable receipt from processed work. If the current Bot API and private-chat permissions support it, evaluate a native reaction acknowledgment **only after inbound D1 acceptance**; it is transport feedback, not agent prose or proof of filing. Verify current official API behavior and supported reaction choice before enabling. Reaction failure must not lose accepted input, block model dispatch or cause duplicate runs. Provide a concise truthful progress fallback when necessary, not a second full acknowledgment after every step. Final reply and inspectable action receipts communicate filing/partial/question outcomes. Test duplicate webhook, acceptance failure, reaction failure and revoked identity separately. No unsupported reaction promise is part of core acceptance.
+
 Modify packages/channels/telegram, Worker webhook and send adapters, link-code endpoints from plan 003, callback/action tables if needed, and integration tests. Do not build a WhatsApp bot, monitor personal chats, or send messages to leads. Use private bot chats for v1; do not assume group messages are trusted member instructions.
 
 ## Required behavior

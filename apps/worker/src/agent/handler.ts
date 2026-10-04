@@ -14,6 +14,7 @@ import { workerDebug, workerFailure } from '../observability.js';
 import { executeAgentTool } from './repository.js';
 import { getTurnContext } from './context.js';
 import { publishAgentActivity } from './activity.js';
+import { StreamPublisher, createThinkingBudget, type SharedThinkingBudget } from './streamPublish.js';
 import { getWorkspaceRevision } from '@otis/ledger';
 import {
   AgentStreamError,
@@ -405,6 +406,9 @@ export class AgentHandler implements TurnHandler {
     // 5. Bounded Slice Loop (Section 7.3)
     const maxRounds = this.options?.maxRoundsPerSlice ?? 2;
     let roundsExecutedThisTurn = 0;
+    // Genuinely per-run thinking budget: round publishers share it so the
+    // display cap is not reset by round boundaries.
+    const thinkingBudget: SharedThinkingBudget = createThinkingBudget();
 
     slice: while (roundsExecutedThisTurn < maxRounds) {
       if (progress.phase === 'completed') {
@@ -516,6 +520,38 @@ export class AgentHandler implements TurnHandler {
             ? progress.completedRounds[progress.completedRounds.length - 1]
             : null;
 
+        // Genuinely new user input since the linked continuation: steering
+        // context consumed after the last provider request, plus a
+        // clarification answer not yet sent. Stored history and previously
+        // proposed assistant calls are never replayed as new input on a
+        // stateful continuation; the server already owns that interaction.
+        // The answer is identified by its durable source message id — a later
+        // clarification's distinct answer is sent, an already-sent answer is
+        // never repeated (and text is never compared).
+        const steeringInputs = progress.steeringInputs ?? [];
+        const newSteering = steeringInputs.slice(progress.sentSteeringCount ?? 0);
+        const answerIsNew =
+          Boolean(ctx.answerText) && (!ctx.answerMessageId || ctx.answerMessageId !== progress.sentAnswerMessageId);
+        const newAnswer = answerIsNew ? ctx.answerText : null;
+        const continuationInput: ProviderMessage[] =
+          lastCompletedRound?.continuation && (newSteering.length > 0 || newAnswer)
+            ? [
+                {
+                  role: 'user',
+                  text: [
+                    ...(newAnswer ? [`[User Clarification Answer]: ${newAnswer}`] : []),
+                    ...newSteering.map((input) => `[Additional context from the same member]: ${input.text}`),
+                  ].join('\n'),
+                },
+              ]
+            : [];
+        // The request below includes these (in messages for a stateless
+        // request, in continuationInput for a linked one); record what was
+        // sent so later rounds do not duplicate it. Persisted on the next
+        // checkpoint save; a failed request discards the in-memory value.
+        progress.sentSteeringCount = steeringInputs.length;
+        if (answerIsNew && ctx.answerMessageId) progress.sentAnswerMessageId = ctx.answerMessageId;
+
         let thinkingRequest: ThinkingRequest = { kind: 'provider_default' };
         if (runRow.thinking_snapshot_json) {
           try {
@@ -535,6 +571,7 @@ export class AgentHandler implements TurnHandler {
           requestId: `${ctx.runId}_r${progress.roundIndex}`,
           sessionId: ctx.chatId,
           messages: conversationMessages,
+          continuationInput,
           tools: getOrderedToolDeclarations(),
           pendingToolResults: lastCompletedRound
             ? lastCompletedRound.toolResults.map((r) => ({
@@ -593,31 +630,45 @@ export class AgentHandler implements TurnHandler {
 
         // Collect and validate round (throws AgentStreamError on incomplete/malformed stream)
         let collectedRound;
+        const publisher = new StreamPublisher(
+          (key, type, payload) => publishAgentActivity(ctx, key, type, payload),
+          progress.roundIndex,
+          modelSnapshot.provider,
+          (err) => workerFailure('agent', 'stream flush failed; remainder retries on next tick', {
+            workspaceId: ctx.workspaceId,
+            runId: ctx.runId,
+            round: progress.roundIndex,
+            error: err instanceof Error ? err.message : String(err),
+          }),
+          thinkingBudget,
+        );
+        // One serialized owner for size- and timer-triggered flushes; every
+        // exit below clears it. The final flush is authorized remainder only:
+        // fence/membership guards still reject stale writes after Stop or
+        // lease loss, and the run terminal state resolves the rest.
+        const publishTimer = setInterval(() => {
+          void publisher.tick().catch(() => undefined);
+        }, 100);
+        let streamOutcome: 'complete' | 'interrupted' = 'complete';
         try {
           const publicStream = async function* () {
-            let buffer = ''; let chunk = 0; let summaries = 0;
-            // Bound both payload size and D1 writes. The authoritative final
-            // message remains complete even after the live preview reaches its cap.
-            const flush = async () => {
-              while (buffer && chunk < 32) {
-                const text = buffer.slice(0, 2048); buffer = buffer.slice(2048);
-                await publishAgentActivity(ctx, `r${progress.roundIndex}_text${chunk++}`, 'text_chunk', { text, round_index: progress.roundIndex });
-              }
-              buffer = '';
-            };
             for await (const event of stream) {
               if (event.type === 'text_delta') {
-                if (chunk < 32) buffer += event.text.slice(0, (32 - chunk) * 2048 - buffer.length);
-                if (buffer.length >= 2048) await flush();
-              } else if (event.type === 'provider_thought_summary' && summaries < 8) {
-                await publishAgentActivity(ctx, `r${progress.roundIndex}_summary${summaries++}`, 'reasoning_summary', { provider: modelSnapshot.provider, text: event.text.slice(0, 8000), round_index: progress.roundIndex });
+                publisher.pushText(event.text);
+              } else if (event.type === 'provider_thought_summary') {
+                publisher.pushThinking({
+                  text: event.text,
+                  blockId: event.blockId,
+                  contentKind: event.contentKind,
+                  mode: event.mode,
+                });
               }
               yield event;
             }
-            await flush();
           };
           collectedRound = await collectAndValidateProviderStream(publicStream());
         } catch (streamErr) {
+          streamOutcome = 'interrupted';
           const appliedCount = progress.completedToolResults.filter((r) => r.result.status === 'applied').length;
           const providerCode = streamErr instanceof AgentStreamError ? streamErr.providerCode : undefined;
           const agentCode = streamErr instanceof AgentStreamError ? streamErr.code : undefined;
@@ -637,6 +688,16 @@ export class AgentHandler implements TurnHandler {
               ? `Partial success: ${appliedCount} actions committed before stream error: ${streamErr instanceof Error ? streamErr.message : String(streamErr)}`
               : streamErr instanceof Error ? streamErr.message : String(streamErr),
           };
+        } finally {
+          clearInterval(publishTimer);
+          const drained = await publisher.close(streamOutcome);
+          if (!drained) {
+            workerFailure('agent', 'live preview incomplete; authoritative answer persists separately', {
+              workspaceId: ctx.workspaceId,
+              runId: ctx.runId,
+              round: progress.roundIndex,
+            });
+          }
         }
 
         // An input accepted while the provider was streaming changes the next

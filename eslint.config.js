@@ -1,5 +1,6 @@
 import js from '@eslint/js';
 import tseslint from 'typescript-eslint';
+import jsxA11y from 'eslint-plugin-jsx-a11y';
 
 export default tseslint.config(
   js.configs.recommended,
@@ -9,6 +10,8 @@ export default tseslint.config(
       '**/dist/**',
       '**/dist-client/**',
       '**/dist-worker/**',
+      '**/storybook-static/**',
+      '**/008-browser-evidence/**',
       '**/.wrangler/**',
       '**/node_modules/**',
       '**/.vite/**',
@@ -24,5 +27,18 @@ export default tseslint.config(
         { argsIgnorePattern: '^_', varsIgnorePattern: '^_' }
       ]
     }
+  },
+  {
+    files: ['apps/web/src/**/*.{ts,tsx}'],
+    ...jsxA11y.flatConfigs.recommended,
+  },
+  {
+    files: ['scripts/*.mjs'],
+    languageOptions: {
+      globals: {
+        console: 'readonly',
+        process: 'readonly',
+      },
+    },
   }
 );

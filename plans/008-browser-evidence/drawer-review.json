@@ -1,0 +1,22 @@
+{
+  "scope": "Native Chrome isolated synthetic production App drawer/back/focus review",
+  "open": {
+    "dialogs": 1,
+    "focus": "Close history",
+    "url": "http://127.0.0.1:5490/?workspace=review-ws&chat=review-chat",
+    "drawers": [
+      {
+        "x": 0,
+        "y": 0,
+        "width": 320,
+        "height": 844
+      }
+    ]
+  },
+  "back": {
+    "dialogs": 0,
+    "focus": "Open history",
+    "url": "http://127.0.0.1:5490/?workspace=review-ws&chat=review-chat",
+    "textarea": true
+  }
+}

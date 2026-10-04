@@ -87,6 +87,10 @@ Record match precision, abstention, wrong-write rate, unsupported assumptions, r
 
 ## 5. Browser review procedure
 
+The 2026-10-03 visual authority is design-tokens.md plus docs/design/approved-reference.png. Before claiming UI completion, run the path-correct implemented design checker and Storybook build, map every design.md fixture ID to its production-component story, and record token section 12 results at all five widths. Until these tools exist, mark them missing rather than passed. Exact recipes replace the older monochrome/white-Send directions. Historical screenshots do not prove the new baseline.
+
+Required additional behavior cases: instant echo before delayed HTTP; lost acknowledgment after commit with same-UUID retry; HTTP/stream order inversion; no duplicate bubble/run; two rapid sends with next-draft preservation; active-run correction plus reachable Stop; silent command state reconciliation under a late old response; prepend while streaming; offline reload/foreground flush; revoked/account-changed local outbox; service-worker private-cache exclusion; completed-message-only screen-reader announcements. DOM tests need record assertions for idempotency and actual browser/device tests for geometry/keyboard/speech. Agent-run failure with saved writes is not a message-delivery retry case.
+
 Use a running local/staging app in Codex or Antigravity's browser controls, as the user requested. Do not install Playwright. If browser tooling fails, record the failure and leave affected checks unverified. Screenshots or simulated DOM metrics alone cannot replace interactive inspection.
 
 Review widths: 360, 390, intermediate around 900, desktop 1280 and 1440 CSS px; review 200% zoom/enlarged text. Record both viewport width and whether emulated or physical device. Test actual mobile keyboard and recording separately on Android/iPhone.
@@ -106,3 +110,26 @@ Suggested result table: check ID, tested state, observed result, evidence path, 
 Block real use for cross-workspace access, lost accepted input, duplicate business effects, unguarded stale writes, invalid source attribution, unreliable undo, secret leakage or false external-delivery claims. UI acceptance includes all required states, not only the happy path. A new API key, model or audio route needs its own capability evidence.
 
 Staging exercises migration, restore/rebuild, export/erasure, retention and secret rotation. Do not treat a dry-run bundle as deployment verification. A successful one-day journey does not establish the two-week habit criterion. Product acceptance is measured during real dogfood after deployment readiness passes.
+
+
+## 8. Field-use quality measurements (addition 2026-10-03)
+
+Measure capture, memory, resurfacing and action separately. Targets below are planning goals to validate with real devices/providers/networks, not new unmeasured guarantees or permission to lower correctness. Record sample count, p50/p95 where useful, model/route, network/device, offline versus online, and failures. Synthetic UI timing is not deployed end-to-end latency.
+
+| Measure | Definition and interpretation |
+|---|---|
+| Immediate echo | Send gesture to visible local bubble; target under 100 ms. Local durable receipt appears only after storage succeeds |
+| Acceptance | Send to D1 commit/confirmed acknowledgment; candidate online target under 1 s. Separately record late/lost acknowledgments and actual commit time; offline waits are a distinct cohort |
+| Voice transcript | From Send/upload stage to validated persisted transcript first displayed; candidate online target about 3–4 s, measure upload and STT separately |
+| Finished reply | Existing targets: median text 5 s, voice 12 s; voice 8–12 s is an aspiration, not a promise. Count partial/failed runs separately; do not hide slow failures |
+| Capture friction | Measure open→ready and stop→submitted separately from speaking duration. Under-5-second interaction overhead is a candidate; full-note time and locked-phone launch are not equivalent metrics |
+| Clarification burden | Unique necessary questions per captured business note, segmented by ambiguity/language/input route. Candidate average below 0.3; never guess a date/status to meet it |
+| Repeated resolved question | Duplicate ask for the same resolved operation/context without changed evidence; target zero. New ambiguity, alias collision and stale context are separate legitimate cases |
+| Capture loss | Submitted operations/recordings lacking recoverable local data or server acceptance after interruption; investigate every loss and record storage limits without claiming unlimited durability |
+| Correction / undo | Count wrong writes, user corrections and action undos, with reason and denominator. Low undo alone does not prove correctness or discoverability |
+| Resurfacing usefulness | At least half of actionable brief items acted on; source saved item ID, time window and real Done/Draft/Move/Snooze or conversational result. Opening a link is not a completed external send |
+| Habit | Existing two-week criterion: at least 5 of 7 days logged without Avi prompting; one-day demo is insufficient |
+
+Additional evaluated journeys: one-handed weak-signal voice capture; kill/reopen with local data intact; validated transcript before final filing; shorthand corrected then recalled in another same-workspace chat; a later collision triggers a justified question; natural amount/entity correction with original report retained; a disputed field avoided by drafts/briefs; stale brief reply resolved against its saved item; ignored/empty brief causes no invented nudge.
+
+Keep aggregate timings/counters and non-sensitive correlation IDs; raw field notes, provider bodies and audio do not belong in telemetry. Quality checks are owned by existing gates: 008 local capture/receipts, 010 transcript/device, 006 interpretation/aliases, 011 resurfacing, 012 drafts. No new analytics platform is required.

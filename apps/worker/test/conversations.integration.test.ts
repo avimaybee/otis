@@ -29,6 +29,10 @@ describe('Worker Conversations & Inbound Integration (workerd runtime)', () => {
     env.ENVIRONMENT = 'test';
     env.TELEGRAM_WEBHOOK_SECRET = 'test_webhook_secret_999';
     env.TELEGRAM_BOT_INSTALLATION_ID = 'test_bot';
+    env.TELEGRAM_BOT_USERNAME = 'otis_conv_test_bot';
+    // Synthetic only: no real Bot API call is made in tests; the token only
+    // satisfies the truthful conversational-route gate.
+    env.TELEGRAM_BOT_TOKEN = '111111:test_synthetic_token';
 
     const now = new Date().toISOString();
     const expiresAt = new Date(Date.now() + 3600 * 1000).toISOString();
@@ -856,16 +860,21 @@ describe('Worker Conversations & Inbound Integration (workerd runtime)', () => {
       });
 
       expect(resRelink.status).toBe(200);
-      const relinkData = (await resRelink.json()) as { status: string; user_id?: string };
-      expect(relinkData.status).toBe('linked');
-      expect(relinkData.user_id).toBe(hunorUserId);
+      const relinkData = (await resRelink.json()) as { status: string; reason?: string };
+      expect(relinkData.status).toBe('conflict');
+      expect(relinkData.reason).toBe('Conflicting Telegram identity binding');
 
-      // Verify telegram user mapping updated to hunorUserId
+      // No silent reassignment: the original binding stands, and the code
+      // of a conflicting redemption is not consumed.
       const updatedTgUser = await env.DB
         .prepare(`SELECT user_id FROM telegram_users WHERE telegram_user_id = ?`)
         .bind(tgUserId)
         .first<{ user_id: string }>();
-      expect(updatedTgUser?.user_id).toBe(hunorUserId);
+      expect(updatedTgUser?.user_id).toBe(aviUserId);
+      const relinkCodeRow = await env.DB
+        .prepare(`SELECT consumed_at FROM link_codes WHERE id = 'lc_relink_test'`)
+        .first<{ consumed_at: string | null }>();
+      expect(relinkCodeRow?.consumed_at).toBeNull();
 
       // 3. /start with invalid code from already-linked account
       const resInvalid = await SELF.fetch('http://localhost/api/inbound/telegram', {

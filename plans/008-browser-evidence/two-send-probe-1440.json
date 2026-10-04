@@ -1,0 +1,145 @@
+{
+  "scope": "synthetic API through production App; native Chrome headless; not server acceptance",
+  "capturedAt": "2026-10-04T05:25:59.128Z",
+  "viewport": {
+    "width": 1440,
+    "height": 844
+  },
+  "mode": "existing chat, two real Send clicks while first POST pending",
+  "immediateEcho": true,
+  "sendStartedBeforeNavList": true,
+  "secondLocalSendBeforeFirstAck": true,
+  "postsBeforeFirstAck": 1,
+  "failedText": "Otis\nWorkspace\n\nSynthetic workspace\n\nNew chat\nSearch chats\n\nYour chats\n\nSynthetic conversation\nSettings\nSynthetic conversation\nSynthetic workspace\nSynthetic browser delivery probe\nSynthetic delivery failed.\nRetry\nDiscard\n10:55 AM\nSecond synthetic input while first is pending\nSending…\n10:56 AM\nMessage Otis\nOtis can make mistakes. Verify important business info.",
+  "retryAvailable": true,
+  "sameUuidOnRetry": true,
+  "bubblesAfterRetry": 1,
+  "retryText": "Otis\nWorkspace\n\nSynthetic workspace\n\nNew chat\nSearch chats\n\nYour chats\n\nSynthetic conversation\nSettings\nSynthetic conversation\nSynthetic workspace\nSynthetic browser delivery probe\n10:55 AM\nSecond synthetic input while first is pending\n10:55 AM\nMessage Otis\nOtis can make mistakes. Verify important business info.",
+  "distinctSubmissionIds": true,
+  "geometry": {
+    "width": 1440,
+    "pageOverflow": false,
+    "composerRect": {
+      "x": 496,
+      "y": 774,
+      "width": 696,
+      "height": 24
+    }
+  },
+  "calls": [
+    {
+      "path": "/api/me",
+      "search": "",
+      "method": "GET",
+      "body": null,
+      "time": 293.1000000089407
+    },
+    {
+      "path": "/api/me",
+      "search": "",
+      "method": "GET",
+      "body": null,
+      "time": 294.40000000596046
+    },
+    {
+      "path": "/api/workspaces/review-ws/chats",
+      "search": "?filter=mine",
+      "method": "GET",
+      "body": null,
+      "time": 375.1000000089407
+    },
+    {
+      "path": "/api/workspaces/review-ws/chats",
+      "search": "?filter=team",
+      "method": "GET",
+      "body": null,
+      "time": 375.40000000596046
+    },
+    {
+      "path": "/api/workspaces/review-ws/chats/review-chat",
+      "search": "",
+      "method": "GET",
+      "body": null,
+      "time": 375.79999999701977
+    },
+    {
+      "path": "/api/workspaces/review-ws/chats/review-chat/messages",
+      "search": "?limit=50",
+      "method": "GET",
+      "body": null,
+      "time": 376
+    },
+    {
+      "path": "/api/workspaces/review-ws/chats/review-chat/activity",
+      "search": "?after=0",
+      "method": "GET",
+      "body": null,
+      "time": 376.1000000089407
+    },
+    {
+      "path": "/api/workspaces/review-ws/chats/review-chat/clarifications",
+      "search": "",
+      "method": "GET",
+      "body": null,
+      "time": 376.1000000089407
+    },
+    {
+      "path": "/api/workspaces/review-ws/models",
+      "search": "?chat_id=review-chat",
+      "method": "GET",
+      "body": null,
+      "time": 376.40000000596046
+    },
+    {
+      "path": "/api/commands",
+      "search": "?surface=web",
+      "method": "GET",
+      "body": null,
+      "time": 376.70000000298023
+    },
+    {
+      "path": "/api/workspaces/review-ws/chats/review-chat/messages",
+      "search": "",
+      "method": "POST",
+      "body": {
+        "client_message_id": "057d3523-f02a-46e9-92a5-d5aff8b72e5f",
+        "text": "Synthetic browser delivery probe"
+      },
+      "time": 533
+    },
+    {
+      "path": "/api/workspaces/review-ws/chats/review-chat/messages",
+      "search": "",
+      "method": "POST",
+      "body": {
+        "client_message_id": "057d3523-f02a-46e9-92a5-d5aff8b72e5f",
+        "text": "Synthetic browser delivery probe"
+      },
+      "time": 1529.7000000029802
+    },
+    {
+      "path": "/api/workspaces/review-ws/chats/review-chat/messages",
+      "search": "",
+      "method": "POST",
+      "body": {
+        "client_message_id": "ece909be-baff-4517-b008-2ecd72f4919b",
+        "text": "Second synthetic input while first is pending"
+      },
+      "time": 1544.4000000059605
+    },
+    {
+      "path": "/api/workspaces/review-ws/runs/review-run",
+      "search": "",
+      "method": "GET",
+      "body": null,
+      "time": 1673.6000000089407
+    },
+    {
+      "path": "/api/workspaces/review-ws/chats/review-chat/messages",
+      "search": "?limit=50",
+      "method": "GET",
+      "body": null,
+      "time": 1673.9000000059605
+    }
+  ]
+}

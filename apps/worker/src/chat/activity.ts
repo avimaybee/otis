@@ -27,6 +27,7 @@ export class ActivityCursorSupersededError extends Error {
 export async function readChatActivity(
   db: D1Database,
   params: { workspaceId: string; chatId: string; afterCursor?: number; limit?: number },
+  queryCount?: { count: number },
 ): Promise<ActivityReadResult> {
   const limit = Math.min(
     Math.max(params.limit ?? ACTIVITY_BOUNDS.MAX_CATCHUP_PAGE, 1),
@@ -34,6 +35,7 @@ export async function readChatActivity(
   );
 
   const after = params.afterCursor ?? 0;
+  if (queryCount) queryCount.count += 1;
   const chat = await db
     .prepare(`SELECT id, workspace_id, activity_cursor FROM chats WHERE id = ? AND workspace_id = ?`)
     .bind(params.chatId, params.workspaceId)
@@ -45,6 +47,12 @@ export async function readChatActivity(
     throw new ActivityCursorSupersededError(latestCursor);
   }
 
+  // If the requested cursor is already at latestCursor, avoid querying run_activity entirely.
+  if (after === latestCursor) {
+    return { activities: [], latestCursor, nextCursor: after };
+  }
+
+  if (queryCount) queryCount.count += 1;
   const rows =
     (
       await db
@@ -89,7 +97,7 @@ function safePayload(type: string, json: string): unknown {
       step_started: ['step_index', 'tool_name'], step_finished: ['step_index', 'tool_name', 'status'],
       action_applied: ['action_id', 'command_name', 'summary', 'event_ids'],
       action_reverted: ['action_id', 'mode', 'requested_by_user_id'],
-      reasoning_summary: ['text', 'provider', 'round_index'],
+      reasoning_summary: ['text', 'provider', 'round_index', 'block_id', 'content_kind', 'mode', 'state'],
       clarification_required: ['question', 'missing_fields'], partial_failure: ['error_code'],
       answer_saved: ['reply', 'selected_workspace_id'], run_finished: ['status'],
     };

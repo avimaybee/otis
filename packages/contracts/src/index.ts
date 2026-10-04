@@ -220,6 +220,39 @@ export interface MeResponse {
   workspaces: WorkspaceSummary[];
 }
 
+/** One-time Telegram connection link for the requesting member. The code
+ * itself is never returned or persisted — only the deep link to open it. */
+export interface TelegramLinkResponse {
+  status: 'ok';
+  deep_link: string;
+  expires_at: string;
+}
+
+/** One own Telegram connection: routing workspace when the caller still has
+ * membership there, otherwise null (selection needed). Never another user's. */
+export interface TelegramConnectionEntry {
+  routing_workspace: { id: string; name: string } | null;
+}
+
+/** Read-only Telegram connection status for the session user. */
+export interface TelegramConnectionResponse {
+  status: 'ok';
+  /** Bot provisioning present (username and token configured). */
+  available: boolean;
+  state: 'connected' | 'routing_needed' | 'disconnected';
+  /** Routing workspace when a single own connection is ready; filtered to
+   * workspaces the caller can still access. */
+  routing_workspace: { id: string; name: string } | null;
+  /** Bounded list of the caller's own connections (legacy multiples). */
+  connections: TelegramConnectionEntry[];
+}
+
+/** Result of disconnecting the session user's own Telegram connection. */
+export interface TelegramDisconnectResponse {
+  status: 'ok';
+  state: 'disconnected';
+}
+
 export interface LogoutResponse {
   status: 'ok';
 }

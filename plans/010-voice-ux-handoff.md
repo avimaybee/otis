@@ -1,0 +1,32 @@
+# Gate 010 supplement: recording, interruption and local recovery
+
+Revised 2026-10-03. Read [010-voice.md](010-voice.md), [010 Groq STT handoff](010-groq-stt-handoff.md), [design.md](../design.md), [design-tokens.md](../design-tokens.md) and architecture section 17. This extends 010; no second recorder, upload schema, STT client or offline module.
+
+## Ownership and prerequisites
+
+Gate 008's production Composer, local IndexedDB module, query state and Storybook setup are the integration points. Gate 010 owns actual recording, authenticated upload, validated transcript and retained-audio access. Existing verified native/Groq routing and zero-additional-spend policy stay intact. Text-only conversation models remain eligible with a configured STT route. A model's general multimodality is not proof of usable audio through the actual endpoint.
+
+The mic ships only with working record/review/send and an available route. Keep absent functionality absent; a story called recording is not permission to ship a dead mic. No live voice, TTS default, avatars or image attachment expansion.
+
+## Recorder implementation sequence
+
+1. On explicit Record, request microphone. Negotiate with MediaRecorder.isTypeSupported and record the actual MIME/codec; don't infer it solely from OS. Validate Android Chrome WebM/Opus, iPhone Safari MP4/AAC and Telegram OGG/Opus through the actual upload/transcription path. If an expected MIME is unavailable, fail clearly or use another tested supported format; do not rename bytes.
+2. Create a stable local recording session ID scoped to account/workspace/chat. Store MIME, ordered sequence index, start time, collected duration, chunks and interruption state using the shared IndexedDB owner. Use MediaRecorder.start with a 1000 ms timeslice. Chunks may arrive late/larger; do not infer actual duration from count alone.
+3. Persist each dataavailable chunk in order, ignoring empty chunks. Checkpoint metadata consistently and serialize writes; final Send cannot race an unfinished final chunk write. Bound storage and track the three-minute cap. A storage exception changes the recovery promise and preserves in-memory bytes where possible; it does not pretend recording is durable.
+4. Meter with AnalyserNode from the actual microphone stream. No random bars or animation based on elapsed time. Use existing approved control/voice recipe values; if meter geometry is missing, ask Avi before designing it. Vibrate on start/stop only where supported; haptics are not the sole status feedback.
+5. Stop finalizes the recording into Review, never sends it. Cancel ends capture, releases resources and removes the local session. Stop all tracks, disconnect meter observers and release AudioContext after capture. Dispose correctly on component unmount and route/logout cleanup.
+6. Handle visibilitychange, recorder stop/error, page lifecycle and foreground return. iOS can interrupt recording while backgrounded; do not rely on another chunk arriving. Checkpoint what exists and say recording stopped when returning. No automatic resume or submission. Recover only validated playable content; if the container is incomplete, explain what could not be recovered instead of offering a broken file.
+7. Reassemble the whole ordered sequence into the actual container, including its required header/final data. A chunk is not necessarily playable alone; concatenating arbitrary middle fragments is not recovery. Test clean stop, interrupted stop, reload and missing final chunk on the real platforms.
+8. Review shows truthful duration/playback with Send and Cancel. Sending creates/reuses the message UUID and frozen blob reference. Network/upload retry uses that identity and checks finalization state; never re-record or re-upload into a second message automatically.
+9. Server quarantine/duration/size/MIME checks, authorized R2 storage, transcription stage and native/STT selection remain under the existing 010 handoff. Local browser metadata is not trusted validation. A failed upload keeps recoverable local recording and Retry. Delete local bytes after known successful handoff or explicit discard under the retention contract; never before confirmation when recovery is still needed.
+10. Render audio/transcript with the same production message component. Every current workspace member may read retained audio; removed members cannot. Raw audio expires after 14 days while source transcript remains. No cached service-worker audio or public R2 bearer access.
+
+## Story and device acceptance
+
+Additional field-use rule: local capture durability is the release priority, not an optional enhancement after visual polish. Display validated transcript as soon as transcription commits; the agent may still be filing. Measure bubble, durable acceptance, transcript and filing latencies separately. Stop goes to Review under the current contract; auto-send with a cancel window remains an unapproved alternative. A recording shortcut may later open the same capture surface, but does not bypass microphone permission/gesture or guarantee locked-phone-to-recording latency. Share Target/audio word seeking are deferred enhancements, not part of the recorder's core acceptance.
+
+Build every design.md voice fixture as a production-component story with clearly synthetic recorder/provider state until implemented. Stories cover denied permission, real levels, max duration, background stop, recoverable/unrecoverable media, Review, upload retry, transcription failure, uncertain proper name/amount/date and expired audio. They do not prove recording codecs or iOS lifecycle.
+
+Device evidence records actual device/OS/browser, negotiated MIME, duration, captured bytes, endpoint/model/STT route, language, outcome and narrow limitation. Use consenting synthetic English/Romanian/Hungarian content. Test both phones: keyboard + mic, permission retry, background/foreground, reload, weak signal, storage failure, Stop/Cancel/Send distinction and three-minute boundary. Verify Telegram samples separately. No fake confidence numbers, empty transcript accepted as fact, or guaranteed interruption recovery claim.
+
+Run targeted local storage/recorder lifecycle tests, actual Workers upload/transcription/retention tests, root checks, design checker and Storybook build once implemented. Follow token section 12 and record actual browser/device observations. No new paid service, transcoding infrastructure or model switching without the existing explicit policy/evidence.

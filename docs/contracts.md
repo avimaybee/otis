@@ -136,6 +136,25 @@ type PublicActivity = {
 
 Allowed event types: `message_accepted`, `queued`, `run_started`, `text_chunk`, `step_started`, `step_finished`, `action_applied`, `reasoning_summary`, `clarification_required`, `partial_failure`, `answer_saved`, `run_finished`, `action_reverted`. Heartbeats are ephemeral and have no business meaning. A reasoning-summary payload records provider attribution and displayable text, never private prompt content.
 
+### Thinking stream target (additive, not yet implementation evidence)
+
+Reuse `reasoning_summary` and the existing authorized public-activity store/SSE/catch-up path. Its historical event name is not proof that every provider's displayable reasoning is a summary. Add typed optional payload fields alongside the existing `provider`, `text` and `round_index`:
+
+| Field | Required meaning for newly emitted Thinking records |
+|---|---|
+| `block_id` | Stable server/provider-derived identity within a run/round; one block may span many activity records |
+| `content_kind` | `summary` or `provider_reasoning`; adapter sets it from the actual documented response channel |
+| `mode` | `append` for text deltas, `snapshot` for a provider's cumulative replacement; never guess from overlapping text |
+| `state` | `streaming`, `complete`, `interrupted` or `truncated`; terminal status may be a final metadata-only record |
+
+The existing envelope supplies run, chat, workspace, durable cursor and record identity. Do not add a second sequence store, transcript table or provider-payload passthrough. A reducer deduplicates activity records by ID/cursor, applies them in cursor order to `(run_id, round_index, block_id)`, appends deltas or replaces that block's snapshot, and groups blocks into one Thinking disclosure per run. Text equality is not a dedupe key: two distinct deltas may legitimately contain the same words. An old payload lacking block/mode metadata remains a separately identified legacy summary; do not blindly join old summaries when their semantics are unknown. Existing readers continue to accept older activity data; coordinate new types, serializers, handler and web reducer together.
+
+Only allowlisted displayable text and this metadata cross the public boundary. Never expose whole provider events, encrypted signatures, hidden prompts, raw request payloads, keys or tool internals. Bound individual records, aggregate retained characters and pending buffers. Batch small deltas with a bounded latency flush and final flush, not one D1 write per token or a silent fixed event-count cutoff. Persist through the existing fenced publication owner before broadcasting. Stop/lost authority never permits a late stale writer; retained partial content can derive interruption from the durable run terminal state if its final flush was no longer authorized. Hitting the display cap emits a single truncation indication and does not stop the answer/tool loop.
+
+Request public output only using verified parameters for the exact selected model/endpoint and within existing run budgets. Thinking-effort controls and reasoning-token accounting do not establish public-output support. If no displayable stream exists, omit Thinking; no model substitution, higher effort or synthetic summary call. Retention/access/erasure are those of existing public chat activity, including authorized teammate history. Provider output here is inspection text and never a source of business authority or a separate canonical memory.
+
+Google documents incremental `thought_summary` deltas separately from opaque `thought_signature` state; signatures cannot be rendered. This demonstrates an endpoint mechanism, not support for every configured Gemini model. Go adapter mappings need independent endpoint-specific evidence before enabling. See [Google's thinking documentation](https://ai.google.dev/gemini-api/docs/thinking) and the [008B implementation guidance](../plans/008-ui-implementation-handoff.md#thinking-inside-working).
+
 Persist before publishing. Reconnect uses a chat cursor; client duplicate suppression is by ID/cursor, not body text. A superseded cursor receives `resync_required` and authoritative transcript fetch. Redact sensitive tool result fields with an allowlist serializer rather than deleting only known secret key names.
 
 ## 9. Shared command grammar
@@ -153,7 +172,7 @@ Recognize an exact supported first non-space `/name`, optional Telegram `@thisbo
 | `/help` | Short commands and natural-language examples |
 | `/start <code>` | Telegram-only one-use account link; never web picker |
 
-Commands are attributed transcript turns. Non-model execution still has durable results. A `/model` response states whether voice works; unsupported/missing-key models are not silently substituted. Workspace switching records its command in the origin chat and never moves historical messages between workspaces.
+Commands keep attributed durable acceptance/audit/results. Web configuration operations use the existing command route with control presentation: no ordinary member/assistant chat bubbles and no LLM turn. Telegram may return a concise native acknowledgment. `/model` results describe the effective model and usable voice route; unsupported/missing-key models are not silently substituted. Workspace switching records its origin scope in audit without moving historical messages. Incomplete web picker selections collect arguments; complete selections apply directly. `//` remains literal text through the shared parser. See design.md section 8.
 
 ## 10. Agent tools
 
@@ -221,3 +240,18 @@ Implemented route shapes (2026-10-02, gate 007). DTOs live in `packages/contract
   - Switching model (`/model <new>`) resets any incompatible thinking override to Provider default and notes it in the command reply.
 - Agent tool `set_chat_thinking`: Exposes the same validated settings owner conversationally.
 - Accepted runs snapshot `thinking_snapshot_json` at acceptance for immutable run execution across queue delay, tool rounds, crashes, and clarification replies.
+
+
+## Frontend message/control boundary (2026-10-03)
+
+This specifies required client behavior and coordinated additions, not new fields already implemented. Read live packages/contracts types before changing schemas.
+
+- Existing ChatMessage.client_message_id and AcceptMessageResponse.message_id/run_id/acceptance_sequence reconcile one locally optimistic input. Keep its visible identity stable through HTTP/stream order inversion. Local sending/saved/failed are delivery states, not agent_runs statuses. Saved means known durable acceptance, not tool completion.
+- Local outbox/drafts carry account/workspace/chat scope, one client UUID, immutable submitted payload, clarification linkage, local time, retry metadata and authoritative mapping once known. Retry delivery sends exactly that original UUID/payload. Editing submitted failed input is a new UUID. Existing payload fingerprint checks remain mandatory.
+- Follow-up sends use the server's accepted mode (new_run, steer or clarification) and actual scope. The UI may not reassign a reply to a different pending question or change an active run's pinned provider configuration.
+- Web control commands use the deterministic command route and existing presentation control boundary. Keep audit/attribution/idempotency; omit normal chat/model-context messages. Output commands still return a readable result. Settings mutation success means authoritative commit, not an optimistic selected label.
+- Per-message language is a required presentation addition where missing. Current ChatMessage at the inspected baseline has no language field. Add its nullable/source-aware representation through storage, serializers, public types and clients together if necessary; old content uses an honest fallback. Do not leak provider protocol or request another model call solely to manufacture language labels.
+- Display formatting receives viewer locale and workspace timezone. Source-member timezone still interprets relative deadlines. Keep stored timestamps UTC. Client day grouping cannot use its host timezone while formatted timestamps use a different workspace zone.
+- Query/router/local-storage libraries do not weaken session, membership, author, workspace, revision, fence or receipt checks. Private caches are invalidated/purged on account change, logout and revocation.
+
+Public API changes remain owned by the relevant gate and need tests. Do not invent an execution-retry endpoint on the client, fake saved actions, persist raw credentials locally or modify domain status enums merely to match a visual pill label.

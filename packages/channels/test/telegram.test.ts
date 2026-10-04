@@ -3,6 +3,7 @@ import {
   normalizeTelegramUpdate,
   validateTelegramWebhookSecret,
 } from '../src/telegram.js';
+import { replyMarkupForPart, splitTelegramText } from '../src/telegramSend.js';
 
 describe('Telegram Channel Normalization & Validation', () => {
   const botId = 'bot_main_123';
@@ -114,5 +115,95 @@ describe('Telegram Channel Normalization & Validation', () => {
         botId,
       ),
     ).toThrow();
+  });
+
+  it('exposes canonical chat/message IDs, bot senders and reply targets', () => {
+    const update = {
+      update_id: 2001,
+      message: {
+        message_id: 77,
+        from: { id: 98765, is_bot: false },
+        chat: { id: 98765, type: 'private' },
+        date: 1700000000,
+        text: 'ok',
+        reply_to_message: { message_id: 71 },
+      },
+    };
+    const res = normalizeTelegramUpdate(update, botId);
+    expect(res.telegramChatId).toBe('98765');
+    expect(res.telegramMessageId).toBe('77');
+    expect(res.senderIsBot).toBe(false);
+    expect(res.replyToMessageId).toBe('71');
+  });
+
+  it('flags senders that are bots and rejects missing canonical IDs', () => {
+    const botUpdate = {
+      update_id: 2002,
+      message: {
+        message_id: 78,
+        from: { id: 12345, is_bot: true },
+        chat: { id: 98765, type: 'private' },
+        date: 1700000000,
+        text: 'beep',
+      },
+    };
+    expect(normalizeTelegramUpdate(botUpdate, botId).senderIsBot).toBe(true);
+    expect(() =>
+      normalizeTelegramUpdate(
+        { update_id: 2003, message: { from: { id: 1 }, chat: { id: 2, type: 'private' }, date: 1, text: 'x' } },
+        botId,
+      ),
+    ).toThrow();
+    expect(() =>
+      normalizeTelegramUpdate(
+        { update_id: 2004, message: { message_id: 3, from: { id: 1 }, chat: { type: 'private' }, date: 1, text: 'x' } },
+        botId,
+      ),
+    ).toThrow();
+  });
+
+  it('treats /startled as ordinary text, not a link command', () => {
+    const update = {
+      update_id: 2005,
+      message: {
+        message_id: 79,
+        from: { id: 98765 },
+        chat: { id: 98765, type: 'private' },
+        date: 1700000000,
+        text: '/startled by the news',
+      },
+    };
+    expect(normalizeTelegramUpdate(update, botId).kind).toBe('text');
+  });
+});
+
+describe('Telegram send formatting', () => {
+  it('keeps short text in one part without parse mode', () => {
+    expect(splitTelegramText('Hello <>& "world"')).toEqual(['Hello <>& "world"']);
+  });
+
+  it('splits long text into ordered parts under the limit, preferably at breaks', () => {
+    const text = `${'a'.repeat(3990)}\n${'b'.repeat(50)} tail`;
+    const parts = splitTelegramText(text);
+    expect(parts.length).toBe(2);
+    expect(parts.every((part) => [...part].reduce((n, ch) => n + ch.length, 0) <= 4000)).toBe(true);
+    expect(parts.join('')).toBe(text);
+    expect(parts[0]!.endsWith('\n')).toBe(true);
+  });
+
+  it('never splits surrogate pairs or drops content', () => {
+    const emoji = '\u{1F600}';
+    const text = `${'x'.repeat(3999)}${emoji}${'y'.repeat(10)}`;
+    const parts = splitTelegramText(text);
+    expect(parts.join('')).toBe(text);
+    for (const part of parts) {
+      expect([...part].every((ch) => ch.length === 1 || ch.length === 2)).toBe(true);
+    }
+  });
+
+  it('attaches ForceReply only to the final part of a question', () => {
+    expect(replyMarkupForPart(true, true)).toEqual({ force_reply: true, selective: true });
+    expect(replyMarkupForPart(true, false)).toBeUndefined();
+    expect(replyMarkupForPart(false, true)).toBeUndefined();
   });
 });

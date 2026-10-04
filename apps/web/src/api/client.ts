@@ -23,6 +23,9 @@ import type {
   UpdateMemberSettingsRequest,
   CredentialStatusResponse,
   RunDetailResponse,
+  TelegramConnectionResponse,
+  TelegramDisconnectResponse,
+  TelegramLinkResponse,
   UndoCommitResponse,
   UndoPreviewResponse,
 } from '@otis/contracts';
@@ -35,10 +38,22 @@ export class ApiError extends Error {
     readonly code: string,
     message: string,
     readonly requestId?: string,
+    /** Milliseconds from a `Retry-After` response header, when the server sent one. */
+    readonly retryAfterMs?: number,
   ) {
     super(message);
     this.name = 'ApiError';
   }
+}
+
+/** Parses a `Retry-After` value (delay seconds or HTTP date) into milliseconds. */
+export function parseRetryAfterMs(value: string | null | undefined): number | undefined {
+  if (!value) return undefined;
+  const trimmed = value.trim();
+  if (/^\d+$/.test(trimmed)) return Number(trimmed) * 1000;
+  const at = Date.parse(trimmed);
+  if (!Number.isNaN(at)) return Math.max(0, at - Date.now());
+  return undefined;
 }
 
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
@@ -75,6 +90,7 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
       error?.code ?? 'unknown_error',
       error?.message ?? `Request failed with HTTP ${response.status}`,
       error?.request_id,
+      parseRetryAfterMs(response.headers.get('Retry-After')),
     );
   }
 
@@ -191,6 +207,18 @@ export const api = {
   credentialStatus: (workspaceId: string, provider: 'gemini' | 'opencode_go') => request<CredentialStatusResponse>(`/api/workspaces/${workspaceId}/credentials/${provider}`),
   putCredential: (workspaceId: string, provider: 'gemini' | 'opencode_go', key: string) => request<CredentialStatusResponse>(`/api/workspaces/${workspaceId}/credentials/${provider}`, { method: 'PUT', body: JSON.stringify({ key }) }),
   verifyCredential: (workspaceId: string, provider: 'gemini' | 'opencode_go') => request<{ verified: boolean }>(`/api/workspaces/${workspaceId}/credentials/${provider}/verify`, { method: 'POST', body: JSON.stringify({}) }),
+
+  issueTelegramLink: (workspaceId: string) =>
+    request<TelegramLinkResponse>(`/api/workspaces/${workspaceId}/telegram/link`, {
+      method: 'POST',
+      body: JSON.stringify({}),
+    }),
+  telegramConnection: (workspaceId: string) =>
+    request<TelegramConnectionResponse>(`/api/workspaces/${workspaceId}/telegram/connection`),
+  disconnectTelegram: (workspaceId: string) =>
+    request<TelegramDisconnectResponse>(`/api/workspaces/${workspaceId}/telegram/connection`, {
+      method: 'DELETE',
+    }),
   activityStreamUrl: (workspaceId: string, chatId: string, after: number) =>
     `/api/workspaces/${workspaceId}/chats/${encodeURIComponent(chatId)}/activity?stream=sse&after=${after}`,
 };

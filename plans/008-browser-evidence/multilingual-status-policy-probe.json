@@ -1,0 +1,36 @@
+{
+  "scope": "Actual current pure authorization policy, transpiled without modifications; synthetic text, no provider or database call",
+  "cases": [
+    {
+      "language": "en",
+      "text": "Set Bistro 24 to warm.",
+      "result": {
+        "isExplicit": true
+      }
+    },
+    {
+      "language": "ro",
+      "text": "Marchează Bistro 24 ca warm.",
+      "result": {
+        "isExplicit": false,
+        "reason": "No explicit status mutation directive found in source text for status 'warm'."
+      }
+    },
+    {
+      "language": "hu",
+      "text": "Jelöld a Bistro 24-et warm státuszúnak.",
+      "result": {
+        "isExplicit": false,
+        "reason": "No explicit status mutation directive found in source text for status 'warm'."
+      }
+    },
+    {
+      "language": "en",
+      "text": "Set Bistro 24 to warm. The offer is not ready yet.",
+      "result": {
+        "isExplicit": false,
+        "reason": "Source text contains negation ('not'). Not an explicit instruction to set status to 'warm'."
+      }
+    }
+  ]
+}

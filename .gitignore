@@ -2,6 +2,7 @@ node_modules/
 dist/
 dist-client/
 dist-worker/
+storybook-static/
 .vite/
 .wrangler/
 .env

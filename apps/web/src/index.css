@@ -1,238 +1,200 @@
-@import "tailwindcss";
-@import '@otis/design/tokens.css';
-@import './components/ui/controls.css';
-@import "tw-animate-css";
 @import "shadcn/tailwind.css";
-@import "@fontsource-variable/geist";
 
 @source ".";
 @source "..";
 
 @custom-variant dark (&:is(.dark *));
 
+/*
+ * Otis component styles. All visual values come from apps/web/src/globals.css
+ * (verbatim design-tokens.md section 9). No hex literals, no parallel palette,
+ * no ad hoc type sizes here: type sizing uses text-xs/sm/base/xl utilities in
+ * markup, weights are 400/500 only, spacing follows the 4px grid with the two
+ * documented recipe exceptions (pl-[14px] selected row, my-1.5 textarea).
+ */
+
 *, *::before, *::after { box-sizing: border-box; }
-html { color-scheme: dark; }
-html, body, #root { margin: 0; height: 100%; }
-body { background: var(--otis-canvas); color: var(--otis-text-primary); font: 400 var(--otis-text-body)/var(--otis-leading-body) var(--otis-font-sans); -webkit-font-smoothing: antialiased; }
-button, input, textarea, select { font: inherit; color: inherit; }
-button { cursor: pointer; touch-action: manipulation; }
-button:disabled { cursor: default; opacity: .55; }
-:focus-visible { outline: 2px solid var(--otis-focus-ring); outline-offset: 3px; border-radius: var(--otis-radius-control); }
-button, input, textarea, select { -webkit-tap-highlight-color: transparent; }
 .otis-visually-hidden { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
-p { margin: 0; }
-/* One vertical shell: the transcript alone scrolls; keyboard/safe area belong to the layout. */
-.otis-shell { display: flex; height: var(--otis-viewport-height, 100dvh); min-height: 0; overflow: hidden; background: var(--otis-canvas); }
+
+/*
+ * Generic element resets live in the base layer so token utilities and
+ * component variants (utilities layer) prevail for color and type.
+ * Unlayered styles would beat them and render controls unreadable.
+ */
+@layer base {
+  html, body, #root { margin: 0; }
+  button, input, textarea, select { font: inherit; color: inherit; }
+  button { cursor: pointer; touch-action: manipulation; }
+  button:disabled { cursor: default; }
+  button, input, textarea, select { -webkit-tap-highlight-color: transparent; }
+  p { margin: 0; }
+}
+
+/* One vertical shell: the transcript alone scrolls. */
+.otis-shell { display: flex; height: 100dvh; height: var(--app-viewport-height, 100dvh); min-height: 0; overflow: hidden; }
 .otis-main { position: relative; display: flex; flex: 1; min-width: 0; min-height: 0; flex-direction: column; }
 .otis-chat { display: flex; flex: 1; min-height: 0; flex-direction: column; }
-.otis-topbar { position: relative; z-index: 5; display: flex; flex: none; min-height: calc(var(--otis-topbar) + env(safe-area-inset-top)); align-items: center; gap: 8px; padding: env(safe-area-inset-top) 8px 0; background: rgba(24, 24, 24, 0.92); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); border-bottom: 1px solid rgba(56, 56, 56, 0.5); }
+
+/* Top bar: recipe flex h-[52px] items-center gap-2 border-b border-border px-4. */
+.otis-topbar { position: relative; z-index: 5; display: flex; flex: none; height: 52px; align-items: center; gap: 8px; padding: 0 16px; border-bottom: 1px solid var(--border); }
 .otis-topbar__identity { flex: 1; min-width: 0; }
-.otis-topbar__title { margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; font-weight: 500; line-height: 20px; }
-.otis-topbar__subtitle { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--otis-text-muted); font-size: 13px; line-height: 18px; }
-.otis-iconbutton { display: inline-flex; flex: none; width: 44px; height: 44px; align-items: center; justify-content: center; padding: 0; border: 0; border-radius: 8px; background: transparent; color: var(--otis-text-secondary); transition: background var(--otis-duration), color var(--otis-duration), transform 0.1s ease; }
-.otis-iconbutton:hover { background: var(--otis-surface-hover); color: var(--otis-text-primary); }
-.otis-iconbutton:active { transform: scale(0.92); }
-/* A measured conversation column, aligned with the composer at every width. */
+.otis-topbar__title { margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.otis-topbar__subtitle { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--subtle); }
+.otis-topbar__actions { display: flex; flex: none; align-items: center; gap: 4px; }
+
+/* 44px touch hit area around the 36px desktop visual. */
+.otis-iconbutton { position: relative; display: inline-flex; flex: none; width: 44px; height: 44px; align-items: center; justify-content: center; padding: 0; border: 0; border-radius: 8px; background: transparent; color: var(--muted-foreground); }
+.otis-iconbutton:hover { background: var(--accent); color: var(--foreground); }
+.otis-stop-square { display: block; width: 12px; height: 12px; background: currentColor; }
+@media (min-width: 56.25rem) and (pointer: fine) {
+  .otis-iconbutton { width: 36px; height: 36px; }
+  .otis-iconbutton::after { content: ''; position: absolute; inset: -4px; }
+}
+
+/* Transcript: scroller flex-1 overflow-y-auto; column max 760 centered. */
 .otis-transcript-region { position: relative; display: flex; flex: 1; min-height: 0; }
-.otis-transcript { flex: 1; min-width: 0; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-color: var(--otis-border) transparent; padding: 16px var(--otis-gutter) 20px; }
-.otis-transcript__inner { width: 100%; max-width: var(--otis-content-width); margin: 0 auto; }
-.otis-transcript__inner--empty { display: flex; min-height: 100%; flex-direction: column; justify-content: center; }
-.otis-message-group + .otis-message-group { margin-top: var(--otis-turn-gap); }
-.otis-turn { position: relative; display: flex; flex-direction: column; gap: 4px; }
+.otis-transcript { flex: 1; min-width: 0; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
+.otis-transcript__inner { width: 100%; max-width: 760px; margin: 0 auto; padding: 24px 16px; display: flex; flex-direction: column; gap: 24px; }
+.otis-transcript__inner--empty { min-height: 100%; justify-content: center; }
+@media (min-width: 56.25rem) {
+  .otis-transcript__inner { padding-left: 24px; padding-right: 24px; }
+}
+.otis-message-group { display: flex; flex-direction: column; gap: 24px; min-width: 0; }
+.otis-turn { position: relative; display: flex; flex-direction: column; gap: 4px; min-width: 0; }
 .otis-turn--member { align-items: flex-end; }
 .otis-turn--agent { align-items: flex-start; }
-.otis-turn__bubble { max-width: 85%; padding: 10px 14px; background: var(--otis-surface); border-radius: 20px; white-space: pre-wrap; overflow-wrap: anywhere; }
-.otis-turn__body { max-width: 100%; white-space: pre-wrap; overflow-wrap: anywhere; }
-.otis-turn__meta { display: flex; gap: 8px; align-items: baseline; color: var(--otis-text-muted); font-size: 13px; line-height: 18px; }
-.otis-turn__actions { display: flex; align-items: center; gap: 4px; margin-top: 3px; }
-.otis-turn--member .otis-turn__actions { justify-content: flex-end; }
-.otis-turn--agent .otis-turn__actions { justify-content: flex-start; }
-.otis-turn__time { font-size: 11px; line-height: 16px; color: var(--otis-text-muted); padding: 0 4px; user-select: none; }
-.otis-msg-action { position: relative; display: inline-flex; align-items: center; justify-content: center; min-width: 32px; min-height: 32px; padding: 6px; border: 0; border-radius: 6px; background: transparent; color: var(--otis-text-muted); cursor: pointer; transition: background var(--otis-duration), color var(--otis-duration), transform 0.1s ease; }
-@media (pointer: coarse) { .otis-msg-action::after { content: ''; position: absolute; inset: -6px; } }
-.otis-msg-action:hover { background: var(--otis-surface-hover); color: var(--otis-text-primary); }
-.otis-msg-action:active { transform: scale(0.90); }
-.otis-msg-action--pill { gap: 5px; min-height: 28px; padding: 2px 10px; background: var(--otis-surface); border: 1px solid var(--otis-border); border-radius: 14px; font-size: 12px; font-weight: 500; color: var(--otis-text-secondary); }
-.otis-msg-action--pill:hover { background: var(--otis-surface-hover); border-color: var(--otis-text-muted); color: var(--otis-text-primary); }
-.otis-msg-action--pill:active { transform: scale(0.94); }
-.otis-dayseparator { display: flex; gap: 12px; align-items: center; margin: 12px 0 16px; color: var(--otis-text-muted); font-size: 13px; line-height: 18px; }
-.otis-dayseparator::before, .otis-dayseparator::after { content: ''; flex: 1; height: 1px; background: var(--otis-border); }
-.otis-run { margin: 0 0 4px; }
-.otis-run:empty { display: none; }
-.otis-run__status { color: var(--otis-text-secondary); font-size: 14px; line-height: 20px; margin: 8px 0; }
-.otis-run__status--error { color: var(--otis-danger); }
-@keyframes otis-shimmer {
-  0% { background-position: -200% 0; }
-  100% { background-position: 200% 0; }
-}
-@keyframes otis-pulse {
-  0%, 100% { opacity: 1; transform: scale(1); }
-  50% { opacity: 0.35; transform: scale(0.85); }
-}
-@keyframes otis-question-enter {
-  from { opacity: 0; transform: translateY(8px) scale(0.99); }
-  to { opacity: 1; transform: translateY(0) scale(1); }
-}
-.otis-working { display: flex; flex-direction: column; gap: 8px; color: var(--otis-text-secondary); font-size: 14px; line-height: 20px; }
-.otis-working__disclosure { display: flex; align-items: center; gap: 8px; align-self: flex-start; min-height: var(--otis-control-height); padding: 0 2px; border: 0; background: transparent; color: var(--otis-text-muted); cursor: pointer; }
-.otis-working__disclosure svg { transition: transform var(--otis-duration); }
-.otis-working__disclosure[aria-expanded='false'] svg { transform: rotate(-90deg); }
-.otis-working--running .otis-working__pulse-dot { display: inline-block; width: 6px; height: 6px; border-radius: 50%; background-color: var(--otis-text-primary); animation: otis-pulse 1.6s ease-in-out infinite; flex-shrink: 0; }
-.otis-working--running .otis-working__label { background: linear-gradient(90deg, var(--otis-text-muted) 0%, var(--otis-text-primary) 50%, var(--otis-text-muted) 100%); background-size: 200% 100%; -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; animation: otis-shimmer 2.2s ease-in-out infinite; display: inline-block; }
-.otis-working__steps { display: flex; flex-direction: column; gap: 6px; margin: 0; padding: 2px 0 2px 10px; border-left: 1px solid var(--otis-border); list-style: none; }
-.otis-working__step { display: flex; align-items: center; gap: 8px 10px; min-height: 28px; }
-.otis-working__step-icon { display: inline-flex; align-items: center; justify-content: center; width: 16px; height: 16px; color: var(--otis-text-muted); flex-shrink: 0; }
-.otis-working__step--succeeded .otis-working__step-icon { color: var(--otis-success); }
-.otis-working__step--failed .otis-working__step-icon { color: var(--otis-danger); }
-.otis-working__description { display: flex; flex: 1; min-width: 120px; flex-direction: column; overflow-wrap: anywhere; }
-.otis-working__step-title { font-size: 13px; font-weight: 500; color: var(--otis-text-primary); }
-.otis-working__inspect { font-size: 12px; min-height: 28px; padding: 0 4px; }
-.otis-working__state { flex: none; color: var(--otis-text-muted); font-size: 13px; }
-.otis-working__state--failed { color: var(--otis-danger); }
-.otis-provider-summary { margin-top: 12px; color: var(--otis-text-secondary); font-size: 14px; }
-.otis-provider-summary summary { min-height: 44px; cursor: pointer; }
-.otis-question { display: flex; flex-direction: column; gap: 6px; margin-top: 12px; padding: 10px 14px; border: 1px dashed var(--otis-border); border-radius: 12px; background: rgba(255, 255, 255, 0.02); }
-.otis-question__header { display: flex; align-items: center; justify-content: space-between; }
-.otis-question__badge { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 500; color: var(--otis-warning); }
-.otis-question__tag { font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--otis-text-muted); }
-.otis-question__text { font-size: 14px; line-height: 20px; color: var(--otis-text-primary); margin: 0; white-space: pre-wrap; }
-.otis-question__reply-btn { align-self: flex-start; min-height: 32px; font-size: 13px; color: var(--otis-text-secondary); text-decoration: underline; text-underline-offset: 3px; }
-.otis-streamed { margin-top: 16px; }
-.otis-textbutton { display: inline-flex; min-height: 44px; align-items: center; gap: 8px; padding: 0 4px; border: 0; background: transparent; color: var(--otis-text-secondary); font-size: 14px; text-decoration: underline; text-underline-offset: 3px; }
-.otis-textbutton:hover { color: var(--otis-text-primary); }
-.otis-load-older { display: flex; margin: 0 auto 16px; }
-.otis-jump { position: absolute; left: 50%; bottom: 16px; transform: translateX(-50%); display: inline-flex; align-items: center; justify-content: center; width: 40px; height: 40px; border: 1px solid var(--otis-border); border-radius: 50%; background: rgba(48, 48, 48, 0.92); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); color: var(--otis-text-primary); box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5); cursor: pointer; z-index: 2; transition: transform var(--otis-duration), background var(--otis-duration), box-shadow var(--otis-duration); }
-.otis-jump:hover { background: var(--otis-surface-hover); transform: translateX(-50%) scale(1.06); }
-.otis-jump:active { transform: translateX(-50%) scale(0.92); }
-.otis-jump:has(.otis-jump__badge) { width: auto; border-radius: 20px; padding: 0 12px; gap: 6px; }
-.otis-jump__badge { display: inline-flex; align-items: center; justify-content: center; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 9px; background: var(--otis-action-bg); color: var(--otis-action-fg); font-size: 11px; font-weight: 600; }
-@keyframes otis-picker-enter { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
-.otis-connection, .otis-chat-error { flex: none; width: 100%; max-width: 792px; margin: auto; padding: 8px 16px; color: var(--otis-text-secondary); font-size: 13px; line-height: 18px; }
-.otis-chat-error { color: var(--otis-danger); }
-.otis-readonly { flex: none; padding: 16px 24px calc(16px + env(safe-area-inset-bottom)); text-align: center; color: var(--otis-text-secondary); font-size: 14px; }
-/* History is structural navigation, with independently scrollable rows and a reachable footer. */
-.otis-sidebar { display: none; width: var(--otis-sidebar-width); flex: none; flex-direction: column; min-height: 0; padding: 12px; background: var(--otis-sidebar); }
-.otis-nav__brand { display: flex; height: 44px; align-items: center; justify-content: space-between; padding-left: 12px; font-weight: 600; }
-.otis-nav__workspace { flex: none; width: 100%; min-height: var(--otis-control-height); margin: 0 0 8px; padding: 6px 10px; border: 0; border-radius: 8px; background: transparent; font-size: 14px; text-overflow: ellipsis; }
-.otis-nav__action, .otis-nav__row { display: flex; flex: none; width: 100%; min-height: var(--otis-control-height); align-items: center; gap: 10px; padding: var(--otis-control-padding) 10px; border: 0; border-radius: 8px; background: transparent; font-size: 13px; line-height: 20px; text-align: left; }
-.otis-nav__row { color: var(--otis-text-secondary); }
-.otis-nav__action:hover, .otis-nav__row:hover, .otis-nav__row[aria-current='page'] { background: var(--otis-surface-hover); color: var(--otis-text-primary); }
-.otis-nav__history { flex: 1; min-height: 0; overflow-y: auto; scrollbar-width: thin; margin-top: 12px; }
-.otis-nav__heading { margin: 16px 10px 4px; color: var(--otis-text-muted); font-size: 13px; font-weight: 500; }
-.otis-nav__heading:first-child { margin-top: 8px; }
-.otis-nav__label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.otis-nav__author { max-width: 76px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--otis-text-muted); font-size: 13px; }
-.otis-nav__empty { margin: 8px 12px; color: var(--otis-text-muted); font-size: 13px; }
-.otis-nav__search { padding: 8px 4px; }
-.otis-nav__search input { width: 100%; min-height: 44px; padding: 8px 12px; border: 1px solid var(--otis-border); border-radius: 8px; background: var(--otis-surface); font-size: 16px; }
-.otis-nav__footer { flex: none; padding-top: 12px; }
-.otis-nav__footer p { margin: 8px 12px 0; color: var(--otis-text-muted); font-size: 13px; line-height: 18px; }
-/* Native dialogs own focus and background inertness. Narrow detail replaces, rather than squeezes, chat. */
-.otis-overlay { position: fixed; inset: 0; z-index: 10; width: 100%; max-width: none; height: 100%; max-height: none; margin: 0; padding: 0; border: 0; color: var(--otis-text-primary); background: transparent; }
-.otis-overlay::backdrop { background: rgba(0, 0, 0, .55); }
-.otis-overlay--drawer { background: transparent; }
-.otis-drawer__scrim { position: absolute; inset: 0; width: 100%; height: 100%; padding: 0; border: 0; background: transparent; }
-.otis-drawer { position: absolute; inset: 0 auto 0 0; display: flex; width: min(320px, 86vw); flex-direction: column; min-height: 0; padding: calc(12px + env(safe-area-inset-top)) 12px calc(16px + env(safe-area-inset-bottom)); border-right: 1px solid var(--otis-border); background: var(--otis-sidebar); }
-.otis-detail { display: flex; flex: none; width: var(--otis-detail-width); min-height: 0; flex-direction: column; gap: var(--otis-section-gap); padding: 12px 16px; border-left: 1px solid var(--otis-border); background: var(--otis-sidebar); overflow-y: auto; }
-.otis-overlay .otis-detail { width: 100%; height: var(--otis-viewport-height, 100dvh); padding: calc(8px + env(safe-area-inset-top)) 16px calc(24px + env(safe-area-inset-bottom)); border: 0; background: var(--otis-canvas); }
-.otis-pane-header { display: flex; flex: none; align-items: center; justify-content: space-between; gap: 12px; min-height: 44px; }
-.otis-pane-header h2 { margin: 0; font-size: 16px; line-height: 24px; font-weight: 500; }
-.otis-detail__section { display: flex; flex-direction: column; gap: 8px; }
-.otis-detail__label { color: var(--otis-text-muted); font-size: 13px; line-height: 18px; }
-.otis-detail__value { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 14px; line-height: 20px; }
-blockquote.otis-detail__value { margin: 0; padding-left: 12px; border-left: 2px solid var(--otis-border); }
-.otis-sources { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 4px; }
-.otis-source-link { min-height: 44px; padding: 8px 0; border: 0; background: transparent; color: var(--otis-text-secondary); font-size: 13px; line-height: 18px; text-decoration: underline; text-underline-offset: 3px; }
-.otis-detail__actions { display: flex; flex-wrap: wrap; gap: 8px; }
-.otis-button { display: inline-flex; min-height: 44px; align-items: center; justify-content: center; gap: 8px; padding: 8px 16px; border: 1px solid var(--otis-border); border-radius: 8px; background: transparent; font-size: 14px; line-height: 20px; }
-.otis-button:hover:not(:disabled) { background: var(--otis-surface-hover); }
-.otis-button--primary { border-color: var(--otis-action-bg); background: var(--otis-action-bg); color: var(--otis-action-fg); }
-.otis-button--primary:hover:not(:disabled) { background: var(--otis-text-secondary); }
-.otis-empty { display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 32px 8px 48px; color: var(--otis-text-secondary); text-align: center; }
-.otis-empty__title { margin: 0; font-size: 20px; font-weight: 500; line-height: 26px; }
-.otis-empty p { font-size: 14px; line-height: 20px; }
-.otis-access { display: flex; flex: 1; width: 100%; max-width: 480px; flex-direction: column; gap: 16px; justify-content: center; margin: auto; padding: 24px; }
-.otis-access h2 { margin: 0; font-size: 20px; font-weight: 500; }
-.otis-entry { display: flex; min-height: 100dvh; align-items: center; justify-content: center; padding: 32px 24px; }
-.otis-entry__inner { display: flex; width: 100%; max-width: 340px; flex-direction: column; gap: 16px; }
-.otis-entry__title { margin: 0; font-size: 20px; font-weight: 500; line-height: 26px; }
-.otis-entry__note { color: var(--otis-text-secondary); font-size: 14px; line-height: 20px; }
-.otis-entry__error { color: var(--otis-danger); font-size: 14px; line-height: 20px; }
-.otis-entry__action { display: flex; width: 100%; min-height: 44px; align-items: center; justify-content: center; border: 0; border-radius: 8px; background: var(--otis-action-bg); color: var(--otis-action-fg); font-weight: 500; }
-@media (min-width: 900px) {
-  .otis-sidebar { display: flex; }
-  .otis-topbar__menu { display: none; }
-  .otis-topbar { padding-right: 16px; padding-left: 24px; }
-  .otis-transcript { padding-top: 20px; padding-right: 24px; padding-left: 24px; }
-  .otis-turn__bubble { max-width: 80%; }
-}
-@media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; transition: none !important; animation: none !important; } }
 
-.otis-turn__meta:has(time) { position: absolute; right: 0; bottom: -15px; opacity: 0; font-size: 11px; line-height: 14px; pointer-events: none; }
-.otis-turn--agent .otis-turn__meta:has(time) { right: auto; left: 0; }
-.otis-turn:hover .otis-turn__meta:has(time), .otis-turn:focus-within .otis-turn__meta:has(time) { opacity: 1; }
-.otis-toast { --normal-bg: var(--otis-surface-raised); --normal-text: var(--otis-text-primary); --normal-border: var(--otis-border); font: 400 13px/18px var(--otis-font-sans); }
-@media (min-width: 900px) and (pointer: fine) {
-  .otis-iconbutton { width: 36px; height: 36px; }
-  .otis-nav__brand { height: 36px; }
-  .otis-button, .otis-textbutton, .otis-source-link, .otis-picker__option { min-height: var(--otis-control-height); }
-  .otis-nav__search input { min-height: 32px; font-size: 13px; }
-}
-
-/* Shared prose rhythm: compact paragraphs, true lists and contained tables. */
-.otis-turn__body { white-space: normal; }
+/* Assistant text sits directly on the canvas. */
+.otis-turn__body { max-width: 100%; overflow-wrap: anywhere; }
 .otis-turn__body > :first-child { margin-top: 0; }
 .otis-turn__body > :last-child { margin-bottom: 0; }
 .otis-turn__body p, .otis-turn__body ul, .otis-turn__body ol, .otis-turn__body blockquote, .otis-turn__body pre { margin: 0 0 12px; }
-.otis-turn__body ul, .otis-turn__body ol { padding-left: 22px; }
+.otis-turn__body ul, .otis-turn__body ol { padding-left: 16px; }
 .otis-turn__body li { margin: 4px 0; }
 .otis-turn__body li > p { margin: 4px 0; }
-.otis-turn__body h1, .otis-turn__body h2, .otis-turn__body h3, .otis-turn__body h4 { margin: 16px 0 8px; font-size: 16px; line-height: 24px; font-weight: 600; }
-.otis-turn__body a { text-decoration: underline; text-underline-offset: 3px; }
-.otis-turn__body blockquote { padding-left: 12px; border-left: 2px solid var(--otis-border); color: var(--otis-text-secondary); }
-.otis-turn__body code { padding: 2px 4px; border-radius: 4px; background: var(--otis-surface); font-size: 13px; }
-.otis-turn__body pre { overflow-x: auto; padding: 12px; border: 1px solid var(--otis-border); border-radius: 8px; background: var(--otis-surface); white-space: pre; }
-.otis-turn__body pre code { padding: 0; }
-.otis-turn__body table { display: block; max-width: 100%; overflow-x: auto; border-collapse: collapse; margin: 12px 0; font-size: 14px; }
-.otis-turn__body th, .otis-turn__body td { padding: 6px 10px; border: 1px solid var(--otis-border); text-align: left; }
+.otis-turn__body h1, .otis-turn__body h2, .otis-turn__body h3, .otis-turn__body h4 { margin: 16px 0 8px; font-weight: 500; font-size: inherit; }
+.otis-turn__body blockquote { padding-left: 12px; border-left: 1px solid var(--border); color: var(--muted-foreground); }
+.otis-turn__body code { padding: 4px; border-radius: 4px; background: var(--muted); }
+.otis-turn__body pre { overflow-x: auto; padding: 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--card); white-space: pre; }
+.otis-turn__body pre code { padding: 0; background: transparent; }
+.otis-turn__body table { display: block; max-width: 100%; overflow-x: auto; border-collapse: collapse; margin: 12px 0; }
+.otis-turn__body th, .otis-turn__body td { padding: 8px; border: 1px solid var(--border); text-align: left; }
 
-@theme inline { --font-heading: var(--font-sans); --font-sans: 'Geist Variable', sans-serif; --color-sidebar-ring: var(--sidebar-ring); --color-sidebar-border: var(--sidebar-border); --color-sidebar-accent-foreground: var(--sidebar-accent-foreground); --color-sidebar-accent: var(--sidebar-accent); --color-sidebar-primary-foreground: var(--sidebar-primary-foreground); --color-sidebar-primary: var(--sidebar-primary); --color-sidebar-foreground: var(--sidebar-foreground); --color-sidebar: var(--sidebar); --color-chart-5: var(--chart-5); --color-chart-4: var(--chart-4); --color-chart-3: var(--chart-3); --color-chart-2: var(--chart-2); --color-chart-1: var(--chart-1); --color-ring: var(--ring); --color-input: var(--input); --color-border: var(--border); --color-destructive: var(--destructive); --color-accent-foreground: var(--accent-foreground); --color-accent: var(--accent); --color-muted-foreground: var(--muted-foreground); --color-muted: var(--muted); --color-secondary-foreground: var(--secondary-foreground); --color-secondary: var(--secondary); --color-primary-foreground: var(--primary-foreground); --color-primary: var(--primary); --color-popover-foreground: var(--popover-foreground); --color-popover: var(--popover); --color-card-foreground: var(--card-foreground); --color-card: var(--card); --color-foreground: var(--foreground); --color-background: var(--background); --radius-sm: calc(var(--radius) * 0.6); --radius-md: calc(var(--radius) * 0.8); --radius-lg: var(--radius); --radius-xl: calc(var(--radius) * 1.4); --radius-2xl: calc(var(--radius) * 1.8); --radius-3xl: calc(var(--radius) * 2.2); --radius-4xl: calc(var(--radius) * 2.6); }
+/* Date separators mark real date changes: centered meta text, no rules. */
+.otis-dayseparator { display: flex; justify-content: center; margin: 0; color: var(--subtle); }
 
-:root, .dark {
-  --background: var(--otis-canvas);
-  --foreground: var(--otis-text-primary);
-  --card: var(--otis-surface);
-  --card-foreground: var(--otis-text-primary);
-  --popover: var(--otis-surface-raised);
-  --popover-foreground: var(--otis-text-primary);
-  --primary: var(--otis-action-bg);
-  --primary-foreground: var(--otis-action-fg);
-  --secondary: var(--otis-surface);
-  --secondary-foreground: var(--otis-text-secondary);
-  --muted: var(--otis-surface-hover);
-  --muted-foreground: var(--otis-text-muted);
-  --accent: var(--otis-surface-hover);
-  --accent-foreground: var(--otis-text-primary);
-  --destructive: var(--otis-danger);
-  --destructive-foreground: #181818;
-  --border: var(--otis-border);
-  --input: var(--otis-border);
-  --ring: var(--otis-focus-ring);
-  --radius: var(--otis-radius-control);
-  --sidebar: var(--otis-sidebar);
-  --sidebar-foreground: var(--otis-text-primary);
-  --sidebar-primary: var(--otis-action-bg);
-  --sidebar-primary-foreground: var(--otis-action-fg);
-  --sidebar-accent: var(--otis-surface-hover);
-  --sidebar-accent-foreground: var(--otis-text-primary);
-  --sidebar-border: var(--otis-border);
-  --sidebar-ring: var(--otis-focus-ring);
+/* Message delivery state: always visible beside its bubble, never hover-gated.
+   Copy/edit actions stay hover-revealed on precise pointers (always on touch). */
+.otis-delivery { display: flex; align-items: center; gap: 8px; }
+.otis-turn--member .otis-delivery { justify-content: flex-end; }
+.otis-turn--agent .otis-delivery { justify-content: flex-start; }
+.otis-turn__actions { display: flex; align-items: center; gap: 4px; }
+.otis-turn--member .otis-turn__actions { justify-content: flex-end; }
+.otis-turn--agent .otis-turn__actions { justify-content: flex-start; }
+@media (hover: hover) and (pointer: fine) {
+  .otis-turn__actions { opacity: 0; }
+  .otis-turn:hover .otis-turn__actions, .otis-turn:focus-within .otis-turn__actions { opacity: 1; }
+}
+.otis-msg-action { position: relative; }
+@media (hover: none) {
+  .otis-msg-action::after { content: ''; position: absolute; inset: -6px; }
 }
 
-@layer base {
-  * {
-    @apply border-border outline-ring/50; }
-  body {
-    @apply bg-background text-foreground; }
-  html {
-    @apply font-sans; } }
+/* Run status lines stay in place; failures pair destructive text with a label. */
+.otis-run { margin: 0 0 8px; }
+.otis-run:empty { display: none; }
+.otis-run__status { color: var(--muted-foreground); margin: 8px 0; }
+.otis-run__status--error { color: var(--destructive); }
+
+/* Working: static 8px highlight dot, real current activity, chronological steps. */
+.otis-working { display: flex; flex-direction: column; gap: 8px; color: var(--muted-foreground); }
+.otis-working__disclosure { display: flex; align-items: center; gap: 8px; align-self: flex-start; min-height: 44px; padding: 0; border: 0; background: transparent; color: var(--muted-foreground); cursor: pointer; }
+.otis-working__disclosure svg { transition: transform 150ms ease-out; }
+.otis-working__disclosure[aria-expanded='false'] svg { transform: rotate(-90deg); }
+.otis-working__pulse-dot { display: inline-block; width: 8px; height: 8px; border-radius: 9999px; background-color: var(--highlight); flex-shrink: 0; }
+.otis-working__steps { display: flex; flex-direction: column; gap: 8px; margin: 0; padding: 0; list-style: none; }
+.otis-working__step { display: flex; align-items: center; gap: 8px; min-height: 32px; }
+.otis-working__step-icon { display: inline-flex; align-items: center; justify-content: center; width: 16px; height: 16px; color: var(--subtle); flex-shrink: 0; }
+.otis-working__step--succeeded .otis-working__step-icon { color: var(--success); }
+.otis-working__step--failed .otis-working__step-icon { color: var(--destructive); }
+.otis-working__description { display: flex; flex: 1; min-width: 0; flex-direction: column; overflow-wrap: anywhere; }
+.otis-provider-summary { margin-top: 12px; color: var(--muted-foreground); }
+.otis-provider-summary summary { min-height: 44px; cursor: pointer; }
+
+/* Clarifications are ordinary conversational text answered in the composer. */
+.otis-question { display: flex; flex-direction: column; gap: 8px; margin-top: 12px; }
+.otis-streamed { margin-top: 16px; }
+.otis-load-older { display: flex; margin: 0 auto; }
+
+/* Jump to latest: neutral icon-button treatment with a count extension. */
+.otis-jump { position: absolute; left: 50%; bottom: 16px; transform: translateX(-50%); z-index: 2; }
+.otis-jump:has(span) { width: auto; padding: 0 12px; border-radius: 9999px; gap: 8px; }
+
+.otis-connection, .otis-chat-error { flex: none; width: 100%; max-width: 760px; margin: 0 auto; padding: 8px 16px; color: var(--muted-foreground); }
+.otis-chat-error { color: var(--destructive); }
+.otis-readonly { flex: none; padding: 16px 16px calc(16px + env(safe-area-inset-bottom)); text-align: center; color: var(--muted-foreground); }
+
+/* Sidebar: full-bleed rows, no radius; selected row has the 2px highlight bar. */
+.otis-sidebar { display: none; width: 280px; flex: none; flex-direction: column; min-height: 0; padding: 8px 0; background: var(--sidebar); border-right: 1px solid var(--sidebar-border); }
+.otis-nav__brand { display: flex; height: 44px; align-items: center; justify-content: space-between; padding: 0 16px; }
+.otis-nav__workspace-label { padding: 8px 16px; margin: 0 0 8px; }
+.otis-nav__action, .otis-nav__row { display: flex; flex: none; width: 100%; align-items: center; gap: 8px; padding: 8px 16px; border: 0; border-left: 2px solid transparent; background: transparent; text-align: left; color: var(--muted-foreground); }
+.otis-nav__action { min-height: 44px; }
+.otis-nav__row { height: 40px; }
+.otis-nav__action:hover, .otis-nav__row:hover { background: var(--sidebar-hover); color: var(--foreground); }
+.otis-nav__row[aria-current='page'] { border-left-color: var(--highlight); background: var(--sidebar-accent); padding-left: 14px; color: var(--sidebar-accent-foreground); }
+.otis-nav__history { flex: 1; min-height: 0; overflow-y: auto; scrollbar-width: thin; margin-top: 8px; border-top: 1px solid var(--sidebar-border); padding-top: 8px; }
+.otis-nav__heading { margin: 16px 0 4px; padding: 8px 16px; color: var(--subtle); }
+.otis-nav__heading:first-child { margin-top: 8px; }
+.otis-nav__label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.otis-nav__author { max-width: 76px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--subtle); }
+.otis-nav__empty { margin: 8px 16px; color: var(--subtle); }
+.otis-nav__search { padding: 8px 16px; }
+.otis-nav__search input { width: 100%; }
+.otis-nav__footer { flex: none; padding: 12px 0 0; border-top: 1px solid var(--sidebar-border); margin-top: 8px; }
+
+/* Native dialogs own focus and background inertness. */
+.otis-overlay { position: fixed; inset: 0; z-index: 10; width: 100%; max-width: none; height: 100%; max-height: none; margin: 0; padding: 0; border: 0; color: var(--foreground); background: transparent; }
+.otis-overlay::backdrop { background: var(--background); opacity: 0.8; }
+/* A nested modal reuses the outer scrim instead of darkening the app twice. */
+.otis-overlay--nested::backdrop { background: transparent; opacity: 1; }
+/* The Vaul history drawer backdrop: same approved 80% background scrim the
+   native dialogs get from ::backdrop, on a real element Vaul can dismiss. */
+.otis-drawer-scrim { position: fixed; inset: 0; z-index: 10; background: var(--background); opacity: 0.8; }
+.otis-drawer { position: absolute; inset: 0 auto 0 0; z-index: 10; display: flex; width: min(320px, 86vw); flex-direction: column; min-height: 0; padding: calc(12px + env(safe-area-inset-top)) 0 calc(16px + env(safe-area-inset-bottom)); background: var(--sidebar); border-right: 1px solid var(--sidebar-border); }
+/* Inner drawer nav is normal flow inside the positioned drawer surface (the
+   single surface/position owner); it only carries the column so the history
+   list keeps its contained scroll. No panel duplication, no new values. */
+.otis-drawer__nav { display: flex; flex: 1; min-height: 0; flex-direction: column; }
+.otis-detail { display: flex; flex: none; width: 384px; min-height: 0; flex-direction: column; gap: 32px; padding: 12px 16px; border-left: 1px solid var(--border); background: var(--sidebar); overflow-y: auto; }
+.otis-overlay .otis-detail { width: 100%; height: var(--app-viewport-height, 100dvh); padding: calc(8px + env(safe-area-inset-top)) 16px calc(24px + env(safe-area-inset-bottom)); border: 0; background: var(--background); }
+.otis-pane-header { display: flex; flex: none; align-items: center; justify-content: space-between; gap: 12px; min-height: 44px; }
+.otis-pane-header h2 { margin: 0; font-weight: 500; }
+.otis-detail__section { display: flex; flex-direction: column; gap: 8px; }
+.otis-detail__label { color: var(--subtle); }
+.otis-detail__value { white-space: pre-wrap; overflow-wrap: anywhere; }
+blockquote.otis-detail__value { margin: 0; padding-left: 12px; border-left: 1px solid var(--border); }
+.otis-sources { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 4px; }
+.otis-source-link { display: inline-flex; align-items: center; gap: 8px; min-height: 44px; padding: 8px 12px; border: 0; border-radius: 8px; background: transparent; color: var(--muted-foreground); cursor: pointer; }
+.otis-source-link:hover { background: var(--accent); color: var(--foreground); }
+.otis-button { display: inline-flex; min-height: 44px; align-items: center; justify-content: center; gap: 8px; }
+a.otis-button, a.otis-button:hover { text-decoration: none; }
+.otis-empty { display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 32px 8px 48px; color: var(--muted-foreground); text-align: center; }
+.otis-empty__title { margin: 0; font-weight: 500; }
+.otis-access { display: flex; flex: 1; width: 100%; max-width: 480px; flex-direction: column; gap: 16px; justify-content: center; margin: auto; padding: 24px; }
+.otis-entry { display: flex; min-height: 100dvh; align-items: center; justify-content: center; padding: 32px 24px; }
+.otis-entry__inner { display: flex; width: 100%; max-width: 384px; flex-direction: column; gap: 16px; }
+.otis-entry__error { color: var(--destructive); }
+.otis-entry__action { display: flex; width: 100%; min-height: 44px; align-items: center; justify-content: center; border: 0; border-radius: 8px; background: var(--primary); color: var(--primary-foreground); font-weight: 500; }
+
+@media (min-width: 56.25rem) {
+  .otis-sidebar { display: flex; }
+  .otis-topbar__menu { display: none; }
+}
+@media (min-width: 56.25rem) and (pointer: fine) {
+  .otis-working__disclosure, .otis-provider-summary summary { min-height: 32px; }
+  .otis-pane-header { min-height: 44px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { scroll-behavior: auto !important; transition: none !important; animation: none !important; }
+}

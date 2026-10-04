@@ -2,25 +2,36 @@
 
 A business memory you talk to. Avi and Hunor use conversation to retain Kerning's leads, contacts, promises and follow-ups.
 
-**Current status:** foundation scaffold implemented; product features remain planned. A passing shell/build does not mean the agent, ledger, authentication or voice works yet. The real-browser foundation acceptance record is still open.
+## Current state
 
-## Start here
+Documentation/source inspection baseline: **663f0b3, 2026-10-03**. The repository now contains identity/workspace lifecycle, ledger, durable actor execution, provider adapters, agent/memory, conversation APIs and a web UI with shadcn and mobile interaction work. The old foundation-only description is retired.
 
-| Read | Purpose |
+Recorded gate acceptance and live readiness are different. See [plans/README.md](plans/README.md) for recorded local evidence and [007 conversation repair](plans/007-conversation-repair.md) for runtime/deployed-path work. This documentation update did not rerun application checks or verify deployment.
+
+**Current UI requirement:** Avi supplied an exact charcoal/Highlighter token baseline and reference. Recent UI commits are partial implementation, not acceptance of that baseline. Start [008A in the detailed UI handoff](plans/008-ui-implementation-handoff.md): visual authority/enforcement/Inter/stories, then optimistic conversation, scroll/keyboard/a11y and offline recovery.
+
+## Read in this order
+
+| Document | Purpose |
 |---|---|
-| [product.md](product.md) | User behavior and v1 boundaries |
-| [design.md](design.md) | Approved mobile/desktop composition, charcoal tokens and interaction states |
-| [architecture.md](architecture.md) | Cloudflare responsibilities, state, transactions and recovery |
-| [docs/contracts.md](docs/contracts.md) | Shared dates, schemas, APIs, tools and commands |
-| [roadmap.md](roadmap.md) | Complete delivery sequence, scenarios and release gates |
-| [plans/README.md](plans/README.md) | Assigned implementation packages and current status |
-| [docs/verification.md](docs/verification.md) | What evidence each check actually proves |
-| [docs/agent-handoff.md](docs/agent-handoff.md) | Start/completion templates for any implementation agent |
-| [docs/decisions.md](docs/decisions.md) | Settled decisions and remaining measurements |
+| [AGENTS.md](AGENTS.md) | Execution rules and preserved invariants |
+| [plans/README.md](plans/README.md) | Gate status and assigned work |
+| [product.md](product.md) | User behavior and v1 scope |
+| [design-tokens.md](design-tokens.md) | Verbatim visual values/recipes; mandatory for UI |
+| [design.md](design.md) | Interaction contract and story inventory; mandatory for UI |
+| [Approved reference](docs/design/approved-reference.png) | Required reference, scaled by token section 2 |
+| [architecture.md](architecture.md) | Server ownership and frontend/offline boundaries |
+| [docs/contracts.md](docs/contracts.md) | Shared types, dates, states, APIs, tools and commands |
+| [roadmap.md](roadmap.md) | Delivery dependencies and journeys |
+| [docs/verification.md](docs/verification.md) | What evidence layers actually prove |
+| [docs/agent-handoff.md](docs/agent-handoff.md) | Assignment/completion templates |
+| [docs/decisions.md](docs/decisions.md) | Settled choices; don't reopen them |
+
+Visual precedence is design-tokens.md, then the reference at its documented production scale. Interaction is design.md; business meaning is product.md; correctness is architecture/contracts. Latest user instructions take precedence. Old CSS/historical screenshots do not override the supplied token file.
 
 ## Local development
 
-Planning host: Node 24.16.0 and pnpm 11.10.0. Check the lockfile and CI versions before upgrading. Run from the repository root:
+Use the repository's current toolchain and lockfile. Run from the repo root:
 
 ```powershell
 pnpm install --frozen-lockfile
@@ -31,49 +42,37 @@ pnpm build
 pnpm dev
 ```
 
-Build first so Wrangler has the current static assets. Development starts Vite at http://localhost:5173 and Wrangler at http://localhost:8787; the Vite web origin proxies /api to Wrangler. Use the Vite URL for live UI development. The Worker origin serves the last built assets. `pnpm dev:web` and `pnpm dev:worker` are available for independent debugging.
+Vite serves the live web UI at http://localhost:5173 and proxies /api to local Wrangler at http://localhost:8787. The Worker origin serves the last built assets; build before inspecting it. pnpm dev:web and pnpm dev:worker run separately when needed.
 
-`pnpm build` builds the web client and TypeScript declarations, then performs a Worker deploy **dry run**. It does not deploy. Local development simulates D1/R2/DO; configured remote IDs do not change that. Never run remote migrations/deployments merely to satisfy a local test.
+pnpm build builds client/declarations and performs a Worker deployment dry run. It does not deploy. Local simulated resources are distinct from production. Do not run remote migrations/deploy to satisfy a local test.
 
-## Packages
+The design checker, Storybook and PWA/local-outbox tooling in the 008 handoff are requirements to implement, not commands/features established by this update. Once introduced, record their actual scripts and results.
 
-Existing: apps/web, apps/worker, packages/contracts, ledger, agent, channels, sheet and design. Most contain stubs. Planned identity, memory, commands and brief packages are created only in their owning gates. Architecture.md records the dependency direction.
+## Storage and modules
 
-D1 is the canonical store for business/conversation/job records. The ledger writes business state. The actor coordinates durable work. R2 stores private audio/files. Queues/Cron are planned, not yet configured features. EU resource location is a provisioning requirement to verify; it is not established by a label in a diagram.
+D1 is canonical for identity, accepted conversations, business events/projections, memory and durable runs/receipts. Ledger owns business mutations; actor coordinates execution. R2 stores private accepted media/exports. Queue wakeups and cron recovery are distinct from immediate conversational dispatch.
 
-## Secrets and client configuration
+The approved web target uses one query cache, router, scroll owner and scoped IndexedDB drafts/outbox module. Browser state never becomes business authority. Voice gate 010 reuses that storage and composer; no parallel recorder/chat schema.
 
-Use .env.example as a names/template reference, never as production credentials. Local Worker values may use .env or .dev.vars according to the installed Wrangler version; do not maintain conflicting copies. Private values include session/encryption secrets, Telegram token/webhook secret and provider keys. Workspace credentials will be encrypted server-side when plan 003 implements them.
+Inspect current packages/migrations before changing boundaries. Some feature packages may remain stubs. A package/binding's existence is not acceptance. Do not add unused libraries, ORM/vector infrastructure or another framework merely to match a diagram.
 
-Firebase client configuration uses explicitly public VITE_FIREBASE_* values. Everything prefixed VITE_ is potentially bundled for the browser. Never give a provider key that prefix. No analytics SDK is wired; only `firebase/app` and `firebase/auth` are used.
+## Configuration
 
-Authoritative local convention: the root `.env` (gitignored) is the single local source for web `VITE_FIREBASE_*` values, because the root Vite config sets `envDir` to the repo root. Local Worker vars live only in `.dev.vars` (gitignored), currently `ENVIRONMENT=local` and `FIREBASE_PROJECT_ID=otisauth`. Do not maintain conflicting copies. Production sets `FIREBASE_PROJECT_ID` as a Worker var/secret and bakes `VITE_*` from the build environment.
+Root .env supplies public VITE_FIREBASE_* values because the root Vite config owns envDir. Local Worker configuration belongs in .dev.vars; both are gitignored. Avoid conflicting copies. Production Worker runtime configuration and frontend build-time values are separate.
 
-Server Firebase verification needs FIREBASE_PROJECT_ID. Exact required secrets, defaults and rotation belong in the implemented environment schema and operations report; missing required production configuration must fail explicitly.
+VITE_-prefixed values may enter the browser bundle. Private provider, session, encryption and Telegram credentials must never use that prefix. Workspace provider connections are shared, encrypted server-side and write-only from UI. Status reads never return credentials. Use synthetic stories/review data.
 
-## Migrations
+Configuration/credential/infrastructure changes are outside a documentation task. Check the implemented environment schema/runbook before provisioning or rotation.
 
-There are no business SQL migrations in the foundation. After the owning gates introduce them:
+## Migrations and verification
+
+Migrations exist. Never edit an applied shared migration; allocate the next number after inspecting the sequence. Local work uses explicit local flags:
 
 ```powershell
 pnpm exec wrangler d1 migrations list DB --local
 pnpm exec wrangler d1 migrations apply DB --local
 ```
 
-Identity schema comes first, then conversation/source storage, then ledger. Plan numbers are not migration numbers. Never edit an already-applied shared migration. Remote resource commands require an explicitly chosen environment and task scope.
+Implementation changes run four root checks plus targeted behavior tests. UI additionally needs implemented token enforcement, production-component stories, a11y checks and native-browser comparison at all five widths. No Playwright. happy-dom or a test named end-to-end is not browser/device proof.
 
-## Verification and dependencies
-
-- TypeScript: strict package/interface checking.
-- ESLint and typescript-eslint: source checks.
-- Vite and React plugin: client development/build.
-- React and React DOM: conversation UI.
-- Vitest: pure and integration test runner.
-- Cloudflare Workers Vitest integration: actual local Workers runtime/bindings.
-- happy-dom: component DOM behavior; **not** actual browser layout.
-- Wrangler: local Cloudflare runtime and Worker bundle/deploy tooling.
-- concurrently: runs web and Worker development processes together.
-
-Additional test-runner packages in the lockfile must remain compatible as a set. Pin/upgrade deliberately and explain each new dependency. No Playwright. Native browser/device evidence follows [docs/browser-review.md](docs/browser-review.md).
-
-See [AGENTS.md](AGENTS.md) before changing implementation or shared contracts.
+Documentation changes need link, consistency and diff checks. Do not claim earlier application tests were rerun. Record exactly which browser/device/provider/deployed checks were performed and which remain unverified.

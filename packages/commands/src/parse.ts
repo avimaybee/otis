@@ -33,11 +33,18 @@ export type ParseResult = ParsedCommand | ParsedUnknownCommand | ParsedPlainText
  * Parses one outbound text message.
  *
  * - `/name` at the first non-space position is a command.
- * - `/name@thisbot` is accepted on Telegram, where chat mentions are appended.
+ * - `/name@bot` is accepted on Telegram when the suffix names this bot
+ *   (case-insensitive, without the configured name it must match the
+ *   literal `@thisbot` escape exactly as before); any other suffix is
+ *   cross-bot traffic and stays literal text.
  * - `//anything` is literal text with the leading slash removed.
  * - A slash anywhere else is ordinary prose.
  */
-export function parseCommandText(text: string, surface: CommandSurface = 'web'): ParseResult {
+export function parseCommandText(
+  text: string,
+  surface: CommandSurface = 'web',
+  botUsername?: string,
+): ParseResult {
   const trimmedStart = text.replace(/^\s+/, '');
   if (!trimmedStart.startsWith('/')) {
     return { kind: 'text', text };
@@ -63,7 +70,9 @@ export function parseCommandText(text: string, surface: CommandSurface = 'web'):
     if (surface !== 'telegram') {
       return { kind: 'text', text };
     }
-    if (addressedSuffix.toLowerCase() !== '@thisbot') {
+    const configured = (botUsername ?? '').trim().replace(/^@/, '').toLowerCase();
+    const accepted = configured.length > 0 ? `@${configured}` : '@thisbot';
+    if (addressedSuffix.toLowerCase() !== accepted) {
       return { kind: 'text', text };
     }
   }

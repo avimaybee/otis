@@ -37,6 +37,19 @@ Users send messy Romanian, Hungarian or English notes and ask questions without 
 
 ## Scope
 
+### Field-quality follow-up, 2026-10-03
+
+These additions are new acceptance targets, not changes to the historical DONE verdict above. Coordinate narrow ledger/agent/context/eval updates after inspecting existing aliases and tools. Do not create a glossary service, new model-training pipeline or duplicate entity store.
+
+- Preserve clear facts from a multi-part note while only the uncertain name/amount/date waits. Typed pending operations remain durable and do not block the workspace. Replay/restart cannot ask an already answered question again.
+- Confirmed corrections/shorthand may add a sourced workspace-scoped entity alias through the existing ledger owner. Record the actual source, normalized alias, target and confirmation context; use existing action/revision/fence/undo guarantees. Use the existing context/memory path for durable vocabulary when appropriate, rather than another glossary table by default. This updates retrieval, not model weights.
+- Never globally learn an alias from a one-off correction unless it establishes that binding. Multiple businesses named Bistro, alias collisions, conflicting member bindings, undo/rename/removal and a second workspace must keep matching honest. A previously resolved alias avoids redundant questions only while still unambiguous and supported by current context.
+- Echo material names, price plus currency and resolved deadline date in a short natural final reply. Date/weekday must agree; preserve date-only versus timed values. Voice uncertainty quotes only the affected excerpt, not a full automatic transcript preamble. Do not infer certainty numerically when the provider supplies none.
+- Natural corrections identify the recent affected report/action where clear, append attributed history and expose its exact undo. Ambiguous correction targets ask narrowly. Do not force a record editor or silently rewrite the original report.
+- Drafts/briefs cannot rely on a disputed fact. Energy such as best day or two warm requires actual confirmed records, never a flattering inference.
+
+Regression/eval set: confirmed r2 and Thai Shop shorthand survives new chat/restart in the same workspace; Thai Garden later makes Thai ambiguous again; correction without standing alias consent does not change unrelated matches; Hunor/Avi conflicting alias reports; undo removes/suppresses the learned binding; cross-workspace no recall; partial note saves known facts but asks only about the date; resolved question replay creates no second question; Romanian/Hungarian amount/date correction; wrong weekday; disputed value omitted from draft; success copy matches actual receipts. Track clarification burden without reducing required questions to hit a metric.
+
 Modify the live agent boundary, memory retrieval package, narrow ledger projection support, the next unused migration after identity/conversation/ledger foundations, eval fixtures/runner, Worker orchestration and related tests. Do not implement UI, Telegram formatting, speech capture or schema-by-conversation (Phase 2). Plan 004A owns chats, messages, pending clarification and runs; do not create those again. Use a fake provider in automated tests and live providers only in controlled synthetic smoke tests.
 
 ## Required run state machine

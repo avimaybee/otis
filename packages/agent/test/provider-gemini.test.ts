@@ -147,8 +147,50 @@ describe('Gemini Interactions adapter', () => {
     ].join('');
     const fetchFn = mockFetch(() => chunkedResponse([stream]));
     const events = await collect(baseInput(geminiModel()), fetchFn);
-    expect(events).toContainEqual({ type: 'provider_thought_summary', text: 'Checking records.' });
+    expect(events).toContainEqual({
+      type: 'provider_thought_summary',
+      text: 'Checking records.',
+      blockId: 's0',
+      contentKind: 'summary',
+      mode: 'append',
+    });
     expect(JSON.stringify(events)).not.toContain('opaque');
+  });
+
+  it('forwards thought step.start summaries as snapshot blocks per step', async () => {
+    const stream = [
+      'event: step.start\n',
+      'data: {"index":0,"step":{"type":"thought","summary":[{"type":"text","text":"Evaluating the clues"}]},"event_type":"step.start"}\n\n',
+      'event: step.start\n',
+      'data: {"index":1,"step":{"type":"thought","summary":[{"type":"text","text":"Comparing options"}]},"event_type":"step.start"}\n\n',
+      'event: interaction.completed\n',
+      'data: {"interaction":{"id":"v1_th2","status":"completed","usage":{}},"event_type":"interaction.completed"}\n\n',
+    ].join('');
+    const fetchFn = mockFetch(() => chunkedResponse([stream]));
+    const events = await collect(baseInput(geminiModel()), fetchFn);
+    expect(events).toContainEqual({
+      type: 'provider_thought_summary',
+      text: 'Evaluating the clues',
+      blockId: 's0',
+      contentKind: 'summary',
+      mode: 'snapshot',
+    });
+    expect(events).toContainEqual({
+      type: 'provider_thought_summary',
+      text: 'Comparing options',
+      blockId: 's1',
+      contentKind: 'summary',
+      mode: 'snapshot',
+    });
+  });
+
+  it('requests verified thought summaries on the same Interactions endpoint', async () => {
+    const fetchFn = mockFetch(() => chunkedResponse([TEXT_STREAM]));
+    await collect(baseInput(geminiModel()), fetchFn);
+    const body = fetchFn.requests[0]!.body as Record<string, unknown>;
+    const genConfig = body['generation_config'] as Record<string, unknown>;
+    expect(genConfig['thinking_summaries']).toBe('auto');
+    expect(genConfig['max_output_tokens']).toBe(512);
   });
 
   it('continues tool results with the previous interaction id', async () => {
@@ -160,8 +202,9 @@ describe('Gemini Interactions adapter', () => {
     await collect(input, fetchFn);
     const body = fetchFn.requests[0]!.body as Record<string, unknown>;
     expect(body['previous_interaction_id']).toBe('v1_tool');
+    // Stateful continuation: the stored interaction already owns the prior
+    // user input, so only the newly pending function result is submitted.
     expect(body['input']).toEqual([
-      { type: 'user_input', content: [{ type: 'text', text: 'Hello' }] },
       {
         type: 'function_result',
         name: 'echo_fixture',
@@ -169,6 +212,61 @@ describe('Gemini Interactions adapter', () => {
         result: [{ type: 'text', text: '{"fixture_id":"a"}' }],
       },
     ]);
+  });
+
+  it('stateful continuation sends only new input and pending results, never replayed calls or history', async () => {
+    const fetchFn = mockFetch(() => chunkedResponse([TEXT_STREAM]));
+    const input = baseInput(geminiModel(), {
+      // Production-shaped handler input: full stored history including the
+      // previously proposed assistant call and its result, plus the latest
+      // pending result and steering that arrived after the continuation.
+      messages: [
+        { role: 'system', text: 'System prompt' },
+        { role: 'user', text: 'Original request' },
+        { role: 'assistant', toolCalls: [{ id: 'call_old', name: 'tool_old', arguments: '{"x":1}' }] },
+        { role: 'tool', toolCallId: 'call_old', name: 'tool_old', text: 'old result' },
+        { role: 'assistant', toolCalls: [{ id: 'call_new', name: 'tool_new', arguments: '{"y":2}' }] },
+      ],
+      pendingToolResults: [{ callId: 'call_new', name: 'tool_new', resultText: 'new result' }],
+      continuationInput: [{ role: 'user', text: '[Additional context from the same member]: prefer Tuesday' }],
+      previousContinuation: { kind: 'gemini-interactions', interactionId: 'v1_linked' },
+    });
+    await collect(input, fetchFn);
+    const body = fetchFn.requests[0]!.body as Record<string, unknown>;
+    expect(body['previous_interaction_id']).toBe('v1_linked');
+    const blocks = body['input'] as Array<Record<string, unknown>>;
+    expect(blocks.some((block) => block['type'] === 'function_call')).toBe(false);
+    expect(blocks.some((block) => block['type'] === 'model_output')).toBe(false);
+    expect(blocks.filter((block) => block['type'] === 'user_input')).toEqual([
+      {
+        type: 'user_input',
+        content: [{ type: 'text', text: '[Additional context from the same member]: prefer Tuesday' }],
+      },
+    ]);
+    expect(blocks.filter((block) => block['type'] === 'function_result')).toEqual([
+      { type: 'function_result', name: 'tool_new', call_id: 'call_new', result: [{ type: 'text', text: 'new result' }] },
+    ]);
+    // Interaction-scoped configuration is re-specified alongside the link.
+    expect(body['system_instruction']).toBe('System prompt');
+    expect(body['generation_config']).toBeDefined();
+  });
+
+  it('initial requests keep complete stateless serialization with function calls and results', async () => {
+    const fetchFn = mockFetch(() => chunkedResponse([TEXT_STREAM]));
+    const input = baseInput(geminiModel(), {
+      messages: [
+        { role: 'user', text: 'Run tool' },
+        { role: 'assistant', toolCalls: [{ id: 'call_s', name: 'tool_s', arguments: '{"a":1}' }] },
+        { role: 'tool', toolCallId: 'call_s', name: 'tool_s', text: 'result_s' },
+      ],
+      previousContinuation: null,
+    });
+    await collect(input, fetchFn);
+    const body = fetchFn.requests[0]!.body as Record<string, unknown>;
+    expect(body['previous_interaction_id']).toBeUndefined();
+    const blocks = body['input'] as Array<Record<string, unknown>>;
+    expect(blocks.some((block) => block['type'] === 'function_call' && block['id'] === 'call_s')).toBe(true);
+    expect(blocks.some((block) => block['type'] === 'function_result' && block['call_id'] === 'call_s')).toBe(true);
   });
 
   it('rejects malformed tool arguments without exposing a partial call', async () => {
@@ -261,7 +359,7 @@ describe('Gemini Interactions adapter', () => {
     await collect(input, fetchFn);
     expect(fetchFn.requests).toHaveLength(1);
     const body = fetchFn.requests[0]!.body as Record<string, unknown>;
-    expect(body['generation_config']).toEqual({ max_output_tokens: 17 });
+    expect(body['generation_config']).toEqual({ max_output_tokens: 17, thinking_summaries: 'auto' });
   });
 
   it('rejects non-positive integer maxOutputTokens before transport', async () => {

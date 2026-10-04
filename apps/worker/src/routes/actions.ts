@@ -261,9 +261,14 @@ export async function handleCommitUndo(
   if (!Number.isSafeInteger(body.expected_revision) || body.expected_revision! < 0 || clientOperationId.length > 128) return jsonError(422, 'validation_error', 'A valid operation ID and preview revision are required.', requestId);
 
   const url = new URL(request.url);
+  // The undo's own action identity is derived from the client operation ID so
+  // a retried request returns the first result instead of reverting twice.
+  const undoActionId = `undo_${workspaceId}_${clientOperationId}`;
+  const commandRunId = `run_cmd_${workspaceId}_${clientOperationId}`;
   // An undo is an attributed turn in the requester's own chat. When the client
-  // omits chat_id, fall back to that member's most recent conversation rather
-  // than writing an unattributed business event.
+  // omits chat_id, a retried operation must replay in the chat that recorded
+  // it; only a fresh operation falls back to the member's most recent
+  // conversation. Ownership is re-verified either way.
   const requestedChatId = url.searchParams.get('chat_id');
   let chatId: string | null = null;
   if (requestedChatId) {
@@ -281,33 +286,49 @@ export async function handleCommitUndo(
     }
     chatId = owned.id;
   } else {
-    const recent = await env.DB
-      .prepare(
-        `SELECT id FROM chats WHERE workspace_id = ? AND author_user_id = ?
-         ORDER BY last_activity_at DESC LIMIT 1`,
-      )
-      .bind(workspaceId, scope.user.id)
-      .first<{ id: string }>();
-    if (!recent) {
-      return jsonError(
-        422,
-        'no_chat',
-        'Undo needs a conversation of yours to record the change in.',
-        requestId,
-      );
+    const recordedRun = await env.DB
+      .prepare(`SELECT chat_id FROM agent_runs WHERE id = ? AND workspace_id = ?`)
+      .bind(commandRunId, workspaceId)
+      .first<{ chat_id: string | null }>();
+    const recordedChatId = recordedRun?.chat_id ? String(recordedRun.chat_id) : null;
+    if (recordedChatId) {
+      const owned = await env.DB
+        .prepare(`SELECT id FROM chats WHERE id = ? AND workspace_id = ? AND author_user_id = ?`)
+        .bind(recordedChatId, workspaceId, scope.user.id)
+        .first<{ id: string }>();
+      if (!owned) {
+        return jsonError(
+          404,
+          'chat_not_found',
+          'Undo must be requested from one of your own conversations in this workspace.',
+          requestId,
+        );
+      }
+      chatId = owned.id;
+    } else {
+      const recent = await env.DB
+        .prepare(
+          `SELECT id FROM chats WHERE workspace_id = ? AND author_user_id = ?
+           ORDER BY last_activity_at DESC LIMIT 1`,
+        )
+        .bind(workspaceId, scope.user.id)
+        .first<{ id: string }>();
+      if (!recent) {
+        return jsonError(
+          422,
+          'no_chat',
+          'Undo needs a conversation of yours to record the change in.',
+          requestId,
+        );
+      }
+      chatId = recent.id;
     }
-    chatId = recent.id;
   }
 
   const target = await getActionReceipt(env.DB, workspaceId, actionId);
   if (!target) {
     return jsonError(404, 'not_found', 'Action not found in this workspace.', requestId);
   }
-
-  // The undo's own action identity is derived from the client operation ID so a
-  // retried request returns the first result instead of reverting twice.
-  const undoActionId = `undo_${target.workspace_id}_${clientOperationId}`;
-  const commandRunId = `run_cmd_${workspaceId}_${clientOperationId}`;
   let source: { messageInId: string; created: boolean };
   try {
     source = await ensureCommandSourceMessage(env.DB, { workspaceId, userId: scope.user.id, chatId, externalId: body.command_text ? clientOperationId : `undo:${clientOperationId}`, text: body.command_text ?? `/undo ${actionId} ${mode}`, targetActionId: actionId, mode, presentation: body.presentation });

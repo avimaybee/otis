@@ -4,7 +4,18 @@
  * In accordance with architecture.md section 8 and plans/002-ledger.md.
  */
 
-import type { CommandResult, LedgerEvent, PendingOperationPayload } from '@otis/contracts';
+import type {
+  CommandResult,
+  DraftProjection,
+  Entity,
+  EntityAlias,
+  EntityStateField,
+  LedgerEvent,
+  MemoryEntry,
+  MemorySuppression,
+  PendingOperationPayload,
+  Task,
+} from '@otis/contracts';
 import type { LedgerCommandContext, LedgerProjectionState } from '../types.js';
 import { getActionReceipt, getWorkspaceProjectionState, getWorkspaceRevision } from './queries.js';
 import { handleCreateEntity } from '../commands/createEntity.js';
@@ -463,6 +474,231 @@ async function handleBatchError(
   throw err;
 }
 
+/**
+ * Immutable persisted-column snapshot of one projection collection,
+ * captured BEFORE the domain handler runs. Reducers may mutate the shared
+ * objects in place or shallow-copy the maps, so anything read from
+ * `currentState` after the handler can silently miss the change (or see a
+ * change that is compared against itself). Fingerprints are plain strings
+ * materialized up front: later comparison is by value, never by reference.
+ *
+ * Each entry carries the exact persisted columns (normalized exactly like
+ * the upsert binds: undefined becomes null, arrays become their JSON text)
+ * plus the delete binds for its row, so deletions use prior keys even when
+ * the handler already dropped them from its maps.
+ */
+interface ProjectionSnap {
+  /** Keyed by the state's own map key. */
+  records: Map<string, { fingerprint: string; del: unknown[] }>;
+}
+
+/** Single-record persisted-column fingerprints (same normalization as the
+ * upsert binds). Used for both the pre-handler snapshot and the post-handler
+ * next state, so column lists live in exactly one place per collection. */
+function fpValues(values: unknown[]): string {
+  return JSON.stringify(
+    values.map((value) => {
+      if (value === undefined) return null;
+      if (Array.isArray(value)) return JSON.stringify(value);
+      return value;
+    }),
+  );
+}
+
+function fpEntity(e: Entity): string {
+  return fpValues([
+    e.id, e.workspace_id, e.name, e.kind, e.status, e.assigned_user_id ?? null, e.created_at, e.updated_at,
+  ]);
+}
+
+function fpAlias(a: EntityAlias): string {
+  return fpValues([a.id, a.workspace_id, a.entity_id, a.alias, a.source_event_id ?? null, a.created_at]);
+}
+
+function fpField(f: EntityStateField): string {
+  const candidates =
+    typeof f.candidate_event_ids === 'string'
+      ? f.candidate_event_ids
+      : f.candidate_event_ids
+        ? JSON.stringify(f.candidate_event_ids)
+        : null;
+  return fpValues([
+    f.id, f.workspace_id, f.entity_id, f.field_name, f.state, f.value_text ?? null, f.value_json ?? null,
+    f.provenance, f.source_event_id ?? null, candidates, f.last_confirmed_value_text ?? null,
+    f.last_confirmed_value_json ?? null, f.revision, f.updated_at,
+  ]);
+}
+
+function fpTask(t: Task): string {
+  return fpValues([
+    t.id, t.workspace_id, t.entity_id ?? null, t.title, t.assignee_user_id ?? null, t.status,
+    t.due_kind ?? null, t.due_local_date ?? null, t.due_instant ?? null, t.due_timezone ?? null,
+    t.snooze_until ?? null, t.source_event_id, t.revision, t.created_at, t.updated_at,
+  ]);
+}
+
+function fpDraft(d: DraftProjection): string {
+  return fpValues([
+    d.id, d.workspace_id, d.entity_id ?? null, d.channel, d.recipient_address ?? null, d.content_text,
+    d.status, d.source_event_id, d.revision, d.created_at, d.updated_at,
+  ]);
+}
+
+function fpMemory(m: MemoryEntry): string {
+  return fpValues([
+    m.id, m.workspace_id, m.scope, m.subject_id ?? null, m.category, m.content, m.status, m.provenance,
+    m.source_event_id ?? null, m.source_message_id ?? null, m.author_user_id ?? null, m.observed_at,
+    m.created_at, m.superseding_event_id ?? null, m.business_revision,
+  ]);
+}
+
+function fpSuppression(s: MemorySuppression): string {
+  return fpValues([
+    s.id, s.workspace_id, s.target_memory_id, s.source_event_id ?? null, s.source_message_id ?? null,
+    s.suppression_event_id, s.revision, s.created_at,
+  ]);
+}
+
+function snapEntities(state: LedgerProjectionState): ProjectionSnap {
+  const records = new Map<string, { fingerprint: string; del: unknown[] }>();
+  for (const [key, e] of state.entities) {
+    records.set(key, {
+      fingerprint: fpEntity(e),
+      del: [e.workspace_id, e.id],
+    });
+  }
+  return { records };
+}
+
+function snapAliases(state: LedgerProjectionState): ProjectionSnap {
+  const records = new Map<string, { fingerprint: string; del: unknown[] }>();
+  for (const [key, a] of state.aliases) {
+    records.set(key, {
+      fingerprint: fpAlias(a),
+      del: [a.workspace_id, a.entity_id, a.alias],
+    });
+  }
+  return { records };
+}
+
+function snapFields(state: LedgerProjectionState): ProjectionSnap {
+  const records = new Map<string, { fingerprint: string; del: unknown[] }>();
+  for (const [key, f] of state.fields) {
+    records.set(key, {
+      fingerprint: fpField(f),
+      del: [f.workspace_id, f.entity_id, f.field_name],
+    });
+  }
+  return { records };
+}
+
+function snapTasks(state: LedgerProjectionState): ProjectionSnap {
+  const records = new Map<string, { fingerprint: string; del: unknown[] }>();
+  for (const [key, t] of state.tasks) {
+    records.set(key, {
+      fingerprint: fpTask(t),
+      del: [t.workspace_id, t.id],
+    });
+  }
+  return { records };
+}
+
+function snapDrafts(state: LedgerProjectionState): ProjectionSnap {
+  const records = new Map<string, { fingerprint: string; del: unknown[] }>();
+  for (const [key, d] of state.drafts) {
+    records.set(key, {
+      fingerprint: fpDraft(d),
+      del: [d.workspace_id, d.id],
+    });
+  }
+  return { records };
+}
+
+function snapMemoryEntries(state: LedgerProjectionState): ProjectionSnap {
+  const records = new Map<string, { fingerprint: string; del: unknown[] }>();
+  for (const [key, m] of state.memoryEntries) {
+    records.set(key, {
+      fingerprint: fpMemory(m),
+      del: [m.workspace_id, m.id],
+    });
+  }
+  return { records };
+}
+
+function snapSuppressions(state: LedgerProjectionState): ProjectionSnap {
+  const records = new Map<string, { fingerprint: string; del: unknown[] }>();
+  for (const [key, s] of state.memorySuppressions) {
+    records.set(key, {
+      fingerprint: fpSuppression(s),
+      del: [s.workspace_id, s.id],
+    });
+  }
+  return { records };
+}
+
+interface ProjectionSnapshots {
+  entities: ProjectionSnap;
+  aliases: ProjectionSnap;
+  fields: ProjectionSnap;
+  tasks: ProjectionSnap;
+  drafts: ProjectionSnap;
+  memoryEntries: ProjectionSnap;
+  memorySuppressions: ProjectionSnap;
+}
+
+function snapshotProjections(state: LedgerProjectionState): ProjectionSnapshots {
+  return {
+    entities: snapEntities(state),
+    aliases: snapAliases(state),
+    fields: snapFields(state),
+    tasks: snapTasks(state),
+    drafts: snapDrafts(state),
+    memoryEntries: snapMemoryEntries(state),
+    memorySuppressions: snapSuppressions(state),
+  };
+}
+
+/**
+ * Pre-handler memory status/content/scope by id, for FTS, refresh-job, and
+ * delete-path decisions that must not read post-handler objects. The main
+ * fingerprint snapshot proves changed-ness; these flags supply the exact
+ * prior values those decisions branch on.
+ */
+function snapMemoryFlags(
+  state: LedgerProjectionState,
+): Map<string, { scope: string; subject_id: string | null; status: string; content: string }> {
+  const flags = new Map<string, { scope: string; subject_id: string | null; status: string; content: string }>();
+  for (const [key, m] of state.memoryEntries) {
+    flags.set(key, { scope: m.scope, subject_id: m.subject_id ?? null, status: m.status, content: m.content });
+  }
+  return flags;
+}
+
+/**
+ * Splits next-state keys against a pre-handler snapshot into created,
+ * changed (persisted values differ), and deleted sets. Unchanged records
+ * emit no statements at all. Created/changed follow next-state order;
+ * deleted follow snapshot order; both deterministic.
+ */
+function diffSnapshots<V>(
+  snap: Map<string, { fingerprint: string; del: unknown[] }>,
+  next: Map<string, V>,
+  fingerprint: (value: V) => string,
+): { created: string[]; changed: string[]; deleted: string[] } {
+  const created: string[] = [];
+  const changed: string[] = [];
+  for (const [key, value] of next) {
+    const prior = snap.get(key);
+    if (!prior) created.push(key);
+    else if (prior.fingerprint !== fingerprint(value)) changed.push(key);
+  }
+  const deleted: string[] = [];
+  for (const key of snap.keys()) {
+    if (!next.has(key)) deleted.push(key);
+  }
+  return { created, changed, deleted };
+}
+
 export async function executeLedgerCommand<TArgs>(
   db: D1Database,
   context: LedgerCommandContext,
@@ -470,7 +706,7 @@ export async function executeLedgerCommand<TArgs>(
   args: TArgs,
   handler: CommandHandler<TArgs>,
   extraStatements?: D1PreparedStatement[],
-  options?: { deferRunTransition?: boolean },
+  options?: { deferRunTransition?: boolean; extrasBeforeGuard?: boolean },
 ): Promise<CommandResult> {
   const now = new Date().toISOString();
   const payloadHash = await computeHash(JSON.stringify({ commandName, args }));
@@ -575,8 +811,14 @@ export async function executeLedgerCommand<TArgs>(
     chat_id: effectiveChatId || undefined,
   };
 
-  // 5. Load current projection state and execute pure domain command
+  // 5. Load current projection state and execute pure domain command.
+  // The immutable snapshot is captured BEFORE the handler: reducers may
+  // mutate the shared objects in place or shallow-copy the maps, so the
+  // commit diff below compares post-handler values against these strings,
+  // never against the (possibly mutated) currentState objects.
   const currentState = await getWorkspaceProjectionState(db, context.workspace_id);
+  const beforeSnapshot = snapshotProjections(currentState);
+  const beforeMemoryFlags = snapMemoryFlags(currentState);
   const nextSeq = wsMeta.last_event_sequence + 1;
   const { result, events, nextState } = handler(resolvedContext, currentState, nextSeq, args);
 
@@ -749,109 +991,141 @@ export async function executeLedgerCommand<TArgs>(
   const committedRevision = wsMeta.business_revision + 1;
   const newLastEventSequence = wsMeta.last_event_sequence + events.length;
 
-  // Step 0: Guard
-  statements.push(createGuardStatement(db, guardId, resolvedContext));
-
-  // Step 0b: Extra statements (e.g., resolving pending clarifications)
-  if (extraStatements && extraStatements.length > 0) {
+  // Step 0a: Optional pre-guard extras, inside the same atomic batch. The
+  // composed Telegram undo places the accepted source receipt here so the
+  // guard below can validate it; a guard failure still rolls the whole
+  // batch back.
+  if (options?.extrasBeforeGuard && extraStatements && extraStatements.length > 0) {
     statements.push(...extraStatements);
   }
 
+  // Step 0b: Transaction guard (membership, source ownership, expected
+  // revision, fence, run, step)
+  statements.push(createGuardStatement(db, guardId, resolvedContext));
+
+  // Step 0c: Remaining extras (e.g., resolving pending clarifications) stay
+  // after the guard unless the caller explicitly opted into pre-guard order.
+  if (!options?.extrasBeforeGuard && extraStatements && extraStatements.length > 0) {
+    statements.push(...extraStatements);
+  }
+
+  // Changed-only projection diffs against the pre-handler snapshot.
+  // Created/changed keys drive upserts; deleted keys drive deletes by prior
+  // keys; unchanged records emit nothing. Loop order below is untouched, so
+  // foreign-key order (entities before events/children, children before
+  // parents on delete) is preserved exactly.
+  const entityDiff = diffSnapshots(beforeSnapshot.entities.records, nextState.entities, fpEntity);
+  const aliasDiff = diffSnapshots(beforeSnapshot.aliases.records, nextState.aliases, fpAlias);
+  const fieldDiff = diffSnapshots(beforeSnapshot.fields.records, nextState.fields, fpField);
+  const taskDiff = diffSnapshots(beforeSnapshot.tasks.records, nextState.tasks, fpTask);
+  const draftDiff = diffSnapshots(beforeSnapshot.drafts.records, nextState.drafts, fpDraft);
+  const memoryDiff = diffSnapshots(beforeSnapshot.memoryEntries.records, nextState.memoryEntries, fpMemory);
+  const suppressionDiff = diffSnapshots(
+    beforeSnapshot.memorySuppressions.records,
+    nextState.memorySuppressions,
+    fpSuppression,
+  );
+
   // Step 1: Projection synchronization - DELETIONS (children deleted before parents for FK safety)
   // Delete drafts missing from nextState
-  for (const draftId of currentState.drafts.keys()) {
-    if (!nextState.drafts.has(draftId)) {
-      statements.push(
-        db.prepare(`DELETE FROM draft_projections WHERE workspace_id = ? AND id = ?`).bind(context.workspace_id, draftId)
-      );
-    }
+  for (const draftId of draftDiff.deleted) {
+    const prior = beforeSnapshot.drafts.records.get(draftId);
+    if (!prior) continue;
+    statements.push(
+      db.prepare(`DELETE FROM draft_projections WHERE workspace_id = ? AND id = ?`).bind(...prior.del)
+    );
   }
 
   // Delete tasks missing from nextState
-  for (const taskId of currentState.tasks.keys()) {
-    if (!nextState.tasks.has(taskId)) {
-      statements.push(
-        db.prepare(`DELETE FROM tasks WHERE workspace_id = ? AND id = ?`).bind(context.workspace_id, taskId)
-      );
-    }
+  for (const taskId of taskDiff.deleted) {
+    const prior = beforeSnapshot.tasks.records.get(taskId);
+    if (!prior) continue;
+    statements.push(
+      db.prepare(`DELETE FROM tasks WHERE workspace_id = ? AND id = ?`).bind(...prior.del)
+    );
   }
 
   // Delete fields missing from nextState
-  for (const [key, field] of currentState.fields) {
-    if (!nextState.fields.has(key)) {
-      statements.push(
-        db
-          .prepare(`DELETE FROM entity_state WHERE workspace_id = ? AND entity_id = ? AND field_name = ?`)
-          .bind(context.workspace_id, field.entity_id, field.field_name)
-      );
-    }
+  for (const key of fieldDiff.deleted) {
+    const prior = beforeSnapshot.fields.records.get(key);
+    if (!prior) continue;
+    statements.push(
+      db
+        .prepare(`DELETE FROM entity_state WHERE workspace_id = ? AND entity_id = ? AND field_name = ?`)
+        .bind(...prior.del)
+    );
   }
 
   // Delete aliases missing from nextState
-  for (const [key, alias] of currentState.aliases) {
-    if (!nextState.aliases.has(key)) {
-      statements.push(
-        db
-          .prepare(`DELETE FROM entity_aliases WHERE workspace_id = ? AND entity_id = ? AND alias = ?`)
-          .bind(context.workspace_id, alias.entity_id, alias.alias)
-      );
-    }
+  for (const key of aliasDiff.deleted) {
+    const prior = beforeSnapshot.aliases.records.get(key);
+    if (!prior) continue;
+    statements.push(
+      db
+        .prepare(`DELETE FROM entity_aliases WHERE workspace_id = ? AND entity_id = ? AND alias = ?`)
+        .bind(...prior.del)
+    );
   }
 
   // Delete entities missing from nextState
-  for (const entityId of currentState.entities.keys()) {
-    if (!nextState.entities.has(entityId)) {
-      statements.push(
-        db.prepare(`DELETE FROM entities WHERE workspace_id = ? AND id = ?`).bind(context.workspace_id, entityId)
-      );
-    }
+  for (const entityId of entityDiff.deleted) {
+    const prior = beforeSnapshot.entities.records.get(entityId);
+    if (!prior) continue;
+    statements.push(
+      db.prepare(`DELETE FROM entities WHERE workspace_id = ? AND id = ?`).bind(...prior.del)
+    );
   }
 
   // Delete memory entries missing from nextState
-  for (const [memId, memEntry] of currentState.memoryEntries) {
-    if (!nextState.memoryEntries.has(memId)) {
-      statements.push(
-        db.prepare(`DELETE FROM memory_entries WHERE workspace_id = ? AND id = ?`).bind(context.workspace_id, memId),
-        db.prepare(`DELETE FROM memory_entries_fts WHERE entry_id = ?`).bind(memId)
-      );
-      const subjectKey = memEntry.subject_id || '__workspace__';
-      const jobId = `job_${crypto.randomUUID()}`;
-      statements.push(
-        db
-          .prepare(
-            `INSERT INTO memory_refresh_jobs (
-               id, workspace_id, scope, subject_key, target_revision, state, attempts,
-               next_attempt_at, created_at, updated_at
-             ) VALUES (?, ?, ?, ?, ?, 'pending', 0, ?, ?, ?)
-             ON CONFLICT(workspace_id, scope, subject_key, target_revision) DO UPDATE SET
-               state = 'pending',
-               updated_at = excluded.updated_at`
-          )
-          .bind(
-            jobId,
-            context.workspace_id,
-            memEntry.scope,
-            subjectKey,
-            committedRevision,
-            now,
-            now,
-            now,
-          )
-      );
-    }
+  for (const memId of memoryDiff.deleted) {
+    const prior = beforeSnapshot.memoryEntries.records.get(memId);
+    const flags = beforeMemoryFlags.get(memId);
+    if (!prior || !flags) continue;
+    statements.push(
+      db.prepare(`DELETE FROM memory_entries WHERE workspace_id = ? AND id = ?`).bind(context.workspace_id, memId),
+      db.prepare(`DELETE FROM memory_entries_fts WHERE entry_id = ?`).bind(memId)
+    );
+    const subjectKey = flags.subject_id || '__workspace__';
+    const jobId = `job_${crypto.randomUUID()}`;
+    statements.push(
+      db
+        .prepare(
+          `INSERT INTO memory_refresh_jobs (
+             id, workspace_id, scope, subject_key, target_revision, state, attempts,
+             next_attempt_at, created_at, updated_at
+           ) VALUES (?, ?, ?, ?, ?, 'pending', 0, ?, ?, ?)
+           ON CONFLICT(workspace_id, scope, subject_key, target_revision) DO UPDATE SET
+             state = 'pending',
+             updated_at = excluded.updated_at`
+        )
+        .bind(
+          jobId,
+          context.workspace_id,
+          flags.scope,
+          subjectKey,
+          committedRevision,
+          now,
+          now,
+          now,
+        )
+    );
   }
 
   // Delete memory suppressions missing from nextState
-  for (const supId of currentState.memorySuppressions.keys()) {
-    if (!nextState.memorySuppressions.has(supId)) {
-      statements.push(
-        db.prepare(`DELETE FROM memory_suppressions WHERE workspace_id = ? AND id = ?`).bind(context.workspace_id, supId)
-      );
-    }
+  for (const supId of suppressionDiff.deleted) {
+    const prior = beforeSnapshot.memorySuppressions.records.get(supId);
+    if (!prior) continue;
+    statements.push(
+      db.prepare(`DELETE FROM memory_suppressions WHERE workspace_id = ? AND id = ?`).bind(...prior.del)
+    );
   }
 
-  // Step 2: Entities projection upserts
-  for (const entity of nextState.entities.values()) {
+  // Step 2: Entities projection upserts — only created or value-changed rows.
+  // New and changed keys preserve next-state order; a changed or new entity
+  // still precedes events and child inserts exactly as before.
+  for (const key of [...entityDiff.created, ...entityDiff.changed]) {
+    const entity = nextState.entities.get(key);
+    if (!entity) continue;
     statements.push(
       db
         .prepare(
@@ -976,8 +1250,11 @@ export async function executeLedgerCommand<TArgs>(
   );
 
   // Step 6: Upsert remaining projected tables (Aliases, Fields, Tasks, Drafts)
-  // Aliases
-  for (const alias of nextState.aliases.values()) {
+  // Aliases are immutable once created: only keys absent from the snapshot
+  // emit anything at all (never a blanket INSERT OR IGNORE per alias).
+  for (const key of [...aliasDiff.created, ...aliasDiff.changed]) {
+    const alias = nextState.aliases.get(key);
+    if (!alias) continue;
     statements.push(
       db
         .prepare(
@@ -995,8 +1272,10 @@ export async function executeLedgerCommand<TArgs>(
     );
   }
 
-  // Fields
-  for (const field of nextState.fields.values()) {
+  // Fields — only created or value-changed rows.
+  for (const key of [...fieldDiff.created, ...fieldDiff.changed]) {
+    const field = nextState.fields.get(key);
+    if (!field) continue;
     statements.push(
       db
         .prepare(
@@ -1036,8 +1315,10 @@ export async function executeLedgerCommand<TArgs>(
     );
   }
 
-  // Tasks
-  for (const task of nextState.tasks.values()) {
+  // Tasks — only created or value-changed rows.
+  for (const key of [...taskDiff.created, ...taskDiff.changed]) {
+    const task = nextState.tasks.get(key);
+    if (!task) continue;
     statements.push(
       db
         .prepare(
@@ -1078,8 +1359,10 @@ export async function executeLedgerCommand<TArgs>(
     );
   }
 
-  // Drafts
-  for (const draft of nextState.drafts.values()) {
+  // Drafts — only created or value-changed rows.
+  for (const key of [...draftDiff.created, ...draftDiff.changed]) {
+    const draft = nextState.drafts.get(key);
+    if (!draft) continue;
     statements.push(
       db
         .prepare(
@@ -1114,7 +1397,10 @@ export async function executeLedgerCommand<TArgs>(
   // Memory Entries, Suppressions, FTS, and Refresh Jobs (if memory events were emitted)
   const hasMemoryEvents = events.some((e) => e.kind === 'memory_note' || e.kind === 'memory_forgotten' || e.kind === 'revert');
   if (hasMemoryEvents) {
-    for (const mem of nextState.memoryEntries.values()) {
+    // Memory entries — only created or value-changed rows.
+    for (const key of [...memoryDiff.created, ...memoryDiff.changed]) {
+      const mem = nextState.memoryEntries.get(key);
+      if (!mem) continue;
       statements.push(
         db
           .prepare(
@@ -1148,7 +1434,12 @@ export async function executeLedgerCommand<TArgs>(
       );
     }
 
-    for (const sup of nextState.memorySuppressions.values()) {
+    // Suppressions are append-only: only keys absent from the snapshot are
+    // inserted (still OR IGNORE for race safety). Unchanged suppressions
+    // emit nothing.
+    for (const key of suppressionDiff.created) {
+      const sup = nextState.memorySuppressions.get(key);
+      if (!sup) continue;
       statements.push(
         db
           .prepare(
@@ -1173,22 +1464,32 @@ export async function executeLedgerCommand<TArgs>(
     // FTS maintenance & refresh jobs: reconcile active notes to memory_entries_fts and schedule refresh jobs
     const scheduledRefreshKeys = new Set<string>();
 
+    // FTS follows committed status/content compared against the pre-handler
+    // flags — never post-handler objects. A new active row still syncs FTS
+    // (DELETE is a harmless no-op plus the required INSERT); an unchanged
+    // active row syncs nothing; any inactive row drops FTS only when a prior
+    // row could have had one.
     for (const mem of nextState.memoryEntries.values()) {
-      const currentMem = currentState.memoryEntries.get(mem.id);
+      const prior = beforeMemoryFlags.get(mem.id);
       if (mem.status === 'active') {
-        if (!currentMem || currentMem.status !== 'active' || currentMem.content !== mem.content) {
+        if (!prior || prior.status !== 'active' || prior.content !== mem.content) {
           statements.push(
             db.prepare(`DELETE FROM memory_entries_fts WHERE entry_id = ?`).bind(mem.id),
             db.prepare(`INSERT INTO memory_entries_fts (entry_id, content) VALUES (?, ?)`).bind(mem.id, mem.content),
           );
         }
-      } else {
+      } else if (prior && prior.status === 'active') {
+        // Only the active-to-inactive transition drops FTS: an unchanged
+        // inactive row already has no FTS row, and a brand-new inactive row
+        // never created one. Entry deletions always drop FTS on their own path.
         statements.push(
           db.prepare(`DELETE FROM memory_entries_fts WHERE entry_id = ?`).bind(mem.id),
         );
       }
 
-      if (!currentMem || currentMem.status !== mem.status || currentMem.content !== mem.content) {
+      // Refresh scheduling keeps its exact prior semantics (status or
+      // content changed, or brand new), evaluated against the snapshot.
+      if (!prior || prior.status !== mem.status || prior.content !== mem.content) {
         const subjectKey = mem.subject_id || '__workspace__';
         const refreshKey = `${mem.scope}::${subjectKey}`;
         if (!scheduledRefreshKeys.has(refreshKey)) {

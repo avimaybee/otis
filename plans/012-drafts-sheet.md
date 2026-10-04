@@ -13,6 +13,8 @@ A1 should record a task to send an offer, but no draft is created until requeste
 
 ## Scope
 
+Field-use quality addition (2026-10-03): drafts use the lead's known language, confirmed facts and useful concise phrasing. Revision is conversational; opening/copying WhatsApp never marks sent. Learn durable phrasing preferences only from explicit reusable guidance or a clearly durable confirmed correction through existing sourced workspace/member memory. A one-time wording edit, inferred personality or another member's style cannot silently become workspace policy. Keep unsent/draft-versus-confirmed-sent attribution distinct; disputed prices/dates require resolution before relying on them. Test repeated edit/undo, language mismatch, missing recipient details and memory scope; no fine-tuning service or automatic outreach.
+
 Modify packages/ledger draft commands, packages/agent draft tool binding, packages/sheet, Worker authenticated export/download routes, R2 object lifecycle, Telegram /sheet integration, and tests. Do not implement WhatsApp Business Platform, send a third-party message, accept XLSX edits back into ledger, or add Google Sheets sync (Phase 2).
 
 ## Draft contract

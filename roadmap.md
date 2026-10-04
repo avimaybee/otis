@@ -20,7 +20,7 @@ The first product is useful when Hunor can send a rough field note, answer a sma
 - Individual authored chats; teammates read them and make corrections from their own chats.
 - Entire ordinary business workflow is conversational. Commands and controls are shortcuts and inspection aids.
 - Mobile composition follows ChatGPT; desktop follows Codex's sidebar/chat/optional detail pattern.
-- Dark neutral charcoal, off-white type, monochrome controls; no box-in-box dashboard aesthetic.
+- Approved charcoal + muted Highlighter reference and exact design-tokens.md recipes; no composer toolbar or box-in-box dashboard aesthetic.
 - Voice notes first, text replies by default; real Android and iPhone compatibility required.
 - Models are handpicked by the operator, not auto-published from a provider catalog. `/model` works on web and Telegram and affects the current chat only.
 - Clear complete instructions can be saved directly. Missing deadlines, ambiguous facts and inferred status changes require clarification. No invented 'today' deadline.
@@ -35,7 +35,8 @@ The first product is useful when Hunor can send a rough field note, answer a sma
 | Document | Answers |
 |---|---|
 | [product.md](product.md) | What users can do, who can do it, and what v1 excludes |
-| [design.md](design.md) | How layout, copy, controls and states should look and behave |
+| [design-tokens.md](design-tokens.md) | Exact approved visual values, recipes and reference-scale rules |
+| [design.md](design.md) | Interaction, layout logic, copy constraints and required story/state inventory |
 | [architecture.md](architecture.md) | How state, transactions, identity, execution and recovery work |
 | [docs/contracts.md](docs/contracts.md) | Shared schemas, enums, dates, APIs, tools and defaults |
 | This roadmap | Why each gate exists, its dependencies, journey and completion evidence |
@@ -43,7 +44,7 @@ The first product is useful when Hunor can send a rough field note, answer a sma
 | [docs/verification.md](docs/verification.md) | Test/evaluation/browser/release evidence requirements |
 | [docs/agent-handoff.md](docs/agent-handoff.md) | Small reproducible prompts and reports for implementation agents |
 
-Do not duplicate a technical choice differently in several places. Product intent governs technical choices; design governs presentation; contracts/architecture govern interfaces and correctness. If a plan's example is older than these contracts, update that example before implementing it. A conflict involving security, data meaning or user experience must be surfaced; routine file naming is the implementer's job.
+Do not duplicate a technical choice differently in several places. Product intent governs technical choices; design-tokens.md governs visual values/recipes and design.md governs interactions; contracts/architecture govern interfaces and correctness. If a plan's example is older than these contracts, update that example before implementing it. A conflict involving security, data meaning or user experience must be surfaced; routine file naming is the implementer's job.
 
 ## 3. Execution order and dependency repair
 
@@ -188,7 +189,7 @@ Run outcome comes from receipts and persisted state. The final prose must agree 
 
 Implement scoped routes and DTO serializers against the storage already created in 004A. Do not create a second chat schema. Persist public activity before SSE publication; use chat cursors, replay and resync semantics. Coalesce text chunks; no D1 write per token. Session/membership revocation must eventually terminate existing streams, not only reject new ones.
 
-Implement one command registry/parser for web and Telegram. Commands are optional shortcuts, durable attributed turns and generally do not call the model. `/model` handles listing, explicit approved key, default reset, missing credentials and in-flight ordering. `/workspace` changes only that surface's selection. `/today` works without schedule. Hide `/sheet` until implemented.
+Implement one command registry/parser for web and Telegram. Commands are optional shortcuts with durable attributed audit/receipts and generally do not call the model. Web control commands apply silently outside normal chat/model context; Telegram keeps concise native acknowledgments. `/model` handles listing, explicit approved key, default reset, missing credentials and in-flight ordering. `/workspace` changes only that surface's selection. `/today` works without schedule. Hide `/sheet` until implemented.
 
 Add action detail/undo preview/group commit, clarification shortcut, status and stop routes. A teammate can read and request attributed shared-state undo from their own chat, but cannot send as the original author.
 
@@ -196,11 +197,13 @@ Add action detail/undo preview/group commit, clarification shortcut, status and 
 
 ## 13. Gate U — the actual interface (008)
 
+The 2026-10-03 [detailed UI handoff](plans/008-ui-implementation-handoff.md) supersedes scaffold-era UI instructions: 008A visual enforcement/stories, 008B optimistic conversation/state, 008C scroll/keyboard/a11y/routes, 008D local outbox/PWA. These are checkpoints within this gate, not more application layers. Prior UI commits are partial implementation; new baseline acceptance requires actual evidence.
+
 **User journey:** on a phone, the person sees their conversation and can reply without navigating a management interface. On desktop, history is readily available and selected details open without dominating the chat.
 
-Implement the neutral tokens and type scale from design.md first. Build the 360 px composition with realistic fixture content; then drawer, desktop sidebar and optional detail. Do not first construct a dashboard and remove pieces to make it mobile.
+Implement the exact design-tokens.md baseline and reference first, with the path-correct enforcement and Storybook setup in plans/008-ui-implementation-handoff.md. Build the 360 px composition with realistic fixture content; then drawer, desktop sidebar and optional detail. Do not first construct a dashboard and remove pieces to make it mobile.
 
-Implement composer multiline behavior, IME safety, mobile Enter/newline, desktop send shortcut, keyboard/safe-area position, stable button layout, voice entry point, slash picker and model choices. No unsupported Plus menu, image button or live-call icon.
+Implement one composer with multiline/IME safety, mobile Enter/newline, desktop send shortcut, keyboard/safe-area position and stable Send/Stop slot. Allow active-run follow-ups as explicitly confirmed in design.md. Slash/model/effort controls apply real settings without chat pollution; quiet overflow is outside the composer. Voice entry ships only with its working route. No unsupported Plus menu, image button or live-call icon.
 
 Integrate optimistic send/acceptance/replay and honest queued/running/saved/partial states. Working shows server actions live, folds after completion, and remains inspectable. Default Undo from here has a concrete preview; single-action undo is secondary. If a user reads old history, preserve their anchor and offer Jump to latest.
 
@@ -228,7 +231,7 @@ Format concise truthful progress and answers; preserve per-action/group undo and
 
 **User journey:** record, stop, listen, send; see uploading, transcription and Working; receive text. Correct a misheard number without erasing the original evidence.
 
-Recorder uses capability detection and real measured audio level if a waveform is shown. Stops at three minutes into review. Distinct Cancel/Stop/Send actions prevent accidental submission. Local IndexedDB recovery is best-effort and labeled honestly; logout removes private local drafts.
+Follow plans/010-voice-ux-handoff.md alongside the STT handoff. Recorder uses capability detection, 1 s ordered IndexedDB chunks and real measured audio level if a waveform is shown. Stops at three minutes into review. Distinct Cancel/Stop/Send actions prevent accidental submission. Local IndexedDB recovery is best-effort and labeled honestly; logout removes private local drafts.
 
 Upload claims are scoped and bounded. Reject known-invalid metadata early. For unknown duration, inspect bytes in bounded private quarantine before transcription/accepted media. Clean failed/orphaned uploads. Stream bytes where possible; avoid giant Worker buffers.
 
@@ -323,6 +326,10 @@ Choose additional proactive triggers from observed missed work and user-configur
 Treat WhatsApp Business Platform access as a new channel feasibility project, separate from `wa.me` draft handoff. Recheck current terms, templates, initiation windows, provider approvals and cost. Do not automate a personal WhatsApp account as a shortcut.
 
 ## 21. Decision boundaries for implementation agents
+
+Field-use addition (2026-10-03): product.md's capture/memory/resurfacing/action principles and docs/verification.md's metric definitions guide core quality work. Reliable local capture, truthful filing state, scoped confirmed aliases, precise date/amount replies, useful sourced briefs and read-only entity inspection are applicable now within their owning gates. They do not authorize new cloud services or another data model.
+
+Deferred candidates from the supplied field-use narrative: installed-PWA Record note shortcut, validated Web Share Target, timestamped audio word seeking, requested spoken brief, opt-in end-of-day/weekly wrap, photo extraction, opt-in nearby context and calendar out-sync. Implement only after core capture/resurfacing acceptance and an explicit bounded assignment. Shortcut/share permission and identity/routing/validation still apply; device/platform capabilities need evidence. No instant recording from a locked phone guarantee. Existing read-only MCP expansion stays ordered after dogfood. Auto-send voice and unsolicited nudges require separate product decisions, not interpretation of the narrative.
 
 Proceed autonomously with reversible implementation details: file decomposition, helper names, query indexes, error propagation, accessible component composition and targeted tests. Ask when a choice changes user visibility, automatic write authority, retained data, external costs, provider routing, third-party messaging or a release promise.
 

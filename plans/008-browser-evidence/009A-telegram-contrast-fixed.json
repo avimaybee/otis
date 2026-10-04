@@ -1,0 +1,50 @@
+{
+  "capturedAt": "2026-10-04T09:54:51.862Z",
+  "scope": "Rebuilt synthetic production-component Storybook served locally, native Chrome CDP at 390/1280, no external bot navigation",
+  "results": [
+    {
+      "width": 390,
+      "anchor": {
+        "text": "Open Telegram",
+        "color": "rgb(24, 24, 24)",
+        "backgroundColor": "rgb(243, 243, 243)",
+        "textDecorationLine": "none",
+        "height": 44,
+        "width": 120.90625,
+        "contrastRatio": 16
+      },
+      "start": {
+        "text": "I’ve tapped Start",
+        "color": "rgb(243, 243, 243)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "textDecorationLine": "none",
+        "height": 44,
+        "width": 128.65625,
+        "contrastRatio": 18.93
+      },
+      "overflow": false
+    },
+    {
+      "width": 1280,
+      "anchor": {
+        "text": "Open Telegram",
+        "color": "rgb(24, 24, 24)",
+        "backgroundColor": "rgb(243, 243, 243)",
+        "textDecorationLine": "none",
+        "height": 44,
+        "width": 120.90625,
+        "contrastRatio": 16
+      },
+      "start": {
+        "text": "I’ve tapped Start",
+        "color": "rgb(243, 243, 243)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "textDecorationLine": "none",
+        "height": 44,
+        "width": 128.65625,
+        "contrastRatio": 18.93
+      },
+      "overflow": false
+    }
+  ]
+}

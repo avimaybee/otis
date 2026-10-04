@@ -1,6 +1,8 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
+import { VitePWA } from 'vite-plugin-pwa';
+import { PWA_MANIFEST, PWA_WORKBOX } from './apps/web/src/pwa.js';
 import { resolve, dirname } from 'path';
 import { fileURLToPath } from 'url';
 
@@ -8,7 +10,20 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
 export default defineConfig({
-  plugins: [react(), tailwindcss()],
+  plugins: [
+    react(),
+    tailwindcss(),
+    VitePWA({
+      strategies: 'generateSW',
+      // Prompt, never auto-update: the in-app notice reloads only when no
+      // unsent local entries exist, and never during a send on its own.
+      registerType: 'prompt',
+      injectRegister: 'auto',
+      manifest: PWA_MANIFEST,
+      workbox: PWA_WORKBOX,
+      devOptions: { enabled: false },
+    }),
+  ],
   resolve: {
     alias: {
       '@': resolve(__dirname, 'apps/web/src'),

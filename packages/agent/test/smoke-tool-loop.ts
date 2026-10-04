@@ -155,17 +155,20 @@ export async function executeSmokeToolLoop(params: {
       arguments: c.args,
     }));
 
-    // Preserve complete user instruction history with follow-up prompt
-    const stepMessages: ProviderMessage[] = [
-      ...conversationMessages,
-      { role: 'user', text: `${STATIC_PREFIX} Summarize the fixture result. ${SMOKE_CONTEXT_MARKER}` },
-    ];
+    // Preserve complete user instruction history for stateless adapters and
+    // provide the genuinely new follow-up for linked stateful continuations.
+    const followUp: ProviderMessage = {
+      role: 'user',
+      text: `${STATIC_PREFIX} Summarize the fixture result. ${SMOKE_CONTEXT_MARKER}`,
+    };
+    const stepMessages: ProviderMessage[] = [...conversationMessages, followUp];
 
     const nextTurn = await params.drain({
       ...params.baseInput,
       model: params.model,
       requestId: `smoke-req-${2 + continuationStep}`,
       messages: stepMessages,
+      continuationInput: [followUp],
       tools: [SMOKE_TOOL],
       pendingToolResults,
       previousContinuation: currentContinuation,

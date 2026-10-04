@@ -53,6 +53,14 @@ export interface NormalizedTelegramUpdate {
   externalId: string; // `${botInstallationId}:${update_id}`
   botInstallationId: string;
   telegramUserId: string;
+  /** Canonical numeric chat ID as an opaque string. Never a username or address. */
+  telegramChatId: string;
+  /** Canonical numeric message ID as an opaque string. */
+  telegramMessageId: string;
+  /** True when the sender is another bot: never conversational input. */
+  senderIsBot: boolean;
+  /** Canonical numeric ID of the replied-to message, when this is a native reply. */
+  replyToMessageId: string | null;
   isPrivateChat: boolean;
   kind: TelegramMessageKind;
   text?: string;
@@ -102,12 +110,27 @@ export function normalizeTelegramUpdate(
   const msg = u.message;
   const isPrivate = msg.chat && msg.chat.type === 'private';
   const telegramUserId = msg.from ? String(msg.from.id) : '';
+  const telegramChatId = msg.chat && typeof msg.chat.id === 'number' ? String(msg.chat.id) : '';
+  const telegramMessageId = typeof msg.message_id === 'number' ? String(msg.message_id) : '';
+  const senderIsBot = msg.from?.is_bot === true;
+  const replyTo = (msg as { reply_to_message?: { message_id?: unknown } }).reply_to_message;
+  const replyToMessageId = replyTo && typeof replyTo.message_id === 'number' ? String(replyTo.message_id) : null;
 
   if (!telegramUserId) {
     throw new Error('Invalid Telegram update: message missing sender information.');
   }
+  if (!telegramChatId || !telegramMessageId) {
+    throw new Error('Invalid Telegram update: message missing canonical chat/message IDs.');
+  }
 
   const externalId = `${botInstallationId}:${u.update_id}`;
+  const baseIds = {
+    telegramUserId,
+    telegramChatId,
+    telegramMessageId,
+    senderIsBot,
+    replyToMessageId,
+  };
 
   // Check for unsupported media
   const unsupportedMediaTypes: string[] = [];
@@ -121,15 +144,17 @@ export function normalizeTelegramUpdate(
   const textContent = msg.text || msg.caption || '';
   const trimmedText = textContent.trim();
 
-  // Check for /start <code> account link command
-  if (trimmedText.startsWith('/start')) {
-    const parts = trimmedText.split(/\s+/);
-    const startCode = parts[1] || '';
+  // Check for /start <code> account link command. Exact command match:
+  // /startled or /starting are ordinary text, never link commands. An
+  // optional @botsuffix is accepted and validated by the caller.
+  const startMatch = /^\/start(@[A-Za-z0-9_]+)?(?:\s+(.*))?$/.exec(trimmedText);
+  if (startMatch) {
+    const startCode = (startMatch[2] || '').split(/\s+/)[0] || '';
     return {
       updateId: u.update_id,
       externalId,
       botInstallationId,
-      telegramUserId,
+      ...baseIds,
       isPrivateChat: isPrivate,
       kind: 'start_command',
       text: trimmedText,
@@ -146,7 +171,7 @@ export function normalizeTelegramUpdate(
         updateId: u.update_id,
         externalId,
         botInstallationId,
-        telegramUserId,
+        ...baseIds,
         isPrivateChat: isPrivate,
         kind: 'unsupported_media_with_text',
         text: trimmedText,
@@ -158,7 +183,7 @@ export function normalizeTelegramUpdate(
       updateId: u.update_id,
       externalId,
       botInstallationId,
-      telegramUserId,
+      ...baseIds,
       isPrivateChat: isPrivate,
       kind: 'unsupported_media_only',
       unsupportedMediaTypes,
@@ -171,7 +196,7 @@ export function normalizeTelegramUpdate(
       updateId: u.update_id,
       externalId,
       botInstallationId,
-      telegramUserId,
+      ...baseIds,
       isPrivateChat: isPrivate,
       kind: 'voice',
       text: trimmedText.length > 0 ? trimmedText : undefined,
@@ -184,7 +209,7 @@ export function normalizeTelegramUpdate(
     updateId: u.update_id,
     externalId,
     botInstallationId,
-    telegramUserId,
+    ...baseIds,
     isPrivateChat: isPrivate,
     kind: 'text',
     text: trimmedText,

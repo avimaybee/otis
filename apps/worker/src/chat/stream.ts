@@ -28,6 +28,9 @@ export interface StreamOptions {
 
 const encoder = new TextEncoder();
 
+/** Stream-internal D1 reads before a clean budget rotation (see above). */
+const STREAM_QUERY_BUDGET = 40;
+
 function formatEvent(name: StreamEventName, data: unknown, id?: number): Uint8Array {
   const lines: string[] = [];
   if (id !== undefined) lines.push(`id: ${id}`);
@@ -43,6 +46,15 @@ const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve,
 /**
  * Creates an SSE Response that streams persisted activity until the bound is
  * reached, membership is lost, or the client disconnects.
+ *
+ * Per-request query ceiling is 50 (007 budget): 3 setup reads in the route
+ * (session, membership, chat) plus at most STREAM_QUERY_BUDGET internal
+ * reads plus a worst-case final tick of 4 (membership recheck 2 + cursor
+ * read 1 + rows read 1) = 47, held under 50 with margin. Budget expiry ends
+ * the stream with a clean close — exactly like maxStreamMs expiry — so the
+ * client reopens from its cursor with a cheap connect. It never emits
+ * resync_required for budget: that event forces a full snapshot reload,
+ * which is the expensive path reserved for genuinely stale cursors.
  */
 export function createActivityStream(db: D1Database, options: StreamOptions): Response {
   const now = options.now ?? (() => Date.now());
@@ -52,8 +64,10 @@ export function createActivityStream(db: D1Database, options: StreamOptions): Re
 
   let cursor = options.afterCursor;
   let lastHeartbeat = now();
+  let lastMembershipCheck = 0;
   let closed = false;
   const startedAt = now();
+  const queryCount = { count: 0 };
 
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
@@ -65,19 +79,40 @@ export function createActivityStream(db: D1Database, options: StreamOptions): Re
       while (!closed && now() - startedAt < maxStreamMs) {
         if (now() - startedAt >= maxStreamMs) break;
 
-        if (!(await verifyStreamMembership(db, options))) {
-          controller.enqueue(formatEvent('membership_revoked', { workspace_id: options.workspaceId }));
+        // Budget rotation: end cleanly BEFORE the per-request query ceiling
+        // so the client reconnects cheaply from its cursor. This is the same
+        // clean close as maxStreamMs expiry — never resync_required, which
+        // would force a full snapshot reload for a healthy stream.
+        if (queryCount.count >= STREAM_QUERY_BUDGET) {
           closed = true;
           controller.close();
           return;
         }
+
+        // Check membership on initial tick, on heartbeat cadence, or before new activity is delivered
+        const shouldCheckMembership = lastMembershipCheck === 0 || now() - lastMembershipCheck >= heartbeatMs;
+        if (shouldCheckMembership) {
+          const isMember = await verifyStreamMembership(db, options, queryCount);
+          lastMembershipCheck = now();
+          if (!isMember) {
+            controller.enqueue(formatEvent('membership_revoked', { workspace_id: options.workspaceId }));
+            closed = true;
+            controller.close();
+            return;
+          }
+        }
+
         let read: ActivityReadResult;
         try {
-          read = await readChatActivity(db, {
-            workspaceId: options.workspaceId,
-            chatId: options.chatId,
-            afterCursor: cursor,
-          });
+          read = await readChatActivity(
+            db,
+            {
+              workspaceId: options.workspaceId,
+              chatId: options.chatId,
+              afterCursor: cursor,
+            },
+            queryCount,
+          );
         } catch (err) {
           if (err instanceof ActivityCursorSupersededError) {
             controller.enqueue(
@@ -95,21 +130,27 @@ export function createActivityStream(db: D1Database, options: StreamOptions): Re
           return;
         }
 
-        for (const activity of read.activities) {
-          controller.enqueue(formatEvent('activity', activity, activity.cursor));
-          cursor = activity.cursor;
-          emitted = true;
+        if (read.activities.length > 0) {
+          // If membership was not verified on this tick, verify before emitting new activity
+          if (!shouldCheckMembership) {
+            const isMember = await verifyStreamMembership(db, options, queryCount);
+            lastMembershipCheck = now();
+            if (!isMember) {
+              controller.enqueue(formatEvent('membership_revoked', { workspace_id: options.workspaceId }));
+              closed = true;
+              controller.close();
+              return;
+            }
+          }
+
+          for (const activity of read.activities) {
+            controller.enqueue(formatEvent('activity', activity, activity.cursor));
+            cursor = activity.cursor;
+            emitted = true;
+          }
         }
 
         if (emitted) return;
-
-        const membership = await verifyStreamMembership(db, options);
-        if (!membership) {
-          controller.enqueue(formatEvent('membership_revoked', { workspace_id: options.workspaceId }));
-          closed = true;
-          controller.close();
-          return;
-        }
 
         if (now() - lastHeartbeat >= heartbeatMs) {
           lastHeartbeat = now();
@@ -140,11 +181,17 @@ export function createActivityStream(db: D1Database, options: StreamOptions): Re
   });
 }
 
-/** Rechecks session and membership so long-lived streams close on revocation. */
-async function verifyStreamMembership(db: D1Database, options: StreamOptions): Promise<boolean> {
+/** Rechecks session and membership as pure reads: zero D1 writes, so long-lived streams close on revocation without costing the write budget. */
+async function verifyStreamMembership(
+  db: D1Database,
+  options: StreamOptions,
+  queryCount: { count: number },
+): Promise<boolean> {
   if (!options.sessionToken) return false;
+  queryCount.count += 1;
   const verified = await verifySession(db, options.sessionToken);
   if (!verified || verified.user.id !== options.userId) return false;
+  queryCount.count += 1;
   const membership = await checkMembership(db, options.workspaceId, options.userId);
   return membership !== null;
 }

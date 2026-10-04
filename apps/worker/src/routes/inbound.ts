@@ -2,17 +2,26 @@
  * @otis/worker/routes/inbound
  * Telegram webhook inbound router.
  * In accordance with docs/contracts.md and plans/004-inbound-routing.md.
+ *
+ * 009A additions: the conversational route requires the server bot token
+ * (replies are the point of the route; without it the endpoint truthfully
+ * reports itself disabled) and publishes best-effort wake-ups for dispatch
+ * and durable Telegram deliveries after acceptance. The link/start
+ * administrative path is covered by the same helper, so an unrouted /start
+ * still gets its single bounded confirmation without a retry loop.
  */
 
 import { validateTelegramWebhookSecret } from '@otis/channels';
 import type { Env } from '../index.js';
 import { jsonError, jsonSuccess } from '../middleware/errors.js';
 import { acceptTelegramInbound } from '../inbox/telegram.js';
+import { publishDispatchHint, publishTelegramDeliveryHint } from '../dispatchHint.js';
 
 export async function handleTelegramWebhook(
   request: Request,
   env: Env,
   requestId: string,
+  ctx?: ExecutionContext,
 ): Promise<Response> {
   const expectedSecret = env.TELEGRAM_WEBHOOK_SECRET;
   if (!expectedSecret || expectedSecret.trim().length === 0) {
@@ -29,6 +38,17 @@ export async function handleTelegramWebhook(
     return jsonError(401, 'unauthorized', 'Invalid Telegram webhook secret token.', requestId);
   }
 
+  // Conversational acceptance is only meaningful when replies can be sent.
+  // Truthful disabled state; no updates are consumed without a reply path.
+  if (!env.TELEGRAM_BOT_TOKEN || env.TELEGRAM_BOT_TOKEN.trim().length === 0) {
+    return jsonError(
+      503,
+      'service_unavailable',
+      'Telegram messaging is disabled because TELEGRAM_BOT_TOKEN is not configured.',
+      requestId,
+    );
+  }
+
   let body: unknown;
   try {
     body = await request.json();
@@ -39,7 +59,20 @@ export async function handleTelegramWebhook(
   const botInstallationId = env.TELEGRAM_BOT_INSTALLATION_ID || 'otis_bot';
 
   try {
-    const result = await acceptTelegramInbound(env.DB, botInstallationId, body);
+    const result = await acceptTelegramInbound(env.DB, botInstallationId, body, {
+      botUsername: env.TELEGRAM_BOT_USERNAME,
+      botToken: env.TELEGRAM_BOT_TOKEN,
+      // Production dials the bounded adapter for the workspace-less
+      // administrative exception. Test environments never contact Telegram:
+      // synthetic transports are injected by tests that need that path.
+      adminTransport: env.ENVIRONMENT === 'test' ? undefined : fetch,
+    });
+    // The work is already durable; hints are never load-bearing. A lost hint
+    // is covered by the cron sweep, and delivery claims are idempotent.
+    if (result.status === 'accepted' && result.run_id && result.workspace_id) {
+      publishDispatchHint(ctx, env, result.workspace_id);
+    }
+    publishTelegramDeliveryHint(ctx, env, result.workspace_id);
     return jsonSuccess(result, 200, { 'x-request-id': requestId });
   } catch (err) {
     return jsonError(

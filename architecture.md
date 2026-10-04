@@ -117,7 +117,7 @@ Core records and wire enums are specified in [docs/contracts.md](docs/contracts.
 
 The client creates a UUID once when the member presses Send. A retry reuses it. The Worker checks session, membership, author, payload bounds and chat/workspace relationship, then atomically stores the member message, inbox record, accepted execution record and dispatch outbox entry. Return 202 only after this commits. A duplicate with the same owner/chat/payload fingerprint returns the original IDs; a reused ID with a different payload returns a conflict. Never return another member's message merely because a UUID collided.
 
-The client may show its local bubble immediately. 'Accepted' means D1 committed; it does not mean tools finished. Network loss after acceptance is resolved by reusing the UUID and fetching the authoritative run state.
+The client must show its local bubble immediately. 'Saved' means D1 acceptance is confirmed; it does not mean tools finished. Network loss after acceptance is resolved by reusing the UUID and fetching the authoritative run state. The scoped local outbox and frontend ownership contract is in section 17; it does not introduce a second business authority.
 
 ### Telegram
 
@@ -264,3 +264,51 @@ Workspace erasure is a separate audited operator/lifecycle operation, outside th
 Core verification: `pnpm typecheck`, `pnpm lint`, `pnpm test`, `pnpm build`. Integration tests must use real local Workers/D1/DO behavior; fake providers isolate semantic and failure scenarios without real costs. DOM tests do not establish browser layout. Manual native-browser checks remain required for layout, keyboard, voice and accessibility. See [verification.md](docs/verification.md).
 
 Primary platform references, rechecked 2026-09-29: [D1 batch](https://developers.cloudflare.com/d1/worker-api/d1-database/), [DO concurrency](https://developers.cloudflare.com/durable-objects/best-practices/rules-of-durable-objects/), [Queue delivery](https://developers.cloudflare.com/queues/reference/delivery-guarantees/), [Firebase verification](https://firebase.google.com/docs/auth/admin/verify-id-tokens). Recheck API signatures and limits when implementing; these references validate platform facts, not the unbuilt application.
+
+
+## 17. Frontend state, optimism and offline boundaries
+
+Added 2026-10-03. Required target; not a claim that the new dependencies/local storage/PWA already exist. See [design.md](design.md) for interaction and [008 handoff](plans/008-ui-implementation-handoff.md) for exact work sequence. [design-tokens.md](design-tokens.md) alone owns visual values/recipes.
+
+| State | Owner | Must not become |
+|---|---|---|
+| Business facts, actions and undo | D1 ledger/events/receipts | Optimistic UI business mutations |
+| Accepted messages, runs and public activity | Worker/D1 with existing actor dispatch/replay | Browser-only conversation authority |
+| Scoped server snapshots | One React Query cache | Copied mutable lists across several frontend stores |
+| Workspace/chat route and Back | One TanStack Router integration | Parallel pushState/popstate navigation |
+| Editable draft and pending local deliveries | Scoped IndexedDB module; component reads its own draft | Unscoped localStorage or a second server inbox |
+| Follow/release/Jump and prepend anchor | One stick-to-bottom integration | Several competing scroll-height adjustments |
+| Keyboard/viewport/composer measurements | One hook and measured composer-height variable | Per-component safe-area/keyboard subtraction |
+| Static offline shell/assets | Restricted service worker cache | Cached credentials, API streams or private R2 objects |
+
+### Local delivery is not execution
+
+One client UUID identifies one immutable submitted payload. Local data includes schema version, account/workspace/chat scope, source content, clarification reference, local creation time, delivery state, retry metadata and authoritative IDs once known. Local messages reconcile with persisted ChatMessage.client_message_id. HTTP acceptance and activity/snapshot arrival can happen in either order.
+
+Draft editing never changes an already submitted outbox payload. A modified failed input is a new message. Delivery retry reuses original UUID/payload; a server conflict/auth failure cannot be repaired by generating new IDs automatically. Unknown acceptance is retried with the original identity. Saved input stays saved even when its agent run fails. Re-executing a partially committed run needs the existing server receipt/continuation boundary, not another optimistic-send operation.
+
+New-chat creation also has stable retry identity/mapping. Messages in that locally new chat cannot create one chat per retry. Before transmission revalidate the current signed-in account and resolve authoritative workspace/chat membership. Browser generation checks discard late callbacks after route/logout/revocation.
+
+### One scoped flush owner
+
+Persist the local operation before network delivery when storage succeeds, with immediate visible echo. Offline and foreground events wake bounded retry with backoff and Retry-After handling. The same chat preserves input order; retries may not bypass unresolved earlier acceptance. Multiple tabs share a small tested flush/claim mechanism; server idempotency remains the final duplicate-effect protection. Browser locks/storage are not trusted authorization.
+
+A browser online flag is a hint, not proof of connectivity. Background Sync is optional; foreground/online flush works without it. A closed browser or storage eviction cannot be promised delivery. Permanent validation/access/obsolete-clarification failures pause with a message-attached recovery action. A stale offline answer never resolves an unrelated question by guessing a new target.
+
+Logout/account change purges scoped drafts, pending sends, local recordings and private query caches and cancels flush/stream work. Revocation removes visible/local private content and prevents retransmission. Locally discarding pending input is distinct from cancelling an already accepted run. Storage/quota failures get a truthful fallback; do not label unsaved in-memory data recoverable after reload.
+
+### Streaming and subscriptions
+
+Use the existing persisted public cursor, ordered deduplication and authorized stream. Merge only affected records, preserving stable message keys. Completed messages do not remount when text arrives. The same renderer covers optimistic, streamed and final content. Reconnect resumes activity/snapshots, never a new model request. A final snapshot replaces the buffer only after equivalent authoritative text exists.
+
+One query cache owns server state; one stream subscription per selected authorized chat patches it or invalidates the exact scoped query. Do not fetch every historical run on each token. Setting mutations reconcile the effective model/effort and invalidate the scoped query while ignoring older results. They retain attribution/audit outside normal model conversation context.
+
+Ordinary acceptance initiates prompt dispatch after the D1 transaction. Queue hints and cron recover lost wakeups; the normal conversational path must not wait for cron. Preserve fences, receipts and fair sequencing; repairing user-visible latency does not authorize bypassing the commit boundary.
+
+### PWA and voice storage
+
+Cache only versioned static shell/fonts/assets by default. Never indiscriminately cache /api, auth, activity streams, provider requests, private audio or credential traffic. No private keys in browser persistence. Offline shell cannot attest to fresh membership/session or invent a server answer. Service-worker updates must not reload away a draft, send or recording.
+
+Gate 010 reuses the scoped IndexedDB module for 1 s ordered recording chunks plus codec/session metadata. Validate reassembled media before offering recovery. A chunk is not necessarily an independently decodable file. Recorder/background/storage interruption can leave only part recoverable; preserve what is validated and state the limitation. Raw accepted audio's R2 retention remains 14 days, separate from unsent local data cleanup.
+
+Keep these as concrete small responsibilities in apps/web. No new Cloudflare service, sync platform, generic state-machine engine or browser business ledger. Design feedback is local; persistence/execution is server-authoritative. Evidence requires actual lost-ack/offline/revocation/race behavior, not a library installation.

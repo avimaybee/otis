@@ -1,0 +1,141 @@
+{
+  "scope": "synthetic API through production App; native Chrome headless; not server acceptance",
+  "capturedAt": "2026-10-04T04:39:20.622Z",
+  "mode": "new chat with delayed sidebar",
+  "immediateEcho": true,
+  "sendStartedBeforeNavList": true,
+  "failedText": "Synthetic conversation\nSynthetic workspace\nSynthetic browser delivery probe\nSynthetic delivery failed.\nRetry\nDiscard\n10:09 AM\nMessage Otis\nOtis can make mistakes. Verify important business info.",
+  "retryAvailable": true,
+  "sameUuidOnRetry": true,
+  "bubblesAfterRetry": 1,
+  "retryText": "Synthetic conversation\nSynthetic workspace\nSynthetic browser delivery probe\n10:09 AM\nMessage Otis\nOtis can make mistakes. Verify important business info.",
+  "calls": [
+    {
+      "path": "/api/me",
+      "search": "",
+      "method": "GET",
+      "body": null,
+      "time": 151.70000000298023
+    },
+    {
+      "path": "/api/me",
+      "search": "",
+      "method": "GET",
+      "body": null,
+      "time": 151.90000000596046
+    },
+    {
+      "path": "/api/workspaces/review-ws/chats",
+      "search": "?filter=mine",
+      "method": "GET",
+      "body": null,
+      "time": 207
+    },
+    {
+      "path": "/api/workspaces/review-ws/chats",
+      "search": "?filter=team",
+      "method": "GET",
+      "body": null,
+      "time": 207.09999999403954
+    },
+    {
+      "path": "/api/workspaces/review-ws/models",
+      "search": "",
+      "method": "GET",
+      "body": null,
+      "time": 207.20000000298023
+    },
+    {
+      "path": "/api/commands",
+      "search": "?surface=web",
+      "method": "GET",
+      "body": null,
+      "time": 207.40000000596046
+    },
+    {
+      "path": "/api/workspaces/review-ws/chats",
+      "search": "",
+      "method": "POST",
+      "body": {
+        "client_chat_id": "new-1849bdf2-1a0c-4daf-88c8-c506a159fa3c"
+      },
+      "time": 412.20000000298023
+    },
+    {
+      "path": "/api/workspaces/review-ws/chats",
+      "search": "?filter=mine",
+      "method": "GET",
+      "body": null,
+      "time": 417.09999999403954
+    },
+    {
+      "path": "/api/workspaces/review-ws/chats/review-chat/messages",
+      "search": "",
+      "method": "POST",
+      "body": {
+        "client_message_id": "d8797bac-49df-4803-a336-49d0c7e29c1a",
+        "text": "Synthetic browser delivery probe"
+      },
+      "time": 418.5
+    },
+    {
+      "path": "/api/workspaces/review-ws/chats/review-chat",
+      "search": "",
+      "method": "GET",
+      "body": null,
+      "time": 434.40000000596046
+    },
+    {
+      "path": "/api/workspaces/review-ws/chats/review-chat/messages",
+      "search": "?limit=50",
+      "method": "GET",
+      "body": null,
+      "time": 434.5
+    },
+    {
+      "path": "/api/workspaces/review-ws/chats/review-chat/activity",
+      "search": "?after=0",
+      "method": "GET",
+      "body": null,
+      "time": 434.5
+    },
+    {
+      "path": "/api/workspaces/review-ws/chats/review-chat/clarifications",
+      "search": "",
+      "method": "GET",
+      "body": null,
+      "time": 434.5
+    },
+    {
+      "path": "/api/workspaces/review-ws/models",
+      "search": "?chat_id=review-chat",
+      "method": "GET",
+      "body": null,
+      "time": 434.59999999403954
+    },
+    {
+      "path": "/api/workspaces/review-ws/chats/review-chat/messages",
+      "search": "",
+      "method": "POST",
+      "body": {
+        "client_message_id": "d8797bac-49df-4803-a336-49d0c7e29c1a",
+        "text": "Synthetic browser delivery probe"
+      },
+      "time": 1350.5
+    },
+    {
+      "path": "/api/workspaces/review-ws/runs/review-run",
+      "search": "",
+      "method": "GET",
+      "body": null,
+      "time": 1471.5
+    },
+    {
+      "path": "/api/workspaces/review-ws/chats/review-chat/messages",
+      "search": "?limit=50",
+      "method": "GET",
+      "body": null,
+      "time": 1471.7000000029802
+    }
+  ]
+}

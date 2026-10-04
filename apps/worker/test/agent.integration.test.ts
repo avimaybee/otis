@@ -26,7 +26,7 @@ import {
   type LoadedRun,
 } from '../src/actor/dispatch.js';
 import { acceptWebMessage, createChat } from '../src/inbox/repository.js';
-import { type TurnInput, type ProviderAdapter, FakeProviderAdapter } from '@otis/agent';
+import { type TurnInput, type ProviderAdapter, FakeProviderAdapter, GeminiInteractionsAdapter } from '@otis/agent';
 
 describe('Worker Agent Loop, Recovery & Clarification Integration (006B workerd)', () => {
   const ws = 'ws-agent-loop-test';
@@ -233,6 +233,356 @@ describe('Worker Agent Loop, Recovery & Clarification Integration (006B workerd)
 
     // Verify fake was called twice (round 1 tool calls, round 2 final text)
     expect(fakeAdapter.calls.length).toBe(2);
+  });
+
+  it('production-shaped Gemini continuation: strict endpoint accepts one linked pending result and no replay', async () => {
+    const toolCallSse = [
+      'event: interaction.created\n',
+      'data: {"interaction":{"id":"v1_cont_1","status":"in_progress"},"event_type":"interaction.created"}\n\n',
+      'event: step.start\n',
+      'data: {"index":0,"step":{"type":"function_call","id":"call_cont_1","name":"upsert_entity","arguments":{}},"event_type":"step.start"}\n\n',
+      'event: step.delta\n',
+      'data: {"index":0,"delta":{"type":"arguments_delta","arguments":"{\\"name\\":\\"Continuation Probe\\"}"},"event_type":"step.delta"}\n\n',
+      'event: step.stop\n',
+      'data: {"index":0,"event_type":"step.stop"}\n\n',
+      'event: interaction.completed\n',
+      'data: {"interaction":{"id":"v1_cont_1","status":"requires_action","usage":{}},"event_type":"interaction.completed"}\n\n',
+      'event: done\n',
+      'data: [DONE]\n\n',
+    ].join('');
+    const textSse = [
+      'event: interaction.created\n',
+      'data: {"interaction":{"id":"v1_cont_2","status":"in_progress"},"event_type":"interaction.created"}\n\n',
+      'event: step.start\n',
+      'data: {"index":0,"step":{"type":"model_output"},"event_type":"step.start"}\n\n',
+      'event: step.delta\n',
+      'data: {"index":0,"delta":{"type":"text","text":"Saved. Continuation complete."},"event_type":"step.delta"}\n\n',
+      'event: step.stop\n',
+      'data: {"index":0,"event_type":"step.stop"}\n\n',
+      'event: interaction.completed\n',
+      'data: {"interaction":{"id":"v1_cont_2","status":"completed","usage":{}},"event_type":"interaction.completed"}\n\n',
+      'event: done\n',
+      'data: [DONE]\n\n',
+    ].join('');
+
+    const requests: Array<Record<string, unknown>> = [];
+    // Strict fake endpoint: rejects any invalid continuation shape with a
+    // real HTTP400 instead of accepting a permissive replay.
+    const strictFetch = async (_url: string, init: RequestInit): Promise<Response> => {
+      const body = JSON.parse(String(init.body)) as Record<string, unknown>;
+      requests.push(body);
+      const blocks = (body['input'] as Array<Record<string, unknown>>) ?? [];
+      if (requests.length === 1) {
+        if (body['previous_interaction_id'] !== undefined) {
+          return new Response(JSON.stringify({ error: { status: 'INVALID_ARGUMENT' } }), { status: 400 });
+        }
+        if (!blocks.some((block) => block['type'] === 'user_input')) {
+          return new Response(JSON.stringify({ error: { status: 'INVALID_ARGUMENT' } }), { status: 400 });
+        }
+        return new Response(toolCallSse, { status: 200, headers: { 'Content-Type': 'text/event-stream' } });
+      }
+      const resultBlocks = blocks.filter((block) => block['type'] === 'function_result');
+      const invalid =
+        body['previous_interaction_id'] !== 'v1_cont_1' ||
+        blocks.some((block) => block['type'] === 'function_call') ||
+        blocks.some((block) => block['type'] === 'model_output') ||
+        blocks.some((block) => block['type'] === 'user_input') ||
+        resultBlocks.length !== 1 ||
+        resultBlocks[0]?.['call_id'] !== 'call_cont_1' ||
+        body['system_instruction'] === undefined ||
+        !Array.isArray(body['tools']);
+      if (invalid) {
+        return new Response(JSON.stringify({ error: { status: 'INVALID_ARGUMENT' } }), { status: 400 });
+      }
+      return new Response(textSse, { status: 200, headers: { 'Content-Type': 'text/event-stream' } });
+    };
+
+    const accepted = await acceptWebMessage(env.DB, {
+      workspaceId: ws,
+      chatId: chatAvi,
+      userId: aviId,
+      clientMessageId: 'msg-client-cont-qa1',
+      text: 'Create the Continuation Probe lead',
+    });
+    const adapter = new GeminiInteractionsAdapter({ fetchFn: strictFetch, apiKey: 'test-gemini-key' });
+    const handler = new AgentHandler({ providerAdapter: adapter, maxRoundsPerSlice: 3, limits: defaultTestLimits });
+    const result = await dispatchOutboxItem(env.DB, await outboxIdForRun(accepted.run_id), ws, { handler });
+
+    expect(result.status).toBe('completed');
+    expect(requests).toHaveLength(2);
+    expect((await loadRunById(accepted.run_id)).status).toBe('succeeded');
+    // Exactly one committed effect/receipt for the whole turn.
+    expect(
+      Number(
+        (await env.DB
+          .prepare(`SELECT COUNT(*) AS n FROM action_receipts WHERE workspace_id = ? AND run_id = ?`)
+          .bind(ws, accepted.run_id)
+          .first<{ n: number }>())?.n,
+      ),
+    ).toBe(1);
+    expect(
+      Number(
+        (await env.DB
+          .prepare(`SELECT COUNT(*) AS n FROM entities WHERE workspace_id = ? AND name = 'Continuation Probe'`)
+          .bind(ws)
+          .first<{ n: number }>())?.n,
+      ),
+    ).toBe(1);
+    const reply = await env.DB
+      .prepare(`SELECT content_text FROM chat_messages WHERE run_id = ? AND author_kind = 'system'`)
+      .bind(accepted.run_id)
+      .first<{ content_text: string }>();
+    expect(reply?.content_text).toContain('Continuation complete');
+  });
+
+  it('a real provider400 after a committed effect stays partial with one receipt', async () => {
+    const toolCallSse = [
+      'event: interaction.created\n',
+      'data: {"interaction":{"id":"v1_partial_1","status":"in_progress"},"event_type":"interaction.created"}\n\n',
+      'event: step.start\n',
+      'data: {"index":0,"step":{"type":"function_call","id":"call_partial_1","name":"upsert_entity","arguments":{}},"event_type":"step.start"}\n\n',
+      'event: step.delta\n',
+      'data: {"index":0,"delta":{"type":"arguments_delta","arguments":"{\\"name\\":\\"Partial Probe\\"}"},"event_type":"step.delta"}\n\n',
+      'event: step.stop\n',
+      'data: {"index":0,"event_type":"step.stop"}\n\n',
+      'event: interaction.completed\n',
+      'data: {"interaction":{"id":"v1_partial_1","status":"requires_action","usage":{}},"event_type":"interaction.completed"}\n\n',
+      'event: done\n',
+      'data: [DONE]\n\n',
+    ].join('');
+    let calls = 0;
+    const strictFetch = async (): Promise<Response> => {
+      calls += 1;
+      if (calls === 1) {
+        return new Response(toolCallSse, { status: 200, headers: { 'Content-Type': 'text/event-stream' } });
+      }
+      return new Response(JSON.stringify({ error: { status: 'INVALID_ARGUMENT' } }), { status: 400 });
+    };
+
+    const accepted = await acceptWebMessage(env.DB, {
+      workspaceId: ws,
+      chatId: chatAvi,
+      userId: aviId,
+      clientMessageId: 'msg-client-partial-qa1',
+      text: 'Create the Partial Probe lead',
+    });
+    const adapter = new GeminiInteractionsAdapter({ fetchFn: strictFetch, apiKey: 'test-gemini-key' });
+    const handler = new AgentHandler({ providerAdapter: adapter, maxRoundsPerSlice: 3, limits: defaultTestLimits });
+    const result = await dispatchOutboxItem(env.DB, await outboxIdForRun(accepted.run_id), ws, { handler });
+
+    expect(result.status).toBe('failed');
+    const run = await loadRunById(accepted.run_id);
+    expect(run.status).toBe('partial');
+    expect(
+      Number(
+        (await env.DB
+          .prepare(`SELECT COUNT(*) AS n FROM action_receipts WHERE workspace_id = ? AND run_id = ?`)
+          .bind(ws, accepted.run_id)
+          .first<{ n: number }>())?.n,
+      ),
+    ).toBe(1);
+    expect(
+      Number(
+        (await env.DB
+          .prepare(`SELECT COUNT(*) AS n FROM entities WHERE workspace_id = ? AND name = 'Partial Probe'`)
+          .bind(ws)
+          .first<{ n: number }>())?.n,
+      ),
+    ).toBe(1);
+  });
+
+  it('sends each clarification answer once by durable identity across stateful continuations and restarts', async () => {
+    // Ledger date interpretation needs the member timezone.
+    await env.DB
+      .prepare(
+        `INSERT INTO member_settings (workspace_id, user_id, brief_enabled, brief_timezone, brief_channel, preferred_language, created_at, updated_at)
+         VALUES (?, ?, 0, 'Europe/Bucharest', 'web', 'en', ?, ?)
+         ON CONFLICT(workspace_id, user_id) DO UPDATE SET brief_timezone = excluded.brief_timezone, updated_at = excluded.updated_at`,
+      )
+      .bind(ws, aviId, nowIso, nowIso)
+      .run();
+
+    const sse = (blocks: string[], interactionId: string, status: string) =>
+      [
+        'event: interaction.created\n',
+        `data: {"interaction":{"id":"${interactionId}","status":"in_progress"},"event_type":"interaction.created"}\n\n`,
+        ...blocks,
+        'event: interaction.completed\n',
+        `data: {"interaction":{"id":"${interactionId}","status":"${status}","usage":{}},"event_type":"interaction.completed"}\n\n`,
+        'event: done\n',
+        'data: [DONE]\n\n',
+      ].join('');
+    const functionCall = (index: number, id: string, name: string, args: unknown) =>
+      `event: step.start\ndata: {"index":${index},"step":{"type":"function_call","id":"${id}","name":"${name}","arguments":${JSON.stringify(args)}},"event_type":"step.start"}\n\n` +
+      `event: step.stop\ndata: {"index":${index},"event_type":"step.stop"}\n\n`;
+    const sse1 = sse([functionCall(0, 'call_q1', 'create_task', { title: 'Q1 task' })], 'v1_q1', 'requires_action');
+    const sse2 = sse(
+      [
+        functionCall(0, 'call_effect', 'upsert_entity', { name: 'Second Effect' }),
+        functionCall(1, 'call_q2', 'create_task', { title: 'Q2 task' }),
+      ],
+      'v1_q2',
+      'requires_action',
+    );
+    const sse3 = sse(
+      [
+        'event: step.start\ndata: {"index":0,"step":{"type":"model_output"},"event_type":"step.start"}\n\n',
+        'event: step.delta\ndata: {"index":0,"delta":{"type":"text","text":"Both tasks handled."},"event_type":"step.delta"}\n\n',
+        'event: step.stop\ndata: {"index":0,"event_type":"step.stop"}\n\n',
+      ],
+      'v1_q3',
+      'completed',
+    );
+
+    const requests: Array<Record<string, unknown>> = [];
+    const strictFetch = async (_url: string, init: RequestInit): Promise<Response> => {
+      const body = JSON.parse(String(init.body)) as Record<string, unknown>;
+      requests.push(body);
+      const blocks = (body['input'] as Array<Record<string, unknown>>) ?? [];
+      const users = blocks.filter((block) => block['type'] === 'user_input');
+      const results = blocks.filter((block) => block['type'] === 'function_result');
+      const bad400 = () => new Response(JSON.stringify({ error: { status: 'INVALID_ARGUMENT' } }), { status: 400 });
+      const ok = (payload: string) => new Response(payload, { status: 200, headers: { 'Content-Type': 'text/event-stream' } });
+      const noReplay = () => !blocks.some((block) => block['type'] === 'function_call' || block['type'] === 'model_output');
+      const continuationOk = (prev: string, callIds: string[], answer: string) =>
+        body['previous_interaction_id'] === prev &&
+        users.length === 1 &&
+        JSON.stringify(users[0]).includes(answer) &&
+        results.length === callIds.length &&
+        results.every((result, index) => result['call_id'] === callIds[index]);
+      if (requests.length === 1) {
+        // Initial stateless request: history and model_output blocks are legal.
+        if (body['previous_interaction_id'] !== undefined) return bad400();
+        return ok(sse1);
+      }
+      if (requests.length === 2) {
+        if (!noReplay() || !continuationOk('v1_q1', ['call_q1'], '2026-10-20')) return bad400();
+        return ok(sse2);
+      }
+      if (requests.length === 3) {
+        if (!noReplay() || !continuationOk('v1_q2', ['call_effect', 'call_q2'], '2026-11-05')) return bad400();
+        // The earlier answer A must not be resent as input on the later
+        // continuation (the system instruction may legitimately mention it).
+        if (JSON.stringify(blocks).includes('2026-10-20')) return bad400();
+        return ok(sse3);
+      }
+      return bad400();
+    };
+
+    const accepted = await acceptWebMessage(env.DB, {
+      workspaceId: ws,
+      chatId: chatAvi,
+      userId: aviId,
+      clientMessageId: 'qa-answer-identity-1',
+      text: 'Plan the Q1 task',
+    });
+    const adapter = new GeminiInteractionsAdapter({ fetchFn: strictFetch, apiKey: 'test-gemini-key' });
+    const parkedQ1 = await dispatchOutboxItem(env.DB, await outboxIdForRun(accepted.run_id), ws, {
+      handler: new AgentHandler({ providerAdapter: adapter, maxRoundsPerSlice: 3, limits: defaultTestLimits }),
+    });
+    expect(parkedQ1.status).toBe('waiting_for_input');
+    const q1 = await env.DB
+      .prepare(`SELECT id FROM pending_clarifications WHERE run_id = ? AND status = 'pending' ORDER BY created_at DESC LIMIT 1`)
+      .bind(accepted.run_id)
+      .first<{ id: string }>();
+
+    // Answer A resolves Q1; the same turn then proposes a committed effect
+    // and parks on Q2.
+    const answerA = await acceptWebMessage(env.DB, {
+      workspaceId: ws,
+      chatId: chatAvi,
+      userId: aviId,
+      clientMessageId: 'qa-answer-A',
+      text: '2026-10-20',
+    });
+    const aSource = await env.DB
+      .prepare(`SELECT source_message_id FROM agent_runs WHERE id = ?`)
+      .bind(answerA.run_id)
+      .first<{ source_message_id: string }>();
+    expect(
+      (
+        await resumeRun(env.DB, {
+          workspaceId: ws,
+          runId: accepted.run_id,
+          answer: { text: '2026-10-20', messageId: aSource!.source_message_id, clarificationId: q1!.id },
+        })
+      ).resumed,
+    ).toBe(true);
+    const parkedQ2 = await dispatchOutboxItem(env.DB, await outboxIdForRun(accepted.run_id), ws, {
+      handler: new AgentHandler({ providerAdapter: adapter, maxRoundsPerSlice: 3, limits: defaultTestLimits }),
+    });
+    expect(parkedQ2.status).toBe('waiting_for_input');
+    const q2 = await env.DB
+      .prepare(`SELECT id FROM pending_clarifications WHERE run_id = ? AND status = 'pending' ORDER BY created_at DESC LIMIT 1`)
+      .bind(accepted.run_id)
+      .first<{ id: string }>();
+    expect(q2?.id).toBeTruthy();
+    expect(q2?.id).not.toBe(q1?.id);
+
+    // Answer B on a fresh handler (restart) must send B once and never A again.
+    const answerB = await acceptWebMessage(env.DB, {
+      workspaceId: ws,
+      chatId: chatAvi,
+      userId: aviId,
+      clientMessageId: 'qa-answer-B',
+      text: '2026-11-05',
+    });
+    const bSource = await env.DB
+      .prepare(`SELECT source_message_id FROM agent_runs WHERE id = ?`)
+      .bind(answerB.run_id)
+      .first<{ source_message_id: string }>();
+    expect(
+      (
+        await resumeRun(env.DB, {
+          workspaceId: ws,
+          runId: accepted.run_id,
+          answer: { text: '2026-11-05', messageId: bSource!.source_message_id, clarificationId: q2!.id },
+        })
+      ).resumed,
+    ).toBe(true);
+    const finished = await dispatchOutboxItem(env.DB, await outboxIdForRun(accepted.run_id), ws, {
+      handler: new AgentHandler({ providerAdapter: adapter, maxRoundsPerSlice: 3, limits: defaultTestLimits }),
+    });
+    expect(finished.status).toBe('completed');
+    expect(requests).toHaveLength(3);
+    expect((await loadRunById(accepted.run_id)).status).toBe('succeeded');
+
+    // Exactly-once effects: one entity and one task per intended action.
+    expect(
+      Number(
+        (await env.DB
+          .prepare(`SELECT COUNT(*) AS n FROM entities WHERE workspace_id = ? AND name = 'Second Effect'`)
+          .bind(ws)
+          .first<{ n: number }>())?.n,
+      ),
+    ).toBe(1);
+    const q1Task = await env.DB
+      .prepare(`SELECT due_local_date FROM tasks WHERE workspace_id = ? AND title = 'Q1 task'`)
+      .bind(ws)
+      .first<{ due_local_date: string | null }>();
+    expect(q1Task?.due_local_date).toBe('2026-10-20');
+    const q2Task = await env.DB
+      .prepare(`SELECT due_local_date FROM tasks WHERE workspace_id = ? AND title = 'Q2 task'`)
+      .bind(ws)
+      .first<{ due_local_date: string | null }>();
+    expect(q2Task?.due_local_date).toBe('2026-11-05');
+    expect(
+      Number(
+        (await env.DB
+          .prepare(`SELECT COUNT(*) AS n FROM tasks WHERE workspace_id = ? AND title IN ('Q1 task', 'Q2 task')`)
+          .bind(ws)
+          .first<{ n: number }>())?.n,
+      ),
+    ).toBe(2);
+    const duplicateReceipts = await env.DB
+      .prepare(
+        `SELECT COUNT(*) AS n FROM (
+           SELECT action_id FROM action_receipts WHERE workspace_id = ? AND run_id = ? GROUP BY action_id HAVING COUNT(*) > 1
+         )`,
+      )
+      .bind(ws, accepted.run_id)
+      .first<{ n: number }>();
+    expect(Number(duplicateReceipts?.n)).toBe(0);
   });
 
   it('rejects truncated/malformed provider stream with zero tools executed', async () => {

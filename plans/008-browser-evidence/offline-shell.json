@@ -1,0 +1,25 @@
+{
+  "scope": "built static offline shell; synthetic online identity; native Chrome, not deployed/provider/device acceptance",
+  "capturedAt": "2026-10-04T04:42:29.226Z",
+  "cacheUrls": [
+    {
+      "name": "workbox-precache-v2-http://127.0.0.1:5492/",
+      "urls": [
+        "http://127.0.0.1:5492/index.html?__WB_REVISION__=b82b20040c78febaf4309c78dcbe603a",
+        "http://127.0.0.1:5492/assets/workbox-window.prod.es5-BBnX5xw4.js",
+        "http://127.0.0.1:5492/assets/inter-vietnamese-wght-normal-CBcvBZtf.woff2",
+        "http://127.0.0.1:5492/assets/inter-latin-wght-normal-Dx4kXJAl.woff2",
+        "http://127.0.0.1:5492/assets/inter-latin-ext-wght-normal-DO1Apj_S.woff2",
+        "http://127.0.0.1:5492/assets/inter-greek-wght-normal-CkhJZR-_.woff2",
+        "http://127.0.0.1:5492/assets/inter-greek-ext-wght-normal-DlzME5K_.woff2",
+        "http://127.0.0.1:5492/assets/inter-cyrillic-wght-normal-DqGufNeO.woff2",
+        "http://127.0.0.1:5492/assets/inter-cyrillic-ext-wght-normal-BOeWTOD4.woff2",
+        "http://127.0.0.1:5492/assets/index-VJdc8Ysv.css",
+        "http://127.0.0.1:5492/assets/index-TL_UBXNC.js"
+      ]
+    }
+  ],
+  "privateCacheEntries": [],
+  "offlineBody": "Otis is unavailable\n\nYou appear to be offline. Your conversations stay on this device until you reconnect — nothing was sent.\n\nTry again",
+  "offlineShellLoaded": true
+}

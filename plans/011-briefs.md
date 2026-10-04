@@ -22,7 +22,15 @@ Suggested implementation areas: brief selection/time/delivery, Worker scheduled 
 8. Explicit one-off reminders require confirmed date/time (or an existing explicit member reminder-time preference). Give them separate job/dedupe IDs; changing/cancelling task invalidates stale reminder attempts.
 9. Stale-sweep candidates/system suggestions use reason-key dedupe. Any system task is visibly rule-originated; missing assignee/date must be clarified before creating a member commitment.
 
-## Verification
+## Field-use quality addition, 2026-10-03
+
+Each of the at-most-five items states a concrete selection reason, due date where known and a source reference: for example, an explicit promised offer due on the member's local date. Reasons derive from records and ranking, not invented explanatory model text. Show confirmed status only; disputed facts cannot support a confident brief/draft. Saved item IDs/order resolve did the first one even after live ranking changes.
+
+Working optional actions are Done, Draft, Move and Snooze. They invoke shared authorized services; ordinary conversation remains sufficient. Move changes due; Snooze changes notification timing under the date contract. Missing times ask. Draft is generated only when requested. Missing lead phone or language asks narrowly where needed; opening WhatsApp is not sent. Test edited/completed/disputed items between brief generation and action, and no unrelated teammate change lost.
+
+Chosen-time/channel opt-in stays unchanged. No automatic Telegram preference, browser push, one unsolicited nudge/day or ignore-three auto-policy is enabled by a narrative example. D17 remains unresolved; chosen brief plus explicit requested reminders are the current allowed interrupt budget. No-items scheduled silence is intentional. Opt-in end-of-day wraps are deferred until their schedule/kind/frequency contract is approved.
+
+## Verification cases
 
 Pure tests: disabled schedule, arbitrary chosen time, weekdays, timezone midnight, both DST changes, schedule edits, date-only due, precise instant due, explicit no-deadline, snooze, promise overlap, disputed facts, same-rank ties and currency mismatch.
 

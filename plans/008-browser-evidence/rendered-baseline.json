@@ -1,0 +1,329 @@
+{
+  "capturedAt": "2026-10-03T19:30:13.167Z",
+  "browser": {
+    "protocolVersion": "1.3",
+    "product": "Chrome/154.0.8037.97",
+    "revision": "@b510e9d7cd3a2fbd78d0ddc42234103206c5f78d",
+    "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/154.0.0.0 Safari/537.36",
+    "jsVersion": "15.4.80.20"
+  },
+  "kind": "isolated native Chrome headless; synthetic production-component stories; not authenticated app or physical device acceptance",
+  "assets": [
+    {
+      "name": "iframe-DT6IORvj.css",
+      "sha256": "82ebae7ffd8310d2af38a2c2cddeb718da9e14b12375e8ac4fd6b696d1061fd3"
+    },
+    {
+      "name": "iframe-DTfH7m7u.css",
+      "sha256": "5d4680f4ba23cf02eedbf286546ed028cc685a9ffa551bc7aee762d1e9070eab"
+    }
+  ],
+  "metrics": [
+    {
+      "id": "chat--long-hu",
+      "width": 360,
+      "height": 844,
+      "scrollWidth": 360,
+      "font": "\"Inter Variable\", Inter, system-ui, \"Segoe UI\", Roboto, sans-serif",
+      "canvas": "rgb(24, 24, 24)",
+      "text": "Ma délelőtt a Pékségben voltam. A tulajdonos csak magyarul beszél, és kérte, hogy az árajánlatot péntekig küldjük el, mert jövő héten leltároznak.\n04:25 PM\n\nMentve. A Pékség árajánlata pénteken esedékes, a jövő heti leltár miatt. Szeretnéd, hogy megírjam a piszkozatot?\n\n04:26 PM",
+      "buttons": [
+        {
+          "label": "Copy message",
+          "width": 32,
+          "height": 32,
+          "color": "rgb(243, 243, 243)",
+          "bg": "rgba(0, 0, 0, 0)"
+        },
+        {
+          "label": "Copy response",
+          "width": 32,
+          "height": 32,
+          "color": "rgb(243, 243, 243)",
+          "bg": "rgba(0, 0, 0, 0)"
+        }
+      ]
+    },
+    {
+      "id": "chat--long-hu",
+      "width": 390,
+      "height": 844,
+      "scrollWidth": 390,
+      "font": "\"Inter Variable\", Inter, system-ui, \"Segoe UI\", Roboto, sans-serif",
+      "canvas": "rgb(24, 24, 24)",
+      "text": "Ma délelőtt a Pékségben voltam. A tulajdonos csak magyarul beszél, és kérte, hogy az árajánlatot péntekig küldjük el, mert jövő héten leltároznak.\n04:25 PM\n\nMentve. A Pékség árajánlata pénteken esedékes, a jövő heti leltár miatt. Szeretnéd, hogy megírjam a piszkozatot?\n\n04:26 PM",
+      "buttons": [
+        {
+          "label": "Copy message",
+          "width": 32,
+          "height": 32,
+          "color": "rgb(243, 243, 243)",
+          "bg": "rgba(0, 0, 0, 0)"
+        },
+        {
+          "label": "Copy response",
+          "width": 32,
+          "height": 32,
+          "color": "rgb(243, 243, 243)",
+          "bg": "rgba(0, 0, 0, 0)"
+        }
+      ]
+    },
+    {
+      "id": "chat--long-hu",
+      "width": 900,
+      "height": 844,
+      "scrollWidth": 900,
+      "font": "\"Inter Variable\", Inter, system-ui, \"Segoe UI\", Roboto, sans-serif",
+      "canvas": "rgb(24, 24, 24)",
+      "text": "Ma délelőtt a Pékségben voltam. A tulajdonos csak magyarul beszél, és kérte, hogy az árajánlatot péntekig küldjük el, mert jövő héten leltároznak.\n04:25 PM\n\nMentve. A Pékség árajánlata pénteken esedékes, a jövő heti leltár miatt. Szeretnéd, hogy megírjam a piszkozatot?\n\n04:26 PM",
+      "buttons": [
+        {
+          "label": "Copy message",
+          "width": 32,
+          "height": 32,
+          "color": "rgb(243, 243, 243)",
+          "bg": "rgba(0, 0, 0, 0)"
+        },
+        {
+          "label": "Copy response",
+          "width": 32,
+          "height": 32,
+          "color": "rgb(243, 243, 243)",
+          "bg": "rgba(0, 0, 0, 0)"
+        }
+      ]
+    },
+    {
+      "id": "chat--long-hu",
+      "width": 1280,
+      "height": 844,
+      "scrollWidth": 1280,
+      "font": "\"Inter Variable\", Inter, system-ui, \"Segoe UI\", Roboto, sans-serif",
+      "canvas": "rgb(24, 24, 24)",
+      "text": "Ma délelőtt a Pékségben voltam. A tulajdonos csak magyarul beszél, és kérte, hogy az árajánlatot péntekig küldjük el, mert jövő héten leltároznak.\n04:25 PM\n\nMentve. A Pékség árajánlata pénteken esedékes, a jövő heti leltár miatt. Szeretnéd, hogy megírjam a piszkozatot?\n\n04:26 PM",
+      "buttons": [
+        {
+          "label": "Copy message",
+          "width": 32,
+          "height": 32,
+          "color": "rgb(243, 243, 243)",
+          "bg": "rgba(0, 0, 0, 0)"
+        },
+        {
+          "label": "Copy response",
+          "width": 32,
+          "height": 32,
+          "color": "rgb(243, 243, 243)",
+          "bg": "rgba(0, 0, 0, 0)"
+        }
+      ]
+    },
+    {
+      "id": "chat--long-hu",
+      "width": 1440,
+      "height": 844,
+      "scrollWidth": 1440,
+      "font": "\"Inter Variable\", Inter, system-ui, \"Segoe UI\", Roboto, sans-serif",
+      "canvas": "rgb(24, 24, 24)",
+      "text": "Ma délelőtt a Pékségben voltam. A tulajdonos csak magyarul beszél, és kérte, hogy az árajánlatot péntekig küldjük el, mert jövő héten leltároznak.\n04:25 PM\n\nMentve. A Pékség árajánlata pénteken esedékes, a jövő heti leltár miatt. Szeretnéd, hogy megírjam a piszkozatot?\n\n04:26 PM",
+      "buttons": [
+        {
+          "label": "Copy message",
+          "width": 32,
+          "height": 32,
+          "color": "rgb(243, 243, 243)",
+          "bg": "rgba(0, 0, 0, 0)"
+        },
+        {
+          "label": "Copy response",
+          "width": 32,
+          "height": 32,
+          "color": "rgb(243, 243, 243)",
+          "bg": "rgba(0, 0, 0, 0)"
+        }
+      ]
+    },
+    {
+      "id": "composer--short",
+      "width": 390,
+      "height": 844,
+      "scrollWidth": 390,
+      "font": "\"Inter Variable\", Inter, system-ui, \"Segoe UI\", Roboto, sans-serif",
+      "canvas": "rgb(24, 24, 24)",
+      "text": "Message Otis\nOtis can make mistakes. Verify important business info.",
+      "buttons": [
+        {
+          "label": "Send",
+          "width": 36,
+          "height": 36,
+          "color": "rgb(243, 243, 243)",
+          "bg": "rgb(226, 216, 107)"
+        }
+      ]
+    },
+    {
+      "id": "composer--follow-up",
+      "width": 390,
+      "height": 844,
+      "scrollWidth": 390,
+      "font": "\"Inter Variable\", Inter, system-ui, \"Segoe UI\", Roboto, sans-serif",
+      "canvas": "rgb(24, 24, 24)",
+      "text": "Replying to Otis\nMessage Otis\nOtis can make mistakes. Verify important business info.",
+      "buttons": [
+        {
+          "label": "Dismiss question",
+          "width": 32,
+          "height": 32,
+          "color": "rgb(168, 168, 168)",
+          "bg": "rgba(0, 0, 0, 0)"
+        },
+        {
+          "label": "Stop Otis",
+          "width": 36,
+          "height": 36,
+          "color": "rgb(243, 243, 243)",
+          "bg": "rgb(243, 243, 243)"
+        },
+        {
+          "label": "Send",
+          "width": 36,
+          "height": 36,
+          "color": "rgb(243, 243, 243)",
+          "bg": "rgb(226, 216, 107)"
+        }
+      ]
+    },
+    {
+      "id": "command--model-long-names",
+      "width": 390,
+      "height": 844,
+      "scrollWidth": 390,
+      "font": "\"Inter Variable\", Inter, system-ui, \"Segoe UI\", Roboto, sans-serif",
+      "canvas": "rgb(24, 24, 24)",
+      "text": "Workspace default\nMiMo V2.5\nMiMo V2.5\nGemini 3.1 Flash Lite\nGemini Warehouse Triage Extended Context Preview With A Very Long Display Name\nMiMo Field Notes Multilingual Beta For Romanian And Hungarian Street Capture\nMessage Otis\nOtis can make mistakes. Verify important business info.",
+      "buttons": [
+        {
+          "label": "Workspace defaultMiMo V2.5",
+          "width": 350,
+          "height": 62,
+          "color": "rgb(243, 243, 243)",
+          "bg": "rgb(44, 44, 44)"
+        },
+        {
+          "label": "MiMo V2.5",
+          "width": 350,
+          "height": 44,
+          "color": "rgb(243, 243, 243)",
+          "bg": "rgba(0, 0, 0, 0)"
+        },
+        {
+          "label": "Gemini 3.1 Flash Lite",
+          "width": 350,
+          "height": 44,
+          "color": "rgb(243, 243, 243)",
+          "bg": "rgba(0, 0, 0, 0)"
+        },
+        {
+          "label": "Gemini Warehouse Triage Extended Context Preview With A Very Long Display Name",
+          "width": 350,
+          "height": 64,
+          "color": "rgb(243, 243, 243)",
+          "bg": "rgba(0, 0, 0, 0)"
+        },
+        {
+          "label": "MiMo Field Notes Multilingual Beta For Romanian And Hungarian Street Capture",
+          "width": 350,
+          "height": 64,
+          "color": "rgb(243, 243, 243)",
+          "bg": "rgba(0, 0, 0, 0)"
+        },
+        {
+          "label": "Send",
+          "width": 36,
+          "height": 36,
+          "color": "rgb(243, 243, 243)",
+          "bg": "rgb(226, 216, 107)"
+        }
+      ]
+    },
+    {
+      "id": "settings--personal",
+      "width": 390,
+      "height": 844,
+      "scrollWidth": 390,
+      "font": "\"Inter Variable\", Inter, system-ui, \"Segoe UI\", Roboto, sans-serif",
+      "canvas": "rgb(24, 24, 24)",
+      "text": "Settings\nYou\nKerning\nReply language\nRomână\nTimezone\n\nUsed for dates and reminders. Your brief stays on its existing schedule.\n\nUse this device’s timezone\nSave timezone\nSign out",
+      "buttons": [
+        {
+          "label": "Close settings",
+          "width": 44,
+          "height": 44,
+          "color": "rgb(168, 168, 168)",
+          "bg": "rgba(0, 0, 0, 0)"
+        },
+        {
+          "label": "You",
+          "width": 52.6875,
+          "height": 44,
+          "color": "rgb(243, 243, 243)",
+          "bg": "rgba(0, 0, 0, 0)"
+        },
+        {
+          "label": "Kerning",
+          "width": 82.3125,
+          "height": 44,
+          "color": "rgb(168, 168, 168)",
+          "bg": "rgba(0, 0, 0, 0)"
+        },
+        {
+          "label": "Reply language",
+          "width": 358,
+          "height": 44,
+          "color": "rgb(243, 243, 243)",
+          "bg": "rgba(0, 0, 0, 0)"
+        },
+        {
+          "label": "Use this device’s timezone",
+          "width": 201.484375,
+          "height": 32,
+          "color": "rgb(243, 243, 243)",
+          "bg": "rgba(0, 0, 0, 0)"
+        },
+        {
+          "label": "Save timezone",
+          "width": 122.890625,
+          "height": 32,
+          "color": "rgb(243, 243, 243)",
+          "bg": "rgb(243, 243, 243)"
+        },
+        {
+          "label": "Sign out",
+          "width": 76.546875,
+          "height": 32,
+          "color": "rgb(140, 140, 140)",
+          "bg": "rgba(0, 0, 0, 0)"
+        }
+      ]
+    },
+    {
+      "id": "entry--sign-in",
+      "width": 390,
+      "height": 844,
+      "scrollWidth": 390,
+      "font": "\"Inter Variable\", Inter, system-ui, \"Segoe UI\", Roboto, sans-serif",
+      "canvas": "rgb(24, 24, 24)",
+      "text": "Sign in to Otis\n\nMembers of a workspace can read its shared conversations and retained voice notes.\n\nContinue with Google\n\nSign-in is not configured on this deployment yet. Ask the workspace owner to finish setup.",
+      "buttons": [
+        {
+          "label": "Continue with Google",
+          "width": 342,
+          "height": 44,
+          "color": "rgb(24, 24, 24)",
+          "bg": "rgb(243, 243, 243)"
+        }
+      ]
+    }
+  ]
+}

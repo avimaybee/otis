@@ -33,3 +33,34 @@ export function publishDispatchHint(ctx: ExecutionContext | undefined, env: Env,
     })(),
   );
 }
+
+/**
+ * Best-effort Telegram delivery wake-up. The delivery row is already
+ * durable; a lost hint is covered by the cron sweep. Workspace-less
+ * administrative rows publish an empty scope so the consumer scans all
+ * workspaces.
+ */
+export function publishTelegramDeliveryHint(
+  ctx: ExecutionContext | undefined,
+  env: Env,
+  workspaceId?: string,
+): void {
+  if (!ctx || !env.DISPATCH_QUEUE) {
+    workerDebug('dispatch', 'no queue binding; cron remains the Telegram delivery backstop', {
+      workspaceId: workspaceId ?? '',
+    });
+    return;
+  }
+  ctx.waitUntil(
+    (async () => {
+      try {
+        await env.DISPATCH_QUEUE!.send({ kind: 'telegram_delivery', workspace_id: workspaceId ?? '' });
+      } catch (err) {
+        workerFailure('dispatch', 'Telegram delivery wake-up publish failed; cron remains the backstop', {
+          workspaceId: workspaceId ?? '',
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    })(),
+  );
+}

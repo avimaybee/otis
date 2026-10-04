@@ -13,6 +13,8 @@ Hunor's field notes may be recorded while walking. The app needs record/stop/sen
 
 ## Scope
 
+Read [010-voice-ux-handoff.md](010-voice-ux-handoff.md) for the 2026-10-03 recording contract: codec detection, ordered 1 s IndexedDB chunks, real meter/haptics, background interruption, validated recovery and actual Android/iPhone evidence. Reuse gate 008's one composer/local storage module. Exact visuals come from design-tokens.md; missing meter/voice recipes require Avi's decision. This supplements rather than replaces the STT handoff below.
+
 Read [010-groq-stt-handoff.md](010-groq-stt-handoff.md) with this plan. It specifies the user-approved automatic native-audio/Groq STT route, zero-additional-spend constraint, credential integration, durable transcription lifecycle and decisive tests. This is part of gate 010, not a new prerequisite gate. Groq setup is shared per workspace; ordinary members do not choose a route for every recording. Native capability failure does not disqualify an otherwise approved text/tool conversation model.
 
 Modify the live web composer, Worker upload/transcription handlers, provider adapter, R2 retention job, Telegram voice handler and tests. Do not implement live bidirectional speech, avatars, video, image upload or automatic spoken reply. The operator handpicks models; the capability gate enables audio only after the selected model/endpoint/format passes actual tests. If not, use an explicitly configured and disclosed transcription provider or make voice unavailable for that chat.

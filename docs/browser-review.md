@@ -1,6 +1,8 @@
 # Browser review record
 
-Status: **unverified for final acceptance**. This is an evidence record, not a completed checklist.
+Status: **unverified against the new 2026-10-03 token/behavior baseline**.
+
+Read design-tokens.md section 12, design.md sections 13–14 and plans/008-ui-implementation-handoff.md. Prior screenshots/reviews remain evidence for their recorded builds. They do not establish the new Inter/Highlighter/recipe baseline, optimistic/offline/keyboard behavior or complete Storybook inventory. The historical notes below are preserved rather than rewritten as new observations. This is an evidence record, not a completed checklist.
 
 At documentation revision 2026-09-30, the repository has a shell and simulated-DOM tests. Earlier HTTP checks returned the shell and health endpoint, but no durable record proves the required real-browser review at phone and desktop widths. A previous native browser tool attempt failed to initialize. Later DOM overflow assertions do not change that evidence status.
 
@@ -27,3 +29,7 @@ deferred to Gate 008 (Conversation UI), where interactive real-device/browser re
 All visual rows above remain unverified for final release purposes.
 
 When performing review, add commit, browser/OS, exact viewport, scenario, observed outcome, defects and screenshot paths. Follow [verification.md](verification.md). Update only checks actually performed. Keep synthetic review data free of real workspace content and credentials.
+
+## 008A tooling record (2026-10-04, uncommitted working tree on `663f0b3`)
+
+Implemented and executed without a real browser: `pnpm check:design` (64 files, exit 0, with negative/missing-path proof), Storybook 10 build (all 81 design.md fixture IDs mapped to production-component stories), 7 vitest-axe settled-state checks, Inter latin-ext bundled in the production build. Evidence: `docs/reviews/2026-10-04-008/REVIEW.md`. All visual rows above remain unverified: no browser controls exist in this environment, so the token section 12 five-width comparison, diacritic rendering, touch, keyboard and reduced-motion checks are explicitly not claimed.

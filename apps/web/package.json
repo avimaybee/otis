@@ -6,35 +6,52 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "storybook": "storybook dev -p 6006",
+    "build-storybook": "storybook build"
   },
   "dependencies": {
-    "@fontsource-variable/geist": "^5.3.0",
+    "@fontsource-variable/inter": "^5.3.0",
     "@otis/commands": "workspace:*",
     "@otis/contracts": "workspace:*",
     "@otis/design": "workspace:*",
     "@radix-ui/react-dropdown-menu": "^2.1.24",
     "@radix-ui/react-select": "^2.3.7",
     "@tailwindcss/vite": "^4.3.3",
+    "@tanstack/react-query": "^5.104.1",
+    "@tanstack/react-router": "^1.170.41",
     "class-variance-authority": "^0.7.1",
+    "cmdk": "^1.1.1",
     "cn": "^0.4.0",
     "firebase": "^12.19.0",
+    "idb-keyval": "^6.3.0",
     "lucide-react": "^1.49.0",
     "radix-ui": "^1.6.7",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "react-markdown": "^10.1.0",
+    "react-textarea-autosize": "^8.5.9",
     "remark-gfm": "^4.0.1",
     "shadcn": "^4.21.1",
     "sonner": "^2.0.8",
     "tailwindcss": "^4.3.3",
-    "tw-animate-css": "^1.4.0"
+    "tw-animate-css": "^1.4.0",
+    "use-stick-to-bottom": "^1.1.6",
+    "vaul": "^1.1.2",
+    "vite-plugin-pwa": "^1.3.0",
+    "workbox-window": "^7.4.1"
   },
   "devDependencies": {
+    "@storybook/addon-a11y": "^10.6.1",
+    "@storybook/react-vite": "^10.6.1",
     "@types/react": "^19.0.10",
     "@types/react-dom": "^19.0.4",
     "@vitejs/plugin-react": "^4.3.4",
+    "axe-core": "^4.13.0",
+    "fake-indexeddb": "^6.2.5",
+    "storybook": "^10.6.1",
     "typescript": "^5.7.3",
-    "vite": "^6.2.0"
+    "vite": "^6.2.0",
+    "vitest-axe": "^0.1.0"
   }
 }

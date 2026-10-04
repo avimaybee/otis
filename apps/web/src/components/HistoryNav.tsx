@@ -1,14 +1,18 @@
-import { useId, useRef, useState } from 'react';
+import { useEffect, useId, useRef, useState, type ReactNode, type RefObject } from 'react';
+import { Drawer } from 'vaul';
 import type { Chat } from '@otis/contracts';
 import { CloseIcon, ComposeIcon, SearchIcon, SettingsIcon } from './icons.js';
-import { Overlay } from './Overlay.js';
 import { ChoiceSelect } from './ui/select.js';
 import { Input } from './ui/input.js';
 import { Button } from './ui/button.js';
+import { useOverlayHistory } from './overlay-history.js';
 
 export interface HistoryNavProps {
   workspaceName: string; workspaces: { id: string; name: string }[]; workspaceId: string;
   ownChats: Chat[]; teamChats: Chat[]; activeChatId: string | null; variant: 'sidebar' | 'drawer';
+  /** Controlled drawer state; the Vaul drawer stays mounted so its graceful
+      close lifecycle (focus return, exit) runs instead of an abrupt unmount. */
+  open?: boolean;
   members?: Record<string, string>; loading?: boolean;
   onSelectChat: (chatId: string) => void; onNewChat: () => void; onSwitchWorkspace: (workspaceId: string) => void;
   onOpenSettings: () => void; onOpenSearch?: () => void; onClose?: () => void;
@@ -18,24 +22,73 @@ export function HistoryNav(props: HistoryNavProps) {
   const [searching, setSearching] = useState(false); const [query, setQuery] = useState('');
   const input = useRef<HTMLInputElement>(null); const id = useId();
   const closeButton = useRef<HTMLButtonElement>(null);
-  const rows = (chats: Chat[], team: boolean) => chats.filter(chat => chat.title.toLocaleLowerCase().includes(query.toLocaleLowerCase())).map(chat => <button key={chat.id} type="button" className="otis-nav__row" aria-current={chat.id === props.activeChatId ? 'page' : undefined} title={chat.title} onClick={() => props.onSelectChat(chat.id)}><span className="otis-nav__label">{chat.title || 'Untitled conversation'}</span>{team && <span className="otis-nav__author">{chat.author_display_name ?? props.members?.[chat.author_user_id] ?? 'Teammate'}</span>}</button>);
-  const content = <nav className={props.variant === 'drawer' ? 'otis-drawer' : 'otis-sidebar'} aria-label="History">
-    <div className="otis-nav__brand"><span>Otis</span>{props.variant === 'drawer' && <Button ref={closeButton} variant="ghost" size="icon" className="otis-iconbutton" type="button" aria-label="Close history" onClick={props.onClose}><CloseIcon /></Button>}</div>
+  const rows = (chats: Chat[], team: boolean) => chats.filter(chat => chat.title.toLocaleLowerCase().includes(query.toLocaleLowerCase())).map(chat => <button key={chat.id} type="button" className="otis-nav__row" aria-current={chat.id === props.activeChatId ? 'page' : undefined} title={chat.title} onClick={() => props.onSelectChat(chat.id)}><span className="otis-nav__label text-base">{chat.title || 'Untitled conversation'}</span>{team && <span className="otis-nav__author text-xs">{chat.author_display_name ?? props.members?.[chat.author_user_id] ?? 'Teammate'}</span>}</button>);
+  const content = <nav className={props.variant === 'drawer' ? 'otis-drawer__nav' : 'otis-sidebar'} aria-label="History">
+    <div className="otis-nav__brand"><span className="text-base">Otis</span>{props.variant === 'drawer' && <Button ref={closeButton} variant="ghost" size="icon" className="otis-iconbutton" type="button" aria-label="Close history" onClick={props.onClose}><CloseIcon /></Button>}</div>
     <label className="otis-visually-hidden" htmlFor={`${id}-workspace`}>Workspace</label>
-    {props.workspaces.length > 1 ? <ChoiceSelect id={`${id}-workspace`} label="Workspace" className="otis-nav__workspace" value={props.workspaceId} options={props.workspaces.map(workspace => ({ value: workspace.id, label: workspace.name }))} onChange={props.onSwitchWorkspace}/> : <p className="otis-nav__workspace-label">{props.workspaceName}</p>}
-    <Button variant="ghost" className="otis-nav__action justify-start" type="button" onClick={props.onNewChat}><ComposeIcon /><span>New chat</span></Button>
+    {props.workspaces.length > 1 ? <ChoiceSelect id={`${id}-workspace`} label="Workspace" className="otis-nav__workspace" value={props.workspaceId} options={props.workspaces.map(workspace => ({ value: workspace.id, label: workspace.name }))} onChange={props.onSwitchWorkspace}/> : <p className="otis-nav__workspace-label text-base">{props.workspaceName}</p>}
+    <Button variant="ghost" className="otis-nav__action justify-start text-sm" type="button" onClick={props.onNewChat}><ComposeIcon /><span>New chat</span></Button>
     {!searching ? (
-      <Button variant="ghost" className="otis-nav__action justify-start" type="button" aria-expanded={false} onClick={() => { setSearching(true); requestAnimationFrame(() => input.current?.focus()); }}><SearchIcon /><span>Search chats</span></Button>
+      <Button variant="ghost" className="otis-nav__action justify-start text-sm" type="button" aria-expanded={false} onClick={() => { setSearching(true); requestAnimationFrame(() => input.current?.focus()); }}><SearchIcon /><span>Search chats</span></Button>
     ) : (
-      <div className="otis-nav__search flex items-center gap-1.5"><label className="otis-visually-hidden" htmlFor={`${id}-search`}>Filter chat titles</label><Input ref={input} id={`${id}-search`} type="search" placeholder="Search chat titles" value={query} onChange={event => setQuery(event.target.value)} onKeyDown={event => { if (event.key === 'Escape') { setSearching(false); setQuery(''); } }} className="flex-1" /><Button variant="ghost" size="icon-xs" type="button" aria-label="Close search" onClick={() => { setSearching(false); setQuery(''); }}><CloseIcon /></Button></div>
+      <div className="otis-nav__search flex items-center gap-2"><label className="otis-visually-hidden" htmlFor={`${id}-search`}>Filter chat titles</label><Input ref={input} id={`${id}-search`} type="search" placeholder="Search chat titles" value={query} onChange={event => setQuery(event.target.value)} onKeyDown={event => { if (event.key === 'Escape') { setSearching(false); setQuery(''); } }} className="flex-1" /><Button variant="ghost" size="icon-xs" type="button" aria-label="Close search" onClick={() => { setSearching(false); setQuery(''); }}><CloseIcon /></Button></div>
     )}
     <div className="otis-nav__history" aria-busy={props.loading}>
-      <p className="otis-nav__heading">Your chats</p>{props.ownChats.length ? rows(props.ownChats, false) : <p className="otis-nav__empty">{props.loading ? 'Loading conversations…' : 'No conversations yet'}</p>}
-      {props.teamChats.length > 0 && <><p className="otis-nav__heading">Team chats</p>{rows(props.teamChats, true)}</>}
-      {query && ![...props.ownChats, ...props.teamChats].some(chat => chat.title.toLocaleLowerCase().includes(query.toLocaleLowerCase())) && <p className="otis-nav__empty">No matching chat titles.</p>}
-      {props.hasMore && <Button variant="ghost" className="otis-nav__row w-full justify-start" type="button" onClick={props.onLoadMore}>Load more conversations</Button>}
+      <p className="otis-nav__heading text-xs">Your chats</p>{props.ownChats.length ? rows(props.ownChats, false) : <p className="otis-nav__empty text-sm">{props.loading ? 'Loading conversations…' : 'No conversations yet'}</p>}
+      {props.teamChats.length > 0 && <><p className="otis-nav__heading text-xs">Team chats</p>{rows(props.teamChats, true)}</>}
+      {query && ![...props.ownChats, ...props.teamChats].some(chat => chat.title.toLocaleLowerCase().includes(query.toLocaleLowerCase())) && <p className="otis-nav__empty text-sm">No matching chat titles.</p>}
+      {props.hasMore && <Button variant="ghost" className="otis-nav__row w-full justify-start text-sm" type="button" onClick={props.onLoadMore}>Load more conversations</Button>}
     </div>
-    <div className="otis-nav__footer"><Button variant="ghost" className="otis-nav__action justify-start" type="button" onClick={props.onOpenSettings}><SettingsIcon /><span>Settings</span></Button></div>
+    <div className="otis-nav__footer"><Button variant="ghost" className="otis-nav__action justify-start text-sm" type="button" onClick={props.onOpenSettings}><SettingsIcon /><span>Settings</span></Button></div>
   </nav>;
-  return props.variant === 'drawer' ? <Overlay initialFocus={closeButton} label="History" className="otis-overlay--drawer" onClose={() => props.onClose?.()}><button type="button" className="otis-drawer__scrim" aria-label="Close history backdrop" onClick={props.onClose} tabIndex={-1}/>{content}</Overlay> : content;
+  return props.variant === 'drawer'
+    ? <HistoryDrawer open={props.open ?? false} onClose={() => props.onClose?.()} initialFocus={closeButton}>{content}</HistoryDrawer>
+    : content;
+}
+
+/**
+ * Mobile history drawer on the Vaul primitive with the approved drawer
+ * recipe. Focus trap, Escape, backdrop/slide dismissal and return focus
+ * come from the shared Vaul/Radix behavior; Back handling and marker
+ * ownership come from the single shared overlay-history hook also used by
+ * Overlay dialogs. No parallel native-dialog drawer beside it.
+ */
+function HistoryDrawer({ open, onClose, initialFocus, children }: { open: boolean; onClose: () => void; initialFocus?: RefObject<HTMLElement | null>; children: ReactNode }) {
+  useOverlayHistory('History', open, onClose);
+  // Deterministic return focus: Vaul/Radix restores the trigger on a
+  // graceful close, and this covers the same target when exit completion
+  // cannot run (or a test environment never finishes it).
+  const previousRef = useRef<HTMLElement | null>(null);
+  const wasOpenRef = useRef(false);
+  useEffect(() => {
+    if (open) {
+      previousRef.current = document.activeElement as HTMLElement | null;
+      wasOpenRef.current = true;
+      return;
+    }
+    if (wasOpenRef.current) {
+      wasOpenRef.current = false;
+      const previous = previousRef.current;
+      previousRef.current = null;
+      try { previous?.focus?.(); } catch { /* Focus return is best-effort. */ }
+    }
+  }, [open ]);
+  return (
+    <Drawer.Root open={open} onOpenChange={next => { if (!next) onClose(); }} modal direction="left">
+      <Drawer.Portal>
+        <Drawer.Overlay className="otis-drawer-scrim" />
+        <Drawer.Content
+          aria-label="History"
+          className="otis-drawer"
+          onOpenAutoFocus={event => {
+            event.preventDefault();
+            initialFocus?.current?.focus();
+          }}
+        >
+          <Drawer.Title className="otis-visually-hidden">History</Drawer.Title>
+          {children}
+        </Drawer.Content>
+      </Drawer.Portal>
+    </Drawer.Root>
+  );
 }

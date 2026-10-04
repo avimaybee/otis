@@ -1,10 +1,10 @@
 # Otis
 
-Working title. Check name, domain and trademark before committing. Alternatives: Foolscap, Tally, Marginalia.
+Otis is the settled product and agent name. Commercial name/domain checks are separate future launch work, not a reason to reopen dogfood branding.
 
 > A business memory you talk to. Tell it what happened by text or voice note. It keeps the records current and, when you choose, sends a brief about who to contact and why.
 
-Status: foundation scaffold implemented; product features planned. Revised 2026-09-30. See plans/README.md for execution evidence.
+Status: core services and web conversation have recorded implementation; new UI/capture/resurfacing requirements still need their owning evidence. Revised 2026-10-03. See plans/README.md for local gate acceptance versus deployed readiness.
 Owner: Avi.
 First user and design partner: Hunor (field outreach, Targu Mures, Romania).
 
@@ -81,7 +81,25 @@ What it is not: a CRM with a chat box bolted on. The conversation is the product
 
 ---
 
+### Field-use quality principles (addition 2026-10-03)
+
+Otis should feel like leaving a note for a colleague who understood the pitch: capture, memory, resurfacing, action. Capture earns initial trust; useful resurfacing earns continued use. Each stage must connect to the next without making the person manage records.
+
+1. **Capture first.** Save submitted text and recording chunks locally before transport where storage permits, then reconcile durable server acceptance. App/network interruption must not silently discard recoverable content. Browser eviction, quota, account cleanup and closed-page transmission are real limits; report them honestly. Field-use acceptance requires interruption/reload/weak-signal evidence, not just a polished message bubble.
+2. **Separate three milestones.** On device means persisted locally; received means server acceptance; filed means the intended operation committed. A reply, partial write, pending question and failed run are distinct outcomes. Processing state complements sending/saved/failed delivery state; it does not replace those states or imply a successful write. The latest message offers quiet inspectable status without inventing a new tick palette.
+3. **Reveal progress progressively.** Immediate bubble, server acknowledgment, transcript as soon as validated, then actual work/answer. Keep typing and follow-up sends available. Do not wait for a whole voice pipeline before displaying the transcript. Measure each stage separately; offline capture cannot satisfy online acceptance latency.
+4. **Names, amounts and dates deserve precision.** Echo material changed names, prices with currency and resolved deadlines with an unambiguous localized calendar date. Keep it a short natural answer, not a dump of every field. Ask about genuinely uncertain transcript words/amounts using the affected excerpt; no full Heard callout on every note and no invented numeric confidence. Date weekday and calendar date must agree. Preserve date-only versus timed commitments.
+5. **Ask narrowly and remember confirmed context.** Save clear facts while only the blocked portion waits. Confirmed shorthand/corrections improve workspace-scoped aliases and glossary retrieval with provenance, undo and conflict handling. This is stored context, not model training. A one-time mention of the other Bistro cannot globally map all future Bistro references. Ask again when ambiguity or competing evidence genuinely returns; never duplicate an already resolved question through retry/restart.
+6. **Correction takes a sentence.** Statements such as 3,500 not 5,300 and that was the other Bistro identify the relevant recent report where unambiguous. Append an attributed correction, preserve the original and expose the exact reversible action. If multiple reports fit, ask one targeted question rather than opening an editor or guessing.
+7. **Resurfacing earns its place.** A brief has at most five distinct items, each with concrete reason and source: what is owed, when, and why it appears now. Done, Draft, Move and Snooze are optional working shortcuts; ordinary replies such as did the first one still work against saved item IDs. Disputed facts are excluded from assertions/drafts that rely on them. No-items silence is intentional for scheduled delivery.
+8. **Quiet is the default.** Chosen briefs and explicitly requested reminders are the v1 interrupt budget. An example allowance of one unsolicited nudge is not approval to enable it. Further proactive triggers, push and end-of-day wraps remain disabled/deferred until explicitly decided. No default hour or delivery channel.
+9. **Shared memory is inspectable.** Reports retain author/time/source. Competing reports remain available with a disputed field and a narrow resolution question, never a silently chosen winner. A read-only sourced entity timeline belongs to inspection, not a new CRM or mutable lead editor; implement it through scoped existing history.
+10. **Energy follows facts.** Celebrate only confirmed outcomes. Do not invent a best day, warm count or inferred success. Replies follow the person's language; outward drafts follow the lead's language. Keep the interface quiet and the approved copy constraints intact.
+
+Operational measures and metric definitions belong in docs/verification.md. Lower clarification/undo rates are useful diagnostics, never reasons to hide questions or corrections. Existing five-of-seven-days, two-week dogfood and at-least-half brief-action goals remain.
+
 ## 4. Users
+
 
 **Field member (Hunor).** Logs from a phone, mostly voice, mostly Romanian, often walking. Needs speed, forgiveness for sloppy input, and a clear answer to "what should I do next".
 
@@ -422,7 +440,13 @@ Voice input works independently of the conversation model's native audio support
 
 Groq `whisper-large-v3` and `whisper-large-v3-turbo` are the selected transcription candidates; choose the default after testing English/Romanian/Hungarian names, dates, amounts and recordings from both phones and Telegram. Groq is an STT provider, not an automatic expansion of the conversation-model list. Text/tool models remain eligible even without native audio. Free-tier request and audio-duration caps apply; preserve accepted input, report rate/quota failures, and never silently upgrade or use paid fallback. Dogfood has no additional inference budget beyond the existing Go subscription and free Gemini/Groq access. No provider quota circumvention through key/account rotation. See plans/010-groq-stt-handoff.md for the implementation contract.
 
-`design.md` is the design guide for the web interface and the visual/copy treatment of agent messages. It specifies composition, type, spacing, surfaces, controls, mobile behavior, accessibility, and design review criteria. The former field-notebook, ink-and-pencil, green-paper, and ruled-ledger proposals are retired. Otis should feel precise, quiet, and easy to understand, with the conversation as the visual center.
+`design-tokens.md` is the exact approved visual/copy baseline supplied by Avi on 2026-10-03, with the reference saved in `docs/design/approved-reference.png`. It supersedes the former monochrome palette/control directions. `design.md` owns interaction, layout logic, states and acceptance; tokens own all visual values and recipes. No composer toolbar or model/thinking chips. Optional slash/overflow configuration applies real scoped changes without cluttering normal web conversation. The former field-notebook, ink-and-pencil, green-paper, and ruled-ledger proposals are retired. Otis should feel precise, quiet, and easy to understand, with the conversation as the visual center.
+
+### Conversation interaction requirements (decision 2026-10-03)
+
+Messages appear immediately with a stable client UUID, reconcile to server acceptance and keep failed delivery plus Retry attached to the message. Saved input is not a completed answer. Follow-ups and corrections remain sendable while Otis works; they use existing steering/ordering, not a forced restart. Every action gives immediate local feedback; slower work shows an in-place pending state. Offline drafts/pending inputs are retained per authenticated workspace/chat where browser storage permits; no guaranteed background delivery. Business state remains server-authoritative.
+
+Storybook covers every state listed in design.md using production components. Actual browser/device review and the token checker are required evidence, not inferred from a passing build. These are implementation requirements, not a claim that local outbox, PWA or all stories already exist.
 
 ## 14. Agent voice
 

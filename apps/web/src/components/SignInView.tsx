@@ -42,13 +42,13 @@ export function SignInView({ onSignedIn }: { onSignedIn: () => void }) {
   return (
     <div className="otis-entry">
       <div className="otis-entry__inner">
-        <h1 className="otis-entry__title">Sign in to Otis</h1>
-        <p className="otis-entry__note">
+        <h1 className="otis-entry__title text-xl font-medium">Sign in to Otis</h1>
+        <p className="otis-entry__note text-sm text-muted-foreground">
           Members of a workspace can read its shared conversations and retained voice notes.
         </p>
 
         {error && (
-          <Alert variant="destructive" className="otis-entry__error mb-4">
+          <Alert variant="destructive" className="otis-entry__error mb-4 text-sm">
             <AlertDescription>{error}</AlertDescription>
           </Alert>
         )}
@@ -63,7 +63,7 @@ export function SignInView({ onSignedIn }: { onSignedIn: () => void }) {
         </Button>
 
         {!isConfigured && (
-          <p className="otis-entry__note">
+          <p className="otis-entry__note text-sm text-muted-foreground">
             Sign-in is not configured on this deployment yet. Ask the workspace owner to finish setup.
           </p>
         )}

@@ -1,6 +1,9 @@
 /** Development-only, synthetic UI fixture. Not imported by the production entry. */
 import { createRoot } from 'react-dom/client';
-import { ConversationScreen } from './ConversationScreen.js';
+import { QueryClientProvider } from '@tanstack/react-query';
+import { RouterProvider, createMemoryHistory } from '@tanstack/react-router';
+import { createAppQueryClient } from './api/queries.js';
+import { SessionContext, createAppRouter } from './router.js';
 import './index.css';
 
 const now = '2026-10-03T12:30:00Z';
@@ -40,4 +43,19 @@ window.fetch = async (input, init) => {
   else if (url.pathname.includes('/credentials/')) payload = { credential: { status: 'available' }, verified: true };
   return new Response(JSON.stringify(payload), { headers: { 'Content-Type': 'application/json' } });
 };
-createRoot(document.getElementById('root')!).render(<ConversationScreen workspaceId="fixture" workspaces={[{ id: 'fixture', name: 'Kerning' }, { id: 'studio', name: 'Studio' }]} userId="avi" members={{ avi: 'Avi', hunor: 'Hunor' }} onSignOut={() => {}}/>);
+createRoot(document.getElementById('root')!).render(
+  <QueryClientProvider client={createAppQueryClient()}>
+    <SessionContext.Provider
+      value={{
+        userId: 'avi',
+        workspaces: [{ id: 'fixture', name: 'Kerning' }, { id: 'studio', name: 'Studio' }],
+        members: { avi: 'Avi', hunor: 'Hunor' },
+        onSignOut: () => {},
+      }}
+    >
+      <RouterProvider
+        router={createAppRouter({ history: createMemoryHistory({ initialEntries: [`${location.pathname}${location.search}`] }) })}
+      />
+    </SessionContext.Provider>
+  </QueryClientProvider>,
+);

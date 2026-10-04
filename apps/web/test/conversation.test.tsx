@@ -38,6 +38,17 @@ describe('Composer', () => {
     expect(onCommand).toHaveBeenCalledWith('/model mimo-25'); expect(onSend).not.toHaveBeenCalled();
     expect(view.host.querySelector('textarea')!.value).toBe(''); await view.unmount();
   });
+  it('submits a // literal as ordinary text, never as a command', async () => {
+    const onSend = vi.fn().mockResolvedValue(true); const onCommand = vi.fn().mockResolvedValue(true);
+    const view = await mount(<Composer running={false} queuedCount={0} commands={COMMANDS} onCommand={onCommand} onSend={onSend}/>);
+    await fill(view.host.querySelector('textarea')!, '// hello');
+    // The picker stays closed for the literal escape.
+    expect(view.host.querySelector('[role="listbox"]')).toBeNull();
+    await React.act(async () => (view.host.querySelector('[aria-label="Send"]') as HTMLElement).click());
+    expect(onSend).toHaveBeenCalledWith('// hello');
+    expect(onCommand).not.toHaveBeenCalled();
+    await view.unmount();
+  });
   it('opens command arguments and dismisses suggestions without losing the draft', async () => {
     const onCommand = vi.fn(); const view = await mount(<Composer running={false} queuedCount={0} commands={COMMANDS} onCommand={onCommand} onSend={vi.fn()}/>);
     await fill(view.host.querySelector('textarea')!, '/');
@@ -58,15 +69,17 @@ describe('Composer', () => {
     await fill(input, 'Second note'); await React.act(async () => accept(true));
     expect(input.value).toBe('Second note'); expect(onSend).toHaveBeenCalledTimes(1); await view.unmount();
   });
-  it('retains a failed draft across remount and removes storage only after acceptance', async () => {
-    const key = 'otis:draft:test-retry'; const onSend = vi.fn().mockResolvedValueOnce(false).mockResolvedValueOnce(true);
-    let view = await mount(<Composer draftKey={key} running={false} queuedCount={0} commands={COMMANDS} onSend={onSend}/>);
+  it('clears the submitted snapshot at once and reports failure locally', async () => {
+    const key = 'otis:draft:test-retry'; const onSend = vi.fn().mockResolvedValueOnce(false);
+    const view = await mount(<Composer draftKey={key} running={false} queuedCount={0} commands={COMMANDS} onSend={onSend}/>);
     await fill(view.host.querySelector('textarea')!, 'Keep the price unchanged.');
-    await React.act(async () => (view.host.querySelector('[aria-label="Send"]') as HTMLElement).click()); await view.unmount();
-    view = await mount(<Composer draftKey={key} running={false} queuedCount={0} commands={COMMANDS} onSend={onSend}/>);
-    expect(view.host.querySelector('textarea')!.value).toBe('Keep the price unchanged.');
     await React.act(async () => (view.host.querySelector('[aria-label="Send"]') as HTMLElement).click());
-    expect(view.host.querySelector('textarea')!.value).toBe(''); expect(sessionStorage.getItem(key)).toBeNull(); await view.unmount();
+    // The outbox entry owns retry/redraft; the composer neither holds the
+    // text hostage nor duplicates the failure the bubble will carry.
+    expect(view.host.querySelector('textarea')!.value).toBe('');
+    expect(onSend).toHaveBeenCalledWith('Keep the price unchanged.');
+    expect(view.host.textContent).not.toContain('not confirmed');
+    await view.unmount();
   });
   it('does not submit an IME composition or mobile Enter', async () => {
     vi.spyOn(window, 'matchMedia').mockImplementation(query => ({ media: query, matches: false, onchange: null, addListener: vi.fn(), removeListener: vi.fn(), addEventListener: vi.fn(), removeEventListener: vi.fn(), dispatchEvent: vi.fn() }));
@@ -153,8 +166,11 @@ describe('Transcript', () => {
         onReply={onReply}
       />
     );
-    expect(view.host.textContent).toContain('Awaiting input');
     expect(view.host.textContent).toContain('When should the offer be ready?');
+    const region = view.host.querySelector('[aria-label="Awaiting input"]') as HTMLElement;
+    expect(region).toBeTruthy();
+    expect(region.textContent).toContain('When should the offer be ready?');
+    expect(view.host.querySelector('.otis-question__badge')).toBeNull();
     const replyBtn = view.host.querySelector('.otis-question__reply-btn') as HTMLButtonElement;
     expect(replyBtn).toBeTruthy();
     await React.act(async () => replyBtn.click());
@@ -194,6 +210,63 @@ describe('Transcript', () => {
     expect(onEdit).toHaveBeenCalledWith('My business note');
     await view.unmount();
   });
+  it('keeps a running preview unlabeled, then labels it unfinished when the run is cancelled', async () => {
+    const base = {
+      messages: [message({ id: 'm1', content_text: 'Draft me a reply', run_id: 'run_1' })],
+      members: {}, currentUserId: 'usr_1', steps: [],
+      activities: [activity('a1', 1, 'text_chunk', { text: 'Half-written draft' })],
+      onInspectAction: vi.fn(),
+    };
+    const running = { run: { id: 'run_1' }, status: 'running', steps: [], actions: [], activities: [] } as never;
+    const cancelled = { run: { id: 'run_1' }, status: 'cancelled', steps: [], actions: [], activities: [] } as never;
+    const host = document.createElement('div'); document.body.appendChild(host);
+    const root = createRoot(host);
+    await React.act(async () => root.render(<Transcript {...base} run={running} />));
+    expect(host.textContent).toContain('Half-written draft');
+    expect(host.textContent).not.toContain('not sent as a saved reply');
+    await React.act(async () => root.render(<Transcript {...base} run={cancelled} />));
+    expect(host.textContent).toContain('Half-written draft');
+    expect(host.textContent).toContain('Partial response — stopped.');
+    expect(host.textContent).toContain('Stopped. Saved changes remain available to inspect or undo.');
+    const failed = { run: { id: 'run_1' }, status: 'failed', steps: [], actions: [], activities: [] } as never;
+    await React.act(async () => root.render(<Transcript {...base} run={failed} />));
+    expect(host.textContent).toContain('Half-written draft');
+    expect(host.textContent).toContain('Partial response — Otis could not finish.');
+    await React.act(async () => root.unmount()); host.remove();
+  });
+  it('keeps a reloaded cancelled historical preview labeled as unfinished', async () => {
+    const view = await mount(<Transcript
+      messages={[message({ id: 'm1', content_text: 'Draft me a reply', run_id: 'run_1' })]}
+      members={{}}
+      currentUserId="usr_1"
+      steps={[]}
+      activities={[activity('a1', 1, 'text_chunk', { text: 'Reloaded partial preview' })]}
+      run={{ run: { id: 'run_1' }, status: 'cancelled', steps: [], actions: [], activities: [] } as never}
+      onInspectAction={vi.fn()}
+    />);
+    expect(view.host.textContent).toContain('Reloaded partial preview');
+    expect(view.host.textContent).toContain('Partial response — stopped.');
+    await view.unmount();
+  });
+  it('renders the persisted final answer once and never the preview when the run succeeded', async () => {
+    const view = await mount(<Transcript
+      messages={[
+        message({ id: 'm1', content_text: 'Draft me a reply', run_id: 'run_1' }),
+        message({ id: 'm2', content_text: 'Final saved reply.', author_kind: 'system', author_user_id: null, run_id: 'run_1' }),
+      ]}
+      members={{}}
+      currentUserId="usr_1"
+      steps={[]}
+      activities={[activity('a1', 1, 'text_chunk', { text: 'Half-written draft' })]}
+      run={{ run: { id: 'run_1' }, status: 'succeeded', steps: [], actions: [], activities: [] } as never}
+      onInspectAction={vi.fn()}
+    />);
+    expect(view.host.textContent).toContain('Final saved reply.');
+    expect(view.host.textContent).not.toContain('Half-written draft');
+    expect(view.host.textContent).not.toContain('Partial response');
+    expect((view.host.textContent ?? '').split('Final saved reply.').length - 1).toBe(1);
+    await view.unmount();
+  });
 });
 
 describe('Activity handling', () => {
@@ -214,9 +287,10 @@ describe('Activity handling', () => {
 describe('History navigation', () => {
   it('uses a drawer on mobile with functional history and settings actions', async () => {
     const onSelect = vi.fn(); const onSettings = vi.fn();
-    const view = await mount(<HistoryNav variant="drawer" workspaceId="ws_1" workspaceName="Kerning" workspaces={[{ id: 'ws_1', name: 'Kerning' }]} ownChats={[{ id: 'chat_1', title: 'Bistro', author_user_id: 'usr_1' } as never]} teamChats={[]} activeChatId="chat_1" onSelectChat={onSelect} onNewChat={vi.fn()} onSwitchWorkspace={vi.fn()} onOpenSettings={onSettings} onClose={vi.fn()}/>);
-    expect(view.host.querySelector('dialog')).toBeTruthy();
-    await React.act(async () => Array.from(view.host.querySelectorAll('button')).find(button => button.textContent === 'Bistro')!.click()); expect(onSelect).toHaveBeenCalledWith('chat_1');
-    await React.act(async () => Array.from(view.host.querySelectorAll('button')).find(button => button.textContent === 'Settings')!.click()); expect(onSettings).toHaveBeenCalledOnce(); await view.unmount();
+    const view = await mount(<HistoryNav variant="drawer" open workspaceId="ws_1" workspaceName="Kerning" workspaces={[{ id: 'ws_1', name: 'Kerning' }]} ownChats={[{ id: 'chat_1', title: 'Bistro', author_user_id: 'usr_1' } as never]} teamChats={[]} activeChatId="chat_1" onSelectChat={onSelect} onNewChat={vi.fn()} onSwitchWorkspace={vi.fn()} onOpenSettings={onSettings} onClose={vi.fn()}/>);
+    // The Vaul drawer portals its dialog to the document body.
+    expect(document.querySelector('div[role="dialog"][data-state="open"]')).toBeTruthy();
+    await React.act(async () => Array.from(document.querySelectorAll('div[role="dialog"] button')).find(button => button.textContent === 'Bistro')!.click()); expect(onSelect).toHaveBeenCalledWith('chat_1');
+    await React.act(async () => Array.from(document.querySelectorAll('div[role="dialog"] button')).find(button => button.textContent === 'Settings')!.click()); expect(onSettings).toHaveBeenCalledOnce(); await view.unmount();
   });
 });

@@ -17,6 +17,13 @@ import type {
 
 export type FakeTurnScript =
   | { kind: 'text'; text: string; usage?: Partial<ProviderUsage> }
+  | { kind: 'text_chunks'; chunks: string[]; usage?: Partial<ProviderUsage> }
+  | {
+      kind: 'thinking';
+      blocks: Array<{ blockId: string; deltas: string[]; snapshot?: string }>;
+      finalText: string;
+      usage?: Partial<ProviderUsage>;
+    }
   | { kind: 'tool_calls'; calls: Array<{ callId: string; name: string; args: unknown }> }
   | {
       kind: 'tool_result_continuation';
@@ -102,6 +109,44 @@ export class FakeProviderAdapter implements ProviderAdapter {
 
     if (script.kind === 'text') {
       if (script.text) yield { type: 'text_delta', text: script.text };
+      yield { type: 'usage', usage: scriptUsage(script.usage) };
+      yield { type: 'finish', reason: 'success', continuation: null };
+      return;
+    }
+
+    if (script.kind === 'text_chunks') {
+      for (const chunk of script.chunks) {
+        if (chunk) yield { type: 'text_delta', text: chunk };
+      }
+      yield { type: 'usage', usage: scriptUsage(script.usage) };
+      yield { type: 'finish', reason: 'success', continuation: null };
+      return;
+    }
+
+    if (script.kind === 'thinking') {
+      for (const block of script.blocks) {
+        if (block.snapshot) {
+          yield {
+            type: 'provider_thought_summary',
+            text: block.snapshot,
+            blockId: block.blockId,
+            contentKind: 'summary',
+            mode: 'snapshot',
+          };
+        }
+        for (const delta of block.deltas) {
+          if (delta) {
+            yield {
+              type: 'provider_thought_summary',
+              text: delta,
+              blockId: block.blockId,
+              contentKind: 'summary',
+              mode: 'append',
+            };
+          }
+        }
+      }
+      if (script.finalText) yield { type: 'text_delta', text: script.finalText };
       yield { type: 'usage', usage: scriptUsage(script.usage) };
       yield { type: 'finish', reason: 'success', continuation: null };
       return;

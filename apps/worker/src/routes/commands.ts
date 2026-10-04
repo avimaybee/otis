@@ -156,6 +156,9 @@ export interface CommandExecutionContext {
   workspaceId: string;
   userId: string;
   surface: CommandSurface;
+  /** Configured bot username for Telegram @suffix matching (without @).
+   * Absent keeps the historical literal `@thisbot` fallback. */
+  botUsername?: string;
 }
 
 export type CommandExecution =
@@ -177,7 +180,7 @@ export async function executeCommand(
   chat: Chat | null,
   text: string,
 ): Promise<CommandExecution> {
-  const parsed = parseCommandText(text, context.surface);
+  const parsed = parseCommandText(text, context.surface, context.botUsername);
   if (parsed.kind === 'text') return { kind: 'not_a_command' };
 
   if (parsed.kind === 'unknown_command') {
@@ -227,7 +230,7 @@ export async function executeCommand(
         // Never announce readiness when nothing can run.
         const landing = await describeUsableDefault(context);
         if (landing.usableKey) {
-          text += ` The workspace model is ${landing.usableLabel}.`;
+          text += ` The workspace model is ${landing.usableLabel}. ${voiceSentenceFor(landing.usableKey)}`;
         } else {
           text += ` But ${landing.problem} Pick a working model with /model <key>:${landing.choices}`;
         }
@@ -236,7 +239,7 @@ export async function executeCommand(
       try {
         const entry = await validateWorkspaceDefaultModel(context.db, { workspaceId: context.workspaceId, actorUserId: context.userId, commandKey: key });
         effects.push({ type: 'set_chat_model', chatId: chat.id, commandKey: key });
-        let text = `This chat now uses ${entry.displayName}.`;
+        let text = `This chat now uses ${entry.displayName}. ${voiceSentenceFor(entry.commandKey)}`;
         if (modelChanged && hadThinkingOverride) {
           effects.push({ type: 'set_chat_thinking', chatId: chat.id, thinkingOverride: null });
           text += ' Thinking effort was reset to Provider default.';
@@ -451,6 +454,16 @@ export async function executeCommand(
   }
 }
 
+/**
+ * Usable voice route for a model key, from verified capability evidence only.
+ * Native audio is per-entry evidence; transcription routes arrive with 010,
+ * so anything else reports voice unavailable. Never a blanket "text only".
+ */
+function voiceSentenceFor(commandKey: string | null): string {
+  const entry = PRODUCTION_REGISTRY.entries.find(candidate => candidate.commandKey === commandKey);
+  if (entry && entry.capabilities.audio === 'supported') return 'Voice notes can use native audio.';
+  return 'Voice notes are not available with this model yet.';
+}
 /**
  * Usable workspace models under the exact resolver rules, plus a plain-language
  * account of the landing state for replies that change model selection.

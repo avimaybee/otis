@@ -3,6 +3,8 @@ Status: IMPLEMENTED; requested by Avi on 2026-10-03. This is an extension across
 
 ## 1. Outcome and scope
 
+**Placement update, 2026-10-03:** design-tokens.md and design.md supersede all older web placement examples in this handoff. No thinking/model controls inside the composer. Preserve verified provider mappings, immutable run snapshots, shared commands and author checks; place optional controls in slash suggestions and quiet chat overflow. Web configuration applies without chat bubbles or LLM turns. The earlier implementation status does not establish acceptance of this newer visual/behavior baseline.
+
 Let the author choose the current chat's thinking effort through `/thinking`, on web and Telegram, with the same setting accessible beside the model choice in the web UI. The backend must send the actual verified provider parameter. Merely adding a prompt such as “think harder,” changing a label, or recording reasoning-token usage does not implement this feature.
 
 Default: **Provider default**. Otis omits an explicit thinking parameter until the author chooses one. This is not a promise that thinking is disabled or that the provider always uses the same amount of computation. Do not impose high effort on every message or add automatic effort selection in this change.
@@ -77,6 +79,8 @@ Gemini's current Interactions mapping is `generation_config.thinking_level`; pre
 For Go, establish exact wire support first. Chat Completions may use `reasoning_effort`, and Responses may use `reasoning.effort`, but these remain candidate fields until proven for the concrete Go model. Do not send both, copy OpenCode CLI's configuration verbatim, or switch endpoints implicitly.
 
 Thinking effort and public thought-summary visibility stay independent. Preserve provider continuation/signature handling. Do not stringify private thought blocks, signatures, full prompts, or provider payloads into public activity. Existing verified public summaries may appear under Working; changing effort does not make unverified summaries available.
+
+2026-10-04 clarification: Avi also requests a **streaming Thinking disclosure nested inside Working**. Its visibility/output contract belongs to [design.md section 6](../design.md#6-streaming-working-and-questions), [contracts section 8](../docs/contracts.md#8-activity-envelope) and [008B's Thinking handoff](008-ui-implementation-handoff.md#thinking-inside-working). Coordinate only the necessary existing-adapter normalization here. Displayable provider reasoning and provider summaries have different labels and must be verified per endpoint. Do not infer that an implemented effort selector means the provider returns text, and do not add a second settings owner or a service to generate imitation thoughts.
 
 ## 5. Durable chat setting and immutable run selection
 

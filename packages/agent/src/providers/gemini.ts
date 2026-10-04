@@ -36,6 +36,15 @@ import { ProviderErrorException, receiverSafeFetch } from './types.js';
 /** Pinned documented revision header (docs examples, checked 2026-10-01). */
 export const GEMINI_API_REVISION = '2026-05-20';
 
+/** Step-scoped thinking block identity within one stream. Consecutive summary
+ * deltas from the same step extend one block; a new step starts a new block.
+ * The handler groups blocks by run and round, so this stays stream-local. */
+export function thoughtBlockId(stepIndex: unknown): string {
+  return typeof stepIndex === 'number' && Number.isInteger(stepIndex) && stepIndex >= 0
+    ? `s${stepIndex}`
+    : 's0';
+}
+
 export const GEMINI_INTERACTIONS_URL = `${GEMINI_ORIGIN}/v1beta/interactions`;
 
 interface AccumulatedCall {
@@ -81,11 +90,19 @@ function toInteractionsInput(input: TurnInput): { systemInstruction?: string; bl
   const systemTexts: string[] = [];
   const blocks: unknown[] = [];
   const seenFunctionResultCallIds = new Set<string>();
+  // A linked continuation carries the stored interaction server-side: only
+  // genuinely new input and the newly pending tool results are sent. Stored
+  // assistant calls/history must never be replayed as new input on the same
+  // interaction (the server already owns them).
+  const statefulContinuation = Boolean(input.previousContinuation?.interactionId);
 
   for (const message of input.messages) {
     if (message.role === 'system') {
       if (message.text) systemTexts.push(message.text);
-    } else if (message.role === 'user') {
+      continue;
+    }
+    if (statefulContinuation) continue;
+    if (message.role === 'user') {
       blocks.push({ type: 'user_input', content: [{ type: 'text', text: message.text ?? '' }] });
     } else if (message.role === 'tool') {
       const callId = message.toolCallId ?? '';
@@ -142,6 +159,14 @@ function toInteractionsInput(input: TurnInput): { systemInstruction?: string; bl
       }
       if (message.text) {
         blocks.push({ type: 'model_output', content: [{ type: 'text', text: message.text }] });
+      }
+    }
+  }
+
+  if (statefulContinuation) {
+    for (const message of input.continuationInput ?? []) {
+      if (message.role === 'user' && message.text) {
+        blocks.push({ type: 'user_input', content: [{ type: 'text', text: message.text }] });
       }
     }
   }
@@ -310,6 +335,10 @@ export class GeminiInteractionsAdapter implements ProviderAdapter {
     const { systemInstruction, blocks } = toInteractionsInput(input);
     const generationConfig: Record<string, unknown> = {
       max_output_tokens: input.maxOutputTokens,
+      // Verified Interactions parameter (docs 2026-09-25): without it only the
+      // final output returns and no thought_summary deltas stream. Same-endpoint
+      // option; live per-model support still needs recorded endpoint evidence.
+      thinking_summaries: 'auto',
     };
     if (input.thinking?.kind === 'gemini_level') {
       generationConfig['thinking_level'] = input.thinking.level;
@@ -418,6 +447,26 @@ export class GeminiInteractionsAdapter implements ProviderAdapter {
         } else if (event === 'step.start') {
           const step = payload['step'] as Record<string, unknown> | undefined;
           const index = payload['index'] as number;
+          if (step?.['type'] === 'thought') {
+            // Documented snapshot channel: a thought step may carry its summary
+            // up front; later thought_summary deltas append to the same block.
+            // thought_signature entries stay server-side (see continuation).
+            const summary = step['summary'];
+            if (Array.isArray(summary)) {
+              for (const item of summary) {
+                const record = item as Record<string, unknown> | undefined;
+                if (record?.['type'] === 'text' && typeof record['text'] === 'string') {
+                  yield {
+                    type: 'provider_thought_summary',
+                    text: record['text'],
+                    blockId: thoughtBlockId(index),
+                    contentKind: 'summary',
+                    mode: 'snapshot',
+                  };
+                }
+              }
+            }
+          }
           if (step?.['type'] === 'function_call') {
             const id = typeof step['id'] === 'string' ? step['id'] : '';
             const name = typeof step['name'] === 'string' ? step['name'] : '';
@@ -445,7 +494,13 @@ export class GeminiInteractionsAdapter implements ProviderAdapter {
           } else if (delta['type'] === 'thought_summary') {
             const content = delta['content'] as Record<string, unknown> | undefined;
             if (content?.['type'] === 'text' && typeof content['text'] === 'string') {
-              yield { type: 'provider_thought_summary', text: content['text'] };
+              yield {
+                type: 'provider_thought_summary',
+                text: content['text'],
+                blockId: thoughtBlockId(index),
+                contentKind: 'summary',
+                mode: 'append',
+              };
             }
           } else if (delta['type'] === 'arguments_delta' || delta['type'] === 'arguments') {
             const piece =

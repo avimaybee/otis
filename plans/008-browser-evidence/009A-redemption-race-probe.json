@@ -1,0 +1,5 @@
+{
+  "scope": "Exact current production redemption guard/upsert SQL in in-memory SQLite; fixture represents a conflicting binding appearing after precheck; no provider/network",
+  "guardAccepted": true,
+  "resultingOwner": "user-B"
+}

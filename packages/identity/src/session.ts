@@ -51,6 +51,13 @@ export async function createSession(
 /**
  * Verifies an opaque session token against D1.
  * Returns the session and user if valid, or null if expired, revoked, or non-existent.
+ *
+ * Pure read: zero D1 writes on every path, including GET scope resolution,
+ * SSE connect/heartbeat/reconnect polling, and membership rechecks.
+ * last_seen_at has no readers (no cleanup, UI, or policy consumes it), so
+ * read-path touches were eliminated rather than debounced. Meaningful
+ * actions (login, accepted sends) write their own rows explicitly; sessions
+ * still record last_seen_at once at creation.
  */
 export async function verifySession(
   db: D1Database,
@@ -90,19 +97,6 @@ export async function verifySession(
     return null;
   }
 
-  // Update last_seen_at in background without blocking
-  const updateLastSeen = async () => {
-    try {
-      await db
-        .prepare('UPDATE sessions SET last_seen_at = ? WHERE token_hash = ?')
-        .bind(nowIso, tokenHash)
-        .run();
-    } catch {
-      // Non-critical background update failure is ignored
-    }
-  };
-  void updateLastSeen();
-
   const session: Session = {
     id: String(row['s_id']),
     token_hash: String(row['s_token_hash']),
@@ -110,7 +104,7 @@ export async function verifySession(
     created_at: String(row['s_created_at']),
     expires_at: String(row['s_expires_at']),
     revoked_at: null,
-    last_seen_at: nowIso,
+    last_seen_at: row['s_last_seen_at'] ? String(row['s_last_seen_at']) : nowIso,
   };
 
   const user: User = {

@@ -1,0 +1,7 @@
+{
+  "scope": "Native Chrome production App with synthetic delayed acceptance, not server evidence",
+  "before": 562,
+  "after": 562,
+  "preserved": true,
+  "max": 11264
+}

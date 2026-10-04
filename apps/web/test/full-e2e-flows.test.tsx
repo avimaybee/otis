@@ -13,7 +13,10 @@ import type {
   UndoPreviewResponse,
   MemorySourceResponse,
 } from '@otis/contracts';
-import { ConversationScreen } from '../src/ConversationScreen.js';
+import { RouterProvider } from '@tanstack/react-router';
+import { SessionContext, createAppRouter } from '../src/router.js';
+import { TestQueryProvider } from './query.js';
+import { resetOutboxForTests } from '../src/api/outbox.js';
 import { api } from '../src/api/client.js';
 import * as stream from '../src/hooks/useActivityStream.js';
 
@@ -104,7 +107,12 @@ async function mount(element: React.ReactElement) {
   const host = document.createElement('div');
   document.body.appendChild(host);
   const root = createRoot(host);
-  await React.act(async () => root.render(element));
+  await React.act(async () => root.render(<TestQueryProvider>{element}</TestQueryProvider>));
+  // Scoped query snapshots resolve outside the render act; flush once so
+  // assertions observe settled server state, not the loading skeleton.
+  await React.act(async () => {
+    await new Promise(resolve => setTimeout(resolve, 0));
+  });
   return {
     host,
     unmount: async () => {
@@ -112,6 +120,23 @@ async function mount(element: React.ReactElement) {
       host.remove();
     },
   };
+}
+
+/**
+ * Production route shell for these flows: the typed router owns
+ * workspace/chat selection from the seeded `?workspace=&chat=` URL while the
+ * test keeps its module-level API mocks. Seeding uses history.replaceState
+ * before mount, exactly like a deep link or refresh.
+ */
+function RouteShell({ onSignOut }: { onSignOut?: () => void }) {
+  const [router] = React.useState(() => createAppRouter());
+  return (
+    <SessionContext.Provider
+      value={{ userId: USER, workspaces: [{ id: WS, name: 'Kerning' }], members: MEMBERS, onSignOut: onSignOut ?? (() => {}) }}
+    >
+      <RouterProvider router={router} />
+    </SessionContext.Provider>
+  );
 }
 
 async function fill(input: HTMLTextAreaElement | HTMLInputElement, value: string) {
@@ -125,6 +150,7 @@ async function fill(input: HTMLTextAreaElement | HTMLInputElement, value: string
 describe('End-to-End UI to Backend Flow Verification', () => {
   beforeEach(() => {
     sessionStorage.clear();
+    resetOutboxForTests();
     history.replaceState({}, '', `/?workspace=${WS}&chat=new`);
     vi.spyOn(stream, 'subscribeToActivity').mockReturnValue({ close: vi.fn() });
   });
@@ -166,13 +192,7 @@ describe('End-to-End UI to Backend Flow Verification', () => {
     });
 
     const view = await mount(
-      <ConversationScreen
-        workspaceId={WS}
-        workspaces={[{ id: WS, name: 'Kerning' }]}
-        userId={USER}
-        members={MEMBERS}
-        onSignOut={vi.fn()}
-      />
+      <RouteShell />
     );
 
     // Composer textarea should be ready
@@ -195,6 +215,91 @@ describe('End-to-End UI to Backend Flow Verification', () => {
     await view.unmount();
   });
 
+  // FLOW 1b: Fresh chat loading state (disabled snapshot query)
+  it('Flow 1b: fresh chat shows the approved empty state immediately with no snapshot request', async () => {
+    history.replaceState({}, '', `/?workspace=${WS}&chat=new`);
+    vi.spyOn(api, 'listChats').mockResolvedValue({ chats: [] });
+    vi.spyOn(api, 'commands').mockResolvedValue({ surface: 'web', commands: [] });
+    vi.spyOn(api, 'models').mockResolvedValue({ models: DEFAULT_MODELS, current_command_key: 'mimo-25', default_command_key: 'mimo-25' });
+    vi.spyOn(api, 'clarifications').mockResolvedValue({ clarifications: [] });
+    const getChatSpy = vi.spyOn(api, 'getChat');
+    const listMessagesSpy = vi.spyOn(api, 'listMessages');
+
+    const view = await mount(<RouteShell />);
+
+    expect(view.host.textContent).not.toContain('Opening conversation');
+    expect(view.host.textContent).toContain('What’s happening?');
+    const textarea = view.host.querySelector('textarea') as HTMLTextAreaElement;
+    expect(textarea).toBeTruthy();
+    expect(textarea.disabled).toBe(false);
+    // The disabled snapshot query must not fire a persisted-chat request.
+    expect(getChatSpy).not.toHaveBeenCalled();
+    expect(listMessagesSpy).not.toHaveBeenCalled();
+
+    await view.unmount();
+  });
+
+  // FLOW 1c: Persisted chat keeps opening feedback until the real result arrives
+  it('Flow 1c: persisted chat holds opening feedback until the real snapshot arrives', async () => {
+    const heldChat = makeChat('chat_held', 'Held snapshot');
+    history.replaceState({}, '', `/?workspace=${WS}&chat=chat_held`);
+    vi.spyOn(api, 'listChats').mockResolvedValue({ chats: [heldChat] });
+    vi.spyOn(api, 'commands').mockResolvedValue({ surface: 'web', commands: [] });
+    vi.spyOn(api, 'models').mockResolvedValue({ models: DEFAULT_MODELS, current_command_key: 'mimo-25', default_command_key: 'mimo-25' });
+    vi.spyOn(api, 'clarifications').mockResolvedValue({ clarifications: [] });
+    vi.spyOn(api, 'activity').mockResolvedValue({ activities: [], latest_cursor: 0 } as never);
+    let releaseSnapshot: (() => void) | null = null;
+    vi.spyOn(api, 'getChat').mockReturnValue(
+      new Promise((resolve) => {
+        releaseSnapshot = () => resolve({ chat: heldChat, is_author: true });
+      }),
+    );
+    vi.spyOn(api, 'listMessages').mockResolvedValue({
+      chat_id: 'chat_held',
+      messages: [makeMessage('msg_held', 'Held until snapshot lands', 'member')],
+      next_before_sequence: null,
+    });
+
+    const view = await mount(<RouteShell />);
+
+    expect(view.host.textContent).toContain('Opening conversation');
+    expect((view.host.querySelector('textarea') as HTMLTextAreaElement).disabled).toBe(true);
+    expect(releaseSnapshot).not.toBeNull();
+
+    await React.act(async () => {
+      releaseSnapshot!();
+      await Promise.resolve();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    expect(view.host.textContent).not.toContain('Opening conversation');
+    expect(view.host.textContent).toContain('Held until snapshot lands');
+    expect((view.host.querySelector('textarea') as HTMLTextAreaElement).disabled).toBe(false);
+
+    await view.unmount();
+  });
+
+  // FLOW 1d: Snapshot failure is not an endless opening state
+  it('Flow 1d: a failed persisted-chat snapshot shows an error, not an endless opening state', async () => {
+    const failedChat = makeChat('chat_failed', 'Failed snapshot');
+    history.replaceState({}, '', `/?workspace=${WS}&chat=chat_failed`);
+    vi.spyOn(api, 'listChats').mockResolvedValue({ chats: [failedChat] });
+    vi.spyOn(api, 'commands').mockResolvedValue({ surface: 'web', commands: [] });
+    vi.spyOn(api, 'models').mockResolvedValue({ models: DEFAULT_MODELS, current_command_key: 'mimo-25', default_command_key: 'mimo-25' });
+    vi.spyOn(api, 'clarifications').mockResolvedValue({ clarifications: [] });
+    vi.spyOn(api, 'activity').mockResolvedValue({ activities: [], latest_cursor: 0 } as never);
+    vi.spyOn(api, 'getChat').mockRejectedValue(new Error('snapshot failed'));
+    vi.spyOn(api, 'listMessages').mockResolvedValue({ chat_id: 'chat_failed', messages: [], next_before_sequence: null });
+
+    const view = await mount(<RouteShell />);
+
+    expect(view.host.textContent).not.toContain('Opening conversation');
+    expect(view.host.textContent).toContain('Could not open this conversation');
+
+    await view.unmount();
+  });
+
   // FLOW 2: Teammate Chat Read-Only Enforcement
   it('Flow 2: enforces read-only mode for teammate conversation and navigates back to own chat', async () => {
     const teamChat = makeChat('chat_team_1', 'Hunor visit notes', TEAMMATE);
@@ -213,13 +318,7 @@ describe('End-to-End UI to Backend Flow Verification', () => {
     vi.spyOn(api, 'clarifications').mockResolvedValue({ clarifications: [] });
 
     const view = await mount(
-      <ConversationScreen
-        workspaceId={WS}
-        workspaces={[{ id: WS, name: 'Kerning' }]}
-        userId={USER}
-        members={MEMBERS}
-        onSignOut={vi.fn()}
-      />
+      <RouteShell />
     );
 
     // Composer should be hidden in read-only mode
@@ -266,13 +365,7 @@ describe('End-to-End UI to Backend Flow Verification', () => {
     });
 
     const view = await mount(
-      <ConversationScreen
-        workspaceId={WS}
-        workspaces={[{ id: WS, name: 'Kerning' }]}
-        userId={USER}
-        members={MEMBERS}
-        onSignOut={vi.fn()}
-      />
+      <RouteShell />
     );
 
     const textarea = view.host.querySelector('textarea') as HTMLTextAreaElement;
@@ -315,13 +408,7 @@ describe('End-to-End UI to Backend Flow Verification', () => {
     const stopSpy = vi.spyOn(api, 'stopRun').mockResolvedValue({ stopped: true, run_status: 'cancelled' });
 
     const view = await mount(
-      <ConversationScreen
-        workspaceId={WS}
-        workspaces={[{ id: WS, name: 'Kerning' }]}
-        userId={USER}
-        members={MEMBERS}
-        onSignOut={vi.fn()}
-      />
+      <RouteShell />
     );
 
     // Stop button should be visible in composer
@@ -385,18 +472,13 @@ describe('End-to-End UI to Backend Flow Verification', () => {
     });
 
     const view = await mount(
-      <ConversationScreen
-        workspaceId={WS}
-        workspaces={[{ id: WS, name: 'Kerning' }]}
-        userId={USER}
-        members={MEMBERS}
-        onSignOut={vi.fn()}
-      />
+      <RouteShell />
     );
 
-    // Transcript should show clarification region
-    expect(view.host.textContent).toContain('Awaiting input');
-    expect(view.host.textContent).toContain('What time on Friday should I call them?');
+    // Transcript shows the clarification as ordinary conversational text with a reply action
+    const region = view.host.querySelector('[aria-label="Awaiting input"]') as HTMLElement;
+    expect(region).toBeTruthy();
+    expect(region.textContent).toContain('What time on Friday should I call them?');
 
     // Click "Answer below"
     const replyBtn = view.host.querySelector('.otis-question__reply-btn') as HTMLButtonElement;
@@ -509,13 +591,7 @@ describe('End-to-End UI to Backend Flow Verification', () => {
     });
 
     const view = await mount(
-      <ConversationScreen
-        workspaceId={WS}
-        workspaces={[{ id: WS, name: 'Kerning' }]}
-        userId={USER}
-        members={MEMBERS}
-        onSignOut={vi.fn()}
-      />
+      <RouteShell />
     );
 
     // Expand working disclosure
@@ -604,13 +680,7 @@ describe('End-to-End UI to Backend Flow Verification', () => {
     const memSourceSpy = vi.spyOn(api, 'memorySource').mockResolvedValue(memorySourceResponse);
 
     const view = await mount(
-      <ConversationScreen
-        workspaceId={WS}
-        workspaces={[{ id: WS, name: 'Kerning' }]}
-        userId={USER}
-        members={MEMBERS}
-        onSignOut={vi.fn()}
-      />
+      <RouteShell />
     );
 
     // Source link pill should be rendered on the assistant message
@@ -675,13 +745,7 @@ describe('End-to-End UI to Backend Flow Verification', () => {
     vi.spyOn(api, 'updateWorkspaceSettings').mockResolvedValue({ settings: { ...wsSettings, default_model: 'gemini-3.1-flash' } });
 
     const view = await mount(
-      <ConversationScreen
-        workspaceId={WS}
-        workspaces={[{ id: WS, name: 'Kerning' }]}
-        userId={USER}
-        members={MEMBERS}
-        onSignOut={vi.fn()}
-      />
+      <RouteShell />
     );
 
     // Open settings from sidebar
@@ -754,13 +818,7 @@ describe('End-to-End UI to Backend Flow Verification', () => {
     const verifyCredSpy = vi.spyOn(api, 'verifyCredential').mockResolvedValue({ verified: true });
 
     const view = await mount(
-      <ConversationScreen
-        workspaceId={WS}
-        workspaces={[{ id: WS, name: 'Kerning' }]}
-        userId={USER}
-        members={MEMBERS}
-        onSignOut={vi.fn()}
-      />
+      <RouteShell />
     );
 
     // Open settings
@@ -804,13 +862,7 @@ describe('End-to-End UI to Backend Flow Verification', () => {
     vi.spyOn(api, 'getChat').mockRejectedValue(new ApiError(401, 'unauthorized', 'Session expired'));
 
     const view = await mount(
-      <ConversationScreen
-        workspaceId={WS}
-        workspaces={[{ id: WS, name: 'Kerning' }]}
-        userId={USER}
-        members={MEMBERS}
-        onSignOut={onSignOut}
-      />
+      <RouteShell onSignOut={onSignOut} />
     );
 
     // Wait for async load to reject
@@ -828,6 +880,269 @@ describe('End-to-End UI to Backend Flow Verification', () => {
     await React.act(async () => signOutBtn.click());
 
     expect(onSignOut).toHaveBeenCalledOnce();
+
+    await view.unmount();
+  });
+});
+
+describe('008B new-chat ordering and recovery (R8)', () => {
+  beforeEach(() => {
+    sessionStorage.clear();
+    resetOutboxForTests();
+    history.replaceState({}, '', `/?workspace=${WS}&chat=new`);
+    vi.spyOn(stream, 'subscribeToActivity').mockReturnValue({ close: vi.fn() });
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    sessionStorage.clear();
+  });
+
+  function baseMocks() {
+    vi.spyOn(api, 'commands').mockResolvedValue({ surface: 'web', commands: [] });
+    vi.spyOn(api, 'models').mockResolvedValue({ models: DEFAULT_MODELS, current_command_key: 'mimo-25', default_command_key: 'mimo-25' });
+    vi.spyOn(api, 'activity').mockResolvedValue({ activities: [], latest_cursor: 0 } as never);
+    vi.spyOn(api, 'clarifications').mockResolvedValue({ clarifications: [] });
+    vi.spyOn(api, 'run').mockResolvedValue({
+      run: { id: 'run_9', status: 'queued' } as never,
+      status: 'queued',
+      steps: [],
+      actions: [],
+      activities: [],
+      pending_clarification: null,
+    });
+  }
+
+  async function mountScreen() {
+    return mount(
+      <RouteShell />,
+    );
+  }
+
+  it('echoes within the submit turn and posts before the sidebar refresh releases', async () => {
+    const createdChat = makeChat('chat_new_9', 'New Conversation');
+    let navCalls = 0;
+    vi.spyOn(api, 'listChats').mockImplementation(async () => {
+      navCalls += 1;
+      if (navCalls > 2) await new Promise(() => {});
+      return { chats: [] };
+    });
+    baseMocks();
+    vi.spyOn(api, 'createChat').mockResolvedValue({ chat: createdChat });
+    vi.spyOn(api, 'getChat').mockResolvedValue({ chat: createdChat, is_author: true });
+    const sendSpy = vi.spyOn(api, 'sendMessage').mockImplementation(async () => {
+      await new Promise(() => {});
+      return { status: 'accepted', message_id: 'msg_9', run_id: 'run_9', acceptance_sequence: 1 };
+    });
+    // The authoritative row cannot exist before acceptance: the mock holds it
+    // back while the POST hangs, so the echo bubble stays local and sending.
+    vi.spyOn(api, 'listMessages').mockResolvedValue({ chat_id: 'chat_new_9', messages: [], next_before_sequence: null });
+
+    const view = await mountScreen();
+    await fill(view.host.querySelector('textarea')!, 'First hello');
+    const sendButton = view.host.querySelector('[aria-label="Send"]') as HTMLButtonElement;
+    // Workspace models resolved without a snapshot (R8-1): the empty-chat
+    // composer is submittable.
+    expect(sendButton.disabled).toBe(false);
+
+    await React.act(async () => {
+      view.host.querySelector('[aria-label="Send"]')!.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    // Deterministic acceptance-boundary proof instead of wall clock: the
+    // echo bubble below exists while the network POST is still held and the
+    // sidebar refetch hangs, so local acceptance awaited no response.
+    // performance.now around React.act is not a paint measurement under
+    // parallel suite CPU load, so it cannot prove the product 100ms target —
+    // which stands unchanged (design.md, docs/verification.md) and is
+    // evidenced natively by immediateEcho plus call timelines in
+    // plans/008-browser-evidence/synthetic-app-probe.json and
+    // two-send-probe.json, not by this unit.
+    const bubbles = () => Array.from(view.host.querySelectorAll('.otis-turn__bubble'));
+    expect(bubbles()).toHaveLength(1);
+    expect(bubbles()[0]!.textContent).toBe('First hello');
+    expect(view.host.textContent).toContain('Sending…');
+    // Fast chat creation posted the message while the sidebar refetch hangs.
+    expect(sendSpy).toHaveBeenCalledTimes(1);
+    expect(sendSpy).toHaveBeenCalledWith(WS, 'chat_new_9', expect.any(String), 'First hello', undefined);
+    expect(navCalls).toBe(3);
+    expect(location.search).toContain('chat=chat_new_9');
+
+    await view.unmount();
+  });
+
+  it('shows the exact failed bubble and retries with the same UUID', async () => {
+    const createdChat = makeChat('chat_new_9', 'New Conversation');
+    vi.spyOn(api, 'listChats').mockResolvedValue({ chats: [] });
+    baseMocks();
+    vi.spyOn(api, 'createChat').mockResolvedValue({ chat: createdChat });
+    vi.spyOn(api, 'getChat').mockResolvedValue({ chat: createdChat, is_author: true });
+    vi.spyOn(api, 'listMessages').mockResolvedValue({ chat_id: 'chat_new_9', messages: [], next_before_sequence: null });
+    const sendSpy = vi.spyOn(api, 'sendMessage')
+      .mockRejectedValueOnce(new Error('Down'))
+      .mockResolvedValue({ status: 'accepted', message_id: 'msg_9', run_id: 'run_9', acceptance_sequence: 1 });
+
+    const view = await mountScreen();
+    await fill(view.host.querySelector('textarea')!, 'Retry me');
+    await React.act(async () => {
+      view.host.querySelector('[aria-label="Send"]')!.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    const firstUuid = sendSpy.mock.calls[0]![2] as string;
+    expect(view.host.textContent).toContain('Retry me');
+    const retry = Array.from(view.host.querySelectorAll('button')).find(button => button.textContent === 'Retry') as HTMLButtonElement;
+    expect(retry).toBeTruthy();
+    // Delivery feedback is never hover-gated: Retry lives in the visible
+    // delivery row, not inside the hover-revealed actions container.
+    expect(retry.closest('.otis-turn__actions')).toBeNull();
+    expect(retry.closest('.otis-delivery')).toBeTruthy();
+    await React.act(async () => retry.click());
+    expect(sendSpy).toHaveBeenCalledTimes(2);
+    expect(sendSpy.mock.calls[1]![2]).toBe(firstUuid);
+    await React.act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 250));
+    });
+    expect(view.host.querySelectorAll('.otis-turn__bubble')).toHaveLength(1);
+    const retryGone = !Array.from(view.host.querySelectorAll('button')).some(button => button.textContent === 'Retry');
+    expect(retryGone).toBe(true);
+
+    await view.unmount();
+  });
+
+  it('reloads a lost acknowledgment with the same identity and one chat', async () => {
+    const createdChat = makeChat('chat_new_9', 'New Conversation');
+    vi.spyOn(api, 'listChats').mockResolvedValue({ chats: [] });
+    baseMocks();
+    const createSpy = vi.spyOn(api, 'createChat').mockResolvedValue({ chat: createdChat });
+    vi.spyOn(api, 'getChat').mockResolvedValue({ chat: createdChat, is_author: true });
+    let resolveSend!: (value: { status: 'accepted'; message_id: string; run_id: string; acceptance_sequence: number }) => void;
+    const sendSpy = vi.spyOn(api, 'sendMessage').mockImplementation(
+      () => new Promise(resolve => {
+        resolveSend = resolve as never;
+      }),
+    );
+    let acceptedId: string | null = null;
+    let acked = false;
+    vi.spyOn(api, 'listMessages').mockImplementation(async () => ({
+      chat_id: 'chat_new_9',
+      messages: acked && acceptedId ? [{ ...makeMessage('msg_9', 'Lost ack', 'member'), client_message_id: acceptedId }] : [],
+      next_before_sequence: null,
+    }));
+
+    let view = await mountScreen();
+    await fill(view.host.querySelector('textarea')!, 'Lost ack');
+    await React.act(async () => {
+      view.host.querySelector('[aria-label="Send"]')!.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    expect(view.host.querySelectorAll('.otis-turn__bubble')).toHaveLength(1);
+    const firstUuid = sendSpy.mock.calls[0]![2] as string;
+    acceptedId = firstUuid;
+    // Crash before the acknowledgment arrives: the attempt dies with the page.
+    await view.unmount();
+    const { releaseDelivery } = await import('../src/api/outbox.js');
+    releaseDelivery(firstUuid);
+
+    view = await mountScreen();
+    // Mount resume replays the same UUID; no second chat is created.
+    await React.act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 50));
+    });
+    expect(createSpy).toHaveBeenCalledTimes(1);
+    expect(sendSpy).toHaveBeenCalledTimes(2);
+    expect(sendSpy.mock.calls[1]![2]).toBe(firstUuid);
+    await React.act(async () => {
+      acked = true;
+      resolveSend({ status: 'accepted', message_id: 'msg_9', run_id: 'run_9', acceptance_sequence: 1 });
+      await new Promise(resolve => setTimeout(resolve, 250));
+    });
+    expect(view.host.querySelectorAll('.otis-turn__bubble')).toHaveLength(1);
+    expect(view.host.textContent).not.toContain('Sending…');
+
+    await view.unmount();
+  });
+
+  it('applies /model from an empty chat with server-confirmed UI and no bubbles', async () => {
+    const createdChat = makeChat('chat_cmd_9', 'New Conversation');
+    vi.spyOn(api, 'listChats').mockResolvedValue({ chats: [] });
+    baseMocks();
+    vi.spyOn(api, 'createChat').mockResolvedValue({ chat: createdChat });
+    const commandSpy = vi.spyOn(api, 'executeCommand').mockResolvedValue({
+      status: 'accepted',
+      message_id: 'cmd_9',
+      run_id: 'run_cmd',
+      acceptance_sequence: 1,
+      command_applied: true,
+    });
+    const switchedChat = { ...createdChat, model_override: 'mimo-25' };
+    vi.spyOn(api, 'getChat').mockResolvedValue({ chat: switchedChat, is_author: true });
+    const modelsSpy = vi.spyOn(api, 'models').mockResolvedValue({ models: DEFAULT_MODELS, current_command_key: 'mimo-25', default_command_key: 'mimo-25' });
+    vi.spyOn(api, 'listMessages').mockResolvedValue({ chat_id: 'chat_cmd_9', messages: [], next_before_sequence: null });
+
+    const view = await mountScreen();
+    await fill(view.host.querySelector('textarea')!, '/model default');
+    await React.act(async () => {
+      view.host.querySelector('[aria-label="Send"]')!.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    expect(commandSpy).toHaveBeenCalledWith(WS, 'chat_cmd_9', expect.any(String), '/model default');
+    expect(view.host.querySelectorAll('.otis-turn')).toHaveLength(0);
+    expect(modelsSpy.mock.calls.length).toBeGreaterThan(1);
+    expect(location.search).toContain('chat=chat_cmd_9');
+
+    await view.unmount();
+  });
+
+  it('accepts two rapid messages instantly while serializing their posts', async () => {
+    const existingChat = makeChat('chat_1', 'Existing');
+    history.replaceState({}, '', `/?workspace=${WS}&chat=chat_1`);
+    vi.spyOn(api, 'listChats').mockResolvedValue({ chats: [existingChat] });
+    baseMocks();
+    vi.spyOn(api, 'getChat').mockResolvedValue({ chat: existingChat, is_author: true });
+    vi.spyOn(api, 'listMessages').mockResolvedValue({ chat_id: 'chat_1', messages: [], next_before_sequence: null });
+    let releaseFirst!: () => void;
+    const posts: Array<{ uuid: string; text: string }> = [];
+    let started = false;
+    const sendSpy = vi.spyOn(api, 'sendMessage').mockImplementation(
+      (_ws, _chat, clientId, text) =>
+        new Promise(resolve => {
+          posts.push({ uuid: clientId, text });
+          if (!started) {
+            // The first POST stays in flight while the user keeps typing.
+            started = true;
+            releaseFirst = () => resolve({ status: 'accepted', message_id: `msg-${clientId}`, run_id: 'run_9', acceptance_sequence: 1 });
+            return;
+          }
+          resolve({ status: 'accepted', message_id: `msg-${clientId}`, run_id: 'run_9', acceptance_sequence: 2 });
+        }),
+    );
+
+    const view = await mountScreen();
+    await fill(view.host.querySelector('textarea')!, 'One');
+    await React.act(async () => {
+      view.host.querySelector('[aria-label="Send"]')!.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    expect(view.host.querySelectorAll('.otis-turn__bubble')).toHaveLength(1);
+    // Second message submits through a real enabled button while POST 1 pends:
+    // local acceptance never waits for the network.
+    await fill(view.host.querySelector('textarea')!, 'Two');
+    const secondSend = view.host.querySelector('[aria-label="Send"]') as HTMLButtonElement;
+    expect(secondSend.disabled).toBe(false);
+    await React.act(async () => {
+      secondSend.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    expect(view.host.querySelectorAll('.otis-turn__bubble')).toHaveLength(2);
+    expect(posts).toHaveLength(1);
+    expect(posts[0]!.text).toBe('One');
+    // The first 202 releases the second POST with its own identity; no model
+    // reply is waited for and no duplicate bubble appears.
+    releaseFirst();
+    await React.act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 0));
+    });
+    await React.act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 0));
+    });
+    expect(sendSpy).toHaveBeenCalledTimes(2);
+    expect(posts.map(post => post.text)).toEqual(['One', 'Two']);
+    expect(posts[0]!.uuid).not.toBe(posts[1]!.uuid);
+    expect(view.host.querySelectorAll('.otis-turn__bubble')).toHaveLength(2);
 
     await view.unmount();
   });

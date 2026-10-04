@@ -1,7 +1,10 @@
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { App } from './App.js';
+import '@fontsource-variable/inter';
+import './globals.css';
 import './index.css';
+import './components/ui/controls.css';
 
 const container = document.getElementById('root');
 if (!container) {

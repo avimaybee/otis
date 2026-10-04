@@ -37,9 +37,9 @@ export function ProviderConnection({ workspaceId, provider, name, onUpdated }: {
   return <div className="otis-settings__provider">
     <div className="otis-settings__row">
       <div>
-        <h3>{name}</h3>
+        <h3 className="text-sm font-medium">{name}</h3>
         <div className="flex items-center gap-2 mt-1">
-          <Badge variant={status === 'Connected' ? 'outline' : status === 'Needs checking' ? 'destructive' : 'secondary'} role="status" className="inline-flex items-center gap-1.5">
+          <Badge variant={status === 'Connected' ? 'outline' : status === 'Needs checking' ? 'destructive' : 'secondary'} role="status" className="inline-flex items-center gap-1">
             {status === 'Connected' && <span className="otis-status-dot" aria-hidden="true" />}
             {status}
           </Badge>
@@ -52,7 +52,7 @@ export function ProviderConnection({ workspaceId, provider, name, onUpdated }: {
     {editing && <form className="mt-3 flex flex-col gap-2" onSubmit={event => { event.preventDefault(); void save(); }}>
       <label htmlFor={id} className="text-sm font-medium">{name} API key</label>
       <Input id={id} type="password" autoComplete="new-password" spellCheck={false} value={key} onChange={event => setKey(event.target.value)} disabled={busy}/>
-      <p className="otis-detail__label">Shared by this workspace. Saved keys cannot be displayed.</p>
+      <p className="otis-detail__label text-xs">Shared by this workspace. Saved keys cannot be displayed.</p>
       <Button type="submit" size="sm" disabled={busy || !key.trim()}>
         {busy ? 'Connecting…' : 'Save and check key'}
       </Button>
