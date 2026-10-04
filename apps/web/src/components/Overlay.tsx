@@ -5,6 +5,8 @@ let openOverlays = 0;
 export function Overlay({ label, className = '', onClose, children, initialFocus }: { label: string; className?: string; onClose: () => void; children: ReactNode; initialFocus?: RefObject<HTMLElement | null> }) {
   const ref = useRef<HTMLDialogElement>(null);
   const nestedRef = useRef(false);
+  const closeRef = useRef(onClose);
+  closeRef.current = onClose;
   // Dismissal, Back handling and marker ownership live in the shared hook,
   // also used by the Vaul history drawer: exactly one owner, no parallel
   // modal implementations drifting apart.
@@ -17,7 +19,20 @@ export function Overlay({ label, className = '', onClose, children, initialFocus
     openOverlays += 1;
     dialog?.showModal();
     initialFocus?.current?.focus();
-    return () => { dialog?.close(); previous?.focus(); openOverlays = Math.max(0, openOverlays - 1); };
+
+    const handleClick = (event: MouseEvent) => {
+      if (event.target === dialog) {
+        closeRef.current();
+      }
+    };
+    dialog?.addEventListener('click', handleClick);
+
+    return () => {
+      dialog?.removeEventListener('click', handleClick);
+      dialog?.close();
+      previous?.focus();
+      openOverlays = Math.max(0, openOverlays - 1);
+    };
   }, []);
   return <dialog ref={ref} aria-label={label} className={`otis-overlay ${className}`} onCancel={event => { event.preventDefault(); onClose(); }}>
     {children}

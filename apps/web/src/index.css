@@ -79,6 +79,8 @@
 .otis-turn__body pre code { padding: 0; background: transparent; }
 .otis-turn__body table { display: block; max-width: 100%; overflow-x: auto; border-collapse: collapse; margin: 12px 0; }
 .otis-turn__body th, .otis-turn__body td { padding: 8px; border: 1px solid var(--border); text-align: left; }
+.otis-turn__body a { color: var(--highlight); text-decoration: underline; text-underline-offset: 2px; }
+.otis-turn__body a:hover { opacity: 0.9; }
 
 /* Date separators mark real date changes: centered meta text, no rules. */
 .otis-dayseparator { display: flex; justify-content: center; margin: 0; color: var(--subtle); }
