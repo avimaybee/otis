@@ -59,7 +59,14 @@ export function SignInView({ onSignedIn }: { onSignedIn: () => void }) {
           disabled={pending || !isConfigured}
           onClick={submit}
         >
-          {pending ? 'Signing in…' : 'Continue with Google'}
+          {pending ? (
+            <>
+              <span className="otis-spinner" aria-hidden="true" />
+              <span>Signing in…</span>
+            </>
+          ) : (
+            'Continue with Google'
+          )}
         </Button>
 
         {!isConfigured && (

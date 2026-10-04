@@ -55,7 +55,14 @@ export function ProviderConnection({ workspaceId, provider, name, onUpdated }: {
       <Input id={id} type="password" autoComplete="new-password" spellCheck={false} value={key} onChange={event => setKey(event.target.value)} disabled={busy}/>
       <p className="otis-detail__label text-xs">Shared by this workspace. Saved keys cannot be displayed.</p>
       <Button type="submit" size="sm" disabled={busy || !key.trim()}>
-        {busy ? 'Connecting…' : 'Save and check key'}
+        {busy ? (
+          <>
+            <span className="otis-spinner" aria-hidden="true" />
+            <span>Connecting…</span>
+          </>
+        ) : (
+          'Save and check key'
+        )}
       </Button>
     </form>}
     {error && <Alert variant="destructive" className="mt-2"><AlertDescription>{error}</AlertDescription></Alert>}

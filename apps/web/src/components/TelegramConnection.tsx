@@ -240,7 +240,14 @@ export function TelegramConnection({ workspaceId, workspaceName }: { workspaceId
           <p className="text-sm mt-1">Message Otis from Telegram. Your messages are saved in {workspaceName}.</p>
           <div className="otis-settings__row mt-2">
             <Button size="sm" className="otis-button" disabled={phase.kind === 'preparing'} onClick={() => void connect()}>
-              {phase.kind === 'preparing' ? 'Preparing link\u2026' : 'Connect Telegram'}
+              {phase.kind === 'preparing' ? (
+                <>
+                  <span className="otis-spinner" aria-hidden="true" />
+                  <span>Preparing link…</span>
+                </>
+              ) : (
+                'Connect Telegram'
+              )}
             </Button>
           </div>
         </>
@@ -290,9 +297,10 @@ export function TelegramConnection({ workspaceId, workspaceName }: { workspaceId
         </>
       )}
       {phase.kind === 'disconnecting' && (
-        <p role="status" className="text-sm mt-1">
-          Disconnecting…
-        </p>
+        <div role="status" className="flex items-center gap-2 text-sm mt-1">
+          <span className="otis-spinner" aria-hidden="true" />
+          <span>Disconnecting…</span>
+        </div>
       )}
       {notice && (
         <p role="status" className="text-sm mt-2">

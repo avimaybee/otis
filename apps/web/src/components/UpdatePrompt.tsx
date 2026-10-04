@@ -80,7 +80,7 @@ export function UpdatePrompt({ userId, onReload }: { userId: string; onReload?: 
     <div className="otis-connection text-xs" role="status">
       <span>An Otis update is ready.</span>
       <Button variant="ghost" size="sm" type="button" aria-busy={applying} disabled={applying} onClick={() => void reload()}>
-        Reload to update
+        {applying ? 'Updating…' : 'Reload to update'}
       </Button>
       <Button variant="ghost" size="sm" type="button" aria-label="Dismiss update" onClick={() => setDismissed(true)}>
         Later
