@@ -1,4 +1,5 @@
 import { useEffect, useId, useState } from 'react';
+import type { ProviderName } from '@otis/contracts';
 import { api } from '../api/client.js';
 import { Button } from './ui/button.js';
 import { Input } from './ui/input.js';
@@ -6,7 +7,7 @@ import { Badge } from './ui/badge.js';
 import { Alert, AlertDescription } from './ui/alert.js';
 
 export function ProviderConnection({ workspaceId, provider, name, onUpdated }: {
-  workspaceId: string; provider: 'gemini' | 'opencode_go'; name: string; onUpdated: () => void;
+  workspaceId: string; provider: ProviderName; name: string; onUpdated: () => void;
 }) {
   const id = useId();
   const [status, setStatus] = useState('Loading…');

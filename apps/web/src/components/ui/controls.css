@@ -31,6 +31,10 @@
 .otis-reply-context { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding-left: 8px; color: var(--muted-foreground); }
 .otis-reply-choices { display: flex; flex-wrap: nowrap; overflow-x: auto; gap: 8px; padding: 0 0 8px; margin-bottom: 8px; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
 .otis-reply-choices::-webkit-scrollbar { display: none; }
+.otis-composer__action { position: relative; transition: background-color 150ms ease-out, color 150ms ease-out; }
+@media (pointer: coarse) {
+  .otis-composer__action::after { content: ''; position: absolute; inset: -4px; }
+}
 
 /* Slash picker: popover surface, menu items. Behavior stays in Composer. */
 .otis-command-picker { position: absolute; bottom: calc(100% + 8px); left: 0; z-index: 5; width: min(360px, 100%); max-height: min(300px, 40dvh); overflow: auto; padding: 4px; border-radius: 12px; background: var(--popover); color: var(--popover-foreground); box-shadow: var(--shadow-popover); scrollbar-width: thin; }

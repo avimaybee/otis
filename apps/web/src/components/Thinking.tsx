@@ -15,7 +15,7 @@ export function ThinkingDisclosure({ blocks, defaultOpen = false }: { blocks: Th
   let lastAttribution = '';
   return (
     <Collapsible.Root className="otis-thinking mt-2 flex flex-col gap-2" defaultOpen={defaultOpen}>
-      <Collapsible.Trigger className="flex min-h-8 items-center gap-2 text-xs text-muted-foreground">
+      <Collapsible.Trigger className="otis-thinking__trigger flex min-h-8 items-center gap-2 text-xs text-muted-foreground">
         <span className="size-4 text-subtle" aria-hidden="true"><ChevronDownIcon /></span>
         <span>Thinking</span>
       </Collapsible.Trigger>

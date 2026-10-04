@@ -171,6 +171,7 @@ export function Transcript({ messages, members, currentUserId, steps, run, runs 
     try {
       await navigator.clipboard.writeText(text);
       setCopiedId(id);
+      toast('Copied to clipboard');
       setTimeout(() => setCopiedId(current => (current === id ? null : current)), 2000);
     } catch {
       toast.error('Could not copy to clipboard');

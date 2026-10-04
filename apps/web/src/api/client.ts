@@ -22,6 +22,7 @@ import type {
   WorkspaceSettings,
   UpdateMemberSettingsRequest,
   CredentialStatusResponse,
+  ProviderName,
   RunDetailResponse,
   TelegramConnectionResponse,
   TelegramDisconnectResponse,
@@ -209,9 +210,9 @@ export const api = {
   memberSettings: (workspaceId: string) => request<{ settings: MemberSettings }>(`/api/workspaces/${workspaceId}/me/settings`),
   updateMemberSettings: (workspaceId: string, body: UpdateMemberSettingsRequest) => request<{ settings: MemberSettings }>(`/api/workspaces/${workspaceId}/me/settings`, { method: 'PUT', body: JSON.stringify(body) }),
   updateWorkspaceSettings: (workspaceId: string, body: { default_model: string | null }) => request<{ settings: WorkspaceSettings }>(`/api/workspaces/${workspaceId}/settings`, { method: 'PUT', body: JSON.stringify(body) }),
-  credentialStatus: (workspaceId: string, provider: 'gemini' | 'opencode_go') => request<CredentialStatusResponse>(`/api/workspaces/${workspaceId}/credentials/${provider}`),
-  putCredential: (workspaceId: string, provider: 'gemini' | 'opencode_go', key: string) => request<CredentialStatusResponse>(`/api/workspaces/${workspaceId}/credentials/${provider}`, { method: 'PUT', body: JSON.stringify({ key }) }),
-  verifyCredential: (workspaceId: string, provider: 'gemini' | 'opencode_go') => request<{ verified: boolean }>(`/api/workspaces/${workspaceId}/credentials/${provider}/verify`, { method: 'POST', body: JSON.stringify({}) }),
+  credentialStatus: (workspaceId: string, provider: ProviderName) => request<CredentialStatusResponse>(`/api/workspaces/${workspaceId}/credentials/${provider}`),
+  putCredential: (workspaceId: string, provider: ProviderName, key: string) => request<CredentialStatusResponse>(`/api/workspaces/${workspaceId}/credentials/${provider}`, { method: 'PUT', body: JSON.stringify({ key }) }),
+  verifyCredential: (workspaceId: string, provider: ProviderName) => request<{ verified: boolean }>(`/api/workspaces/${workspaceId}/credentials/${provider}/verify`, { method: 'POST', body: JSON.stringify({}) }),
 
   issueTelegramLink: (workspaceId: string) =>
     request<TelegramLinkResponse>(`/api/workspaces/${workspaceId}/telegram/link`, {

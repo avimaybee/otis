@@ -22,6 +22,12 @@ export function HistoryNav(props: HistoryNavProps) {
   const [searching, setSearching] = useState(false); const [query, setQuery] = useState('');
   const input = useRef<HTMLInputElement>(null); const id = useId();
   const closeButton = useRef<HTMLButtonElement>(null);
+  const searchButton = useRef<HTMLButtonElement>(null);
+  const closeSearch = () => {
+    setSearching(false);
+    setQuery('');
+    requestAnimationFrame(() => searchButton.current?.focus());
+  };
   const rows = (chats: Chat[], team: boolean) => chats.filter(chat => chat.title.toLocaleLowerCase().includes(query.toLocaleLowerCase())).map(chat => <button key={chat.id} type="button" className="otis-nav__row" aria-current={chat.id === props.activeChatId ? 'page' : undefined} title={chat.title} onClick={() => props.onSelectChat(chat.id)}><span className="otis-nav__label text-base">{chat.title || 'Untitled conversation'}</span>{team && <span className="otis-nav__author text-xs">{chat.author_display_name ?? props.members?.[chat.author_user_id] ?? 'Teammate'}</span>}</button>);
   const content = <nav className={props.variant === 'drawer' ? 'otis-drawer__nav' : 'otis-sidebar'} aria-label="History">
     <div className="otis-nav__brand"><span className="text-base">Otis</span>{props.variant === 'drawer' && <Button ref={closeButton} variant="ghost" size="icon" className="otis-iconbutton" type="button" aria-label="Close history" onClick={props.onClose}><CloseIcon /></Button>}</div>
@@ -29,9 +35,9 @@ export function HistoryNav(props: HistoryNavProps) {
     {props.workspaces.length > 1 ? <ChoiceSelect id={`${id}-workspace`} label="Workspace" className="otis-nav__workspace" value={props.workspaceId} options={props.workspaces.map(workspace => ({ value: workspace.id, label: workspace.name }))} onChange={props.onSwitchWorkspace}/> : <p className="otis-nav__workspace-label text-base">{props.workspaceName}</p>}
     <Button variant="ghost" className="otis-nav__action justify-start text-sm" type="button" onClick={props.onNewChat}><ComposeIcon /><span>New chat</span></Button>
     {!searching ? (
-      <Button variant="ghost" className="otis-nav__action justify-start text-sm" type="button" aria-expanded={false} onClick={() => { setSearching(true); requestAnimationFrame(() => input.current?.focus()); }}><SearchIcon /><span>Search chats</span></Button>
+      <Button ref={searchButton} variant="ghost" className="otis-nav__action justify-start text-sm" type="button" aria-expanded={false} onClick={() => { setSearching(true); requestAnimationFrame(() => input.current?.focus()); }}><SearchIcon /><span>Search chats</span></Button>
     ) : (
-      <div className="otis-nav__search flex items-center gap-2"><label className="otis-visually-hidden" htmlFor={`${id}-search`}>Filter chat titles</label><Input ref={input} id={`${id}-search`} type="search" placeholder="Search chat titles" value={query} onChange={event => setQuery(event.target.value)} onKeyDown={event => { if (event.key === 'Escape') { setSearching(false); setQuery(''); } }} className="flex-1" /><Button variant="ghost" size="icon-xs" type="button" aria-label="Close search" onClick={() => { setSearching(false); setQuery(''); }}><CloseIcon /></Button></div>
+      <div className="otis-nav__search flex items-center gap-2"><label className="otis-visually-hidden" htmlFor={`${id}-search`}>Filter chat titles</label><Input ref={input} id={`${id}-search`} type="search" placeholder="Search chat titles" value={query} onChange={event => setQuery(event.target.value)} onKeyDown={event => { if (event.key === 'Escape') { event.preventDefault(); closeSearch(); } }} className="flex-1" /><Button variant="ghost" size="icon-xs" type="button" aria-label="Close search" onClick={closeSearch}><CloseIcon /></Button></div>
     )}
     <div className="otis-nav__history" aria-busy={props.loading}>
       <p className="otis-nav__heading text-xs">Your chats</p>{props.ownChats.length ? rows(props.ownChats, false) : <p className="otis-nav__empty text-sm">{props.loading ? 'Loading conversations…' : 'No conversations yet'}</p>}

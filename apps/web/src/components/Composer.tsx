@@ -197,12 +197,12 @@ export function Composer({ disabled, disabledReason, running, commands, models =
               if (event.key === 'Enter' && desktop && !event.shiftKey) { event.preventDefault(); void submit(); }
             }} />
           {micVisible && (
-            <button type="button" className="grid size-9 shrink-0 place-items-center rounded-full text-muted-foreground hover:bg-accent hover:text-foreground" aria-label={voiceController.phase === 'requesting' ? 'Starting recording' : 'Record voice note'} aria-busy={voiceController.phase === 'requesting'} disabled={disabled || voiceController.phase === 'requesting'} onClick={() => void voiceController.start()}>{voiceController.phase === 'requesting' ? <span className="otis-spinner" aria-hidden="true"/> : <MicIcon/>}</button>
+            <button type="button" className="otis-composer__action grid size-9 shrink-0 place-items-center rounded-full text-muted-foreground hover:bg-accent hover:text-foreground" aria-label={voiceController.phase === 'requesting' ? 'Starting recording' : 'Record voice note'} aria-busy={voiceController.phase === 'requesting'} disabled={disabled || voiceController.phase === 'requesting'} onClick={() => void voiceController.start()}>{voiceController.phase === 'requesting' ? <span className="otis-spinner" aria-hidden="true"/> : <MicIcon/>}</button>
           )}
           {running && onStop && !value.trim() ? (
-            <button type="button" className="grid size-9 shrink-0 place-items-center rounded-full bg-primary text-primary-foreground" aria-label="Stop Otis" disabled={stopping} onClick={() => void stop()}><StopIcon/></button>
+            <button type="button" className="otis-composer__action grid size-9 shrink-0 place-items-center rounded-full bg-primary text-primary-foreground" aria-label="Stop Otis" disabled={stopping} onClick={() => void stop()}><StopIcon/></button>
           ) : (
-            <button type="button" className={value.trim() && !disabled ? 'grid size-9 shrink-0 place-items-center rounded-full bg-highlight text-highlight-foreground hover:bg-highlight-hover active:bg-highlight-pressed' : 'grid size-9 shrink-0 place-items-center rounded-full bg-accent text-subtle'} aria-label="Send" aria-busy={sending} disabled={disabled || tooLong || !value.trim() || controlPending || (!modelReady && !(value.trim().startsWith('/') && !value.trim().startsWith('//')))} onClick={() => void submit()}>{sending ? <span className="otis-spinner" aria-hidden="true"/> : <SendIcon/>}</button>
+            <button type="button" className={`otis-composer__action grid size-9 shrink-0 place-items-center rounded-full ${value.trim() && !disabled ? 'bg-highlight text-highlight-foreground hover:bg-highlight-hover active:bg-highlight-pressed' : 'bg-accent text-subtle'}`} aria-label="Send" aria-busy={sending} disabled={disabled || tooLong || !value.trim() || controlPending || (!modelReady && !(value.trim().startsWith('/') && !value.trim().startsWith('//')))} onClick={() => void submit()}>{sending ? <span className="otis-spinner" aria-hidden="true"/> : <SendIcon/>}</button>
           )}
         </>
       )}

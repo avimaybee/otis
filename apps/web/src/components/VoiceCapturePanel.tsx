@@ -84,7 +84,7 @@ export function VoiceCapturePanel({ controller, canSend, onCancel, onSend }: Voi
         <Button variant="ghost" size="sm" type="button" onClick={onCancel}>Cancel</Button>
         <button
           type="button"
-          className="grid size-9 shrink-0 place-items-center rounded-full bg-primary text-primary-foreground"
+          className="otis-composer__action grid size-9 shrink-0 place-items-center rounded-full bg-primary text-primary-foreground"
           aria-label="Stop recording"
           onClick={controller.stop}
         >
@@ -100,7 +100,7 @@ export function VoiceCapturePanel({ controller, canSend, onCancel, onSend }: Voi
       <div className="flex w-full items-center gap-2">
         <button
           type="button"
-          className="grid size-9 shrink-0 place-items-center rounded-full text-muted-foreground hover:bg-accent hover:text-foreground"
+          className="otis-composer__action grid size-9 shrink-0 place-items-center rounded-full text-muted-foreground hover:bg-accent hover:text-foreground"
           aria-label={controller.playing ? 'Pause recording' : 'Play recording'}
           disabled={!controller.recoverable}
           onClick={controller.togglePlayback}
@@ -117,7 +117,7 @@ export function VoiceCapturePanel({ controller, canSend, onCancel, onSend }: Voi
         {controller.recoverable && canSend && (
           <button
             type="button"
-            className="grid size-9 shrink-0 place-items-center rounded-full bg-highlight text-highlight-foreground hover:bg-highlight-hover active:bg-highlight-pressed"
+            className="otis-composer__action grid size-9 shrink-0 place-items-center rounded-full bg-highlight text-highlight-foreground hover:bg-highlight-hover active:bg-highlight-pressed"
             aria-label={controller.uploadState === 'failed' ? 'Retry sending voice note' : 'Send voice note'}
             aria-busy={uploading}
             disabled={uploading}

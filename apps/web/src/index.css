@@ -43,7 +43,7 @@
 .otis-topbar__actions { display: flex; flex: none; align-items: center; gap: 4px; }
 
 /* 44px touch hit area around the 36px desktop visual. */
-.otis-iconbutton { position: relative; display: inline-flex; flex: none; width: 44px; height: 44px; align-items: center; justify-content: center; padding: 0; border: 0; border-radius: 8px; background: transparent; color: var(--muted-foreground); }
+.otis-iconbutton { position: relative; display: inline-flex; flex: none; width: 44px; height: 44px; align-items: center; justify-content: center; padding: 0; border: 0; border-radius: 8px; background: transparent; color: var(--muted-foreground); transition: background-color 150ms ease-out, color 150ms ease-out; }
 .otis-iconbutton:hover { background: var(--accent); color: var(--foreground); }
 .otis-stop-square { display: block; width: 12px; height: 12px; background: currentColor; }
 @media (min-width: 56.25rem) and (pointer: fine) {
@@ -111,6 +111,9 @@
 .otis-working__disclosure { display: flex; align-items: center; gap: 8px; align-self: flex-start; min-height: 44px; padding: 0; border: 0; background: transparent; color: var(--muted-foreground); cursor: pointer; }
 .otis-working__disclosure svg { transition: transform 150ms ease-out; }
 .otis-working__disclosure[aria-expanded='false'] svg { transform: rotate(-90deg); }
+.otis-thinking__trigger { display: flex; align-items: center; gap: 8px; min-height: 32px; padding: 0; border: 0; background: transparent; color: var(--muted-foreground); cursor: pointer; }
+.otis-thinking__trigger svg { transition: transform 150ms ease-out; }
+.otis-thinking__trigger[data-state='closed'] svg { transform: rotate(-90deg); }
 .otis-working__pulse-dot { display: inline-block; width: 8px; height: 8px; border-radius: 9999px; background-color: var(--highlight); flex-shrink: 0; }
 .otis-working__steps { display: flex; flex-direction: column; gap: 8px; margin: 0; padding: 0; list-style: none; }
 .otis-working__step { display: flex; align-items: center; gap: 8px; min-height: 32px; }
@@ -138,7 +141,7 @@
 .otis-sidebar { display: none; width: 280px; flex: none; flex-direction: column; min-height: 0; padding: 8px 0; background: var(--sidebar); border-right: 1px solid var(--sidebar-border); }
 .otis-nav__brand { display: flex; height: 44px; align-items: center; justify-content: space-between; padding: 0 16px; }
 .otis-nav__workspace-label { padding: 8px 16px; margin: 0 0 8px; }
-.otis-nav__action, .otis-nav__row { display: flex; flex: none; width: 100%; align-items: center; gap: 8px; padding: 8px 16px; border: 0; border-left: 2px solid transparent; background: transparent; text-align: left; color: var(--muted-foreground); }
+.otis-nav__action, .otis-nav__row { display: flex; flex: none; width: 100%; align-items: center; gap: 8px; padding: 8px 16px; border: 0; border-left: 2px solid transparent; background: transparent; text-align: left; color: var(--muted-foreground); transition: background-color 150ms ease-out, color 150ms ease-out; }
 .otis-nav__action { min-height: 44px; }
 .otis-nav__row { height: 40px; }
 .otis-nav__action:hover, .otis-nav__row:hover { background: var(--sidebar-hover); color: var(--foreground); }
@@ -175,7 +178,7 @@
 .otis-detail__value { white-space: pre-wrap; overflow-wrap: anywhere; }
 blockquote.otis-detail__value { margin: 0; padding-left: 12px; border-left: 1px solid var(--border); }
 .otis-sources { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 4px; }
-.otis-source-link { display: inline-flex; align-items: center; gap: 8px; min-height: 44px; padding: 8px 12px; border: 0; border-radius: 8px; background: transparent; color: var(--muted-foreground); cursor: pointer; }
+.otis-source-link { display: inline-flex; align-items: center; gap: 8px; min-height: 44px; padding: 8px 12px; border: 0; border-radius: 8px; background: transparent; color: var(--muted-foreground); cursor: pointer; transition: background-color 150ms ease-out, color 150ms ease-out; }
 .otis-source-link:hover { background: var(--accent); color: var(--foreground); }
 .otis-button { display: inline-flex; min-height: 44px; align-items: center; justify-content: center; gap: 8px; }
 a.otis-button, a.otis-button:hover { text-decoration: none; }
