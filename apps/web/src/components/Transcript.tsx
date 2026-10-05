@@ -472,13 +472,23 @@ export function activityToSteps(activities: PublicActivity[], runActions: RunDet
       const receipt = runActions.find(action => action.action_id === payload.action_id);
       const label = stepLabel(payload.command_name ?? 'Saved a change', receipt?.summary);
       const summary = receipt?.summary && label.includes(receipt.summary) ? null : (receipt?.summary ?? null);
-      steps.push({
-        id: activity.id,
-        label,
-        state: receipt ? 'succeeded' : 'running',
-        actionId: receipt?.action_id,
-        summary,
-      });
+      const existing = [...steps].reverse().find(step => !step.actionId || step.actionId === payload.action_id);
+      if (existing) {
+        existing.actionId = receipt?.action_id;
+        existing.state = receipt ? 'succeeded' : 'running';
+        if (receipt?.summary) {
+          existing.label = label;
+          existing.summary = summary;
+        }
+      } else {
+        steps.push({
+          id: activity.id,
+          label,
+          state: receipt ? 'succeeded' : 'running',
+          actionId: receipt?.action_id,
+          summary,
+        });
+      }
     }
     if (activity.type === 'action_reverted') {
       const target = steps.find(step => step.actionId === payload.action_id);
