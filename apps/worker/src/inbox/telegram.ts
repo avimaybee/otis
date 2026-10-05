@@ -1284,9 +1284,14 @@ export async function acceptTelegramInbound(
     }
   }
 
-  const initialTitle = normalized.kind === 'text' && normalized.text
+  const dynamicTopic = normalized.kind === 'text' && normalized.text
     ? generateChatTitle(normalized.text)
-    : 'Telegram Conversation';
+    : normalized.kind === 'voice'
+    ? 'Voice Note'
+    : null;
+  const initialTitle = dynamicTopic && dynamicTopic !== 'New conversation'
+    ? `Telegram · ${dynamicTopic}`
+    : 'Telegram';
 
   if (!chatId) {
     const chat = await createChat(db, {
@@ -1306,14 +1311,23 @@ export async function acceptTelegramInbound(
       .prepare(`SELECT title FROM chats WHERE id = ? AND workspace_id = ?`)
       .bind(chatId, workspaceId)
       .first<{ title: string }>();
-    if (existing?.title === 'Telegram Conversation' || existing?.title === 'New conversation') {
+    const isGeneric = !existing?.title ||
+      existing.title === 'Telegram' ||
+      existing.title === 'Telegram · Voice Note' ||
+      existing.title === 'Telegram Conversation' ||
+      existing.title === 'New conversation' ||
+      existing.title === 'Untitled conversation';
+    if (isGeneric) {
       try {
-        await updateChatTitle(db, {
-          workspaceId,
-          chatId,
-          userId,
-          title: generateChatTitle(normalized.text),
-        });
+        const topic = generateChatTitle(normalized.text);
+        if (topic && topic !== 'New conversation') {
+          await updateChatTitle(db, {
+            workspaceId,
+            chatId,
+            userId,
+            title: `Telegram · ${topic}`,
+          });
+        }
       } catch {
         // Non-fatal title update
       }

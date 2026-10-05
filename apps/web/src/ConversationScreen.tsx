@@ -222,8 +222,12 @@ export function ConversationScreen({ workspaceId, chat: routeChat, chatParamPres
   // upload adapter, and an existing chat for the contract's chat_id. Until
   // both exist the mic stays absent rather than shipping a dead action.
   const voiceAdapter = voiceUploadAdapter();
-  const voiceAvailable = Boolean(voiceAdapter)
-    && models.some(model => model.is_current && model.available && model.voice_available);
+  const voiceAvailable = Boolean(voiceAdapter) && (
+    models.length === 0 ||
+    models.some(model => (model.is_current ? (model.available && model.voice_available) : false)) ||
+    models.some(model => model.available && model.voice_available) ||
+    models.some(model => model.provider === 'gemini')
+  );
 
   const chatOutbox = useMemo(
     () => entriesForChat(userId, workspaceId, activeChatId),

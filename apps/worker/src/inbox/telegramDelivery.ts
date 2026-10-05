@@ -375,6 +375,36 @@ export async function sendTelegramText(
 }
 
 /**
+ * Sends a chat action (e.g. 'typing') to Telegram so users see the bot working.
+ */
+export async function sendTelegramChatAction(
+  botToken: string,
+  telegramChatId: string | number,
+  action: 'typing' | 'record_voice' | 'upload_voice' = 'typing',
+  fetchFn: TelegramSendFetch = fetch,
+  timeoutMs = 5000,
+): Promise<boolean> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetchFn(`${TELEGRAM_API_BASE}/bot${botToken}/sendChatAction`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      signal: controller.signal,
+      body: JSON.stringify({
+        chat_id: telegramChatId,
+        action,
+      }),
+    });
+    return response.ok;
+  } catch {
+    return false;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
  * Reasons are persisted and may surface in logs/diagnostics: strip anything
  * shaped like a bot token so a token can never leak through an error string.
  */

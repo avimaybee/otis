@@ -15,6 +15,7 @@ import { validateTelegramWebhookSecret } from '@otis/channels';
 import type { Env } from '../index.js';
 import { jsonError, jsonSuccess } from '../middleware/errors.js';
 import { acceptTelegramInbound } from '../inbox/telegram.js';
+import { sendTelegramChatAction } from '../inbox/telegramDelivery.js';
 import { publishDispatchHint, publishTelegramDeliveryHint } from '../dispatchHint.js';
 import { processTranscriptionJobs } from '../media/transcription.js';
 import { extractPlatformKeys } from '../providers/service.js';
@@ -83,6 +84,20 @@ export async function handleTelegramWebhook(
       }).catch(() => undefined);
       if (ctx) ctx.waitUntil(pass);
       else void pass;
+    }
+    // Show Telegram native typing indicator so user sees the bot working immediately
+    if (result.status === 'accepted' && env.TELEGRAM_BOT_TOKEN) {
+      const tgChatId = (body as { message?: { chat?: { id?: number | string } } })?.message?.chat?.id;
+      if (tgChatId && ctx) {
+        ctx.waitUntil(
+          sendTelegramChatAction(
+            env.TELEGRAM_BOT_TOKEN,
+            tgChatId,
+            'typing',
+            env.ENVIRONMENT === 'test' ? undefined : fetch,
+          ).catch(() => undefined),
+        );
+      }
     }
     // The work is already durable; hints are never load-bearing. A lost hint
     // is covered by the cron sweep, and delivery claims are idempotent.

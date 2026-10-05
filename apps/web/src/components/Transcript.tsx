@@ -170,11 +170,10 @@ function RunWork({ run, steps, activities, onInspectAction, onReply, hasAgentMes
     return !payload || typeof payload.block_id !== 'string' || !payload.block_id;
   });
   return <div className="otis-run">
-    {run?.status === 'queued' && <p className="otis-run__status text-sm text-subtle" role="status">Thinking…</p>}
-    {run?.status === 'running' && !steps.length && thinking.blocks.length === 0 && (
+    {(run?.status === 'queued' || (run?.status === 'running' && !steps.length && thinking.blocks.length === 0)) && (
       <div className="mb-2 flex items-center gap-2 text-xs text-muted-foreground" role="status">
         <span aria-hidden="true" className="size-2 shrink-0 rounded-full bg-highlight" />
-        <span>Working…</span>
+        <span>{run?.status === 'queued' ? 'Thinking…' : 'Working…'}</span>
       </div>
     )}
     {steps.length === 0 && thinking.blocks.length > 0 && (

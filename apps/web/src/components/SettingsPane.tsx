@@ -4,7 +4,6 @@ import { api, ApiError } from '../api/client.js';
 import { CloseIcon } from './icons.js';
 import { Overlay } from './Overlay.js';
 import { ChoiceSelect } from './ui/select.js';
-import { ProviderConnection } from './ProviderConnection.js';
 import { TelegramConnection } from './TelegramConnection.js';
 import { Button } from './ui/button.js';
 import { Input } from './ui/input.js';
@@ -199,10 +198,6 @@ export function SettingsPane({
     } catch (err) { handleError(err); }
     finally { setBusy(null); }
   };
-  const connectionsUpdated = () => {
-    void api.models(workspaceId).then(result => setModels(result.models)).catch(() => setMessage('Could not refresh available models. Close and reopen settings.'));
-    onUpdated?.();
-  };
   return <Overlay label="Settings" className="otis-overlay--settings" onClose={onClose}><section className="otis-settings">
     <header className="otis-pane-header"><h2 className="text-base font-medium">Settings</h2><Button variant="ghost" size="icon" type="button" className="otis-iconbutton" aria-label="Close settings" onClick={onClose}><CloseIcon/></Button></header>
     <div className="otis-settings__tabs" role="tablist" aria-label="Settings sections">
@@ -210,7 +205,6 @@ export function SettingsPane({
     </div>
     <div className="otis-settings__content text-sm" id={`${id}-${tab}`} role="tabpanel" aria-labelledby={`${id}-${tab}-tab`}>
       {!loaded ? <p role="status" className="text-sm">Loading settings…</p> : tab === 'personal' ? <>
-        <div className="otis-settings__section"><label htmlFor={`${id}-language`} className="text-sm font-medium">Reply language</label><ChoiceSelect id={`${id}-language`} label="Reply language" value={personal!.preferred_language} options={[{ value: 'auto', label: 'Automatic (matches your language)' }, { value: 'en', label: 'English' }, { value: 'ro', label: 'Română' }, { value: 'hu', label: 'Magyar' }]} onChange={(value: string) => void savePersonal('language', { preferred_language: value })} disabled={Boolean(busy)}/></div>
         <div className="otis-settings__section">
           <div className="flex items-center justify-between">
             <h3 className="text-sm font-medium">Morning brief schedule</h3>
@@ -295,7 +289,6 @@ export function SettingsPane({
           </div>
         )}
         <div className="otis-settings__section"><label htmlFor={`${id}-model`} className="text-sm font-medium">Workspace model</label><p className="otis-detail__label text-xs">Chats follow this model unless you choose another in that chat.</p><ChoiceSelect id={`${id}-model`} label="Workspace model" value={defaultModel ?? 'none'} options={[{ value: 'none', label: 'No default model' }, ...models.filter(model => model.available || model.command_key === defaultModel).map(model => ({ value: model.command_key, label: model.display_name, disabled: !model.available }))]} onChange={(value: string) => void saveDefault(value)} disabled={Boolean(busy)}/></div>
-        <div className="otis-settings__section"><h3 className="text-sm font-medium">Connections</h3><ProviderConnection workspaceId={workspaceId} provider="opencode_go" name="OpenCode Go" onUpdated={connectionsUpdated}/><ProviderConnection workspaceId={workspaceId} provider="gemini" name="Gemini" onUpdated={connectionsUpdated}/><ProviderConnection workspaceId={workspaceId} provider="groq" name="Groq (Voice Transcription)" onUpdated={connectionsUpdated}/></div>
         <div className="otis-settings__section">
           <div className="flex items-center justify-between">
             <h3 className="text-sm font-medium">Workspace members</h3>

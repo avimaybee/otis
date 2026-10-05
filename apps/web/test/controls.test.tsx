@@ -40,7 +40,7 @@ describe('Authoritative conversation controls', () => {
     const send = vi.spyOn(api, 'sendMessage');
     const command = vi.spyOn(api, 'executeCommand').mockImplementation(async (_ws, _chat, _id, text) => { choice = text.split(' ')[1]!; return { status: 'accepted', message_id: 'control', run_id: 'command', acceptance_sequence: 1, command_applied: true }; });
     const view = await mountRoute('/?workspace=ws&chat=chat', { userId: 'avi', workspaces: [{ id: 'ws', name: 'Kerning' }], members: { avi: 'Avi' }, onSignOut: vi.fn() });
-    const trigger = view.host.querySelector('[aria-label="Chat options"]') as HTMLElement;
+    const trigger = (view.host.querySelector('[aria-label="Select model and thinking effort"]') ?? view.host.querySelector('[aria-label="Chat options"]')) as HTMLElement;
     expect(trigger).toBeTruthy();
     await openMenu(trigger);
     const current = Array.from(document.querySelectorAll('[role="menuitemradio"]')).find(item => item.getAttribute('aria-checked') === 'true' && item.textContent === 'Medium') as HTMLElement;
@@ -74,7 +74,7 @@ describe('Authoritative conversation controls', () => {
       return { status: 'accepted', message_id: 'control', run_id: 'command', acceptance_sequence: 1, command_applied: true };
     });
     const view = await mountRoute('/?workspace=ws&chat=chat', { userId: 'avi', workspaces: [{ id: 'ws', name: 'Kerning' }], members: { avi: 'Avi' }, onSignOut: vi.fn() });
-    const trigger = view.host.querySelector('[aria-label="Chat options"]') as HTMLElement;
+    const trigger = (view.host.querySelector('[aria-label="Select model and thinking effort"]') ?? view.host.querySelector('[aria-label="Chat options"]')) as HTMLElement;
     await openMenu(trigger);
     const high = Array.from(document.querySelectorAll('[role="menuitemradio"]')).find(item => item.textContent === 'High') as HTMLElement;
     expect(high).toBeTruthy();
@@ -98,17 +98,25 @@ describe('Authoritative conversation controls', () => {
 });
 
 describe('Independent personal settings', () => {
-  it('saves a reply language without requiring or inventing a timezone', async () => {
+  it('saves brief timezone without requiring or inventing settings', async () => {
     vi.spyOn(api, 'settings').mockResolvedValue({ settings: { workspace_id: 'ws', default_model: null, created_at: '', updated_at: '' } });
     vi.spyOn(api, 'memberSettings').mockResolvedValue({ settings: own });
     vi.spyOn(api, 'models').mockResolvedValue({ models: [], current_command_key: null, default_command_key: null });
-    const update = vi.spyOn(api, 'updateMemberSettings').mockResolvedValue({ settings: { ...own, preferred_language: 'ro' } });
+    const update = vi.spyOn(api, 'updateMemberSettings').mockResolvedValue({ settings: { ...own, brief_timezone: 'Europe/Bucharest' } });
     const view = await mount(<SettingsPane workspaceId="ws" workspaceName="Kerning" onClose={vi.fn()} onSignOut={vi.fn()}/>);
-    const trigger = view.host.querySelector('[aria-label="Reply language"]') as HTMLElement;
-    await openMenu(trigger);
-    const option = Array.from(document.querySelectorAll('[role="option"]')).find(item => item.textContent?.includes('Română')) as HTMLElement;
-    expect(option).toBeTruthy(); await React.act(async () => option.click());
-    expect(update).toHaveBeenCalledWith('ws', { preferred_language: 'ro' });
-    expect(view.host.querySelector('input')!.value).toBe(''); await view.unmount();
+    const input = view.host.querySelector('input') as HTMLInputElement;
+    expect(input).toBeTruthy();
+    await React.act(async () => {
+      const nativeSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')?.set;
+      nativeSetter?.call(input, 'Europe/Bucharest');
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    const form = view.host.querySelector('form');
+    await React.act(async () => {
+      form?.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+    });
+    expect(update).toHaveBeenCalledWith('ws', { brief_timezone: 'Europe/Bucharest' });
+    await view.unmount();
   });
 });

@@ -6,10 +6,19 @@ import { cancelDraftSave, deleteDraft, draftSession, flushDraftSaves, loadDraft,
 import type { VoiceUploadAdapter } from '../api/voice.js';
 import { useMediaQuery } from '../hooks/useMediaQuery.js';
 import { useVoiceRecorder, type VoiceController, type VoiceRecorderEnvironment, type VoiceRecorderScope } from '../hooks/useVoiceRecorder.js';
-import { CloseIcon, MicIcon, SendIcon, StopIcon } from './icons.js';
+import { ChevronDownIcon, CloseIcon, MicIcon, SendIcon, StopIcon } from './icons.js';
 import { VoiceCapturePanel } from './VoiceCapturePanel.js';
 import { Button } from './ui/button.js';
 import { Command, CommandItem, CommandList } from './ui/command.js';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuLabel,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from './ui/dropdown-menu.js';
 
 export interface ClarificationContext {
   id?: string; question: string; candidates?: string[] | null; missing_fields?: string[];
@@ -172,6 +181,7 @@ export function Composer({ disabled, disabledReason, running, commands, models =
     !currentThinking || currentThinking.is_default || !currentThinking.current_choice_id
       ? 'Provider default'
       : (currentThinking.choices.find(c => c.id === currentThinking.current_choice_id)?.label ?? 'Provider default');
+  const followsDefault = !models.some(m => m.is_current && !m.is_default);
 
   return <div className="otis-composer"><div className="otis-composer__inner">
     {replyTo && <div className="otis-reply-context text-xs flex items-center justify-between"><span className="truncate">Replying to Otis: {replyTo.question}</span><Button variant="ghost" size="icon-xs" type="button" aria-label="Dismiss question" onClick={replyTo.onCancel}><CloseIcon/></Button></div>}
@@ -216,10 +226,62 @@ export function Composer({ disabled, disabledReason, running, commands, models =
                   )}
                 </div>
               )}
-              {current && (
-                <span className="text-xs text-muted-foreground select-none" title="Chat model. Change via chat options or /model.">
-                  {currentModelLabel}{currentThinking?.state === 'supported' && currentThinkingLabel !== 'Provider default' ? ` · ${currentThinkingLabel}` : ''}
-                </span>
+              {models.length > 0 && current && (
+                <DropdownMenu modal={false}>
+                  <DropdownMenuTrigger asChild>
+                    <button
+                      type="button"
+                      className="flex items-center gap-1 rounded-full border border-border bg-card/70 px-2 py-1 text-xs text-muted-foreground hover:bg-accent hover:text-foreground transition-colors cursor-pointer select-none"
+                      disabled={controlPending}
+                      aria-label="Select model and thinking effort"
+                    >
+                      <span className="font-medium text-foreground">{currentModelLabel}</span>
+                      {currentThinking?.state === 'supported' && currentThinkingLabel !== 'Provider default' && (
+                        <span className="text-subtle">· {currentThinkingLabel}</span>
+                      )}
+                      <ChevronDownIcon />
+                    </button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="start" side="top" className="w-56" aria-label="Select model">
+                    <DropdownMenuLabel>Model</DropdownMenuLabel>
+                    <DropdownMenuRadioGroup
+                      value={followsDefault ? 'default' : current.command_key}
+                      onValueChange={key => { void onCommand?.(`/model ${key}`); }}
+                    >
+                      <DropdownMenuRadioItem value="default" disabled={controlPending}>
+                        <div className="flex flex-col">
+                          <span className="font-medium">Workspace default</span>
+                          <span className="text-xs text-muted-foreground">
+                            {models.find(m => m.is_default)?.display_name ?? 'No default model'}
+                          </span>
+                        </div>
+                      </DropdownMenuRadioItem>
+                      {models.filter(m => m.available).map(m => (
+                        <DropdownMenuRadioItem key={m.command_key} value={m.command_key} disabled={controlPending}>
+                          <span className="font-medium">{m.display_name}</span>
+                        </DropdownMenuRadioItem>
+                      ))}
+                    </DropdownMenuRadioGroup>
+
+                    {currentThinking?.state === 'supported' && currentThinking.choices.length > 0 && (
+                      <>
+                        <DropdownMenuSeparator />
+                        <DropdownMenuLabel>Thinking effort</DropdownMenuLabel>
+                        <DropdownMenuRadioGroup
+                          value={currentThinking.is_default ? 'default' : currentThinking.current_choice_id ?? 'default'}
+                          onValueChange={key => { void onCommand?.(`/thinking ${key}`); }}
+                        >
+                          <DropdownMenuRadioItem value="default" disabled={controlPending}>Provider default</DropdownMenuRadioItem>
+                          {currentThinking.choices.map(choice => (
+                            <DropdownMenuRadioItem key={choice.id} value={choice.id} disabled={controlPending}>
+                              {choice.label}
+                            </DropdownMenuRadioItem>
+                          ))}
+                        </DropdownMenuRadioGroup>
+                      </>
+                    )}
+                  </DropdownMenuContent>
+                </DropdownMenu>
               )}
             </div>
 

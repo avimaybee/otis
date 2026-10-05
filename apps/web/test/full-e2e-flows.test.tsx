@@ -774,13 +774,13 @@ describe('End-to-End UI to Backend Flow Verification', () => {
 
     // Workspace model setting should be visible
     expect(view.host.textContent).toContain('Workspace model');
-    expect(view.host.textContent).toContain('Connections');
+    expect(view.host.textContent).not.toContain('Connections');
 
     await view.unmount();
   });
 
-  // FLOW 9: Provider Connection Lifecycle
-  it('Flow 9: saves new provider API key and verifies credential status', async () => {
+  // FLOW 9: Platform Universal Models (No BYOK keys required from user)
+  it('Flow 9: uses universal platform credentials without requiring user API keys', async () => {
     const ownSettings: MemberSettings = {
       workspace_id: WS,
       user_id: USER,
@@ -812,11 +812,6 @@ describe('End-to-End UI to Backend Flow Verification', () => {
     vi.spyOn(api, 'settings').mockResolvedValue({ settings: wsSettings });
     vi.spyOn(api, 'memberSettings').mockResolvedValue({ settings: ownSettings });
 
-    // Provider starts not connected
-    vi.spyOn(api, 'credentialStatus').mockResolvedValue({ credential: null });
-    const putCredSpy = vi.spyOn(api, 'putCredential').mockResolvedValue({ credential: { provider: 'gemini', status: 'available', updated_at: TIMESTAMP } });
-    const verifyCredSpy = vi.spyOn(api, 'verifyCredential').mockResolvedValue({ verified: true });
-
     const view = await mount(
       <RouteShell />
     );
@@ -829,23 +824,11 @@ describe('End-to-End UI to Backend Flow Verification', () => {
     const wsTab = Array.from(view.host.querySelectorAll('[role="tab"]')).find(t => t.textContent === 'Kerning') as HTMLElement;
     await React.act(async () => wsTab.click());
 
-    // Click "Connect" for Gemini
+    // No user-facing key configuration or connect buttons exist
     const connectButtons = Array.from(view.host.querySelectorAll('button')).filter(b => b.textContent === 'Connect');
-    expect(connectButtons.length).toBeGreaterThan(0);
-    await React.act(async () => connectButtons[0]!.click());
-
-    // Enter API key in password input
-    const pwInput = view.host.querySelector('input[type="password"]') as HTMLInputElement;
-    expect(pwInput).toBeTruthy();
-    await fill(pwInput, 'test-gemini-api-key-12345');
-
-    // Click "Save and check key"
-    const saveKeyBtn = Array.from(view.host.querySelectorAll('button')).find(b => b.textContent === 'Save and check key') as HTMLButtonElement;
-    expect(saveKeyBtn).toBeTruthy();
-    await React.act(async () => saveKeyBtn.click());
-
-    expect(putCredSpy).toHaveBeenCalledWith(WS, expect.stringMatching(/gemini|opencode_go/), 'test-gemini-api-key-12345');
-    expect(verifyCredSpy).toHaveBeenCalledWith(WS, expect.stringMatching(/gemini|opencode_go/));
+    expect(connectButtons).toHaveLength(0);
+    const pwInputs = view.host.querySelectorAll('input[type="password"]');
+    expect(pwInputs).toHaveLength(0);
 
     await view.unmount();
   });

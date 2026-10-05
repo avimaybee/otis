@@ -407,9 +407,8 @@ export function buildWorkspaceSttConfig(
       transcriptionVerified: stored.verified_formats.length === 3,
     };
   }
-  // Zero-setup platform usage: when Groq credentials exist on the platform
-  // and the workspace has not explicitly disabled voice, provide default STT.
-  if (credentialStatus === 'available' && stored.provider === null && !stored.enabled) {
+  // Zero-setup universal platform usage: provide default STT whenever Groq credential is available
+  if (credentialStatus === 'available') {
     return {
       enabled: true,
       provider: 'groq',
