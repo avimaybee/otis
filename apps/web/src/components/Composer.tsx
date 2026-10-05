@@ -195,7 +195,7 @@ export function Composer({ disabled, disabledReason, running, commands, models =
       {voiceActive ? (
         <VoiceCapturePanel
           controller={voiceController}
-          canSend={Boolean(voice?.adapter) && Boolean(voice?.scope?.chatId)}
+          canSend={Boolean(voice?.adapter) && Boolean(voice?.scope?.workspaceId)}
           onCancel={() => voiceController.cancel()}
           onSend={() => void voiceController.send()}
         />

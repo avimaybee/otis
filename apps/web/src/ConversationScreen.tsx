@@ -512,8 +512,13 @@ export function ConversationScreen({ workspaceId, chat: routeChat, chatParamPres
     chatId?: string;
   }): Promise<void> => {
     if (accessLost) throw new Error('Voice send is unavailable.');
-    const targetChatId = result.chatId ?? activeChatId;
-    if (!targetChatId) throw new Error('Open a conversation before sending a voice note.');
+    let targetChatId = result.chatId ?? activeChatId;
+    if (!targetChatId) {
+      const pendingKey = getOrCreatePendingNewChat(userId, workspaceId);
+      const created = await api.createChat(workspaceId, `new-${pendingKey}`, userId);
+      targetChatId = created.chat.id;
+      setNewChatMapping(pendingKey, targetChatId, userId);
+    }
     const existing = getOutboxEntry(result.clientMessageId);
     if (existing?.state === 'saved') return;
     if (existing?.state === 'failed') {
@@ -534,11 +539,12 @@ export function ConversationScreen({ workspaceId, chat: routeChat, chatParamPres
     }
     if (!activeChatId && targetChatId) {
       navigate(workspaceId, targetChatId);
+      void queryClient.invalidateQueries({ queryKey: qk.chats(userId, workspaceId, 'mine') });
     }
     requestFlush('voice');
     const outcome = await awaitOutboxSettlement(result.clientMessageId);
     if (outcome === 'failed') throw new Error('Voice message not accepted.');
-  }, [accessLost, activeChatId, userId, workspaceId, navigate]);
+  }, [accessLost, activeChatId, userId, workspaceId, navigate, queryClient]);
 
   const retryMessage = useCallback((clientId: string): void => {
     if (!retryOutboxEntry(clientId)) return;
