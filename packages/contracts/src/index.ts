@@ -118,6 +118,8 @@ export interface WorkspaceMember {
   joined_at: string;
   created_at: string;
   updated_at: string;
+  display_name?: string | null;
+  email?: string | null;
 }
 
 export interface WorkspaceSummary {
@@ -175,6 +177,8 @@ export interface ProviderCredentialMetadata {
   status: ProviderStatus;
   last_verified_at: string | null;
   key_version: number;
+  source?: 'platform' | 'workspace';
+  has_platform_fallback?: boolean;
 }
 
 export interface WorkspaceSettings {

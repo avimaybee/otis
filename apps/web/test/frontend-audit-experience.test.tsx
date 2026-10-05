@@ -4,10 +4,13 @@ import * as React from 'react';
 import { createRoot } from 'react-dom/client';
 import { SignInView } from '../src/components/SignInView.js';
 import { SettingsPane } from '../src/components/SettingsPane.js';
-import { Transcript } from '../src/components/Transcript.js';
+import { Transcript, formatOutcomeSummary, consolidateWorkingSteps } from '../src/components/Transcript.js';
+import { DetailPane } from '../src/components/DetailPane.js';
 import { Composer } from '../src/components/Composer.js';
 import { ChatOverflow } from '../src/components/ChatOverflow.js';
 import { HistoryNav } from '../src/components/HistoryNav.js';
+import { ProviderConnection } from '../src/components/ProviderConnection.js';
+import { Command, CommandItem, CommandList } from '../src/components/ui/command.js';
 import { TestQueryProvider } from './query.js';
 import { api } from '../src/api/client.js';
 import type { ChatMessage, MemberSettings, RunDetailResponse } from '@otis/contracts';
@@ -254,7 +257,7 @@ describe('Frontend Experience Audit & Confidence Verification (FE-01 - FE-16)', 
       await view.unmount();
     });
 
-    it('renders "Received by Otis · Starting…" when run is queued', async () => {
+    it('renders "Thinking…" when run is queued', async () => {
       const runDetail: RunDetailResponse = {
         run: {
           id: 'run_start_test',
@@ -299,7 +302,7 @@ describe('Frontend Experience Audit & Confidence Verification (FE-01 - FE-16)', 
         />,
       );
 
-      expect(view.host.textContent).toContain('Received by Otis · Starting…');
+      expect(view.host.textContent).toContain('Thinking…');
 
       await view.unmount();
     });
@@ -677,6 +680,491 @@ describe('Frontend Experience Audit & Confidence Verification (FE-01 - FE-16)', 
       expect(document.body.textContent).not.toContain('Voice unavailable');
 
       await view.unmount();
+    });
+  });
+
+  describe('LIVE-01: Sign-in Proposition and Purpose', () => {
+    it('displays product purpose before shared-conversation disclosure', async () => {
+      const view = await mount(<SignInView onSignedIn={vi.fn()} />);
+
+      expect(view.host.textContent).toContain('Sign in to Otis');
+      expect(view.host.textContent).toContain('Keep track of visits, promises, and follow-ups.');
+      expect(view.host.textContent).toContain('Members of a workspace can read its shared conversations and retained voice notes.');
+
+      const proposition = view.host.querySelector('.otis-entry__proposition');
+      const note = view.host.querySelector('.otis-entry__note');
+      expect(proposition).toBeTruthy();
+      expect(note).toBeTruthy();
+
+      await view.unmount();
+    });
+  });
+
+  describe('LIVE-02: Brief Schedule Unified Presentation', () => {
+    it('presents morning brief status and timing alongside timezone configuration', async () => {
+      vi.spyOn(api, 'settings').mockResolvedValue({
+        settings: { workspace_id: 'ws_test', default_model: null, created_at: '', updated_at: '' },
+      });
+      vi.spyOn(api, 'memberSettings').mockResolvedValue({
+        settings: {
+          ...mockMemberSettings,
+          brief_enabled: true,
+          brief_local_time: '08:30',
+          brief_weekdays: [1, 2, 3, 4, 5],
+          brief_channel: 'web',
+        },
+      });
+      vi.spyOn(api, 'models').mockResolvedValue({ models: [], current_command_key: null, default_command_key: null });
+      vi.spyOn(api, 'listMembers').mockResolvedValue({ members: [] });
+
+      const view = await mount(
+        <SettingsPane
+          workspaceId="ws_test"
+          workspaceName="Kerning Test"
+          currentUserRole="owner"
+          onClose={vi.fn()}
+          onSignOut={vi.fn()}
+        />,
+      );
+
+      expect(view.host.textContent).toContain('Morning brief schedule');
+      expect(view.host.textContent).toContain('Enabled');
+      expect(view.host.textContent).toContain('08:30');
+      expect(view.host.textContent).toContain('Mon, Tue, Wed, Thu, Fri');
+      expect(view.host.textContent).toContain('Brief schedule timezone');
+
+      await view.unmount();
+    });
+
+    it('explains disabled state when brief is not yet scheduled', async () => {
+      vi.spyOn(api, 'settings').mockResolvedValue({
+        settings: { workspace_id: 'ws_test', default_model: null, created_at: '', updated_at: '' },
+      });
+      vi.spyOn(api, 'memberSettings').mockResolvedValue({ settings: mockMemberSettings });
+      vi.spyOn(api, 'models').mockResolvedValue({ models: [], current_command_key: null, default_command_key: null });
+      vi.spyOn(api, 'listMembers').mockResolvedValue({ members: [] });
+
+      const view = await mount(
+        <SettingsPane
+          workspaceId="ws_test"
+          workspaceName="Kerning Test"
+          currentUserRole="owner"
+          onClose={vi.fn()}
+          onSignOut={vi.fn()}
+        />,
+      );
+
+      expect(view.host.textContent).toContain('Morning brief schedule');
+      expect(view.host.textContent).toContain('Disabled');
+      expect(view.host.textContent).toContain('Morning briefs start disabled until you configure a schedule.');
+
+      await view.unmount();
+    });
+  });
+
+  describe('LIVE-03: Provider Effective Access and Truthful Status', () => {
+    it('renders platform-included provider with Included badge, purpose, and custom key action without remove button', async () => {
+      vi.spyOn(api, 'credentialStatus').mockResolvedValue({
+        status: 'ok',
+        credential: {
+          provider: 'opencode_go',
+          status: 'available',
+          key_version: 1,
+          last_verified_at: null,
+          source: 'platform',
+          has_platform_fallback: true,
+        },
+      });
+
+      const view = await mount(
+        <ProviderConnection
+          workspaceId="ws_test"
+          provider="opencode_go"
+          name="OpenCode Go"
+          onUpdated={vi.fn()}
+        />,
+      );
+
+      expect(view.host.textContent).toContain('OpenCode Go');
+      expect(view.host.textContent).toContain('Included');
+      expect(view.host.textContent).toContain('Chat & reasoning inference · Included with Otis platform');
+      expect(view.host.textContent).toContain('Provide custom key');
+      expect(view.host.textContent).not.toContain('Remove');
+
+      await view.unmount();
+    });
+
+    it('renders workspace custom key with Custom key badge, Replace key, and Remove key with confirmation', async () => {
+      vi.spyOn(api, 'credentialStatus').mockResolvedValue({
+        status: 'ok',
+        credential: {
+          provider: 'gemini',
+          status: 'available',
+          key_version: 1,
+          last_verified_at: '2026-10-05T12:00:00Z',
+          source: 'workspace',
+          has_platform_fallback: true,
+        },
+      });
+
+      const view = await mount(
+        <ProviderConnection
+          workspaceId="ws_test"
+          provider="gemini"
+          name="Gemini"
+          onUpdated={vi.fn()}
+        />,
+      );
+
+      expect(view.host.textContent).toContain('Gemini');
+      expect(view.host.textContent).toContain('Custom key');
+      expect(view.host.textContent).toContain('Chat & multimodal inference · Workspace custom key');
+      expect(view.host.textContent).toContain('Replace key');
+      expect(view.host.textContent).toContain('Remove key');
+
+      // Click remove key to see confirmation
+      const removeBtn = Array.from(view.host.querySelectorAll('button')).find((b) =>
+        b.textContent?.includes('Remove key'),
+      );
+      expect(removeBtn).toBeTruthy();
+
+      await React.act(async () => {
+        removeBtn?.click();
+      });
+
+      expect(view.host.textContent).toContain('Removing this key will revert this workspace to included platform access.');
+      expect(view.host.textContent).toContain('Confirm remove');
+
+      await view.unmount();
+    });
+  });
+
+  describe('LIVE-04: Member List Owner & Viewer Identification', () => {
+    it('clearly displays member name, email, role, and indicates "(You)" for current viewer', async () => {
+      vi.spyOn(api, 'settings').mockResolvedValue({
+        settings: { workspace_id: 'ws_test', default_model: null, created_at: '', updated_at: '' },
+      });
+      vi.spyOn(api, 'memberSettings').mockResolvedValue({ settings: mockMemberSettings });
+      vi.spyOn(api, 'models').mockResolvedValue({ models: [], current_command_key: null, default_command_key: null });
+      vi.spyOn(api, 'listMembers').mockResolvedValue({
+        members: [
+          {
+            workspace_id: 'ws_test',
+            user_id: 'user_owner',
+            role: 'owner',
+            joined_at: '2026-10-01T00:00:00Z',
+            created_at: '2026-10-01T00:00:00Z',
+            updated_at: '2026-10-01T00:00:00Z',
+            display_name: 'Avi Owner',
+            email: 'avi@kerning.com',
+          },
+          {
+            workspace_id: 'ws_test',
+            user_id: 'user_teammate',
+            role: 'member',
+            joined_at: '2026-10-02T00:00:00Z',
+            created_at: '2026-10-02T00:00:00Z',
+            updated_at: '2026-10-02T00:00:00Z',
+            display_name: 'Hunor Member',
+            email: 'hunor@kerning.com',
+          },
+        ],
+      });
+
+      const view = await mount(
+        <SettingsPane
+          workspaceId="ws_test"
+          workspaceName="Kerning Test"
+          currentUserRole="owner"
+          currentUserId="user_owner"
+          onClose={vi.fn()}
+          onSignOut={vi.fn()}
+        />,
+      );
+
+      // Switch to Workspace tab
+      const wsTab = Array.from(view.host.querySelectorAll('[role="tab"]')).find((el) =>
+        el.textContent === 'Kerning Test',
+      ) as HTMLButtonElement;
+      expect(wsTab).toBeTruthy();
+      await React.act(async () => {
+        wsTab.click();
+      });
+
+      expect(view.host.textContent).toContain('Avi Owner (You)');
+      expect(view.host.textContent).toContain('Owner · avi@kerning.com');
+      expect(view.host.textContent).toContain('Hunor Member');
+      expect(view.host.textContent).toContain('Member · hunor@kerning.com');
+
+      await view.unmount();
+    });
+  });
+
+  describe('LIVE-05: Create Workspace Focus Management', () => {
+    it('manages focus when toggling new workspace creation and returns focus on cancel', async () => {
+      vi.spyOn(api, 'settings').mockResolvedValue({
+        settings: { workspace_id: 'ws_test', default_model: null, created_at: '', updated_at: '' },
+      });
+      vi.spyOn(api, 'memberSettings').mockResolvedValue({ settings: mockMemberSettings });
+      vi.spyOn(api, 'models').mockResolvedValue({ models: [], current_command_key: null, default_command_key: null });
+      vi.spyOn(api, 'listMembers').mockResolvedValue({ members: [] });
+
+      const view = await mount(
+        <SettingsPane
+          workspaceId="ws_test"
+          workspaceName="Kerning Test"
+          currentUserRole="owner"
+          currentUserId="user_owner"
+          onClose={vi.fn()}
+          onSignOut={vi.fn()}
+        />,
+      );
+
+      // Switch to Workspace tab
+      const wsTab = Array.from(view.host.querySelectorAll('[role="tab"]')).find((el) =>
+        el.textContent === 'Kerning Test',
+      ) as HTMLButtonElement;
+      await React.act(async () => {
+        wsTab.click();
+      });
+
+      const newWsBtn = Array.from(view.host.querySelectorAll('button')).find((b) =>
+        b.textContent?.includes('+ New workspace'),
+      ) as HTMLButtonElement;
+      expect(newWsBtn).toBeTruthy();
+
+      await React.act(async () => {
+        newWsBtn.click();
+      });
+
+      const input = view.host.querySelector('input[aria-label="New workspace name"]') as HTMLInputElement;
+      expect(input).toBeTruthy();
+      expect(document.activeElement).toBe(input);
+
+      const cancelBtn = Array.from(view.host.querySelectorAll('button')).find((b) =>
+        b.textContent === 'Cancel',
+      ) as HTMLButtonElement;
+      expect(cancelBtn).toBeTruthy();
+
+      await React.act(async () => {
+        cancelBtn.click();
+      });
+
+      await React.act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      });
+
+      const restoredBtn = Array.from(view.host.querySelectorAll('button')).find((b) =>
+        b.textContent?.includes('+ New workspace'),
+      ) as HTMLButtonElement;
+      expect(restoredBtn).toBeTruthy();
+      expect(document.activeElement).toBe(restoredBtn);
+
+      await view.unmount();
+    });
+  });
+
+  describe('LIVE-06: Outcome Summary Sanitization', () => {
+    it('sanitizes technical IDs and avoids redundant saved suffixes', () => {
+      expect(formatOutcomeSummary('mem_01J2K3L4M5N6P7Q8', 1)).toBe('1 change saved');
+      expect(formatOutcomeSummary('(mem_01J2K3L4)', 2)).toBe('2 changes saved');
+      expect(formatOutcomeSummary('Saved note for Thai Shop', 1)).toBe('Saved note for Thai Shop');
+      expect(formatOutcomeSummary('Thai Shop offer by Friday', 1)).toBe('Thai Shop offer by Friday saved');
+      expect(formatOutcomeSummary('Created task for Thai Shop', 1)).toBe('Created task for Thai Shop');
+      expect(formatOutcomeSummary('Follow-up saved', 1)).toBe('Follow-up saved');
+      expect(formatOutcomeSummary('Saved memory mem_123 for Alice', 1)).toBe('Saved memory for Alice');
+      expect(formatOutcomeSummary(null, 3)).toBe('3 changes saved');
+    });
+  });
+
+  describe('LIVE-08 & LIVE-09: Composer Loading Copy and Quiet Model Label', () => {
+    it('shows checking model status during loading and quiet model indicator when resolved', async () => {
+      const viewLoading = await mount(
+        <Composer
+          running={false}
+          commands={[]}
+          models={[]}
+          modelsLoading={true}
+          modelReady={false}
+          onSend={vi.fn()}
+        />,
+      );
+
+      expect(viewLoading.host.textContent).toContain('Checking available model…');
+      expect(viewLoading.host.textContent).not.toContain('Choose a model to start. Connections are in Settings.');
+      await viewLoading.unmount();
+
+      const viewReady = await mount(
+        <Composer
+          running={false}
+          commands={[]}
+          models={[
+            {
+              command_key: 'gemini',
+              display_name: 'Gemini 2.5 Pro',
+              available: true,
+              is_default: true,
+              is_current: true,
+              thinking: { state: 'supported', choices: [], is_default: true },
+            },
+          ]}
+          modelsLoading={false}
+          modelReady={true}
+          onSend={vi.fn()}
+        />,
+      );
+
+      expect(viewReady.host.textContent).toContain('Gemini 2.5 Pro');
+      // No duplicate dropdown trigger inside composer
+      expect(viewReady.host.querySelector('[aria-label="Choose model"]')).toBeNull();
+      await viewReady.unmount();
+    });
+  });
+
+  describe('LIVE-13: Command Suggestions ARIA ID Resolution', () => {
+    it('preserves custom DOM id on CommandItem for aria-activedescendant resolution', async () => {
+      const view = await mount(
+        <Command label="Commands">
+          <CommandList>
+            <CommandItem id="cmd-option-0" value="/model">/model</CommandItem>
+            <CommandItem id="cmd-option-1" value="/help">/help</CommandItem>
+          </CommandList>
+        </Command>,
+      );
+
+      const item0 = view.host.querySelector('#cmd-option-0');
+      const item1 = view.host.querySelector('#cmd-option-1');
+      expect(item0).toBeTruthy();
+      expect(item1).toBeTruthy();
+      expect(item0?.getAttribute('id')).toBe('cmd-option-0');
+
+      await view.unmount();
+    });
+  });
+
+  describe('LIVE-15: HistoryNav Filter Escape Bubbling Prevention', () => {
+    it('stops propagation of Escape event when closing search filter', async () => {
+      const outerKeyDown = vi.fn();
+      const view = await mount(
+        <div onKeyDown={outerKeyDown}>
+          <HistoryNav
+            workspaces={[{ id: 'ws_test', name: 'Kerning' }]}
+            workspaceId="ws_test"
+            workspaceName="Kerning"
+            ownChats={[]}
+            teamChats={[]}
+            activeChatId={null}
+            onSelectChat={vi.fn()}
+            onNewChat={vi.fn()}
+            onSwitchWorkspace={vi.fn()}
+            onOpenSettings={vi.fn()}
+          />
+        </div>,
+      );
+
+      const filterBtn = Array.from(view.host.querySelectorAll('button')).find((b) =>
+        b.textContent?.includes('Filter loaded chats'),
+      ) as HTMLButtonElement;
+      expect(filterBtn).toBeTruthy();
+
+      await React.act(async () => {
+        filterBtn.click();
+      });
+
+      const searchInput = view.host.querySelector('input[type="search"]') as HTMLInputElement;
+      expect(searchInput).toBeTruthy();
+
+      await React.act(async () => {
+        searchInput.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+      });
+
+      expect(outerKeyDown).not.toHaveBeenCalled();
+      await view.unmount();
+    });
+  });
+
+  describe('LIVE-17: Consolidated Read Steps in WorkingDisclosure', () => {
+    it('groups consecutive identical read steps without actions', () => {
+      const rawSteps = [
+        { id: 's1', label: 'Reading saved records', state: 'succeeded' as const },
+        { id: 's2', label: 'Reading saved records', state: 'succeeded' as const },
+        { id: 's3', label: 'Reading saved records', state: 'succeeded' as const },
+        { id: 's4', label: 'Reading saved records', state: 'succeeded' as const },
+        { id: 's5', label: 'Saving follow-up: "Thai Shop"', state: 'succeeded' as const, actionId: 'act_1' },
+      ];
+
+      const consolidated = consolidateWorkingSteps(rawSteps);
+      expect(consolidated).toHaveLength(2);
+      expect(consolidated[0]?.label).toBe('Reading saved records');
+      expect(consolidated[0]?.count).toBe(4);
+      expect(consolidated[1]?.actionId).toBe('act_1');
+    });
+  });
+
+  describe('LIVE-19 & LIVE-20: DetailPane Memory Change Reversal & Focus Restoration', () => {
+    it('describes memory reversals when affected entities and tasks are empty', async () => {
+      vi.spyOn(api, 'action').mockResolvedValue({
+        action: {
+          action_id: 'act_1',
+          workspace_id: 'ws_test',
+          command_name: 'forget_memory',
+          result_status: 'applied',
+          summary: 'Removed memory note mem_01J2K3',
+          committed_revision: 1,
+          actor_kind: 'member',
+          actor_user_id: 'usr_1',
+          source_message_id: null,
+          run_id: 'run_1',
+          step_id: null,
+          created_at: '2026-10-05T12:00:00Z',
+          events: [],
+          undo: { available: true, reverted_event_ids: [], reverted_by_event_ids: [] },
+          source: null,
+        },
+      });
+
+      vi.spyOn(api, 'undoPreview').mockResolvedValue({
+        preview: {
+          target_action_id: 'act_1',
+          mode: 'from_here',
+          selected_action_ids: ['act_1', 'act_2', 'act_3'],
+          affected_event_ids: [],
+          affected_entities: [],
+          affected_tasks: [],
+          dependencies: [],
+          expected_revision: 1,
+        },
+      });
+
+      const triggerBtn = document.createElement('button');
+      triggerBtn.textContent = 'View changes';
+      document.body.appendChild(triggerBtn);
+      triggerBtn.focus();
+      expect(document.activeElement).toBe(triggerBtn);
+
+      const view = await mount(
+        <DetailPane
+          workspaceId="ws_test"
+          chatId="chat_1"
+          actionId="act_1"
+          onClose={vi.fn()}
+          onUndone={vi.fn()}
+        />,
+      );
+
+      // What changed should sanitize raw mem_ ID
+      expect(view.host.textContent).toContain('Removed memory note');
+      expect(view.host.textContent).not.toContain('mem_01J2K3');
+
+      // Revert 3 saved changes describes reversal context
+      expect(view.host.textContent).toContain('Revert 3 saved changes?');
+      expect(view.host.textContent).toContain('Reverts 3 saved context changes from this run');
+
+      await view.unmount();
+
+      // Focus restored to trigger on unmount
+      expect(document.activeElement).toBe(triggerBtn);
+      triggerBtn.remove();
     });
   });
 });

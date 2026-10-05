@@ -53,7 +53,10 @@ export function SignInView({ onSignedIn, inviteToken: propInviteToken }: { onSig
     <div className="otis-entry">
       <div className="otis-entry__inner">
         <h1 className="otis-entry__title text-xl font-medium">Sign in to Otis</h1>
-        <p className="otis-entry__note text-sm text-muted-foreground">
+        <p className="otis-entry__proposition text-sm font-medium text-foreground mt-1">
+          Keep track of visits, promises, and follow-ups.
+        </p>
+        <p className="otis-entry__note text-sm text-muted-foreground mt-1">
           Members of a workspace can read its shared conversations and retained voice notes.
         </p>
 

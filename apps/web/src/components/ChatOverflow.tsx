@@ -44,13 +44,15 @@ export function ChatOverflow({ models, onCommand, disabled, pending, followsDefa
       <DropdownMenuLabel>Model</DropdownMenuLabel>
       <DropdownMenuRadioGroup value={followsDefault ? 'default' : current?.command_key ?? ''} onValueChange={key => { void onCommand?.(`/model ${key}`); }}>
         <DropdownMenuRadioItem value="default" disabled={busy}>
-          <span className="otis-menu__label"><span>Workspace default</span><small className="text-xs">{models.find(model => model.is_default)?.display_name ?? 'No model configured'}</small></span>
+          <span>Workspace default</span>
+          <span className="text-xs text-muted-foreground">{models.find(model => model.is_default)?.display_name ?? 'No model configured'}</span>
         </DropdownMenuRadioItem>
         {selectable.map(model => {
           const note = voiceNote(model);
           return (
             <DropdownMenuRadioItem key={model.command_key} value={model.command_key} disabled={busy}>
-              <span className="otis-menu__label"><span>{model.display_name}</span>{note && <small className="text-xs">{note}</small>}</span>
+              <span>{model.display_name}</span>
+              {note && <span className="text-xs text-muted-foreground">{note}</span>}
             </DropdownMenuRadioItem>
           );
         })}

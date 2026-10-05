@@ -35,6 +35,13 @@ export const stepLabel = (name?: string | null, target?: string | null) => {
   if (name === 'set_fields' || name === 'set_field') {
     return cleanTarget ? `Updating record for "${cleanTarget}"` : 'Updating the record';
   }
+  if (name === 'forget_memory') {
+    const sanitized = cleanTarget.replace(/^(?:forgotten memory entry\s*:?\s*|mem_[a-zA-Z0-9_-]+\s*:?\s*)/i, '').trim();
+    return sanitized ? `Removing context: "${sanitized}"` : 'Removing saved context';
+  }
+  if (name === 'remember_context') {
+    return cleanTarget ? `Saving context: "${cleanTarget}"` : 'Saving workspace context';
+  }
   if (cleanTarget && LABELS[name]) {
     return `${LABELS[name]}: "${cleanTarget}"`;
   }
@@ -57,9 +64,53 @@ function StepIcon({ label, state }: { label: string; state: WorkingStep['state']
   return <CheckIcon />;
 }
 
+export function formatOutcomeSummary(summary?: string | null, totalActions = 1): string {
+  if (!summary || !summary.trim()) {
+    return `${totalActions} change${totalActions === 1 ? '' : 's'} saved`;
+  }
+  let clean = summary.trim();
+  // Strip raw memory or action IDs if present: e.g. "mem_01J..." or "act_..."
+  clean = clean.replace(/\b(mem|act)_[a-zA-Z0-9_-]+/g, '').trim();
+  clean = clean.replace(/\(\s*\)/g, '').replace(/\s{2,}/g, ' ').trim();
+  if (!clean || /^[^a-zA-Z0-9]+$/.test(clean)) {
+    return `${totalActions} change${totalActions === 1 ? '' : 's'} saved`;
+  }
+  clean = clean.replace(/\.+$/, '').trim();
+  if (clean.toLowerCase().endsWith('saved') || /^(saved|created|updated|removed|recorded|reverted)\b/i.test(clean)) {
+    return clean;
+  }
+  return `${clean} saved`;
+}
+
+export function consolidateWorkingSteps(steps: WorkingStep[]): (WorkingStep & { count?: number })[] {
+  const result: (WorkingStep & { count?: number })[] = [];
+  for (const step of steps) {
+    const prev = result[result.length - 1];
+    const isReadStep = !step.actionId && (
+      step.label.toLowerCase().includes('reading') ||
+      step.label.toLowerCase().includes('searching') ||
+      step.label.toLowerCase().includes('finding')
+    );
+    if (
+      prev &&
+      isReadStep &&
+      !prev.actionId &&
+      prev.label === step.label &&
+      prev.state === step.state &&
+      prev.summary === step.summary
+    ) {
+      prev.count = (prev.count ?? 1) + 1;
+    } else {
+      result.push({ ...step, count: 1 });
+    }
+  }
+  return result;
+}
+
 export function WorkingDisclosure({ steps, finished, expanded, onToggle, onInspectAction, isWaiting }: { steps: WorkingStep[]; finished: boolean; expanded: boolean; onToggle: () => void; onInspectAction?: (actionId: string) => void; isWaiting?: boolean }) {
   if (!steps.length) return null;
   const current = steps.find(step => step.state === 'running') ?? steps.at(-1)!;
+  const displaySteps = consolidateWorkingSteps(steps);
   return (
     <section className="otis-working" aria-label={finished ? 'Worked' : isWaiting ? 'Paused' : 'Working'} aria-live="off">
       <button type="button" className="otis-working__disclosure mb-2 flex items-center gap-2 text-xs text-muted-foreground" aria-expanded={expanded} onClick={onToggle}>
@@ -80,7 +131,7 @@ export function WorkingDisclosure({ steps, finished, expanded, onToggle, onInspe
       </button>
       {expanded && (
         <ol className="otis-working__steps text-xs">
-          {steps.map(step => (
+          {displaySteps.map(step => (
             <li key={step.id} className={`otis-working__step otis-working__step--${step.state}`}>
               <span className="otis-working__step-icon">
                 {step.state === 'running' && !isWaiting ? (
@@ -90,7 +141,7 @@ export function WorkingDisclosure({ steps, finished, expanded, onToggle, onInspe
                 )}
               </span>
               <div className="otis-working__description">
-                <span>{step.label}</span>
+                <span>{step.count && step.count > 1 ? `${step.label} (${step.count})` : step.label}</span>
                 {step.summary && !step.label.includes(step.summary) && <span className="text-subtle">{step.summary}</span>}
               </div>
               {step.actionId && step.state === 'succeeded' && onInspectAction && (
@@ -119,7 +170,7 @@ function RunWork({ run, steps, activities, onInspectAction, onReply, hasAgentMes
     return !payload || typeof payload.block_id !== 'string' || !payload.block_id;
   });
   return <div className="otis-run">
-    {run?.status === 'queued' && <p className="otis-run__status text-sm text-subtle" role="status">Received by Otis · Starting…</p>}
+    {run?.status === 'queued' && <p className="otis-run__status text-sm text-subtle" role="status">Thinking…</p>}
     {run?.status === 'running' && !steps.length && thinking.blocks.length === 0 && (
       <div className="mb-2 flex items-center gap-2 text-xs text-muted-foreground" role="status">
         <span aria-hidden="true" className="size-2 shrink-0 rounded-full bg-highlight" />
@@ -313,7 +364,7 @@ export function Transcript({ messages, members, currentUserId, steps, run, runs 
               {!isMember && runData?.actions?.length ? (
                 <div className="otis-outcome mt-2 flex items-center gap-2 text-xs text-subtle" role="status">
                   <CheckIcon />
-                  <span>{runData.actions[0]?.summary ? `${runData.actions[0].summary} saved` : `${runData.actions.length} change${runData.actions.length === 1 ? '' : 's'} saved`}</span>
+                  <span>{formatOutcomeSummary(runData.actions[0]?.summary, runData.actions.length)}</span>
                   {onInspectAction && (
                     <Button variant="ghost" size="sm" type="button" className="otis-outcome__link h-auto p-0 text-xs text-muted-foreground underline-offset-4 hover:underline" onClick={() => onInspectAction(runData.actions[0]!.action_id)}>
                       View changes
@@ -401,7 +452,7 @@ export function activityToSteps(activities: PublicActivity[], runActions: RunDet
       step_index?: number;
       target?: string;
     };
-    if (payload.tool_name === 'turn:agent') continue;
+    if (payload.tool_name === 'turn:agent' || payload.tool_name === 'checkpoint' || payload.tool_name?.startsWith('turn:')) continue;
     if (activity.type === 'step_started') {
       steps.push({
         id: `${activity.run_id}:${payload.step_index ?? activity.id}`,
@@ -437,7 +488,7 @@ export function activityToSteps(activities: PublicActivity[], runActions: RunDet
   return steps;
 }
 export function stepsFromRun(run: RunDetailResponse, activities: PublicActivity[]): WorkingStep[] {
-  const tools = run.steps.filter(step => step.tool_name !== 'turn:agent');
+  const tools = run.steps.filter(step => step.tool_name !== 'turn:agent' && step.tool_name !== 'checkpoint' && !step.tool_name?.startsWith('turn:'));
   if (!tools.length) return activityToSteps(activities, run.actions);
   return tools.map(step => {
     const receipt = run.actions.find(action => action.action_id === step.action_id && ['applied', 'already_applied'].includes(action.result_status));

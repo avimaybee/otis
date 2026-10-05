@@ -6,17 +6,10 @@ import { cancelDraftSave, deleteDraft, draftSession, flushDraftSaves, loadDraft,
 import type { VoiceUploadAdapter } from '../api/voice.js';
 import { useMediaQuery } from '../hooks/useMediaQuery.js';
 import { useVoiceRecorder, type VoiceController, type VoiceRecorderEnvironment, type VoiceRecorderScope } from '../hooks/useVoiceRecorder.js';
-import { ChevronDownIcon, CloseIcon, MicIcon, SendIcon, StopIcon } from './icons.js';
+import { CloseIcon, MicIcon, SendIcon, StopIcon } from './icons.js';
 import { VoiceCapturePanel } from './VoiceCapturePanel.js';
 import { Button } from './ui/button.js';
 import { Command, CommandItem, CommandList } from './ui/command.js';
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuRadioGroup,
-  DropdownMenuRadioItem,
-  DropdownMenuTrigger,
-} from './ui/dropdown-menu.js';
 
 export interface ClarificationContext {
   id?: string; question: string; candidates?: string[] | null; missing_fields?: string[];
@@ -37,7 +30,7 @@ export interface ComposerProps {
   disabled?: boolean; disabledReason?: string; running: boolean;
   commands: CommandDescriptor[]; models?: ModelOption[]; workspaces?: { id: string; name: string }[];
   placeholder?: string; draftKey?: string; draftValue?: string | null; replyTo?: ClarificationContext;
-  controlPending?: boolean; modelReady?: boolean; voice?: VoiceComposerConfig;
+  controlPending?: boolean; modelReady?: boolean; modelsLoading?: boolean; voice?: VoiceComposerConfig;
   modelsError?: string; onRetryModels?: () => void;
   onCommand?: (text: string) => Promise<boolean>;
   onStop?: () => Promise<void>; onSend: (text: string) => void | boolean | Promise<boolean>;
@@ -47,7 +40,7 @@ export interface SuggestionItem { name: string; label?: string; summary: string;
 export function deriveCandidates(_question: string, candidates?: string[] | null, _missingFields?: string[], _intendedOp?: string): string[] { return candidates ?? []; }
 
 export function Composer({ disabled, disabledReason, running, commands, models = [], workspaces = [],
-  placeholder = 'Message Otis', draftKey, draftValue, replyTo, controlPending, modelReady = true, voice, modelsError, onRetryModels, onCommand, onStop, onSend }: ComposerProps) {
+  placeholder = 'Message Otis', draftKey, draftValue, replyTo, controlPending, modelReady = true, modelsLoading = false, voice, modelsError, onRetryModels, onCommand, onStop, onSend }: ComposerProps) {
   const id = useId();
   const input = useRef<HTMLTextAreaElement>(null);
   const sendingRef = useRef(false);
@@ -179,7 +172,6 @@ export function Composer({ disabled, disabledReason, running, commands, models =
     !currentThinking || currentThinking.is_default || !currentThinking.current_choice_id
       ? 'Provider default'
       : (currentThinking.choices.find(c => c.id === currentThinking.current_choice_id)?.label ?? 'Provider default');
-  const followsDefault = !models.some(m => m.is_current && !m.is_default);
 
   return <div className="otis-composer"><div className="otis-composer__inner">
     {replyTo && <div className="otis-reply-context text-xs flex items-center justify-between"><span className="truncate">Replying to Otis: {replyTo.question}</span><Button variant="ghost" size="icon-xs" type="button" aria-label="Dismiss question" onClick={replyTo.onCancel}><CloseIcon/></Button></div>}
@@ -201,7 +193,7 @@ export function Composer({ disabled, disabledReason, running, commands, models =
         <>
           <label className="otis-visually-hidden" htmlFor={id}>{placeholder}</label>
           <TextareaAutosize id={id} ref={input} name="message" minRows={1} maxRows={6} className="otis-composer__input max-h-36 min-h-6 w-full resize-none bg-transparent text-base leading-6 outline-none placeholder:text-muted-foreground" placeholder={disabled ? disabledReason ?? placeholder : placeholder} autoComplete="off" value={value} disabled={disabled}
-            aria-describedby={`${id}-status`} aria-haspopup="listbox" aria-controls={pickerOpen ? `${id}-picker` : undefined} aria-activedescendant={pickerOpen && suggestions[activeIndex] ? `${id}-option-${activeIndex}` : undefined} aria-autocomplete="list"
+            aria-describedby={`${id}-status`} aria-haspopup="listbox" aria-expanded={pickerOpen ? 'true' : undefined} aria-controls={pickerOpen ? `${id}-picker` : undefined} aria-activedescendant={pickerOpen && suggestions[activeIndex] ? `${id}-option-${activeIndex}` : undefined} aria-autocomplete="list"
             onChange={event => { commitDraft(event.target.value); setDismissed(false); setIndex(0); }}
             onKeyDown={event => {
               if (event.nativeEvent.isComposing || event.keyCode === 229) return;
@@ -224,80 +216,10 @@ export function Composer({ disabled, disabledReason, running, commands, models =
                   )}
                 </div>
               )}
-              {models.length > 0 && (
-                <DropdownMenu modal={false}>
-                  <DropdownMenuTrigger asChild>
-                    <button
-                      type="button"
-                      className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-normal text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
-                      aria-label="Choose model"
-                      disabled={disabled || controlPending}
-                    >
-                      <span>{currentModelLabel}</span>
-                      <ChevronDownIcon size={12} />
-                    </button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="start" side="top" className="mb-1" aria-label="Model selection">
-                    <DropdownMenuRadioGroup
-                      value={followsDefault ? 'default' : current?.command_key ?? ''}
-                      onValueChange={key => { void command(`/model ${key}`); }}
-                    >
-                      <DropdownMenuRadioItem value="default" disabled={controlPending}>
-                        <span className="otis-menu__label">
-                          <span>Workspace default</span>
-                          <small className="text-xs">{models.find(m => m.is_default)?.display_name ?? 'No model configured'}</small>
-                        </span>
-                      </DropdownMenuRadioItem>
-                      {models.filter(m => m.available).map(m => {
-                        const voiceLabel = m.native_audio_supported
-                          ? 'Native voice'
-                          : m.voice_available
-                          ? 'Voice via transcription'
-                          : null;
-                        return (
-                          <DropdownMenuRadioItem key={m.command_key} value={m.command_key} disabled={controlPending}>
-                            <span className="otis-menu__label">
-                              <span>{m.display_name}</span>
-                              {voiceLabel && <small className="text-xs">{voiceLabel}</small>}
-                            </span>
-                          </DropdownMenuRadioItem>
-                        );
-                      })}
-
-                    </DropdownMenuRadioGroup>
-                  </DropdownMenuContent>
-                </DropdownMenu>
-              )}
-
-              {currentThinking?.state === 'supported' && currentThinking.choices.length > 0 && (
-                <DropdownMenu modal={false}>
-                  <DropdownMenuTrigger asChild>
-                    <button
-                      type="button"
-                      className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-normal text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
-                      aria-label="Thinking effort"
-                      disabled={disabled || controlPending}
-                    >
-                      <span>{currentThinkingLabel}</span>
-                      <ChevronDownIcon size={12} />
-                    </button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="start" side="top" className="mb-1" aria-label="Thinking effort selection">
-                    <DropdownMenuRadioGroup
-                      value={currentThinking.is_default ? 'default' : currentThinking.current_choice_id ?? 'default'}
-                      onValueChange={key => { void command(`/thinking ${key}`); }}
-                    >
-                      <DropdownMenuRadioItem value="default" disabled={controlPending}>
-                        Provider default
-                      </DropdownMenuRadioItem>
-                      {currentThinking.choices.map(choice => (
-                        <DropdownMenuRadioItem key={choice.id} value={choice.id} disabled={controlPending}>
-                          {choice.label}
-                        </DropdownMenuRadioItem>
-                      ))}
-                    </DropdownMenuRadioGroup>
-                  </DropdownMenuContent>
-                </DropdownMenu>
+              {current && (
+                <span className="text-xs text-muted-foreground select-none" title="Chat model. Change via chat options or /model.">
+                  {currentModelLabel}{currentThinking?.state === 'supported' && currentThinkingLabel !== 'Provider default' ? ` · ${currentThinkingLabel}` : ''}
+                </span>
               )}
             </div>
 
@@ -345,6 +267,6 @@ export function Composer({ disabled, disabledReason, running, commands, models =
         </>
       )}
     </div>
-    <div id={`${id}-status`} className={`otis-composer__status text-xs${tooLong || voiceError || error ? ' otis-composer__status--error' : ''}`} role="status">{tooLong ? `Keep the message under ${DOMAIN_BOUNDS.MAX_INPUT_CHARS.toLocaleString()} characters.` : voiceError || error || (!modelReady ? 'Choose a model to start. Connections are in Settings.' : voiceStorageWarning || 'Otis can make mistakes. Verify important business info.')}<span className="otis-visually-hidden">{sending ? 'Sending your message.' : ''}</span></div>
+    <div id={`${id}-status`} className={`otis-composer__status text-xs${tooLong || voiceError || error ? ' otis-composer__status--error' : ''}`} role="status">{tooLong ? `Keep the message under ${DOMAIN_BOUNDS.MAX_INPUT_CHARS.toLocaleString()} characters.` : voiceError || error || (modelsLoading ? 'Checking available model…' : !modelReady ? 'Choose a model to start. Connections are in Settings.' : voiceStorageWarning || 'Otis can make mistakes. Verify important business info.')}<span className="otis-visually-hidden">{sending ? 'Sending your message.' : ''}</span></div>
   </div></div>;
 }

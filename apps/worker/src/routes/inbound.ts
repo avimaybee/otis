@@ -17,6 +17,7 @@ import { jsonError, jsonSuccess } from '../middleware/errors.js';
 import { acceptTelegramInbound } from '../inbox/telegram.js';
 import { publishDispatchHint, publishTelegramDeliveryHint } from '../dispatchHint.js';
 import { processTranscriptionJobs } from '../media/transcription.js';
+import { extractPlatformKeys } from '../providers/service.js';
 
 export async function handleTelegramWebhook(
   request: Request,
@@ -69,6 +70,7 @@ export async function handleTelegramWebhook(
       adminTransport: env.ENVIRONMENT === 'test' ? undefined : fetch,
       storage: env.STORAGE,
       fileTransport: env.ENVIRONMENT === 'test' ? undefined : fetch,
+      platformKeys: extractPlatformKeys(env),
     });
     // Voice acceptance creates a durable transcription intent; run a bounded
     // best-effort pass so Telegram notes also land without waiting for cron.

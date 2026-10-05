@@ -1,4 +1,4 @@
-import { useEffect, useId, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import type { MemberSettings, ModelOption, UpdateMemberSettingsRequest } from '@otis/contracts';
 import { api, ApiError } from '../api/client.js';
 import { CloseIcon } from './icons.js';
@@ -9,6 +9,21 @@ import { TelegramConnection } from './TelegramConnection.js';
 import { Button } from './ui/button.js';
 import { Input } from './ui/input.js';
 import { Alert, AlertDescription } from './ui/alert.js';
+import { Badge } from './ui/badge.js';
+
+const supportedTimezones = (() => {
+  try {
+    return Intl.supportedValuesOf ? Intl.supportedValuesOf('timeZone') : [];
+  } catch {
+    return [];
+  }
+})();
+
+function formatWeekdays(weekdays: number[] | null | undefined): string {
+  if (!weekdays || weekdays.length === 0) return 'Weekdays';
+  const dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  return weekdays.map(d => dayNames[d] ?? String(d)).join(', ');
+}
 
 export function SettingsPane({
   workspaceId,
@@ -58,6 +73,14 @@ export function SettingsPane({
   const [showCreateWs, setShowCreateWs] = useState(false);
   const [confirmDeleteWs, setConfirmDeleteWs] = useState(false);
   const [confirmRemoveUserId, setConfirmRemoveUserId] = useState<string | null>(null);
+  const newWsInputRef = useRef<HTMLInputElement>(null);
+  const newWsBtnRef = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    if (showCreateWs) {
+      newWsInputRef.current?.focus();
+    }
+  }, [showCreateWs]);
 
   useEffect(() => {
     setWsName(workspaceName);
@@ -133,6 +156,7 @@ export function SettingsPane({
       setNewWsName('');
       setShowCreateWs(false);
       setSaved('Workspace created');
+      setTimeout(() => newWsBtnRef.current?.focus(), 0);
       onWorkspaceCreated?.(result.workspace.id);
     } catch (err) { handleError(err); }
     finally { setBusy(null); }
@@ -186,8 +210,71 @@ export function SettingsPane({
     </div>
     <div className="otis-settings__content text-sm" id={`${id}-${tab}`} role="tabpanel" aria-labelledby={`${id}-${tab}-tab`}>
       {!loaded ? <p role="status" className="text-sm">Loading settings…</p> : tab === 'personal' ? <>
-        <div className="otis-settings__section"><label htmlFor={`${id}-language`} className="text-sm font-medium">Reply language</label><ChoiceSelect id={`${id}-language`} label="Reply language" value={personal!.preferred_language} options={[{ value: 'en', label: 'English' }, { value: 'ro', label: 'Română' }, { value: 'hu', label: 'Magyar' }]} onChange={(value: string) => void savePersonal('language', { preferred_language: value })} disabled={Boolean(busy)}/></div>
-        <form className="otis-settings__section" onSubmit={event => { event.preventDefault(); void saveTimezone(); }}><label htmlFor={`${id}-timezone`} className="text-sm font-medium">Brief schedule timezone</label><p className="otis-detail__label text-xs">Controls the timezone for your scheduled morning briefs. Changing this adjusts when your brief delivers.</p><Input id={`${id}-timezone`} value={timezone} placeholder="Not set" onChange={event => setTimezone(event.target.value)} autoComplete="off" spellCheck={false}/><div className="otis-settings__row mt-2"><Button variant="outline" size="sm" type="button" disabled={Boolean(busy)} onClick={() => setTimezone(Intl.DateTimeFormat().resolvedOptions().timeZone)}>Use this device’s timezone</Button><Button size="sm" type="submit" disabled={Boolean(busy) || timezone === (personal!.brief_timezone ?? '')}>{busy === 'timezone' ? <><span className="otis-spinner" aria-hidden="true" /><span>Saving…</span></> : 'Save timezone'}</Button></div></form>
+        <div className="otis-settings__section"><label htmlFor={`${id}-language`} className="text-sm font-medium">Reply language</label><ChoiceSelect id={`${id}-language`} label="Reply language" value={personal!.preferred_language} options={[{ value: 'auto', label: 'Automatic (matches your language)' }, { value: 'en', label: 'English' }, { value: 'ro', label: 'Română' }, { value: 'hu', label: 'Magyar' }]} onChange={(value: string) => void savePersonal('language', { preferred_language: value })} disabled={Boolean(busy)}/></div>
+        <div className="otis-settings__section">
+          <div className="flex items-center justify-between">
+            <h3 className="text-sm font-medium">Morning brief schedule</h3>
+            <Badge variant={personal?.brief_enabled ? 'outline' : 'secondary'} className="text-xs">
+              {personal?.brief_enabled ? 'Enabled' : 'Disabled'}
+            </Badge>
+          </div>
+          {personal?.brief_enabled ? (
+            <div className="rounded-lg border border-border bg-card/60 p-2 mt-2 space-y-1 text-xs">
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Delivery time</span>
+                <span className="font-medium text-foreground">{personal.brief_local_time ?? '08:30'}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Active days</span>
+                <span className="font-medium text-foreground">{formatWeekdays(personal.brief_weekdays)}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Channel</span>
+                <span className="font-medium text-foreground capitalize">{personal.brief_channel ?? 'web'}</span>
+              </div>
+            </div>
+          ) : (
+            <p className="otis-detail__label text-xs mt-1">
+              Morning briefs start disabled until you configure a schedule. When active, Otis prepares a morning summary of upcoming promises, visits, and follow-ups.
+            </p>
+          )}
+          <form className="mt-3" onSubmit={event => { event.preventDefault(); void saveTimezone(); }}>
+            <label htmlFor={`${id}-timezone`} className="text-sm font-medium">Brief schedule timezone</label>
+            <p className="otis-detail__label text-xs">Controls the timezone for your scheduled morning briefs. Changing this adjusts when your brief delivers.</p>
+            <Input
+              id={`${id}-timezone`}
+              value={timezone}
+              placeholder="Not set"
+              onChange={event => setTimezone(event.target.value)}
+              autoComplete="off"
+              spellCheck={false}
+              list={`${id}-timezones`}
+            />
+            <datalist id={`${id}-timezones`}>
+              {supportedTimezones.map(tz => (
+                <option key={tz} value={tz} />
+              ))}
+            </datalist>
+            <div className="otis-settings__row mt-2">
+              <Button
+                variant="outline"
+                size="sm"
+                type="button"
+                disabled={Boolean(busy)}
+                onClick={() => setTimezone(Intl.DateTimeFormat().resolvedOptions().timeZone)}
+              >
+                Use this device’s timezone
+              </Button>
+              <Button
+                size="sm"
+                type="submit"
+                disabled={Boolean(busy) || timezone === (personal!.brief_timezone ?? '')}
+              >
+                {busy === 'timezone' ? <><span className="otis-spinner" aria-hidden="true" /><span>Saving…</span></> : 'Save timezone'}
+              </Button>
+            </div>
+          </form>
+        </div>
         <TelegramConnection workspaceId={workspaceId} workspaceName={workspaceName}/>
       </> : <>
         {isOwner ? (
@@ -252,68 +339,84 @@ export function SettingsPane({
           )}
           <div className="flex flex-col gap-2 mt-3">
             {memberList.length > 0
-              ? memberList.map(member => (
-                  <div key={member.user_id} className="flex items-center justify-between py-1">
-                    <div className="flex items-center gap-2">
-                      <span className="otis-member-avatar text-xs" aria-hidden="true">
-                        {(member.display_name || member.email || 'M').charAt(0).toUpperCase()}
-                      </span>
-                      <div className="flex flex-col">
-                        <span className="text-sm">{member.display_name || member.email || 'Member'}</span>
-                        <span className="text-xs text-muted-foreground capitalize">{member.role}</span>
+              ? memberList.map(member => {
+                  const isCurrent = member.user_id === currentUserId;
+                  const primaryName = member.display_name || member.email;
+                  const displayName = primaryName
+                    ? (isCurrent ? `${primaryName} (You)` : primaryName)
+                    : (isCurrent ? 'You' : `Member (${member.user_id.slice(0, 6)})`);
+                  const avatarInitial = (primaryName || (isCurrent ? 'Y' : 'M')).charAt(0).toUpperCase();
+                  const roleText = member.role === 'owner' ? 'Owner' : 'Member';
+                  const subtitle = member.email && member.display_name && member.display_name !== member.email
+                    ? `${roleText} · ${member.email}`
+                    : roleText;
+
+                  return (
+                    <div key={member.user_id} className="flex items-center justify-between py-1">
+                      <div className="flex items-center gap-2">
+                        <span className="otis-member-avatar text-xs" aria-hidden="true">
+                          {avatarInitial}
+                        </span>
+                        <div className="flex flex-col">
+                          <span className="text-sm">{displayName}</span>
+                          <span className="text-xs text-muted-foreground capitalize">{subtitle}</span>
+                        </div>
                       </div>
-                    </div>
-                    {isOwner && member.role !== 'owner' && member.user_id !== currentUserId && (
-                      confirmRemoveUserId === member.user_id ? (
-                        <div className="flex items-center gap-1">
-                          <Button
-                            variant="destructive"
-                            size="sm"
-                            type="button"
-                            className="h-6 px-2 text-xs"
-                            onClick={() => void removeMember(member.user_id)}
-                            disabled={busy === `remove_${member.user_id}`}
-                          >
-                            {busy === `remove_${member.user_id}` ? 'Removing…' : 'Confirm'}
-                          </Button>
+                      {isOwner && member.role !== 'owner' && !isCurrent && (
+                        confirmRemoveUserId === member.user_id ? (
+                          <div className="flex items-center gap-1">
+                            <Button
+                              variant="destructive"
+                              size="sm"
+                              type="button"
+                              className="h-6 px-2 text-xs"
+                              onClick={() => void removeMember(member.user_id)}
+                              disabled={busy === `remove_${member.user_id}`}
+                            >
+                              {busy === `remove_${member.user_id}` ? 'Removing…' : 'Confirm'}
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              type="button"
+                              className="h-6 px-2 text-xs"
+                              onClick={() => setConfirmRemoveUserId(null)}
+                            >
+                              Cancel
+                            </Button>
+                          </div>
+                        ) : (
                           <Button
                             variant="ghost"
                             size="sm"
                             type="button"
-                            className="h-6 px-2 text-xs"
-                            onClick={() => setConfirmRemoveUserId(null)}
+                            className="text-destructive hover:text-destructive h-6 px-2 text-xs"
+                            onClick={() => setConfirmRemoveUserId(member.user_id)}
+                            disabled={Boolean(busy)}
                           >
-                            Cancel
+                            Remove
                           </Button>
-                        </div>
-                      ) : (
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          type="button"
-                          className="text-destructive hover:text-destructive h-6 px-2 text-xs"
-                          onClick={() => setConfirmRemoveUserId(member.user_id)}
-                          disabled={Boolean(busy)}
-                        >
-                          Remove
-                        </Button>
-                      )
-                    )}
-                  </div>
-                ))
-              : Object.entries(members).map(([memberId, name]) => (
-                  <div key={memberId} className="flex items-center gap-2 py-1">
-                    <span className="otis-member-avatar text-xs" aria-hidden="true">{name.charAt(0).toUpperCase()}</span>
-                    <span className="text-sm">{name}</span>
-                  </div>
-                ))}
+                        )
+                      )}
+                    </div>
+                  );
+                })
+              : Object.entries(members).map(([memberId, name]) => {
+                  const isCurrent = memberId === currentUserId;
+                  return (
+                    <div key={memberId} className="flex items-center gap-2 py-1">
+                      <span className="otis-member-avatar text-xs" aria-hidden="true">{name.charAt(0).toUpperCase()}</span>
+                      <span className="text-sm">{isCurrent ? `${name} (You)` : name}</span>
+                    </div>
+                  );
+                })}
           </div>
         </div>
         <div className="otis-settings__section">
           <div className="flex items-center justify-between">
             <h3 className="text-sm font-medium">Create workspace</h3>
             {!showCreateWs && (
-              <Button variant="outline" size="sm" type="button" onClick={() => setShowCreateWs(true)}>
+              <Button ref={newWsBtnRef} variant="outline" size="sm" type="button" onClick={() => setShowCreateWs(true)}>
                 + New workspace
               </Button>
             )}
@@ -321,6 +424,7 @@ export function SettingsPane({
           {showCreateWs && (
             <form className="flex items-center gap-2 mt-2" onSubmit={e => { e.preventDefault(); void createNewWorkspace(); }}>
               <Input
+                ref={newWsInputRef}
                 placeholder="New workspace name"
                 aria-label="New workspace name"
                 value={newWsName}
@@ -330,7 +434,16 @@ export function SettingsPane({
               <Button size="sm" type="submit" disabled={Boolean(busy) || !newWsName.trim()}>
                 {busy === 'create_workspace' ? 'Creating…' : 'Create'}
               </Button>
-              <Button variant="ghost" size="sm" type="button" onClick={() => setShowCreateWs(false)}>
+              <Button
+                variant="ghost"
+                size="sm"
+                type="button"
+                onClick={() => {
+                  setShowCreateWs(false);
+                  setNewWsName('');
+                  setTimeout(() => newWsBtnRef.current?.focus(), 0);
+                }}
+              >
                 Cancel
               </Button>
             </form>
@@ -367,7 +480,7 @@ export function SettingsPane({
       </>}
       {message && <Alert variant="destructive" className="my-2"><AlertDescription>{message}</AlertDescription>{!loaded && <Button variant="outline" size="sm" className="mt-2" onClick={() => setReload(value => value + 1)}>Retry</Button>}</Alert>}
     </div>
-    <footer className="otis-settings__footer text-xs"><span role="status">{saved}</span><Button variant="ghost" size="sm" onClick={onSignOut}>Sign out</Button></footer>
+    <footer className="otis-settings__footer text-xs"><span role="status">{saved}</span><Button variant="ghost" size="sm" className="text-muted-foreground hover:text-foreground" onClick={onSignOut}>Sign out</Button></footer>
   </section></Overlay>;
 }
 

@@ -5,6 +5,7 @@
  * abort atomically instead of silently violating owner/last-member rules.
  */
 
+import type { WorkspaceMember } from '@otis/contracts';
 import { checkMembership } from './membership.js';
 
 export type LifecycleErrorCode =
@@ -268,11 +269,14 @@ export async function transferOwnership(
 export async function listMembers(
   db: D1Database,
   workspaceId: string,
-): Promise<Array<{ workspace_id: string; user_id: string; role: 'owner' | 'member'; joined_at: string; created_at: string; updated_at: string }>> {
+): Promise<WorkspaceMember[]> {
   const { results } = await db
     .prepare(
-      `SELECT workspace_id, user_id, role, joined_at, created_at, updated_at
-       FROM workspace_users WHERE workspace_id = ? ORDER BY joined_at ASC`
+      `SELECT wu.workspace_id, wu.user_id, wu.role, wu.joined_at, wu.created_at, wu.updated_at,
+              u.display_name, u.email
+       FROM workspace_users wu
+       LEFT JOIN users u ON wu.user_id = u.id
+       WHERE wu.workspace_id = ? ORDER BY wu.joined_at ASC`
     )
     .bind(workspaceId)
     .all<Record<string, unknown>>();
@@ -283,5 +287,7 @@ export async function listMembers(
     joined_at: String(r['joined_at']),
     created_at: String(r['created_at']),
     updated_at: String(r['updated_at']),
+    display_name: r['display_name'] ? String(r['display_name']) : null,
+    email: r['email'] ? String(r['email']) : null,
   }));
 }

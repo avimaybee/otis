@@ -11,9 +11,10 @@ import {
 import { parseCommandText } from '@otis/commands';
 import { sha256 } from '@otis/identity';
 import { resumeRun } from '../actor/dispatch.js';
-import { createChat, resolveThinkingSnapshot } from './repository.js';
+import { createChat, generateChatTitle, resolveThinkingSnapshot, updateChatTitle } from './repository.js';
 import { buildTelegramDeliveryInserts, sendTelegramText, type TelegramSendFetch } from './telegramDelivery.js';
 import { executeTelegramCommand } from './telegramCommands.js';
+import type { PlatformKeys } from '../providers/service.js';
 import {
   acceptTelegramVoiceMessage,
   extractTelegramVoiceMetadata,
@@ -615,6 +616,7 @@ export async function acceptTelegramInbound(
     storage?: R2Bucket;
     /** Bounded Telegram file transport; tests inject a fake, production passes global fetch. */
     fileTransport?: TelegramFileFetch;
+    platformKeys?: PlatformKeys;
   },
 ): Promise<TelegramInboundResult> {
   let normalized: NormalizedTelegramUpdate;
@@ -1282,11 +1284,15 @@ export async function acceptTelegramInbound(
     }
   }
 
+  const initialTitle = normalized.kind === 'text' && normalized.text
+    ? generateChatTitle(normalized.text)
+    : 'Telegram Conversation';
+
   if (!chatId) {
     const chat = await createChat(db, {
       workspaceId,
       authorUserId: userId,
-      title: 'Telegram Conversation',
+      title: initialTitle,
     });
     chatId = chat.id;
     await db
@@ -1295,6 +1301,23 @@ export async function acceptTelegramInbound(
       )
       .bind(chatId, now, normalized.telegramUserId)
       .run();
+  } else if (normalized.kind === 'text' && normalized.text) {
+    const existing = await db
+      .prepare(`SELECT title FROM chats WHERE id = ? AND workspace_id = ?`)
+      .bind(chatId, workspaceId)
+      .first<{ title: string }>();
+    if (existing?.title === 'Telegram Conversation' || existing?.title === 'New conversation') {
+      try {
+        await updateChatTitle(db, {
+          workspaceId,
+          chatId,
+          userId,
+          title: generateChatTitle(normalized.text),
+        });
+      } catch {
+        // Non-fatal title update
+      }
+    }
   }
 
   // 2b. Slash commands run through the shared interpreter with the
@@ -1375,6 +1398,7 @@ export async function acceptTelegramInbound(
           metadata,
           nowIso: now,
           fetchFn: options.fileTransport,
+          platformKeys: options.platformKeys,
         });
         return {
           status: 'accepted',
@@ -1388,6 +1412,25 @@ export async function acceptTelegramInbound(
         const message = err instanceof TelegramVoiceError
           ? err.message
           : 'The voice note could not be processed.';
+        if (options?.adminTransport && options?.botToken) {
+          return await replyTelegramAdmin(db, {
+            workspaceId,
+            userId,
+            chatId,
+            storeStatus: 'processed',
+            errorMessage: `Voice note rejected (${code}): ${message}`,
+            botInstallationId: normalized.botInstallationId,
+            telegramUserId: normalized.telegramUserId,
+            telegramChatId: normalized.telegramChatId,
+            externalId: normalized.externalId,
+            fingerprint,
+            persistedPayload,
+            now,
+            text: `I couldn't process your voice note: ${message}`,
+            resultStatus: 'unsupported',
+            reason: message,
+          }, options);
+        }
         const minId = `min_${crypto.randomUUID()}`;
         await db
           .prepare(
@@ -1415,6 +1458,26 @@ export async function acceptTelegramInbound(
           user_id: userId,
         };
       }
+    }
+
+    if (options?.adminTransport && options?.botToken) {
+      return await replyTelegramAdmin(db, {
+        workspaceId,
+        userId,
+        chatId,
+        storeStatus: 'processed',
+        errorMessage: 'Voice notes are unavailable in this environment',
+        botInstallationId: normalized.botInstallationId,
+        telegramUserId: normalized.telegramUserId,
+        telegramChatId: normalized.telegramChatId,
+        externalId: normalized.externalId,
+        fingerprint,
+        persistedPayload,
+        now,
+        text: 'Voice notes are currently unavailable. Please type your message.',
+        resultStatus: 'unsupported',
+        reason: 'Voice notes are unavailable',
+      }, options);
     }
 
     const minId = `min_${crypto.randomUUID()}`;

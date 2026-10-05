@@ -51,12 +51,49 @@
 .otis-settings__provider { padding: 12px 0; }
 .otis-settings__provider + .otis-settings__provider { border-top: 1px solid var(--border); }
 .otis-settings__provider form { display: flex; flex-direction: column; gap: 8px; margin-top: 12px; }
-.otis-settings__footer { display: flex; align-items: center; justify-content: space-between; flex: none; gap: 12px; padding-top: 8px; color: var(--subtle); }
+.otis-settings .otis-detail__label { color: var(--muted-foreground); }
+.otis-settings__footer { display: flex; align-items: center; justify-content: space-between; flex: none; gap: 12px; padding-top: 8px; color: var(--muted-foreground); }
 .otis-settings__error { margin: 8px 0; color: var(--destructive); }
 @media (max-width: 600px) {
   .otis-overlay.otis-overlay--settings { width: 100%; height: var(--app-viewport-height, 100dvh); max-height: none; border: 0; border-radius: 0; }
   .otis-settings { padding: calc(12px + env(safe-area-inset-top)) 16px calc(12px + env(safe-area-inset-bottom)); }
   .otis-overlay--settings .otis-settings { height: 100%; max-height: none; }
+  .otis-settings__row button,
+  .otis-settings__footer button { min-height: 44px; }
+}
+
+/* Change detail dialog: bounded intermediate dialog on desktop/tablet, full screen on phone. */
+.otis-overlay.otis-overlay--detail {
+  width: min(540px, calc(100vw - 32px));
+  height: auto;
+  max-height: calc(var(--app-viewport-height, 100dvh) - 48px);
+  margin: auto;
+  border-radius: 16px;
+  background: var(--popover);
+  overflow: visible;
+}
+.otis-overlay--detail .otis-detail {
+  width: 100%;
+  max-height: calc(var(--app-viewport-height, 100dvh) - 48px);
+  height: auto;
+  padding: 24px;
+  background: var(--popover);
+  border-radius: 16px;
+}
+@media (max-width: 600px) {
+  .otis-overlay.otis-overlay--detail {
+    width: 100%;
+    height: var(--app-viewport-height, 100dvh);
+    max-height: none;
+    border: 0;
+    border-radius: 0;
+  }
+  .otis-overlay--detail .otis-detail {
+    height: 100%;
+    max-height: none;
+    border-radius: 0;
+    padding: calc(8px + env(safe-area-inset-top)) 16px calc(24px + env(safe-area-inset-bottom));
+  }
 }
 @media (min-width: 56.25rem) and (pointer: fine) {
   .otis-menu__item { min-height: 32px; }

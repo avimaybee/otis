@@ -183,20 +183,14 @@ export async function deleteChat(
     db.prepare(`UPDATE telegram_users SET active_chat_id = NULL WHERE active_chat_id = ?`).bind(params.chatId),
     db.prepare(`UPDATE media_objects SET chat_id = NULL WHERE chat_id = ?`).bind(params.chatId),
     db.prepare(`UPDATE briefs SET chat_id = NULL, message_id = NULL, run_id = NULL WHERE chat_id = ?`).bind(params.chatId),
-    // Delete run children first
+    // Delete chat-bound transient state
     db.prepare(`DELETE FROM pending_clarifications WHERE chat_id = ?`).bind(params.chatId),
-    db.prepare(`DELETE FROM run_steps WHERE run_id IN (SELECT id FROM agent_runs WHERE chat_id = ?)`).bind(params.chatId),
-    db.prepare(`DELETE FROM media_transcriptions WHERE run_id IN (SELECT id FROM agent_runs WHERE chat_id = ?)`).bind(params.chatId),
     db.prepare(`DELETE FROM run_activity WHERE chat_id = ? AND workspace_id = ?`).bind(params.chatId, params.workspaceId),
-    // Delete agent runs before messages_in so ON DELETE SET NULL on source_message_id doesn't trigger CHECK constraint
-    db.prepare(`DELETE FROM agent_runs WHERE chat_id = ? AND workspace_id = ?`).bind(params.chatId, params.workspaceId),
-    // Delete chat messages
     db.prepare(`DELETE FROM chat_messages WHERE chat_id = ? AND workspace_id = ?`).bind(params.chatId, params.workspaceId),
-    // Preserve any inbound message tied to an immutable ledger event by unlinking its chat_id
-    db.prepare(`UPDATE messages_in SET chat_id = NULL WHERE chat_id = ? AND workspace_id = ? AND id IN (SELECT source_message_id FROM events WHERE source_message_id IS NOT NULL)`).bind(params.chatId, params.workspaceId),
-    // Delete remaining inbound messages
-    db.prepare(`DELETE FROM messages_in WHERE chat_id = ? AND workspace_id = ?`).bind(params.chatId, params.workspaceId),
-    // Finally delete chat
+    // Unlink durable agent runs and inbound messages from this deleted chat so history/audit integrity is preserved
+    db.prepare(`UPDATE agent_runs SET chat_id = NULL WHERE chat_id = ? AND workspace_id = ?`).bind(params.chatId, params.workspaceId),
+    db.prepare(`UPDATE messages_in SET chat_id = NULL WHERE chat_id = ? AND workspace_id = ?`).bind(params.chatId, params.workspaceId),
+    // Finally delete the chat record
     db.prepare(`DELETE FROM chats WHERE id = ? AND workspace_id = ?`).bind(params.chatId, params.workspaceId),
   ]);
 

@@ -4,7 +4,7 @@
  * Requires the CREDENTIALS_KEY wrapping key; explicit 500 when unconfigured.
  */
 
-import type { CredentialStatusResponse, PutCredentialRequest } from '@otis/contracts';
+import type { CredentialStatusResponse, ProviderCredentialMetadata, PutCredentialRequest } from '@otis/contracts';
 import {
   CredentialError,
   deleteWorkspaceCredential,
@@ -141,12 +141,25 @@ export async function handleGetCredentialStatus(
   });
   const platformKeys = extractPlatformKeys(env);
   const provKey = provider as (typeof PROVIDERS)[number];
-  const effectiveCredential = credential ?? (platformKeys[provKey] ? {
-    provider: provKey,
-    status: 'available' as const,
-    key_version: 1,
-    last_verified_at: new Date().toISOString(),
-  } : null);
+  const hasPlatform = Boolean(platformKeys[provKey]);
+
+  let effectiveCredential: ProviderCredentialMetadata | null = null;
+  if (credential) {
+    effectiveCredential = {
+      ...credential,
+      source: 'workspace',
+      has_platform_fallback: hasPlatform,
+    };
+  } else if (hasPlatform) {
+    effectiveCredential = {
+      provider: provKey,
+      status: 'available' as const,
+      key_version: 1,
+      last_verified_at: null,
+      source: 'platform',
+      has_platform_fallback: true,
+    };
+  }
   const responseBody: CredentialStatusResponse = { status: 'ok', credential: effectiveCredential };
   return jsonSuccess(responseBody, 200, { 'x-request-id': requestId });
 }

@@ -39,16 +39,27 @@ CommandList.displayName = CommandPrimitive.List.displayName;
 const CommandItem = React.forwardRef<
   React.ElementRef<typeof CommandPrimitive.Item>,
   React.ComponentPropsWithoutRef<typeof CommandPrimitive.Item>
->(({ className, ...props }, ref) => (
-  <CommandPrimitive.Item
-    ref={ref}
-    className={cn(
-      "relative flex w-full cursor-default items-center gap-2 rounded-md px-2 py-1 text-sm select-none transition-colors duration-150 data-[selected='true']:bg-accent data-[disabled='true']:pointer-events-none data-[disabled='true']:opacity-50 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
-      className
-    )}
-    {...props}
-  />
-));
+>(({ className, id: customId, ...props }, ref) => {
+  const innerRef = React.useRef<HTMLDivElement | null>(null);
+  React.useImperativeHandle(ref, () => innerRef.current as HTMLDivElement);
+
+  React.useLayoutEffect(() => {
+    if (customId && innerRef.current) {
+      innerRef.current.id = customId;
+    }
+  }, [customId]);
+
+  return (
+    <CommandPrimitive.Item
+      ref={innerRef}
+      className={cn(
+        "relative flex w-full cursor-default items-center gap-2 rounded-md px-2 py-1 text-sm select-none transition-colors duration-150 data-[selected='true']:bg-accent data-[disabled='true']:pointer-events-none data-[disabled='true']:opacity-50 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
+        className
+      )}
+      {...props}
+    />
+  );
+});
 CommandItem.displayName = CommandPrimitive.Item.displayName;
 
 const CommandEmpty = React.forwardRef<

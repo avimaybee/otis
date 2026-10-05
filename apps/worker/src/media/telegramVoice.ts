@@ -10,7 +10,7 @@
  */
 
 import { VOICE_BOUNDS, type VoiceFormat } from '@otis/contracts';
-import { resolveModelForChat, resolveVoiceRouteForWorkspace } from '../providers/service.js';
+import { resolveModelForChat, resolveVoiceRouteForWorkspace, type PlatformKeys } from '../providers/service.js';
 import { resolveThinkingSnapshot } from '../inbox/repository.js';
 import { inspectAudioBytes, sniffAudioContainer } from './container.js';
 import { createValidatedMedia, transcriptionIntentStatement } from './repository.js';
@@ -100,6 +100,7 @@ export interface TelegramVoiceAcceptParams {
   metadata: TelegramVoiceMetadata;
   nowIso: string;
   fetchFn?: TelegramFileFetch;
+  platformKeys?: PlatformKeys;
 }
 
 export interface TelegramVoiceAcceptResult {
@@ -196,6 +197,7 @@ export async function acceptTelegramVoiceMessage(
     workspaceId: params.workspaceId,
     model: model.available ? model.entry : null,
     audioMimeOrExt: 'audio/ogg',
+    platformKeys: params.platformKeys,
   });
   if (route.route === 'unavailable') {
     throw new TelegramVoiceError('voice_unavailable', route.message);

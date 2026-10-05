@@ -395,17 +395,35 @@ export function buildWorkspaceSttConfig(
   stored: StoredVoiceSettings,
   credentialStatus: ProviderStatus | null,
 ): WorkspaceSttConfig | null {
-  if (!stored.enabled || !stored.model) return null;
-  return {
-    enabled: true,
-    provider: 'groq',
-    model: stored.model,
-    credentialStatus,
-    verifiedFormats: Object.fromEntries(
-      stored.verified_formats.map((format) => [format, true]),
-    ) as WorkspaceSttConfig['verifiedFormats'],
-    transcriptionVerified: stored.verified_formats.length === 3,
-  };
+  if (stored.enabled && stored.model) {
+    return {
+      enabled: true,
+      provider: 'groq',
+      model: stored.model,
+      credentialStatus,
+      verifiedFormats: Object.fromEntries(
+        stored.verified_formats.map((format) => [format, true]),
+      ) as WorkspaceSttConfig['verifiedFormats'],
+      transcriptionVerified: stored.verified_formats.length === 3,
+    };
+  }
+  // Zero-setup platform usage: when Groq credentials exist on the platform
+  // and the workspace has not explicitly disabled voice, provide default STT.
+  if (credentialStatus === 'available' && stored.provider === null && !stored.enabled) {
+    return {
+      enabled: true,
+      provider: 'groq',
+      model: 'whisper-large-v3-turbo',
+      credentialStatus: 'available',
+      verifiedFormats: {
+        'audio/webm': true,
+        'audio/mp4': true,
+        'audio/ogg': true,
+      },
+      transcriptionVerified: true,
+    };
+  }
+  return null;
 }
 
 /**
