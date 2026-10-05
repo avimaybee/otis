@@ -94,7 +94,7 @@ function safePayload(type: string, json: string): unknown {
     const keys: Record<string, string[]> = {
       message_accepted: ['client_message_id', 'text', 'media_id', 'steering_message_id'],
       queued: ['status'], run_started: ['status'], text_chunk: ['text', 'round_index'],
-      step_started: ['step_index', 'tool_name'], step_finished: ['step_index', 'tool_name', 'status'],
+      step_started: ['step_index', 'tool_name', 'target', 'detail'], step_finished: ['step_index', 'tool_name', 'status', 'target', 'detail'],
       action_applied: ['action_id', 'command_name', 'summary', 'event_ids'],
       action_reverted: ['action_id', 'mode', 'requested_by_user_id'],
       reasoning_summary: ['text', 'provider', 'round_index', 'block_id', 'content_kind', 'mode', 'state'],

@@ -14,9 +14,10 @@ import { HistoryNav } from './components/HistoryNav.js';
 import { SourcePane } from './components/SourcePane.js';
 import { SettingsPane } from './components/SettingsPane.js';
 import { Transcript } from './components/Transcript.js';
-import { ComposeIcon, MenuIcon } from './components/icons.js';
+import { CloseIcon, ComposeIcon, MenuIcon } from './components/icons.js';
 import { Overlay } from './components/Overlay.js';
 import { Button } from './components/ui/button.js';
+import { Input } from './components/ui/input.js';
 import {
   awaitOutboxSettlement,
   claimDelivery,
@@ -77,14 +78,20 @@ export interface ConversationScreenProps {
   onSignOut: () => void;
   /** The single typed navigation owner; replaces manual pushState/popstate. */
   onNavigate: (workspace: string, chat: string | null, replace?: boolean) => void;
+  onRefreshSession?: () => Promise<void>;
 }
 function safeError(error: unknown, fallback: string) { if (error instanceof ApiError && error.status === 401) return 'Your session has expired. Sign in again.'; if (error instanceof ApiError && error.status === 404) return 'This conversation is unavailable or your access has changed.'; return fallback; }
 function isAuthError(error: unknown): boolean { return error instanceof ApiError && [401, 403, 404].includes(error.status); }
 
-export function ConversationScreen({ workspaceId, chat: routeChat, chatParamPresent, workspaces, userId, members, onSignOut, onNavigate }: ConversationScreenProps) {
+export function ConversationScreen({ workspaceId, chat: routeChat, chatParamPresent, workspaces, userId, members, onSignOut, onNavigate, onRefreshSession }: ConversationScreenProps) {
   const activeChatId = routeChat;
   const [drawerOpen, setDrawerOpen] = useState(false); const [settingsOpen, setSettingsOpen] = useState(false); const [detailActionId, setDetailActionId] = useState<string | null>(null);
   const [streamStatus, setStreamStatus] = useState<StreamStatus>('idle'); const [error, setError] = useState<string | null>(null); const [accessLost, setAccessLost] = useState(false);
+  const [renameTarget, setRenameTarget] = useState<{ id: string; title: string } | null>(null);
+  const [renameTitle, setRenameTitle] = useState('');
+  const [deleteTarget, setDeleteTarget] = useState<{ id: string; title: string } | null>(null);
+  const [createWorkspaceOpen, setCreateWorkspaceOpen] = useState(false);
+  const [newWorkspaceName, setNewWorkspaceName] = useState('');
   const [sourceId, setSourceId] = useState<string | null>(null);
   const [streamGeneration, setStreamGeneration] = useState(0);
   const [loadingOlder, setLoadingOlder] = useState(false);
@@ -404,6 +411,8 @@ export function ConversationScreen({ workspaceId, chat: routeChat, chatParamPres
       // local send moment, and a released reader must never be yanked back.
       refreshRun(entryWorkspaceId, chatId, accepted.run_id);
       refreshMessages(entryWorkspaceId, chatId);
+      void queryClient.invalidateQueries({ queryKey: qk.chats(entryUserId, entryWorkspaceId, 'mine') });
+      void queryClient.invalidateQueries({ queryKey: qk.chat(entryUserId, entryWorkspaceId, chatId) });
       if (accepted.selected_workspace_id && workspaces.some(workspace => workspace.id === accepted.selected_workspace_id)) { switchWorkspace(accepted.selected_workspace_id); return true; }
       return true;
     } catch (err) {
@@ -607,7 +616,97 @@ export function ConversationScreen({ workspaceId, chat: routeChat, chatParamPres
       if (generation !== epoch.current) return;
     } catch { setError('Could not load more conversations.'); }
   }, [queryClient, userId, workspaceId]);
-  const navProps = { workspaceId, workspaceName, workspaces, ownChats, teamChats, members, activeChatId, loading: navLoading, onSelectChat: (id: string) => navigate(workspaceId, id), onNewChat: () => navigate(workspaceId, null), onSwitchWorkspace: switchWorkspace, onOpenSettings: () => { setDrawerOpen(false); setSettingsOpen(true); }, hasMore: Boolean(mineQuery.data?.nextCursor || teamQuery.data?.nextCursor), onLoadMore: () => void loadMoreChats() };
+
+  const handleOpenRename = useCallback((chatId: string, currentTitle: string) => {
+    setRenameTarget({ id: chatId, title: currentTitle });
+    setRenameTitle(currentTitle);
+  }, []);
+
+  const handleConfirmRename = useCallback(async () => {
+    if (!renameTarget) return;
+    const trimmed = renameTitle.trim();
+    if (!trimmed) return;
+    try {
+      await api.renameChat(workspaceId, renameTarget.id, trimmed);
+      void queryClient.invalidateQueries({ queryKey: qk.chats(userId, workspaceId, 'mine') });
+      void queryClient.invalidateQueries({ queryKey: qk.chat(userId, workspaceId, renameTarget.id) });
+      toast.success('Conversation renamed');
+      setRenameTarget(null);
+    } catch {
+      toast.error('Could not rename conversation');
+    }
+  }, [renameTarget, renameTitle, workspaceId, userId, queryClient]);
+
+  const handleOpenDelete = useCallback((chatId: string, currentTitle: string) => {
+    setDeleteTarget({ id: chatId, title: currentTitle });
+  }, []);
+
+  const handleConfirmDelete = useCallback(async () => {
+    if (!deleteTarget) return;
+    try {
+      await api.deleteChat(workspaceId, deleteTarget.id);
+      void queryClient.invalidateQueries({ queryKey: qk.chats(userId, workspaceId, 'mine') });
+      if (activeChatId === deleteTarget.id) {
+        navigate(workspaceId, null);
+      }
+      toast.success('Conversation deleted');
+      setDeleteTarget(null);
+    } catch {
+      toast.error('Could not delete conversation');
+    }
+  }, [deleteTarget, workspaceId, userId, activeChatId, navigate, queryClient]);
+
+  const handleConfirmCreateWorkspace = useCallback(async () => {
+    const trimmed = newWorkspaceName.trim();
+    if (!trimmed) return;
+    try {
+      const result = await api.createWorkspace(trimmed);
+      await onRefreshSession?.();
+      navigate(result.workspace.id, null);
+      toast.success('Workspace created');
+      setCreateWorkspaceOpen(false);
+      setNewWorkspaceName('');
+    } catch {
+      toast.error('Could not create workspace');
+    }
+  }, [newWorkspaceName, onRefreshSession, navigate]);
+
+  const handleWorkspaceRenamed = useCallback(async () => {
+    await onRefreshSession?.();
+  }, [onRefreshSession]);
+
+  const handleWorkspaceDeleted = useCallback(async () => {
+    await onRefreshSession?.();
+    const remaining = workspaces.filter(w => w.id !== workspaceId);
+    if (remaining.length > 0 && remaining[0]) {
+      navigate(remaining[0].id, null);
+    }
+  }, [onRefreshSession, workspaces, workspaceId, navigate]);
+
+  const handleWorkspaceCreated = useCallback(async (newId: string) => {
+    await onRefreshSession?.();
+    navigate(newId, null);
+  }, [onRefreshSession, navigate]);
+
+  const navProps = {
+    workspaceId,
+    workspaceName,
+    workspaces,
+    ownChats,
+    teamChats,
+    members,
+    activeChatId,
+    loading: navLoading,
+    onSelectChat: (id: string) => navigate(workspaceId, id),
+    onNewChat: () => navigate(workspaceId, null),
+    onSwitchWorkspace: switchWorkspace,
+    onOpenSettings: () => { setDrawerOpen(false); setSettingsOpen(true); },
+    hasMore: Boolean(mineQuery.data?.nextCursor || teamQuery.data?.nextCursor),
+    onLoadMore: () => void loadMoreChats(),
+    onRenameChat: handleOpenRename,
+    onDeleteChat: handleOpenDelete,
+    onCreateWorkspace: () => { setNewWorkspaceName(''); setCreateWorkspaceOpen(true); },
+  };
 
   // Loading reflects an actual in-flight persisted-chat snapshot fetch.
   // A fresh chat's disabled query is pending-but-idle, so it must show the
@@ -619,7 +718,7 @@ export function ConversationScreen({ workspaceId, chat: routeChat, chatParamPres
   return <div className="otis-shell h-dvh bg-background text-foreground flex">
     <Toaster theme="dark" position="top-center" visibleToasts={2} closeButton toastOptions={{ className: 'otis-toast', duration: 3000 }} offset={64}/>
     {!accessLost && <HistoryNav variant="sidebar" {...navProps}/>} {!accessLost && <HistoryNav variant="drawer" open={drawerOpen} {...navProps} onClose={() => setDrawerOpen(false)}/>}
-    <main className="otis-main"><header className="otis-topbar flex h-[52px] items-center gap-2 border-b border-border px-4"><Button variant="ghost" size="icon" type="button" className="otis-iconbutton otis-topbar__menu" aria-label="Open history" aria-expanded={drawerOpen} onClick={() => setDrawerOpen(true)} disabled={accessLost}><MenuIcon/></Button><div className="otis-topbar__identity"><h1 className="otis-topbar__title truncate text-base font-medium" title={currentDetail?.chat.title ?? workspaceName}>{currentDetail?.chat.title ?? workspaceName}</h1><span className="otis-topbar__subtitle text-xs text-subtle">{readOnly ? `${currentDetail!.chat.author_display_name ?? members[currentDetail!.chat.author_user_id] ?? 'Teammate'} · read only` : activeChatId ? workspaceName : 'New conversation'}</span></div><div className="otis-topbar__actions"><ChatOverflow models={models} followsDefault={followsDefault} disabled={accessLost || readOnly} pending={controlPending} running={Boolean(running)} onCommand={applyCommand} onStop={running ? async () => { await api.stopRun(workspaceId, running.run.id); if (activeChatId) refreshRun(workspaceId, activeChatId, running.run.id); } : undefined}/><Button variant="ghost" size="icon" type="button" className="otis-iconbutton" aria-label="New chat" onClick={() => navigate(workspaceId, null)} disabled={accessLost}><ComposeIcon/></Button></div></header>
+    <main className="otis-main"><header className="otis-topbar flex h-[52px] items-center gap-2 border-b border-border px-4"><Button variant="ghost" size="icon" type="button" className="otis-iconbutton otis-topbar__menu" aria-label="Open history" aria-expanded={drawerOpen} onClick={() => setDrawerOpen(true)} disabled={accessLost}><MenuIcon/></Button><div className="otis-topbar__identity"><h1 className="otis-topbar__title truncate text-base font-medium" title={currentDetail?.chat.title ?? workspaceName}>{currentDetail?.chat.title ?? workspaceName}</h1><span className="otis-topbar__subtitle text-xs text-subtle">{readOnly ? `${currentDetail!.chat.author_display_name ?? members[currentDetail!.chat.author_user_id] ?? 'Teammate'} · read only` : activeChatId ? workspaceName : 'New conversation'}</span></div><div className="otis-topbar__actions"><ChatOverflow models={models} followsDefault={followsDefault} disabled={accessLost || readOnly} pending={controlPending} running={Boolean(running)} onCommand={applyCommand} onStop={running ? async () => { await api.stopRun(workspaceId, running.run.id); if (activeChatId) refreshRun(workspaceId, activeChatId, running.run.id); } : undefined} onRename={activeChatId && !readOnly ? () => handleOpenRename(activeChatId, currentDetail?.chat.title ?? '') : undefined} onDelete={activeChatId && !readOnly ? () => handleOpenDelete(activeChatId, currentDetail?.chat.title ?? '') : undefined}/><Button variant="ghost" size="icon" type="button" className="otis-iconbutton" aria-label="New chat" onClick={() => navigate(workspaceId, null)} disabled={accessLost}><ComposeIcon/></Button></div></header>
     {accessLost ? <div className="otis-access"><h2 className="text-xl font-medium">Conversation unavailable</h2><p className="text-sm text-muted-foreground">Your session may have expired or your workspace access has changed. Private content has been closed.</p><Button variant="outline" type="button" onClick={() => location.reload()}>Reload access</Button><Button variant="secondary" type="button" onClick={onSignOut}>Sign out</Button></div> : <div className="otis-chat">
       {streamStatus === 'resyncing' && <p className="otis-connection text-xs" role="status">Reconnecting to activity… Your conversation is retained.</p>}
       <Transcript key={`${workspaceId}:${activeChatId ?? 'new'}`} messages={derived.messages} members={members} currentUserId={userId} runs={snapshot?.runs ?? {}} activities={snapshot?.activities ?? []} steps={[]} delivery={derived.delivery} onRetryMessage={(clientId) => void retryMessage(clientId)} onDiscardMessage={discardMessage} onInspectSource={setSourceId} onInspectAction={setDetailActionId} onReply={readOnly ? undefined : setReplyId} onEditMessage={readOnly ? undefined : setDraftValue} loading={loading} hasOlder={Boolean(snapshot?.older)} loadingOlder={loadingOlder} olderError={olderError} followSignal={followSignal} positionKey={`${userId}:${workspaceId}:${activeChatId ?? 'new'}`} onLoadOlder={() => void loadOlder()}/>
@@ -627,6 +726,76 @@ export function ConversationScreen({ workspaceId, chat: routeChat, chatParamPres
       {readOnly ? <div className="otis-readonly text-sm"><p>This is {currentDetail!.chat.author_display_name ?? members[currentDetail!.chat.author_user_id] ?? 'a teammate'}’s conversation.</p><Button variant="ghost" size="sm" type="button" onClick={() => navigate(workspaceId, ownChats[0]?.id ?? null)}>Continue in your own chat</Button></div> : <div ref={composerRef} className="otis-composer-slot"><Composer key={`${workspaceId}:${userId}:${activeChatId ?? 'new'}`} draftKey={`otis:draft:${userId}:${workspaceId}:${activeChatId ?? 'new'}`} draftValue={draftValue} disabled={Boolean(activeChatId && !snapshot)} disabledReason="Opening conversation…" running={Boolean(running)} commands={commands} models={models} workspaces={workspaces} controlPending={controlPending} modelReady={models.some(model => model.is_current && model.available)} voice={{ available: voiceAvailable, adapter: voiceAdapter, scope: { userId, workspaceId, chatId: activeChatId }, onSent: voiceSend }} onCommand={applyCommand} onStop={running ? async () => { await api.stopRun(workspaceId, running.run.id); if (activeChatId) refreshRun(workspaceId, activeChatId, running.run.id); } : undefined} replyTo={activeClarification ? { id: activeClarification.id, question: activeClarification.question, candidates: activeClarification.candidates, missing_fields: activeClarification.missing_fields, intended_operation: activeClarification.intended_operation, onCancel: () => { setDismissedClarificationId(activeClarification.id); setReplyId(null); } } : undefined} onSend={send}/></div>}
     </div>}</main>
     {controlResult && <Overlay label="Command result" className="otis-overlay--settings" onClose={() => setControlResult(null)}><section className="otis-settings"><header className="otis-pane-header"><h2 className="text-base font-medium">Result</h2><Button variant="outline" size="sm" type="button" onClick={() => setControlResult(null)}>Close</Button></header><div className="otis-settings__content text-sm"><Markdown skipHtml disallowedElements={['img']}>{controlResult}</Markdown></div></section></Overlay>}
-    {sourceId && <SourcePane workspaceId={workspaceId} memoryId={sourceId} onClose={() => setSourceId(null)} onAccessLost={loseAccess} onOpenChat={id => navigate(workspaceId, id)}/>} {detailActionId && <DetailPane onAccessLost={loseAccess} workspaceId={workspaceId} chatId={readOnly ? '' : activeChatId ?? ''} actionId={detailActionId} onClose={() => setDetailActionId(null)} onUndone={() => { if (activeChatId) void resyncChat(activeChatId); }}/>} {settingsOpen && <SettingsPane onAccessLost={loseAccess} workspaceId={workspaceId} workspaceName={workspaceName} members={members} onUpdated={() => setModelRevision(value => value + 1)} onClose={() => setSettingsOpen(false)} onSignOut={onSignOut}/>}
+    {sourceId && <SourcePane workspaceId={workspaceId} memoryId={sourceId} onClose={() => setSourceId(null)} onAccessLost={loseAccess} onOpenChat={id => navigate(workspaceId, id)}/>} {detailActionId && <DetailPane onAccessLost={loseAccess} workspaceId={workspaceId} chatId={readOnly ? '' : activeChatId ?? ''} actionId={detailActionId} onClose={() => setDetailActionId(null)} onUndone={() => { if (activeChatId) void resyncChat(activeChatId); }}/>} {settingsOpen && <SettingsPane onAccessLost={loseAccess} workspaceId={workspaceId} workspaceName={workspaceName} members={members} onUpdated={() => setModelRevision(value => value + 1)} onClose={() => setSettingsOpen(false)} onSignOut={onSignOut} onWorkspaceRenamed={handleWorkspaceRenamed} onWorkspaceDeleted={handleWorkspaceDeleted} onWorkspaceCreated={handleWorkspaceCreated}/>}
+    {renameTarget && (
+      <Overlay label="Rename conversation" className="otis-overlay--settings" onClose={() => setRenameTarget(null)}>
+        <section className="otis-settings">
+          <header className="otis-pane-header">
+            <h2 className="text-base font-medium">Rename conversation</h2>
+            <Button variant="ghost" size="icon" type="button" className="otis-iconbutton" aria-label="Close" onClick={() => setRenameTarget(null)}>
+              <CloseIcon />
+            </Button>
+          </header>
+          <form className="otis-settings__content text-sm" onSubmit={e => { e.preventDefault(); void handleConfirmRename(); }}>
+            <label htmlFor="rename-chat-input" className="text-sm font-medium">Conversation title</label>
+            <Input
+              id="rename-chat-input"
+              value={renameTitle}
+              onChange={e => setRenameTitle(e.target.value)}
+              className="mt-1"
+            />
+            <div className="flex items-center gap-2 mt-4 justify-end">
+              <Button variant="ghost" size="sm" type="button" onClick={() => setRenameTarget(null)}>Cancel</Button>
+              <Button size="sm" type="submit" disabled={!renameTitle.trim()}>Save</Button>
+            </div>
+          </form>
+        </section>
+      </Overlay>
+    )}
+    {deleteTarget && (
+      <Overlay label="Delete conversation" className="otis-overlay--settings" onClose={() => setDeleteTarget(null)}>
+        <section className="otis-settings">
+          <header className="otis-pane-header">
+            <h2 className="text-base font-medium">Delete conversation</h2>
+            <Button variant="ghost" size="icon" type="button" className="otis-iconbutton" aria-label="Close" onClick={() => setDeleteTarget(null)}>
+              <CloseIcon />
+            </Button>
+          </header>
+          <div className="otis-settings__content text-sm">
+            <p className="text-sm text-muted-foreground">Are you sure you want to delete &ldquo;{deleteTarget.title || 'Untitled conversation'}&rdquo;? This conversation cannot be restored.</p>
+            <div className="flex items-center gap-2 mt-4 justify-end">
+              <Button variant="ghost" size="sm" type="button" onClick={() => setDeleteTarget(null)}>Cancel</Button>
+              <Button variant="destructive" size="sm" type="button" onClick={() => void handleConfirmDelete()}>Delete</Button>
+            </div>
+          </div>
+        </section>
+      </Overlay>
+    )}
+    {createWorkspaceOpen && (
+      <Overlay label="Create workspace" className="otis-overlay--settings" onClose={() => setCreateWorkspaceOpen(false)}>
+        <section className="otis-settings">
+          <header className="otis-pane-header">
+            <h2 className="text-base font-medium">Create workspace</h2>
+            <Button variant="ghost" size="icon" type="button" className="otis-iconbutton" aria-label="Close" onClick={() => setCreateWorkspaceOpen(false)}>
+              <CloseIcon />
+            </Button>
+          </header>
+          <form className="otis-settings__content text-sm" onSubmit={e => { e.preventDefault(); void handleConfirmCreateWorkspace(); }}>
+            <label htmlFor="new-ws-input" className="text-sm font-medium">Workspace name</label>
+            <Input
+              id="new-ws-input"
+              value={newWorkspaceName}
+              onChange={e => setNewWorkspaceName(e.target.value)}
+              placeholder="e.g. Acme Studio"
+              className="mt-1"
+            />
+            <div className="flex items-center gap-2 mt-4 justify-end">
+              <Button variant="ghost" size="sm" type="button" onClick={() => setCreateWorkspaceOpen(false)}>Cancel</Button>
+              <Button size="sm" type="submit" disabled={!newWorkspaceName.trim()}>Create</Button>
+            </div>
+          </form>
+        </section>
+      </Overlay>
+    )}
   </div>;
 }

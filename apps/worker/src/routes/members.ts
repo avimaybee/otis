@@ -11,13 +11,16 @@ import type {
   TransferOwnershipRequest,
 } from '@otis/contracts';
 import {
+  acceptInvite,
   createInvite,
+  extractSessionToken,
   InviteError,
   leaveWorkspace,
   LifecycleError,
   listMembers,
   removeMember,
   transferOwnership,
+  verifySession,
 } from '@otis/identity';
 import type { Env } from '../index.js';
 import { jsonError, jsonSuccess } from '../middleware/errors.js';
@@ -167,3 +170,34 @@ export async function handleTransferOwnership(
     throw err;
   }
 }
+
+export async function handleAcceptInvite(
+  request: Request,
+  env: Env,
+  token: string,
+  requestId: string,
+): Promise<Response> {
+  const sessionToken = extractSessionToken(request);
+  if (!sessionToken) {
+    return jsonError(401, 'unauthorized', 'Authentication session required.', requestId);
+  }
+  const verified = await verifySession(env.DB, sessionToken);
+  if (!verified) {
+    return jsonError(401, 'session_expired', 'Session is invalid or expired.', requestId);
+  }
+
+  try {
+    const result = await acceptInvite(env.DB, {
+      token,
+      userId: verified.user.id,
+      userEmail: verified.user.email ?? '',
+    });
+    return jsonSuccess({ status: 'ok', workspace_id: result.workspaceId }, 200, { 'x-request-id': requestId });
+  } catch (err) {
+    if (err instanceof InviteError) {
+      return jsonError(409, err.code, err.message, requestId);
+    }
+    throw err;
+  }
+}
+

@@ -1402,11 +1402,12 @@ describe('/model default honesty and resolver-parity availability', () => {
     expect(byKey.get('mimo-25')?.available).toBe(true);
     expect(byKey.get('gemini-3.1-flash-lite')?.available).toBe(true);
     expect(byKey.get('muse-12')?.available).toBe(true);
-    expect(byKey.get('gemini-3.5-flash-lite')?.available).toBe(false);
+    expect(byKey.get('gemini-3.5-flash-lite')?.available).toBe(true);
+    expect(byKey.get('gemini-preview-unverified')?.available).toBe(false);
 
     // A default pointing at an unusable entry is reported, not confirmed.
     await env.DB.prepare(
-      `INSERT INTO workspace_settings (workspace_id, default_model, created_at, updated_at) VALUES (?, 'gemini-3.5-flash-lite', ?, ?)`,
+      `INSERT INTO workspace_settings (workspace_id, default_model, created_at, updated_at) VALUES (?, 'gemini-preview-unverified', ?, ?)`,
     ).bind(ws, now, now).run();
     const badDefault = await send(chatId, '/model default', 'model-honest-bad-default');
     expect(badDefault.status).toBe(202);

@@ -15,6 +15,8 @@ import { jsonError, jsonSuccess } from '../middleware/errors.js';
 import {
   createChat,
   getChat,
+  updateChatTitle,
+  deleteChat,
   listChats,
   listChatMessages,
   acceptWebMessage,
@@ -168,6 +170,79 @@ export async function handleGetChat(
   }
 
   return jsonSuccess({ chat }, 200, { 'x-request-id': requestId });
+}
+
+/**
+ * PATCH /api/workspaces/:workspaceId/chats/:chatId
+ */
+export async function handleUpdateChat(
+  request: Request,
+  env: Env,
+  workspaceId: string,
+  chatId: string,
+  requestId: string,
+): Promise<Response> {
+  if (!validateCsrfAndOrigin(request)) {
+    return jsonError(403, 'csrf_violation', 'Invalid CSRF header or origin.', requestId);
+  }
+  const auth = await authenticateWorkspaceMember(request, env, workspaceId, requestId);
+  if (auth.error) return auth.error;
+
+  let body: { title?: string } = {};
+  try {
+    body = (await request.json()) as { title?: string };
+  } catch {
+    return jsonError(400, 'bad_request', 'Invalid JSON body.', requestId);
+  }
+
+  if (!body || typeof body.title !== 'string') {
+    return jsonError(422, 'validation_error', 'title string is required.', requestId);
+  }
+
+  try {
+    const chat = await updateChatTitle(env.DB, {
+      workspaceId,
+      chatId,
+      userId: auth.userId,
+      title: body.title,
+    });
+    return jsonSuccess({ chat }, 200, { 'x-request-id': requestId });
+  } catch (err) {
+    if (err instanceof ValidationError) return jsonError(422, 'validation_error', err.message, requestId);
+    if (err instanceof ForbiddenError) return jsonError(403, 'forbidden', err.message, requestId);
+    if (err instanceof NotFoundError) return jsonError(404, 'not_found', err.message, requestId);
+    throw err;
+  }
+}
+
+/**
+ * DELETE /api/workspaces/:workspaceId/chats/:chatId
+ */
+export async function handleDeleteChat(
+  request: Request,
+  env: Env,
+  workspaceId: string,
+  chatId: string,
+  requestId: string,
+): Promise<Response> {
+  if (!validateCsrfAndOrigin(request)) {
+    return jsonError(403, 'csrf_violation', 'Invalid CSRF header or origin.', requestId);
+  }
+  const auth = await authenticateWorkspaceMember(request, env, workspaceId, requestId);
+  if (auth.error) return auth.error;
+
+  try {
+    const result = await deleteChat(env.DB, {
+      workspaceId,
+      chatId,
+      userId: auth.userId,
+    });
+    return jsonSuccess(result, 200, { 'x-request-id': requestId });
+  } catch (err) {
+    if (err instanceof ForbiddenError) return jsonError(403, 'forbidden', err.message, requestId);
+    if (err instanceof NotFoundError) return jsonError(404, 'not_found', err.message, requestId);
+    throw err;
+  }
 }
 
 /**

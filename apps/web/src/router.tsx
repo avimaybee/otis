@@ -22,6 +22,7 @@ export interface SessionContextValue {
   workspaces: { id: string; name: string }[];
   members: Record<string, string>;
   onSignOut: () => void;
+  onRefreshSession?: () => Promise<void>;
 }
 
 export const SessionContext = createContext<SessionContextValue | null>(null);
@@ -69,6 +70,7 @@ function ConversationRouteView() {
       userId={session.userId}
       members={session.members}
       onSignOut={session.onSignOut}
+      onRefreshSession={session.onRefreshSession}
       onNavigate={(workspace, nextChat, replace) =>
         navigate({ to: '/', search: { workspace, chat: nextChat ?? 'new' }, replace: replace ?? false })
       }

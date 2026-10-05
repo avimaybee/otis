@@ -35,6 +35,7 @@ export function TelegramConnection({ workspaceId, workspaceName }: { workspaceId
   const [phase, setPhase] = useState<TelegramPhase>({ kind: 'loading' });
   const [notice, setNotice] = useState('');
   const [error, setError] = useState('');
+  const [copiedLink, setCopiedLink] = useState(false);
   const [loadError, setLoadError] = useState(false);
   const [reload, setReload] = useState(0);
   const generation = useRef(0);
@@ -238,7 +239,15 @@ export function TelegramConnection({ workspaceId, workspaceName }: { workspaceId
             </p>
           )}
           <p className="text-sm mt-1">Message Otis from Telegram. Your messages are saved in {workspaceName}.</p>
-          <div className="otis-settings__row mt-2">
+          <div className="rounded-lg bg-card border border-border p-3 text-xs text-muted-foreground mt-2 flex flex-col gap-1">
+            <p className="font-medium text-foreground">How it works (3 easy steps):</p>
+            <ol className="list-decimal pl-4 space-y-1">
+              <li>Click <strong>Connect Telegram</strong> below.</li>
+              <li>A private Otis chat will open in your Telegram app.</li>
+              <li>Tap the <strong>START</strong> button at the bottom of the chat. Otis is immediately connected!</li>
+            </ol>
+          </div>
+          <div className="otis-settings__row mt-3">
             <Button size="sm" className="otis-button" disabled={phase.kind === 'preparing'} onClick={() => void connect()}>
               {phase.kind === 'preparing' ? (
                 <>
@@ -255,11 +264,33 @@ export function TelegramConnection({ workspaceId, workspaceName }: { workspaceId
       {phase.kind === 'ready' && (
         <>
           <p className="text-sm mt-1">Open Telegram, then tap Start to connect your account.</p>
-          <div className="otis-settings__row mt-2">
+          <div className="rounded-lg bg-card border border-border p-3 text-xs text-muted-foreground mt-2 flex flex-col gap-1">
+            <p className="font-medium text-foreground">Next steps:</p>
+            <p>1. Tap <strong>Open Telegram</strong> (or copy link to open on your phone).</p>
+            <p>2. Tap the <strong>START</strong> button at the bottom of the Telegram screen.</p>
+          </div>
+          <div className="otis-settings__row mt-2 flex items-center gap-2 flex-wrap">
             <Button asChild size="sm" className="otis-button">
               <a href={phase.link} target="_blank" rel="noopener noreferrer">
                 Open Telegram
               </a>
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              className="otis-button"
+              type="button"
+              onClick={async () => {
+                try {
+                  await navigator.clipboard.writeText(phase.link);
+                  setCopiedLink(true);
+                  setTimeout(() => setCopiedLink(false), 2000);
+                } catch {
+                  /* clipboard fallback */
+                }
+              }}
+            >
+              {copiedLink ? 'Link copied!' : 'Copy link'}
             </Button>
             <Button variant="outline" size="sm" className="otis-button" onClick={() => runCheckRef.current()}>
               I’ve tapped Start

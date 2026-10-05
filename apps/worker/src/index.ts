@@ -6,11 +6,18 @@
 import type { HealthResponse } from '@otis/contracts';
 import { handleAuthSession, handleLogout } from './routes/auth.js';
 import { handleGetMe } from './routes/me.js';
-import { handleGetWorkspace } from './routes/workspaces.js';
+import {
+  handleGetWorkspace,
+  handleCreateWorkspace,
+  handleUpdateWorkspace,
+  handleDeleteWorkspace,
+} from './routes/workspaces.js';
 import {
   handleListChats,
   handleCreateChat,
   handleCreateMessage,
+  handleUpdateChat,
+  handleDeleteChat,
 } from './routes/chats.js';
 import { handleGetChatDetail, handleGetMessages } from './routes/chat.js';
 import { handleGetActivity } from './routes/activity.js';
@@ -49,6 +56,7 @@ import { handleVoiceMediaRoute } from './media/routes.js';
 import { processTranscriptionJobs, type TranscriptionProcessResult } from './media/transcription.js';
 import { cleanupExpiredMedia } from './media/cleanup.js';
 import {
+  handleAcceptInvite,
   handleCreateInvite,
   handleLeaveWorkspace,
   handleListMembers,
@@ -392,11 +400,24 @@ export default {
       }
 
       // 4. Workspace routes
+      if (url.pathname === '/api/workspaces') {
+        if (request.method === 'POST') {
+          return await handleCreateWorkspace(request, env, requestId);
+        }
+        return jsonError(405, 'method_not_allowed', 'Method not allowed.', requestId);
+      }
+
       const workspaceMatch = url.pathname.match(/^\/api\/workspaces\/([^/]+)$/);
       if (workspaceMatch) {
         const workspaceId = workspaceMatch[1];
         if (request.method === 'GET' && workspaceId) {
           return await handleGetWorkspace(request, env, workspaceId, requestId);
+        }
+        if (request.method === 'PATCH' && workspaceId) {
+          return await handleUpdateWorkspace(request, env, workspaceId, requestId);
+        }
+        if (request.method === 'DELETE' && workspaceId) {
+          return await handleDeleteWorkspace(request, env, workspaceId, requestId);
         }
         return jsonError(405, 'method_not_allowed', 'Method not allowed.', requestId);
       }
@@ -421,6 +442,12 @@ export default {
         const chatId = singleChatMatch[2];
         if (request.method === 'GET' && workspaceId && chatId) {
           return await handleGetChatDetail(request, env, workspaceId, chatId, requestId);
+        }
+        if (request.method === 'PATCH' && workspaceId && chatId) {
+          return await handleUpdateChat(request, env, workspaceId, chatId, requestId);
+        }
+        if (request.method === 'DELETE' && workspaceId && chatId) {
+          return await handleDeleteChat(request, env, workspaceId, chatId, requestId);
         }
         return jsonError(405, 'method_not_allowed', 'Method not allowed.', requestId);
       }
@@ -505,6 +532,25 @@ export default {
         const targetUserId = removeMatch[2];
         if (request.method === 'POST' && workspaceId && targetUserId) {
           return await handleRemoveMember(request, env, workspaceId, targetUserId, requestId);
+        }
+        return jsonError(405, 'method_not_allowed', 'Method not allowed.', requestId);
+      }
+
+      const memberItemMatch = url.pathname.match(/^\/api\/workspaces\/([^/]+)\/members\/([^/]+)$/);
+      if (memberItemMatch) {
+        const workspaceId = memberItemMatch[1];
+        const targetUserId = memberItemMatch[2];
+        if (request.method === 'DELETE' && workspaceId && targetUserId) {
+          return await handleRemoveMember(request, env, workspaceId, targetUserId, requestId);
+        }
+        return jsonError(405, 'method_not_allowed', 'Method not allowed.', requestId);
+      }
+
+      const acceptInviteMatch = url.pathname.match(/^\/api\/invites\/([^/]+)\/accept$/);
+      if (acceptInviteMatch) {
+        const token = acceptInviteMatch[1];
+        if (request.method === 'POST' && token) {
+          return await handleAcceptInvite(request, env, token, requestId);
         }
         return jsonError(405, 'method_not_allowed', 'Method not allowed.', requestId);
       }

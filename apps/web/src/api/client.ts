@@ -225,6 +225,56 @@ export const api = {
     request<TelegramDisconnectResponse>(`/api/workspaces/${workspaceId}/telegram/connection`, {
       method: 'DELETE',
     }),
+  renameChat: (workspaceId: string, chatId: string, title: string) =>
+    request<{ chat: Chat }>(`/api/workspaces/${workspaceId}/chats/${encodeURIComponent(chatId)}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ title }),
+    }),
+
+  deleteChat: (workspaceId: string, chatId: string) =>
+    request<{ deleted: boolean; chatId: string }>(`/api/workspaces/${workspaceId}/chats/${encodeURIComponent(chatId)}`, {
+      method: 'DELETE',
+    }),
+
+  createWorkspace: (name: string) =>
+    request<{ workspace: { id: string; name: string; role: string } }>(`/api/workspaces`, {
+      method: 'POST',
+      body: JSON.stringify({ name }),
+    }),
+
+  updateWorkspace: (workspaceId: string, name: string) =>
+    request<{ workspace: { id: string; name: string } }>(`/api/workspaces/${encodeURIComponent(workspaceId)}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ name }),
+    }),
+
+  deleteWorkspace: (workspaceId: string) =>
+    request<{ deleted: boolean }>(`/api/workspaces/${encodeURIComponent(workspaceId)}`, {
+      method: 'DELETE',
+    }),
+
+  listMembers: (workspaceId: string) =>
+    request<{ members: { user_id: string; role: string; display_name: string | null; email?: string }[] }>(
+      `/api/workspaces/${workspaceId}/members`,
+    ),
+
+  createInvite: (workspaceId: string, email: string) =>
+    request<{ status: string; invite_id: string; token: string; expires_at: string }>(
+      `/api/workspaces/${workspaceId}/invites`,
+      { method: 'POST', body: JSON.stringify({ email }) },
+    ),
+
+  removeMember: (workspaceId: string, userId: string) =>
+    request<{ status: string }>(`/api/workspaces/${workspaceId}/members/${encodeURIComponent(userId)}`, {
+      method: 'DELETE',
+    }),
+
+  acceptInvite: (token: string) =>
+    request<{ status: string; workspace_id: string }>(`/api/invites/${encodeURIComponent(token)}/accept`, {
+      method: 'POST',
+      body: JSON.stringify({}),
+    }),
+
   activityStreamUrl: (workspaceId: string, chatId: string, after: number) =>
     `/api/workspaces/${workspaceId}/chats/${encodeURIComponent(chatId)}/activity?stream=sse&after=${after}`,
 };

@@ -6,10 +6,17 @@ import { cancelDraftSave, deleteDraft, draftSession, flushDraftSaves, loadDraft,
 import type { VoiceUploadAdapter } from '../api/voice.js';
 import { useMediaQuery } from '../hooks/useMediaQuery.js';
 import { useVoiceRecorder, type VoiceController, type VoiceRecorderEnvironment, type VoiceRecorderScope } from '../hooks/useVoiceRecorder.js';
-import { CloseIcon, MicIcon, SendIcon, StopIcon } from './icons.js';
+import { ChevronDownIcon, CloseIcon, MicIcon, SendIcon, StopIcon } from './icons.js';
 import { VoiceCapturePanel } from './VoiceCapturePanel.js';
 import { Button } from './ui/button.js';
 import { Command, CommandItem, CommandList } from './ui/command.js';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuTrigger,
+} from './ui/dropdown-menu.js';
 
 export interface ClarificationContext {
   id?: string; question: string; candidates?: string[] | null; missing_fields?: string[];
@@ -165,6 +172,14 @@ export function Composer({ disabled, disabledReason, running, commands, models =
   };
   const stop = async () => { if (!onStop || stopping) return; setStopping(true); setError(''); try { await onStop(); } catch { setError('Could not stop yet. Try again.'); } finally { setStopping(false); } };
 
+  const currentModelLabel = current?.display_name ?? 'Model';
+  const currentThinking = current?.thinking;
+  const currentThinkingLabel =
+    !currentThinking || currentThinking.is_default || !currentThinking.current_choice_id
+      ? 'Provider default'
+      : (currentThinking.choices.find(c => c.id === currentThinking.current_choice_id)?.label ?? 'Provider default');
+  const followsDefault = !models.some(m => m.is_current && !m.is_default);
+
   return <div className="otis-composer"><div className="otis-composer__inner">
     {replyTo && <div className="otis-reply-context text-xs"><span>Replying to Otis</span><Button variant="ghost" size="icon-xs" type="button" aria-label="Dismiss question" onClick={replyTo.onCancel}><CloseIcon/></Button></div>}
     {replyTo?.candidates?.length ? <div className="otis-reply-choices" aria-label="Suggested responses">{replyTo.candidates.map(choice => <Button key={choice} variant="outline" size="sm" type="button" onClick={() => { commitDraft(choice); input.current?.focus(); }}>{choice}</Button>)}</div> : null}
@@ -173,7 +188,7 @@ export function Composer({ disabled, disabledReason, running, commands, models =
         {suggestions.map((row, rowIndex) => <CommandItem key={row.name} id={`${id}-option-${rowIndex}`} value={row.insert} disabled={controlPending} onSelect={() => void select(rowIndex)}><span>{row.label}</span>{row.summary && <small className="text-xs">{row.summary}</small>}</CommandItem>)}
       </CommandList>
     </Command>}
-    <div className="otis-composer__field flex min-h-[52px] items-end gap-1 rounded-2xl bg-card py-2 pr-2 pl-4">
+    <div className="otis-composer__field flex flex-col min-h-[52px] rounded-2xl bg-card p-3 gap-2">
       {voiceActive ? (
         <VoiceCapturePanel
           controller={voiceController}
@@ -184,7 +199,7 @@ export function Composer({ disabled, disabledReason, running, commands, models =
       ) : (
         <>
           <label className="otis-visually-hidden" htmlFor={id}>{placeholder}</label>
-          <TextareaAutosize id={id} ref={input} name="message" minRows={1} maxRows={6} className="otis-composer__input my-1.5 max-h-36 min-h-6 flex-1 resize-none bg-transparent text-base leading-6 outline-none placeholder:text-muted-foreground" placeholder={disabled ? disabledReason ?? placeholder : placeholder} autoComplete="off" value={value} disabled={disabled}
+          <TextareaAutosize id={id} ref={input} name="message" minRows={1} maxRows={6} className="otis-composer__input max-h-36 min-h-6 w-full resize-none bg-transparent text-base leading-6 outline-none placeholder:text-muted-foreground" placeholder={disabled ? disabledReason ?? placeholder : placeholder} autoComplete="off" value={value} disabled={disabled}
             aria-describedby={`${id}-status`} aria-haspopup="listbox" aria-controls={pickerOpen ? `${id}-picker` : undefined} aria-autocomplete="list"
             onChange={event => { commitDraft(event.target.value); setDismissed(false); setIndex(0); }}
             onKeyDown={event => {
@@ -196,14 +211,118 @@ export function Composer({ disabled, disabledReason, running, commands, models =
               }
               if (event.key === 'Enter' && desktop && !event.shiftKey) { event.preventDefault(); void submit(); }
             }} />
-          {micVisible && (
-            <button type="button" className="otis-composer__action grid size-9 shrink-0 place-items-center rounded-full text-muted-foreground hover:bg-accent hover:text-foreground" aria-label={voiceController.phase === 'requesting' ? 'Starting recording' : 'Record voice note'} aria-busy={voiceController.phase === 'requesting'} disabled={disabled || voiceController.phase === 'requesting'} onClick={() => void voiceController.start()}>{voiceController.phase === 'requesting' ? <span className="otis-spinner" aria-hidden="true"/> : <MicIcon/>}</button>
-          )}
-          {running && onStop && !value.trim() ? (
-            <button type="button" className="otis-composer__action grid size-9 shrink-0 place-items-center rounded-full bg-primary text-primary-foreground" aria-label="Stop Otis" disabled={stopping} onClick={() => void stop()}><StopIcon/></button>
-          ) : (
-            <button type="button" className={`otis-composer__action grid size-9 shrink-0 place-items-center rounded-full ${value.trim() && !disabled ? 'bg-highlight text-highlight-foreground hover:bg-highlight-hover active:bg-highlight-pressed' : 'bg-accent text-subtle'}`} aria-label="Send" aria-busy={sending} disabled={disabled || tooLong || !value.trim() || controlPending || (!modelReady && !(value.trim().startsWith('/') && !value.trim().startsWith('//')))} onClick={() => void submit()}>{sending ? <span className="otis-spinner" aria-hidden="true"/> : <SendIcon/>}</button>
-          )}
+          <div className="flex items-center justify-between gap-2 pt-1">
+            <div className="flex items-center gap-2 flex-wrap">
+              {models.length > 0 && (
+                <DropdownMenu modal={false}>
+                  <DropdownMenuTrigger asChild>
+                    <button
+                      type="button"
+                      className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-normal text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
+                      aria-label="Choose model"
+                      disabled={disabled || controlPending}
+                    >
+                      <span>{currentModelLabel}</span>
+                      <ChevronDownIcon size={12} />
+                    </button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="start" side="top" className="mb-1" aria-label="Model selection">
+                    <DropdownMenuRadioGroup
+                      value={followsDefault ? 'default' : current?.command_key ?? ''}
+                      onValueChange={key => { void command(`/model ${key}`); }}
+                    >
+                      <DropdownMenuRadioItem value="default" disabled={controlPending}>
+                        <span className="otis-menu__label">
+                          <span>Workspace default</span>
+                          <small className="text-xs">{models.find(m => m.is_default)?.display_name ?? 'No model configured'}</small>
+                        </span>
+                      </DropdownMenuRadioItem>
+                      {models.filter(m => m.available).map(m => (
+                        <DropdownMenuRadioItem key={m.command_key} value={m.command_key} disabled={controlPending}>
+                          <span className="otis-menu__label">
+                            <span>{m.display_name}</span>
+                            <small className="text-xs">{m.native_audio_supported ? 'Native voice' : m.voice_available ? 'Voice via transcription' : 'Voice unavailable'}</small>
+                          </span>
+                        </DropdownMenuRadioItem>
+                      ))}
+                    </DropdownMenuRadioGroup>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              )}
+
+              {currentThinking?.state === 'supported' && currentThinking.choices.length > 0 && (
+                <DropdownMenu modal={false}>
+                  <DropdownMenuTrigger asChild>
+                    <button
+                      type="button"
+                      className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-normal text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
+                      aria-label="Thinking effort"
+                      disabled={disabled || controlPending}
+                    >
+                      <span>{currentThinkingLabel}</span>
+                      <ChevronDownIcon size={12} />
+                    </button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="start" side="top" className="mb-1" aria-label="Thinking effort selection">
+                    <DropdownMenuRadioGroup
+                      value={currentThinking.is_default ? 'default' : currentThinking.current_choice_id ?? 'default'}
+                      onValueChange={key => { void command(`/thinking ${key}`); }}
+                    >
+                      <DropdownMenuRadioItem value="default" disabled={controlPending}>
+                        Provider default
+                      </DropdownMenuRadioItem>
+                      {currentThinking.choices.map(choice => (
+                        <DropdownMenuRadioItem key={choice.id} value={choice.id} disabled={controlPending}>
+                          {choice.label}
+                        </DropdownMenuRadioItem>
+                      ))}
+                    </DropdownMenuRadioGroup>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              )}
+            </div>
+
+            <div className="flex items-center gap-2 shrink-0">
+              {micVisible && (
+                <button
+                  type="button"
+                  className="otis-composer__action grid size-9 shrink-0 place-items-center rounded-full text-muted-foreground hover:bg-accent hover:text-foreground"
+                  aria-label={voiceController.phase === 'requesting' ? 'Starting recording' : 'Record voice note'}
+                  aria-busy={voiceController.phase === 'requesting'}
+                  disabled={disabled || voiceController.phase === 'requesting'}
+                  onClick={() => void voiceController.start()}
+                >
+                  {voiceController.phase === 'requesting' ? <span className="otis-spinner" aria-hidden="true"/> : <MicIcon/>}
+                </button>
+              )}
+              {running && onStop && !value.trim() ? (
+                <button
+                  type="button"
+                  className="otis-composer__action otis-composer__send grid size-9 shrink-0 place-items-center rounded-full bg-primary text-primary-foreground"
+                  aria-label="Stop Otis"
+                  disabled={stopping}
+                  onClick={() => void stop()}
+                >
+                  <StopIcon/>
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  className={`otis-composer__action otis-composer__send grid size-9 shrink-0 place-items-center rounded-full ${
+                    value.trim() && !disabled
+                      ? 'bg-highlight text-highlight-foreground hover:bg-highlight-hover active:bg-highlight-pressed'
+                      : 'bg-accent text-subtle'
+                  }`}
+                  aria-label="Send"
+                  aria-busy={sending}
+                  disabled={disabled || tooLong || !value.trim() || controlPending || (!modelReady && !(value.trim().startsWith('/') && !value.trim().startsWith('//')))}
+                  onClick={() => void submit()}
+                >
+                  {sending ? <span className="otis-spinner" aria-hidden="true"/> : <SendIcon/>}
+                </button>
+              )}
+            </div>
+          </div>
         </>
       )}
     </div>

@@ -14,6 +14,7 @@ describe('operator model registry', () => {
     expect(PRODUCTION_REGISTRY.version).toBe(1);
     expect(PRODUCTION_REGISTRY.entries.map((entry) => entry.commandKey)).toEqual([
       'gemini-3.5-flash-lite',
+      'gemini-preview-unverified',
       'gemini-3.1-flash-lite',
       'mimo-25',
       'mimo-26-pro',
@@ -22,6 +23,7 @@ describe('operator model registry', () => {
       'deepseek-v4.1-flash',
     ]);
     const provenVerifiedAt: Record<string, string> = {
+      'gemini-3.5-flash-lite': '2026-10-03',
       'gemini-3.1-flash-lite': '2026-10-01',
       'mimo-25': '2026-10-01',
       'mimo-26-pro': '2026-10-01',
@@ -113,7 +115,7 @@ describe('operator model registry', () => {
     );
     // Unverified models in PRODUCTION_REGISTRY fail closed.
     expect(() =>
-      resolveCommandKey(PRODUCTION_REGISTRY, 'gemini-3.5-flash-lite', { credentialStatus: 'available' }),
+      resolveCommandKey(PRODUCTION_REGISTRY, 'gemini-preview-unverified', { credentialStatus: 'available' }),
     ).toThrowError(/not verified/);
   });
 
@@ -144,9 +146,10 @@ describe('operator model registry', () => {
   });
 
   it('lists evidenced entries backed by available credentials in PRODUCTION_REGISTRY', () => {
-    // Both credentials available: lists exactly the 6 proven models
+    // Both credentials available: lists exactly the 7 proven models
     const allAvailable = listAvailableModels(PRODUCTION_REGISTRY, { gemini: 'available', opencode_go: 'available' });
     expect(allAvailable.map((m) => m.commandKey)).toEqual([
+      'gemini-3.5-flash-lite',
       'gemini-3.1-flash-lite',
       'mimo-25',
       'mimo-26-pro',
@@ -155,9 +158,9 @@ describe('operator model registry', () => {
       'deepseek-v4.1-flash',
     ]);
 
-    // Only Gemini available: lists 1
+    // Only Gemini available: lists 2
     const geminiOnly = listAvailableModels(PRODUCTION_REGISTRY, { gemini: 'available', opencode_go: 'unverified' });
-    expect(geminiOnly.map((m) => m.commandKey)).toEqual(['gemini-3.1-flash-lite']);
+    expect(geminiOnly.map((m) => m.commandKey)).toEqual(['gemini-3.5-flash-lite', 'gemini-3.1-flash-lite']);
 
     // Only OpenCode Go available: lists 5
     const goOnly = listAvailableModels(PRODUCTION_REGISTRY, { gemini: 'unverified', opencode_go: 'available' });

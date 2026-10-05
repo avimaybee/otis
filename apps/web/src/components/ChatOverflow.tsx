@@ -8,8 +8,9 @@ import { Button } from './ui/button.js';
  * slash commands, never in the composer. Selections apply the same
  * deterministic command operations the composer picker uses.
  */
-export function ChatOverflow({ models, onCommand, disabled, pending, followsDefault, running, onStop }: {
+export function ChatOverflow({ models, onCommand, disabled, pending, followsDefault, running, onStop, onRename, onDelete }: {
   models: ModelOption[]; onCommand?: (text: string) => Promise<boolean>; disabled?: boolean; pending?: boolean; followsDefault?: boolean; running?: boolean; onStop?: () => Promise<void>;
+  onRename?: () => void; onDelete?: () => void;
 }) {
   const current = models.find(model => model.is_current);
   const thinking = current?.thinking;
@@ -47,6 +48,12 @@ export function ChatOverflow({ models, onCommand, disabled, pending, followsDefa
         <DropdownMenuLabel>Run</DropdownMenuLabel>
         {/* An action, not a choice: a menu item, never a radio option. */}
         <DropdownMenuItem onSelect={() => { void onStop(); }}>Stop Otis</DropdownMenuItem>
+      </>}
+      {(onRename || onDelete) && <>
+        <DropdownMenuSeparator />
+        <DropdownMenuLabel>Conversation</DropdownMenuLabel>
+        {onRename && <DropdownMenuItem onSelect={() => onRename()}>Rename conversation</DropdownMenuItem>}
+        {onDelete && <DropdownMenuItem className="text-destructive focus:text-destructive" onSelect={() => onDelete()}>Delete conversation</DropdownMenuItem>}
       </>}
       {pending && <span className="otis-visually-hidden" role="status">Updating chat settings…</span>}
     </DropdownMenuContent>

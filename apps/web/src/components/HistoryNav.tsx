@@ -1,7 +1,8 @@
 import { useEffect, useId, useRef, useState, type ReactNode, type RefObject } from 'react';
 import { Drawer } from 'vaul';
 import type { Chat } from '@otis/contracts';
-import { CloseIcon, ComposeIcon, SearchIcon, SettingsIcon } from './icons.js';
+import { CloseIcon, ComposeIcon, MoreVerticalIcon, SearchIcon, SettingsIcon } from './icons.js';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from './ui/dropdown-menu.js';
 import { ChoiceSelect } from './ui/select.js';
 import { Input } from './ui/input.js';
 import { Button } from './ui/button.js';
@@ -17,6 +18,9 @@ export interface HistoryNavProps {
   onSelectChat: (chatId: string) => void; onNewChat: () => void; onSwitchWorkspace: (workspaceId: string) => void;
   onOpenSettings: () => void; onOpenSearch?: () => void; onClose?: () => void;
   onLoadMore?: () => void; hasMore?: boolean;
+  onRenameChat?: (chatId: string, currentTitle: string) => void;
+  onDeleteChat?: (chatId: string, currentTitle: string) => void;
+  onCreateWorkspace?: () => void;
 }
 export function HistoryNav(props: HistoryNavProps) {
   const [searching, setSearching] = useState(false); const [query, setQuery] = useState('');
@@ -28,11 +32,36 @@ export function HistoryNav(props: HistoryNavProps) {
     setQuery('');
     requestAnimationFrame(() => searchButton.current?.focus());
   };
-  const rows = (chats: Chat[], team: boolean) => chats.filter(chat => chat.title.toLocaleLowerCase().includes(query.toLocaleLowerCase())).map(chat => <button key={chat.id} type="button" className="otis-nav__row" aria-current={chat.id === props.activeChatId ? 'page' : undefined} title={chat.title} onClick={() => props.onSelectChat(chat.id)}><span className="otis-nav__label text-base">{chat.title || 'Untitled conversation'}</span>{team && <span className="otis-nav__author text-xs">{chat.author_display_name ?? props.members?.[chat.author_user_id] ?? 'Teammate'}</span>}</button>);
+  const rows = (chats: Chat[], team: boolean) => chats.filter(chat => chat.title.toLocaleLowerCase().includes(query.toLocaleLowerCase())).map(chat => (
+    <div key={chat.id} className="relative flex items-center group w-full">
+      <button type="button" className="otis-nav__row pr-8" aria-current={chat.id === props.activeChatId ? 'page' : undefined} title={chat.title} onClick={() => props.onSelectChat(chat.id)}>
+        <span className="otis-nav__label text-base">{chat.title || 'Untitled conversation'}</span>
+        {team && <span className="otis-nav__author text-xs">{chat.author_display_name ?? props.members?.[chat.author_user_id] ?? 'Teammate'}</span>}
+      </button>
+      {!team && (props.onRenameChat || props.onDeleteChat) && (
+        <div className="absolute right-2 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity">
+          <DropdownMenu modal={false}>
+            <DropdownMenuTrigger asChild>
+              <Button variant="ghost" size="icon-xs" type="button" className="otis-iconbutton size-6 p-0 text-muted-foreground hover:text-foreground" aria-label={`Options for ${chat.title || 'conversation'}`}>
+                <MoreVerticalIcon />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" side="bottom">
+              {props.onRenameChat && <DropdownMenuItem onSelect={() => props.onRenameChat!(chat.id, chat.title)}>Rename</DropdownMenuItem>}
+              {props.onDeleteChat && <DropdownMenuItem className="text-destructive focus:text-destructive" onSelect={() => props.onDeleteChat!(chat.id, chat.title)}>Delete</DropdownMenuItem>}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
+      )}
+    </div>
+  ));
   const content = <nav className={props.variant === 'drawer' ? 'otis-drawer__nav' : 'otis-sidebar'} aria-label="History">
     <div className="otis-nav__brand"><span className="text-base">Otis</span>{props.variant === 'drawer' && <Button ref={closeButton} variant="ghost" size="icon" className="otis-iconbutton" type="button" aria-label="Close history" onClick={props.onClose}><CloseIcon /></Button>}</div>
     <label className="otis-visually-hidden" htmlFor={`${id}-workspace`}>Workspace</label>
-    {props.workspaces.length > 1 ? <ChoiceSelect id={`${id}-workspace`} label="Workspace" className="otis-nav__workspace" value={props.workspaceId} options={props.workspaces.map(workspace => ({ value: workspace.id, label: workspace.name }))} onChange={props.onSwitchWorkspace}/> : <p className="otis-nav__workspace-label text-base">{props.workspaceName}</p>}
+    <div className="flex items-center justify-between px-4 pb-2">
+      {props.workspaces.length > 1 ? <ChoiceSelect id={`${id}-workspace`} label="Workspace" className="otis-nav__workspace flex-1 mr-2" value={props.workspaceId} options={props.workspaces.map(workspace => ({ value: workspace.id, label: workspace.name }))} onChange={props.onSwitchWorkspace}/> : <p className="otis-nav__workspace-label text-base flex-1 m-0 p-0">{props.workspaceName}</p>}
+      {props.onCreateWorkspace && <Button variant="ghost" size="sm" type="button" className="text-xs text-muted-foreground hover:text-foreground h-6 px-2 shrink-0" title="Create workspace" onClick={props.onCreateWorkspace}>+ New</Button>}
+    </div>
     <Button variant="ghost" className="otis-nav__action justify-start text-sm" type="button" onClick={props.onNewChat}><ComposeIcon /><span>New chat</span></Button>
     {!searching ? (
       <Button ref={searchButton} variant="ghost" className="otis-nav__action justify-start text-sm" type="button" aria-expanded={false} onClick={() => { setSearching(true); requestAnimationFrame(() => input.current?.focus()); }}><SearchIcon /><span>Search chats</span></Button>

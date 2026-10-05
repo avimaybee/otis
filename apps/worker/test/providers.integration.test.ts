@@ -249,12 +249,12 @@ describe('Worker Providers Integration (workerd)', () => {
     expect(prodEntry.modelId).toBe('mimo-v2.5');
     expect(prodEntry.commandKey).toBe('mimo-25');
 
-    // But gemini-3.5-flash-lite (unverified in default PRODUCTION_REGISTRY) rejects
+    // But gemini-preview-unverified (unverified in default PRODUCTION_REGISTRY) rejects
     await expect(
       validateWorkspaceDefaultModel(env.DB, {
         workspaceId: ws,
         actorUserId: aviId,
-        commandKey: 'gemini-3.5-flash-lite',
+        commandKey: 'gemini-preview-unverified',
       }),
     ).rejects.toMatchObject({ code: 'invalid_model' });
 

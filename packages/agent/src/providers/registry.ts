@@ -159,8 +159,12 @@ export const PRODUCTION_REGISTRY: ModelRegistry = {
       'Tier-dependent; see https://ai.google.dev/gemini-api/terms',
       {
         capabilities: {
+          text: 'supported',
+          tools: 'supported',
+          stream: 'supported',
           thinking: {
-            state: 'unverified',
+            state: 'supported',
+            defaultChoiceId: 'medium',
             documentationUrl: 'https://ai.google.dev/gemini-api/docs/thinking',
             choices: [
               { id: 'minimal', label: 'Minimal', request: { kind: 'gemini_level', level: 'minimal' }, verifiedAt: '2026-10-03', evidenceRef: 'docs/005-live-provider-evidence.md' },
@@ -169,6 +173,25 @@ export const PRODUCTION_REGISTRY: ModelRegistry = {
               { id: 'high', label: 'High', request: { kind: 'gemini_level', level: 'high' }, verifiedAt: '2026-10-03', evidenceRef: 'docs/005-live-provider-evidence.md' },
             ],
           },
+        },
+        evidenceRef: 'docs/005-live-provider-evidence.md',
+        verifiedAt: '2026-10-03',
+      },
+    ),
+    entry(
+      'gemini-preview-unverified',
+      'Gemini Preview (Unverified)',
+      'gemini',
+      'gemini-preview-unverified',
+      'gemini-interactions',
+      `${GEMINI_ORIGIN}/v1beta/interactions`,
+      'Paid tier: not used for training; free tier: used (see Gemini API terms)',
+      'Tier-dependent; see https://ai.google.dev/gemini-api/terms',
+      {
+        capabilities: {
+          text: 'unverified',
+          tools: 'unverified',
+          stream: 'unverified',
         },
       },
     ),

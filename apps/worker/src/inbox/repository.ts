@@ -105,6 +105,92 @@ export async function createChat(
 }
 
 /**
+ * Automatically creates a readable, concise title from the user's first message text.
+ */
+export function generateChatTitle(firstMessageText: string): string {
+  const cleaned = firstMessageText
+    .replace(/^[/#]+\s*/, '')
+    .replace(/[*_`~[\]]/g, '')
+    .trim();
+  if (!cleaned) return 'New conversation';
+  const firstSentence = cleaned.split(/[\n.?!]/)[0]?.trim() || cleaned;
+  const words = firstSentence.split(/\s+/).filter(Boolean);
+  let title = words.slice(0, 6).join(' ');
+  if (title.length > 50) {
+    title = title.slice(0, 47).trim() + '…';
+  }
+  return title.charAt(0).toUpperCase() + title.slice(1);
+}
+
+/**
+ * Updates a chat title (renaming a conversation).
+ */
+export async function updateChatTitle(
+  db: D1Database,
+  params: {
+    workspaceId: string;
+    chatId: string;
+    userId: string;
+    title: string;
+  },
+): Promise<Chat> {
+  const title = (params.title || '').trim();
+  if (!title || title.length > 200) {
+    throw new ValidationError('Chat title must be 1–200 characters.');
+  }
+  const chat = await getChat(db, params.workspaceId, params.chatId);
+  if (!chat) throw new NotFoundError('Chat not found in this workspace.');
+  const member = await db
+    .prepare(`SELECT role FROM workspace_users WHERE workspace_id = ? AND user_id = ?`)
+    .bind(params.workspaceId, params.userId)
+    .first<{ role: string }>();
+  if (!member) throw new ForbiddenError('User is not a member of this workspace.');
+  if (chat.author_user_id !== params.userId && member.role !== 'owner') {
+    throw new ForbiddenError('Only the chat author or workspace owner can rename this conversation.');
+  }
+  const now = new Date().toISOString();
+  await db
+    .prepare(`UPDATE chats SET title = ?, updated_at = ? WHERE id = ? AND workspace_id = ?`)
+    .bind(title, now, params.chatId, params.workspaceId)
+    .run();
+  return { ...chat, title, updated_at: now };
+}
+
+/**
+ * Permanently deletes a chat and its messages and runs.
+ */
+export async function deleteChat(
+  db: D1Database,
+  params: {
+    workspaceId: string;
+    chatId: string;
+    userId: string;
+  },
+): Promise<{ deleted: boolean; chatId: string }> {
+  const chat = await getChat(db, params.workspaceId, params.chatId);
+  if (!chat) throw new NotFoundError('Chat not found in this workspace.');
+  const member = await db
+    .prepare(`SELECT role FROM workspace_users WHERE workspace_id = ? AND user_id = ?`)
+    .bind(params.workspaceId, params.userId)
+    .first<{ role: string }>();
+  if (!member) throw new ForbiddenError('User is not a member of this workspace.');
+  if (chat.author_user_id !== params.userId && member.role !== 'owner') {
+    throw new ForbiddenError('Only the chat author or workspace owner can delete this conversation.');
+  }
+
+  await db.batch([
+    db.prepare(`DELETE FROM chat_messages WHERE chat_id = ? AND workspace_id = ?`).bind(params.chatId, params.workspaceId),
+    db.prepare(`DELETE FROM messages_in WHERE chat_id = ? AND workspace_id = ?`).bind(params.chatId, params.workspaceId),
+    db.prepare(`DELETE FROM run_activity WHERE chat_id = ? AND workspace_id = ?`).bind(params.chatId, params.workspaceId),
+    db.prepare(`DELETE FROM agent_runs WHERE chat_id = ? AND workspace_id = ?`).bind(params.chatId, params.workspaceId),
+    db.prepare(`DELETE FROM pending_clarifications WHERE chat_id = ?`).bind(params.chatId),
+    db.prepare(`DELETE FROM chats WHERE id = ? AND workspace_id = ?`).bind(params.chatId, params.workspaceId),
+  ]);
+
+  return { deleted: true, chatId: params.chatId };
+}
+
+/**
  * Resolves the effective model key and thinking snapshot for a chat exactly
  * as web acceptance does, so Telegram runs pin the same values and a later
  * /model or /thinking cannot change an already accepted run. Pure reads.
@@ -568,10 +654,13 @@ export async function acceptWebMessage(
     ...(params.command ? { command: params.command } : {}),
   });
 
+  const shouldAutoName = (chat.title === 'New conversation' || chat.title === 'Untitled conversation') && Boolean(text) && !text.startsWith('/');
+  const autoTitle = shouldAutoName ? generateChatTitle(text) : null;
+
   // Single D1 Batch:
   // Step 0: Transaction Guard (aborts batch if caller is no longer active member or not chat author)
   // Step 1: Update workspace last_acceptance_sequence
-  // Step 2: Update chat activity_cursor
+  // Step 2: Update chat activity_cursor and auto-name title if default
   // Step 3: Insert messages_in (reading workspace sequence)
   // Step 4: Insert agent_runs
   // Step 5: Insert chat_messages
@@ -632,9 +721,9 @@ export async function acceptWebMessage(
 
       db
         .prepare(
-          `UPDATE chats SET activity_cursor = activity_cursor + 1, last_activity_at = ?, updated_at = ? WHERE id = ?`
+          `UPDATE chats SET activity_cursor = activity_cursor + 1, last_activity_at = ?, updated_at = ?, title = CASE WHEN title IN ('New conversation', 'Untitled conversation') AND ? IS NOT NULL THEN ? ELSE title END WHERE id = ?`
         )
-        .bind(now, now, params.chatId),
+        .bind(now, now, autoTitle, autoTitle, params.chatId),
 
       db
         .prepare(

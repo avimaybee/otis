@@ -255,3 +255,137 @@ export async function getUserWorkspaces(
     joined_at: String(r['joined_at']),
   }));
 }
+
+/**
+ * Creates a new workspace authored by the given user.
+ */
+export async function createWorkspace(
+  db: D1Database,
+  params: {
+    name: string;
+    ownerUserId: string;
+    workspaceId?: string;
+  },
+): Promise<Workspace> {
+  const name = (params.name || '').trim();
+  if (!name || name.length > 100) {
+    throw new Error('Workspace name must be 1–100 characters.');
+  }
+  const workspaceId = params.workspaceId || `ws_${crypto.randomUUID()}`;
+  const nowIso = new Date().toISOString();
+  const auditId = crypto.randomUUID();
+
+  await db.batch([
+    db
+      .prepare(
+        `INSERT INTO workspaces (id, name, owner_user_id, business_revision, membership_revision, lease_fence, created_at, updated_at)
+         VALUES (?, ?, ?, 0, 1, 0, ?, ?)`
+      )
+      .bind(workspaceId, name, params.ownerUserId, nowIso, nowIso),
+    db
+      .prepare(
+        `INSERT INTO workspace_users (workspace_id, user_id, role, joined_at, created_at, updated_at)
+         VALUES (?, ?, 'owner', ?, ?, ?)`
+      )
+      .bind(workspaceId, params.ownerUserId, nowIso, nowIso, nowIso),
+    db
+      .prepare(
+        `INSERT INTO workspace_settings (workspace_id, default_model, created_at, updated_at)
+         VALUES (?, 'gemini-3.5-flash-lite', ?, ?)`
+      )
+      .bind(workspaceId, nowIso, nowIso),
+    db
+      .prepare(
+        `INSERT INTO membership_audit (id, workspace_id, user_id, actor_user_id, action, occurred_at, details)
+         VALUES (?, ?, ?, ?, 'created', ?, ?)`
+      )
+      .bind(
+        auditId,
+        workspaceId,
+        params.ownerUserId,
+        params.ownerUserId,
+        nowIso,
+        JSON.stringify({ reason: 'user_created' }),
+      ),
+  ]);
+
+  return {
+    id: workspaceId,
+    name,
+    owner_user_id: params.ownerUserId,
+    business_revision: 0,
+    membership_revision: 1,
+    lease_owner: null,
+    lease_attempt_id: null,
+    lease_fence: 0,
+    lease_expires_at: null,
+    created_at: nowIso,
+    updated_at: nowIso,
+  };
+}
+
+/**
+ * Renames an existing workspace (owner only).
+ */
+export async function updateWorkspaceName(
+  db: D1Database,
+  params: {
+    workspaceId: string;
+    name: string;
+    actorUserId: string;
+  },
+): Promise<Workspace> {
+  const name = (params.name || '').trim();
+  if (!name || name.length > 100) {
+    throw new Error('Workspace name must be 1–100 characters.');
+  }
+  const membership = await db
+    .prepare(`SELECT role FROM workspace_users WHERE workspace_id = ? AND user_id = ?`)
+    .bind(params.workspaceId, params.actorUserId)
+    .first<{ role: string }>();
+  if (!membership) throw new Error('not_member');
+  if (membership.role !== 'owner') throw new Error('not_owner');
+
+  const nowIso = new Date().toISOString();
+  await db
+    .prepare(`UPDATE workspaces SET name = ?, updated_at = ? WHERE id = ?`)
+    .bind(name, nowIso, params.workspaceId)
+    .run();
+
+  const ws = await getWorkspace(db, params.workspaceId);
+  if (!ws) throw new Error('not_found');
+  return ws;
+}
+
+/**
+ * Permanently deletes a workspace and its data (owner only).
+ */
+export async function deleteWorkspace(
+  db: D1Database,
+  params: {
+    workspaceId: string;
+    actorUserId: string;
+  },
+): Promise<{ deleted: boolean }> {
+  const membership = await db
+    .prepare(`SELECT role FROM workspace_users WHERE workspace_id = ? AND user_id = ?`)
+    .bind(params.workspaceId, params.actorUserId)
+    .first<{ role: string }>();
+  if (!membership) throw new Error('not_member');
+  if (membership.role !== 'owner') throw new Error('not_owner');
+
+  await db.batch([
+    db.prepare(`DELETE FROM chat_messages WHERE workspace_id = ?`).bind(params.workspaceId),
+    db.prepare(`DELETE FROM messages_in WHERE workspace_id = ?`).bind(params.workspaceId),
+    db.prepare(`DELETE FROM run_activity WHERE workspace_id = ?`).bind(params.workspaceId),
+    db.prepare(`DELETE FROM agent_runs WHERE workspace_id = ?`).bind(params.workspaceId),
+    db.prepare(`DELETE FROM chats WHERE workspace_id = ?`).bind(params.workspaceId),
+    db.prepare(`DELETE FROM provider_credentials WHERE workspace_id = ?`).bind(params.workspaceId),
+    db.prepare(`DELETE FROM workspace_settings WHERE workspace_id = ?`).bind(params.workspaceId),
+    db.prepare(`DELETE FROM workspace_users WHERE workspace_id = ?`).bind(params.workspaceId),
+    db.prepare(`DELETE FROM workspaces WHERE id = ?`).bind(params.workspaceId),
+  ]);
+
+  return { deleted: true };
+}
+

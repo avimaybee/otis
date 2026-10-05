@@ -16,10 +16,65 @@ import { SignInView } from './components/SignInView.js';
 import { UnavailableScreen } from './components/UnavailableScreen.js';
 import { UpdatePrompt } from './components/UpdatePrompt.js';
 import { Button } from './components/ui/button.js';
+import { Input } from './components/ui/input.js';
 import { clearUserOutbox } from './api/outbox.js';
 import { deleteDraftsForUser } from './api/drafts.js';
 import { unregisterFlushOwner } from './api/flush.js';
 import { clearUserQueries, createAppQueryClient } from './api/queries.js';
+import { api } from './api/client.js';
+
+function NoWorkspaceView({ user, onCreated, onSignOut }: { user: User; onCreated: () => void; onSignOut: () => void }) {
+  const [name, setName] = useState(user.display_name ? `${user.display_name}’s Workspace` : 'My Workspace');
+  const [creating, setCreating] = useState(false);
+  const [error, setError] = useState('');
+
+  const handleCreate = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const trimmed = name.trim();
+    if (!trimmed) return;
+    setCreating(true);
+    setError('');
+    try {
+      await api.createWorkspace(trimmed);
+      onCreated();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not create workspace. Try again.');
+      setCreating(false);
+    }
+  };
+
+  return (
+    <div className="otis-entry">
+      <div className="otis-entry__inner">
+        <h1 className="otis-entry__title text-xl font-medium">Create your workspace</h1>
+        <p className="text-sm text-muted-foreground">
+          You don’t have a workspace yet. Create one now to begin remembering, organizing, and chatting with Otis.
+        </p>
+        <form onSubmit={handleCreate} className="flex flex-col gap-2 w-full max-w-sm mt-2">
+          <Input
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder="Workspace name"
+            disabled={creating}
+            required
+          />
+          {error && <p className="text-xs text-destructive">{error}</p>}
+          <Button type="submit" disabled={creating || !name.trim()} className="w-full">
+            {creating ? 'Creating…' : 'Create workspace'}
+          </Button>
+        </form>
+        <Button
+          type="button"
+          variant="ghost"
+          className="otis-entry__action mt-4"
+          onClick={onSignOut}
+        >
+          Sign out
+        </Button>
+      </div>
+    </div>
+  );
+}
 
 /** Device connectivity hint only; reachability is proven per request. */
 function deviceOffline(): boolean {
@@ -89,25 +144,14 @@ export function App() {
 
   if (state.status === 'no_workspace') {
     return (
-      <div className="otis-entry">
-        <div className="otis-entry__inner">
-          <h1 className="otis-entry__title text-xl font-medium">No workspace yet</h1>
-          <p className="text-sm text-muted-foreground">
-            Ask a workspace owner for an invite, then sign in again. Members of a workspace share its
-            conversations and retained voice notes.
-          </p>
-          <Button
-            type="button"
-            className="otis-entry__action"
-            onClick={async () => {
-              await clientSignOut();
-              setState({ status: 'signed_out' });
-            }}
-          >
-            Sign out
-          </Button>
-        </div>
-      </div>
+      <NoWorkspaceView
+        user={state.user}
+        onCreated={() => void loadSession()}
+        onSignOut={async () => {
+          await clientSignOut();
+          setState({ status: 'signed_out' });
+        }}
+      />
     );
   }
 
@@ -138,6 +182,7 @@ export function App() {
           workspaces: state.workspaces.map((workspace) => ({ id: workspace.id, name: workspace.name })),
           members,
           onSignOut: signOut,
+          onRefreshSession: loadSession,
         }}
       >
         <RouterProvider router={router} />

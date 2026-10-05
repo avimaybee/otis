@@ -13,7 +13,32 @@ import { dayKeyInZone, formatClockTime, formatDayLabel } from '../i18n/format.js
 export interface WorkingStep { id: string; label: string; state: 'queued' | 'running' | 'succeeded' | 'failed' | 'skipped' | 'undone'; actionId?: string | null; summary?: string | null; }
 export const STATES: Record<WorkingStep['state'], string> = { queued: 'Queued', running: 'Working', succeeded: 'Done', failed: 'Failed', skipped: 'Skipped', undone: 'Undone' };
 const LABELS: Record<string, string> = { find_entities: 'Finding the business', query: 'Reading saved records', search_memory: 'Searching workspace memory', get_memory: 'Reading the source', upsert_entity: 'Saving the business', create_entity: 'Saving the business', set_fields: 'Updating the record', set_field: 'Updating the record', log_event: 'Saving the note', create_task: 'Saving the follow-up', update_task: 'Updating the follow-up', draft_message: 'Preparing the draft', record_draft: 'Saving the draft', remember_context: 'Saving workspace context', forget_memory: 'Forgetting saved context', undo: 'Reverting the change', update_preference: 'Updating your preference' };
-export const stepLabel = (name?: string | null) => (name ? (LABELS[name] ?? name.replace(/_/g, ' ')) : 'Working');
+export const stepLabel = (name?: string | null, target?: string | null) => {
+  if (!name) return 'Working';
+  const cleanTarget = target ? target.trim() : '';
+  if (name === 'upsert_entity' || name === 'create_entity') {
+    return cleanTarget ? `Saving "${cleanTarget}"` : 'Saving the business';
+  }
+  if (name === 'find_entities') {
+    return cleanTarget ? `Finding "${cleanTarget}"` : 'Finding the business';
+  }
+  if (name === 'search_memory') {
+    return cleanTarget ? `Searching memory for "${cleanTarget}"` : 'Searching workspace memory';
+  }
+  if (name === 'create_task') {
+    return cleanTarget ? `Saving follow-up: "${cleanTarget}"` : 'Saving the follow-up';
+  }
+  if (name === 'update_task') {
+    return cleanTarget ? `Updating follow-up: "${cleanTarget}"` : 'Updating the follow-up';
+  }
+  if (name === 'set_fields' || name === 'set_field') {
+    return cleanTarget ? `Updating record for "${cleanTarget}"` : 'Updating the record';
+  }
+  if (cleanTarget && LABELS[name]) {
+    return `${LABELS[name]}: "${cleanTarget}"`;
+  }
+  return LABELS[name] ?? name.replace(/_/g, ' ');
+};
 function failureMessage(code: string | null | undefined) {
   if (code === 'model_unavailable') return 'Choose an available model to continue. Your message is saved.';
   if (code === 'provider_stream_error') return 'The model connection failed. Your message is saved.';
@@ -327,17 +352,60 @@ export function Transcript({ messages, members, currentUserId, steps, run, runs 
 export function activityToSteps(activities: PublicActivity[], runActions: RunDetailResponse['actions']): WorkingStep[] {
   const steps: WorkingStep[] = [];
   for (const activity of activities) {
-    const payload = (activity.payload ?? {}) as { tool_name?: string; status?: WorkingStep['state']; action_id?: string; command_name?: string; summary?: string; step_index?: number };
+    const payload = (activity.payload ?? {}) as {
+      tool_name?: string;
+      status?: WorkingStep['state'];
+      action_id?: string;
+      command_name?: string;
+      summary?: string;
+      step_index?: number;
+      target?: string;
+    };
     if (payload.tool_name === 'turn:agent') continue;
-    if (activity.type === 'step_started') steps.push({ id: `${activity.run_id}:${payload.step_index ?? activity.id}`, label: stepLabel(payload.tool_name ?? 'Working'), state: 'running' });
-    if (activity.type === 'step_finished') { const last = [...steps].reverse().find(step => step.state === 'running'); if (last) { last.state = payload.status ?? 'succeeded'; } }
-    if (activity.type === 'action_applied') { const receipt = runActions.find(action => action.action_id === payload.action_id); steps.push({ id: activity.id, label: stepLabel(payload.command_name ?? 'Saved a change'), state: receipt ? 'succeeded' : 'running', actionId: receipt?.action_id, summary: receipt?.summary ?? null }); }
-    if (activity.type === 'action_reverted') { const target = steps.find(step => step.actionId === payload.action_id); if (target) target.state = 'undone'; }
+    if (activity.type === 'step_started') {
+      steps.push({
+        id: `${activity.run_id}:${payload.step_index ?? activity.id}`,
+        label: stepLabel(payload.tool_name ?? 'Working', payload.target),
+        state: 'running',
+        summary: payload.target ?? null,
+      });
+    }
+    if (activity.type === 'step_finished') {
+      const last = [...steps].reverse().find(step => step.state === 'running');
+      if (last) {
+        last.state = payload.status ?? 'succeeded';
+        if (payload.target && !last.summary) last.summary = payload.target;
+      }
+    }
+    if (activity.type === 'action_applied') {
+      const receipt = runActions.find(action => action.action_id === payload.action_id);
+      steps.push({
+        id: activity.id,
+        label: stepLabel(payload.command_name ?? 'Saved a change', receipt?.summary),
+        state: receipt ? 'succeeded' : 'running',
+        actionId: receipt?.action_id,
+        summary: receipt?.summary ?? null,
+      });
+    }
+    if (activity.type === 'action_reverted') {
+      const target = steps.find(step => step.actionId === payload.action_id);
+      if (target) target.state = 'undone';
+    }
   }
   return steps;
 }
 export function stepsFromRun(run: RunDetailResponse, activities: PublicActivity[]): WorkingStep[] {
   const tools = run.steps.filter(step => step.tool_name !== 'turn:agent');
   if (!tools.length) return activityToSteps(activities, run.actions);
-  return tools.map(step => { const receipt = run.actions.find(action => action.action_id === step.action_id && ['applied', 'already_applied'].includes(action.result_status)); const undone = activities.some(item => item.type === 'action_reverted' && (item.payload as { action_id?: string }).action_id === step.action_id); return { id: String(step.step_index), label: stepLabel(step.tool_name), state: undone ? 'undone' : step.status === 'planned' ? activities.some(item => item.type === 'step_started' && (item.payload as { step_index?: number }).step_index === step.step_index) ? 'running' : 'queued' : step.status, actionId: receipt?.action_id, summary: receipt?.summary ?? null }; });
+  return tools.map(step => {
+    const receipt = run.actions.find(action => action.action_id === step.action_id && ['applied', 'already_applied'].includes(action.result_status));
+    const undone = activities.some(item => item.type === 'action_reverted' && (item.payload as { action_id?: string }).action_id === step.action_id);
+    return {
+      id: String(step.step_index),
+      label: stepLabel(step.tool_name, receipt?.summary),
+      state: undone ? 'undone' : step.status === 'planned' ? (activities.some(item => item.type === 'step_started' && (item.payload as { step_index?: number }).step_index === step.step_index) ? 'running' : 'queued') : step.status,
+      actionId: receipt?.action_id,
+      summary: receipt?.summary ?? null,
+    };
+  });
 }

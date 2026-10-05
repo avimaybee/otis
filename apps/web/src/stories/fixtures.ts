@@ -166,13 +166,25 @@ export const storyModels: ModelOption[] = [
   },
   {
     command_key: 'gemini-3.5-flash-lite',
-    display_name: 'Gemini 3.5 Flash Lite',
+    display_name: 'Gemini 3.5 Flash-Lite',
     provider: 'gemini',
     native_audio_supported: false,
     voice_available: false,
-    available: false,
-    is_current: false,
-    is_default: false,
+    available: true,
+    is_current: true,
+    is_default: true,
+    thinking: {
+      current_choice_id: null,
+      effective_choice_id: 'medium',
+      is_default: true,
+      state: 'supported',
+      choices: [
+        { id: 'minimal', label: 'Minimal' },
+        { id: 'low', label: 'Low' },
+        { id: 'medium', label: 'Medium' },
+        { id: 'high', label: 'High' },
+      ],
+    },
   },
 ];
 

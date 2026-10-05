@@ -137,7 +137,7 @@ export async function acceptInvite(
   const invitedEmail = String(invite['invited_email']).trim().toLowerCase();
   const userEmail = params.userEmail.trim().toLowerCase();
 
-  if (invitedEmail !== userEmail) {
+  if (invitedEmail !== '*' && invitedEmail !== userEmail) {
     throw new InviteError(
       'email_mismatch',
       `Invite was issued to ${invitedEmail}, but signed-in account is ${userEmail}.`,

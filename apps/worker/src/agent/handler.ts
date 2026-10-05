@@ -879,7 +879,22 @@ export class AgentHandler implements TurnHandler {
             });
 
             const currentRevision = (await getWorkspaceRevision(ctx.db, ctx.workspaceId))?.business_revision ?? 0;
-            await publishAgentActivity(ctx, `step${stepIndex}_started`, 'step_started', { tool_name: call.name, step_index: stepIndex });
+            const argsRecord = (call.args && typeof call.args === 'object' ? call.args : {}) as Record<string, unknown>;
+            const toolTarget =
+              typeof argsRecord['name'] === 'string'
+                ? (argsRecord['name'] as string)
+                : typeof argsRecord['query'] === 'string'
+                  ? (argsRecord['query'] as string)
+                  : typeof argsRecord['title'] === 'string'
+                    ? (argsRecord['title'] as string)
+                    : typeof argsRecord['entity_name'] === 'string'
+                      ? (argsRecord['entity_name'] as string)
+                      : null;
+            await publishAgentActivity(ctx, `step${stepIndex}_started`, 'step_started', {
+              tool_name: call.name,
+              step_index: stepIndex,
+              ...(toolTarget ? { target: toolTarget.slice(0, 80) } : {}),
+            });
 
             // Execute through repository
             result = await executeAgentTool({
@@ -907,7 +922,12 @@ export class AgentHandler implements TurnHandler {
               fence: ctx.fence,
               nowIso: this.nowIso(),
             });
-            await publishAgentActivity(ctx, `step${stepIndex}_finished`, 'step_finished', { tool_name: call.name, step_index: stepIndex, status: ['applied', 'already_applied'].includes(result.status) ? 'succeeded' : result.status === 'needs_clarification' ? 'skipped' : 'failed' });
+            await publishAgentActivity(ctx, `step${stepIndex}_finished`, 'step_finished', {
+              tool_name: call.name,
+              step_index: stepIndex,
+              status: ['applied', 'already_applied'].includes(result.status) ? 'succeeded' : result.status === 'needs_clarification' ? 'skipped' : 'failed',
+              ...(toolTarget ? { target: toolTarget.slice(0, 80) } : {}),
+            });
 
             if (result.status === 'rejected' && result.error?.code === 'daily_action_limit_exceeded') {
               return {
