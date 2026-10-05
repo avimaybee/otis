@@ -237,6 +237,14 @@ Effort: S = hours, M = about a day, L = multiple days including tests. Priority 
 - Smallest fix: restore bounded revocation enforcement through the existing scoped stream owner using current membership/session and deliberate invalidation/expiry. A checks-at-open-only stream cannot claim the old periodic revocation semantics. Combine with the existing transport repair; no heartbeat writes or generic authorization cache service.
 - Acceptance: open the actual default production branch, remove member/revoke session, then publish new activity; removed subscriber receives no post-revocation private event and closes with the correct signal. Retained members continue, scope is checked on reconnect, row-read budget is recorded.
 
+### SOL-29 — New live publication sends cursor zero instead of the persisted activity cursor
+
+- Priority: P1 for the concurrent realtime change, already owned by the other agent. Confidence HIGH. Effort S/M. Fix risk MED: replay ordering and publication authority.
+- Evidence: `apps/worker/src/agent/activity.ts:16–37` increments/persists a chat cursor but broadcasts an envelope with literal `cursor: 0` and no SSE event ID. The client's activity admission/reconnect protocol uses positive monotonically increasing persisted cursors. The broadcaster does not return/reuse the committed row and can rebroadcast an existing ID after an idempotent no-op.
+- User impact: the first zero-cursor event can enter the client, but subsequent distinct events also have zero and are discarded as duplicate cursor data by `mergeActivity`. The reconnect cursor does not advance. Database catch-up can later show the events, obscuring the broken live path.
+- Smallest fix: publish the actual committed authorized row/ID/cursor from the existing activity owner; idempotent replay must preserve that identity and avoid duplicate publication effects. Keep append-before-publish/fence checks, stable ordering and current authority. Do not synthesize a cursor or bypass the existing durable owner.
+- Acceptance: initial snapshot cursor > 0, new default-path publication reaches the browser with the next persisted cursor and SSE ID, duplicate key/restart does not add another event, lost response catches up without duplicate text, stale executor cannot publish new public content.
+
 ## Essential feature gaps already owned by existing gates
 
 These are unfinished journeys, not newly discovered implementations to duplicate. Prioritize after the capture/integrity defects above. Recheck concurrent work before assigning them.

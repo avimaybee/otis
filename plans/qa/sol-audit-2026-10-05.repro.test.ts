@@ -7,6 +7,8 @@ import { handleRecordDraft } from '../../packages/ledger/src/commands/recordDraf
 import type { LedgerCommandContext, LedgerProjectionState, RecordDraftArgs } from '../../packages/ledger/src/types.js';
 import { createOutboxEntry, markOutboxFailed, retryOutboxEntry, resetOutboxForTests } from '../../apps/web/src/api/outbox.js';
 import { FLUSH_MAX_ATTEMPTS, selectDueEntries } from '../../apps/web/src/api/flush.js';
+import { mergeActivity } from '../../apps/web/src/hooks/useActivityStream.js';
+import type { PublicActivity } from '../../packages/contracts/src/index.js';
 
 vi.mock('idb-keyval', () => ({
   get: vi.fn(async () => undefined), set: vi.fn(async () => undefined),
@@ -26,6 +28,11 @@ const empty = (): LedgerProjectionState => ({
 afterEach(() => resetOutboxForTests());
 
 describe('Sol audit — current defects reproduced', () => {
+  it('distinct live events with cursor zero collapse into the first event', () => {
+    const first: PublicActivity = { schema_version: 1, id: 'audit-activity-1', cursor: 0, workspace_id: 'audit-workspace', chat_id: 'audit-chat', run_id: 'audit-run', created_at: '2026-10-05T00:00:00Z', type: 'text_chunk', payload: { text: 'First' } };
+    const second = { ...first, id: 'audit-activity-2', payload: { text: 'Second' } };
+    expect(mergeActivity(mergeActivity([], first), second)).toEqual([first]);
+  });
   it.each(['Has Bistro signed?', 'If we signed, would it count as won?', 'The client asked: "Have we signed?"'])('status guard incorrectly accepts %s as won intent', text => {
     expect(isExplicitStatusIntent(text, 'won').isExplicit).toBe(true);
   });

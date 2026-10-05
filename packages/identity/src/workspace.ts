@@ -177,6 +177,12 @@ export async function bootstrapWorkspace(
         nowIso,
         JSON.stringify({ reason: 'bootstrap' }),
       ),
+    db
+      .prepare(
+        `INSERT OR IGNORE INTO workspace_settings (workspace_id, default_model, created_at, updated_at)
+         VALUES (?, 'gemini-3.5-flash-lite', ?, ?)`
+      )
+      .bind(params.workspaceId, nowIso, nowIso),
   ]);
 
   return {
