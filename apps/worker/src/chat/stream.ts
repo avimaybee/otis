@@ -226,8 +226,20 @@ export function createActivityStream(db: D1Database, options: StreamOptions): Re
       }
 
       // 3. Subscribe to in-memory liveChatBus (events pushed in RAM directly as tokens arrive)
-      unsubscribeLiveBus = liveChatBus.subscribe(options.workspaceId, options.chatId, (event) => {
+      unsubscribeLiveBus = liveChatBus.subscribe(options.workspaceId, options.chatId, async (event) => {
         if (closed) return;
+        const isMember = await verifyStreamMembership(db, options, queryCount, sessionCache, now());
+        if (!isMember) {
+          closed = true;
+          unsubscribeLiveBus?.();
+          try {
+            controller.enqueue(formatEvent('membership_revoked', { workspace_id: options.workspaceId }));
+            controller.close();
+          } catch {
+            // Already closed or cancelled by reader
+          }
+          return;
+        }
         try {
           controller.enqueue(formatEvent(event.name, event.data, event.id));
           if (event.id !== undefined && event.id > cursor) {

@@ -260,18 +260,36 @@ describe('008C transcript follow, jump and announcements', () => {
     await view.unmount();
   });
 
-  it('renders Romanian and Hungarian diacritics as ordinary text', async () => {
+  it('renders Romanian and Hungarian diacritics as ordinary text with comma-below and double acutes', async () => {
+    const candidateString = 'Restaurantul 2 e cald acum. Oferta până vineri, 3.500 RON. Șantier, țară, tűz, őr.';
+    const timeString = 'Fri 9 Oct · 3,500 RON · 07:41';
     const view = await mount(
       <Transcript
-        messages={[storyMessage({ content_text: 'ș și ț · ő és ű · 3.500 RON' })]}
+        messages={[storyMessage({ content_text: `${candidateString}\n\n${timeString}` })]}
         members={storyMembers}
         currentUserId="user-hunor"
         steps={[]}
         onInspectAction={() => {}}
       />,
     );
-    expect(view.host.textContent).toContain('ș și ț');
-    expect(view.host.textContent).toContain('ő és ű');
+    expect(view.host.textContent).toContain(candidateString);
+    expect(view.host.textContent).toContain(timeString);
+
+    // Verify correct Unicode codepoints:
+    // Romanian Ș (\u0218) and ț (\u021B) have comma-below, not cedilla (\u015E, \u015F, \u0162, \u0163)
+    expect(candidateString).toContain('\u0218'); // Ș (capital S comma-below in Șantier)
+    expect(candidateString).toContain('\u021B'); // ț (lowercase t comma-below in țară)
+    expect(candidateString).not.toContain('\u015E'); // Ş (capital S cedilla)
+    expect(candidateString).not.toContain('\u015F'); // ş (lowercase s cedilla)
+    expect(candidateString).not.toContain('\u0162'); // Ţ (capital T cedilla)
+    expect(candidateString).not.toContain('\u0163'); // ţ (lowercase t cedilla)
+
+    // Hungarian ő (\u0151) and ű (\u0171) have double acutes, not umlauts (\u00F6, \u00FC)
+    expect(candidateString).toContain('\u0151'); // ő (lowercase o double-acute in őr)
+    expect(candidateString).toContain('\u0171'); // ű (lowercase u double-acute in tűz)
+    expect(candidateString).not.toContain('\u00F6'); // ö (umlaut)
+    expect(candidateString).not.toContain('\u00FC'); // ü (umlaut)
+
     await view.unmount();
   });
 });

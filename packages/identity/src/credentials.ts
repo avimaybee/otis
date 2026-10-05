@@ -459,3 +459,44 @@ function isGuardFailure(err: unknown): boolean {
     s.includes('PRIMARY KEY')
   );
 }
+
+/**
+ * Deletes a workspace provider credential, returning to zero-setup platform usage.
+ */
+export async function deleteWorkspaceCredential(
+  db: D1Database,
+  params: {
+    workspaceId: string;
+    provider: ProviderName;
+    actorUserId: string;
+  },
+): Promise<boolean> {
+  const nowIso = new Date().toISOString();
+  const member = await db
+    .prepare(`SELECT 1 FROM workspace_users WHERE workspace_id = ? AND user_id = ?`)
+    .bind(params.workspaceId, params.actorUserId)
+    .first();
+  if (!member) {
+    throw new CredentialError('not_member', 'Caller is no longer a member of this workspace.');
+  }
+
+  const result = await db.batch([
+    db
+      .prepare(`DELETE FROM provider_credentials WHERE workspace_id = ? AND provider = ?`)
+      .bind(params.workspaceId, params.provider),
+    db
+      .prepare(
+        `INSERT INTO settings_audit (id, workspace_id, user_id, actor_user_id, scope, changed_fields_json, occurred_at)
+         VALUES (?, ?, NULL, ?, 'credential', ?, ?)`
+      )
+      .bind(
+        crypto.randomUUID(),
+        params.workspaceId,
+        params.actorUserId,
+        JSON.stringify({ provider: params.provider, action: 'deleted' }),
+        nowIso,
+      ),
+  ]);
+
+  return ((result[0]?.meta?.changes ?? 0) > 0);
+}

@@ -565,8 +565,9 @@ export function markOutboxFailed(clientId: string, error: { code: string; messag
 export function retryOutboxEntry(clientId: string): OutboxEntry | undefined {
   const entry = entries.get(clientId);
   if (!entry) return undefined;
-  // Explicit user retry runs now: it clears any scheduled automatic retry.
-  const next: OutboxEntry = { ...entry, state: 'sending', attempts: entry.attempts + 1, nextRetryAt: undefined, errorCode: undefined, errorMessage: undefined };
+  // Explicit user retry runs now: it clears any scheduled automatic retry
+  // and resets the attempt counter so exhausted retries get a fresh budget.
+  const next: OutboxEntry = { ...entry, state: 'sending', attempts: 0, nextRetryAt: undefined, errorCode: undefined, errorMessage: undefined };
   entries.set(clientId, next);
   schedulePersist();
   return next;

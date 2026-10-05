@@ -30,12 +30,13 @@ it('default production stream receives a private broadcast after D1 membership r
     liveChatBus.broadcast(workspaceId, chat.id, { name: 'activity', data: { marker: 'private-after-removal' }, id: 1 });
     let body = '';
     const decoder = new TextDecoder();
-    for (let index = 0; index < 20 && !body.includes('private-after-removal'); index++) {
+    for (let index = 0; index < 20 && !body.includes('membership_revoked'); index++) {
       const chunk = await reader.read();
       if (chunk.done) break;
       body += decoder.decode(chunk.value);
     }
-    expect(body).toContain('private-after-removal');
+    expect(body).toContain('membership_revoked');
+    expect(body).not.toContain('private-after-removal');
   } finally {
     await reader.cancel();
   }

@@ -1,5 +1,7 @@
 import type { Preview } from '@storybook/react-vite';
-import '@fontsource-variable/inter';
+import '@fontsource-variable/instrument-sans';
+import '@fontsource-variable/bricolage-grotesque';
+import '@fontsource-variable/geist-mono';
 import '../src/globals.css';
 import '../src/index.css';
 import '../src/components/ui/controls.css';

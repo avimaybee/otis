@@ -48,6 +48,11 @@ export async function handleGetActivity(
     if (!token) {
       return jsonError(401, 'unauthorized', 'Session token missing or expired.', requestId);
     }
+    if (env.WORKSPACE_ACTOR) {
+      const actorId = env.WORKSPACE_ACTOR.idFromName(workspaceId);
+      const stub = env.WORKSPACE_ACTOR.get(actorId);
+      return stub.fetch(request);
+    }
     return createActivityStream(env.DB, {
       workspaceId,
       chatId,

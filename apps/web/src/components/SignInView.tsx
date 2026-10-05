@@ -12,20 +12,30 @@ import { signInWithGoogle, getClientAuth } from '../firebase.js';
 import { Button } from './ui/button.js';
 import { Alert, AlertDescription } from './ui/alert.js';
 
-export function SignInView({ onSignedIn }: { onSignedIn: () => void }) {
+export function SignInView({ onSignedIn, inviteToken: propInviteToken }: { onSignedIn: () => void; inviteToken?: string | null }) {
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const { isConfigured } = getClientAuth();
+  const inviteToken = propInviteToken ?? (() => {
+    try {
+      if (typeof window === 'undefined') return null;
+      return new URL(window.location.href).searchParams.get('invite');
+    } catch {
+      return null;
+    }
+  })();
 
   const submit = async () => {
     setPending(true);
     setError(null);
     try {
       const idToken = await signInWithGoogle();
+      const payload: { id_token: string; invite_token?: string } = { id_token: idToken };
+      if (inviteToken) payload.invite_token = inviteToken;
       const response = await fetch('/api/auth/session', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', [AUTH_BOUNDS.CSRF_HEADER]: '1' },
-        body: JSON.stringify({ id_token: idToken }),
+        body: JSON.stringify(payload),
       });
       if (!response.ok) {
         const body = (await response.json().catch(() => null)) as { error?: { message?: string } } | null;
@@ -46,6 +56,15 @@ export function SignInView({ onSignedIn }: { onSignedIn: () => void }) {
         <p className="otis-entry__note text-sm text-muted-foreground">
           Members of a workspace can read its shared conversations and retained voice notes.
         </p>
+
+        {inviteToken && (
+          <div className="rounded-xl border border-border bg-card p-3 text-left mb-2">
+            <p className="text-sm font-medium text-foreground">Workspace invitation</p>
+            <p className="text-xs text-muted-foreground mt-1">
+              Sign in with Google to accept your invitation and join the workspace.
+            </p>
+          </div>
+        )}
 
         {error && (
           <Alert variant="destructive" className="otis-entry__error mb-4 text-sm">

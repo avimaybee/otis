@@ -39,7 +39,7 @@ export function HistoryNav(props: HistoryNavProps) {
         {team && <span className="otis-nav__author text-xs">{chat.author_display_name ?? props.members?.[chat.author_user_id] ?? 'Teammate'}</span>}
       </button>
       {!team && (props.onRenameChat || props.onDeleteChat) && (
-        <div className="absolute right-2 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity">
+        <div className={`absolute right-2 ${props.variant === 'drawer' ? 'opacity-100' : 'opacity-0 group-hover:opacity-100 group-focus-within:opacity-100'} transition-opacity`}>
           <DropdownMenu modal={false}>
             <DropdownMenuTrigger asChild>
               <Button variant="ghost" size="icon-xs" type="button" className="otis-iconbutton size-6 p-0 text-muted-foreground hover:text-foreground" aria-label={`Options for ${chat.title || 'conversation'}`}>
@@ -64,14 +64,18 @@ export function HistoryNav(props: HistoryNavProps) {
     </div>
     <Button variant="ghost" className="otis-nav__action justify-start text-sm" type="button" onClick={props.onNewChat}><ComposeIcon /><span>New chat</span></Button>
     {!searching ? (
-      <Button ref={searchButton} variant="ghost" className="otis-nav__action justify-start text-sm" type="button" aria-expanded={false} onClick={() => { setSearching(true); requestAnimationFrame(() => input.current?.focus()); }}><SearchIcon /><span>Search chats</span></Button>
+      <Button ref={searchButton} variant="ghost" className="otis-nav__action justify-start text-sm" type="button" aria-expanded={false} onClick={() => { setSearching(true); requestAnimationFrame(() => input.current?.focus()); }}><SearchIcon /><span>Filter loaded chats</span></Button>
     ) : (
-      <div className="otis-nav__search flex items-center gap-2"><label className="otis-visually-hidden" htmlFor={`${id}-search`}>Filter chat titles</label><Input ref={input} id={`${id}-search`} type="search" placeholder="Search chat titles" value={query} onChange={event => setQuery(event.target.value)} onKeyDown={event => { if (event.key === 'Escape') { event.preventDefault(); closeSearch(); } }} className="flex-1" /><Button variant="ghost" size="icon-xs" type="button" aria-label="Close search" onClick={closeSearch}><CloseIcon /></Button></div>
+      <div className="otis-nav__search flex items-center gap-2"><label className="otis-visually-hidden" htmlFor={`${id}-search`}>Filter loaded chats</label><Input ref={input} id={`${id}-search`} type="search" placeholder="Filter loaded chats" value={query} onChange={event => setQuery(event.target.value)} onKeyDown={event => { if (event.key === 'Escape') { event.preventDefault(); closeSearch(); } }} className="flex-1" /><Button variant="ghost" size="icon-xs" type="button" aria-label="Close search" onClick={closeSearch}><CloseIcon /></Button></div>
     )}
     <div className="otis-nav__history" aria-busy={props.loading}>
       <p className="otis-nav__heading text-xs">Your chats</p>{props.ownChats.length ? rows(props.ownChats, false) : <p className="otis-nav__empty text-sm">{props.loading ? 'Loading conversations…' : 'No conversations yet'}</p>}
       {props.teamChats.length > 0 && <><p className="otis-nav__heading text-xs">Team chats</p>{rows(props.teamChats, true)}</>}
-      {query && ![...props.ownChats, ...props.teamChats].some(chat => chat.title.toLocaleLowerCase().includes(query.toLocaleLowerCase())) && <p className="otis-nav__empty text-sm">No matching chat titles.</p>}
+      {query && ![...props.ownChats, ...props.teamChats].some(chat => chat.title.toLocaleLowerCase().includes(query.toLocaleLowerCase())) && (
+        <p className="otis-nav__empty text-sm">
+          {props.hasMore ? 'No matches in loaded conversations. Try loading older history below.' : 'No matching chat titles.'}
+        </p>
+      )}
       {props.hasMore && <Button variant="ghost" className="otis-nav__row w-full justify-start text-sm" type="button" onClick={props.onLoadMore}>Load more conversations</Button>}
     </div>
     <div className="otis-nav__footer"><Button variant="ghost" className="otis-nav__action justify-start text-sm" type="button" onClick={props.onOpenSettings}><SettingsIcon /><span>Settings</span></Button></div>

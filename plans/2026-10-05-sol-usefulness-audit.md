@@ -6,7 +6,7 @@ Started 2026-10-05, Asia/Calcutta. Baseline: `main`, HEAD `e2071bc`, plus the ex
 
 Find additional essential fixes that make Otis useful to a nontechnical person. The other agent already owns chat naming/rename/delete, workspace CRUD/member management, model picker/default/thinking, Working detail, reference structure, and Telegram linking. Do not duplicate those assignments. Check their integration boundaries where they affect unrelated capture/recovery/security.
 
-Audit in progress. Source inspection is not live-provider or production acceptance. No application code changed. Subagents were stopped on the user's instruction; subsequent work is solo. Findings below are verified by source unless stronger reproduction is explicitly recorded.
+Initial audit pass complete: 29 numbered observations (SOL-17 has a concurrent-source qualification), plus four already-owned feature gaps. This remains the living report for revalidation as implementation changes arrive. Source inspection is not live-provider or production acceptance. No application code changed. Subagents were stopped on the user's instruction; subsequent work is solo. Findings below are verified by source unless stronger reproduction is explicitly recorded.
 
 Effort: S = hours, M = about a day, L = multiple days including tests. Priority reflects immediate usefulness/data integrity, not a mandate to build every feature. Confidence HIGH means the cited code establishes the behavior; runtime frequency remains unmeasured.
 
@@ -231,9 +231,9 @@ Effort: S = hours, M = about a day, L = multiple days including tests. Priority 
 
 ### SOL-28 — New production stream stops rechecking membership/session after opening
 
-- Priority: P1 access-boundary blocker for the same concurrent stream change. Confidence HIGH by source; real removed-member stream not exercised. Effort S/M alongside SOL-27. Fix risk MED: revocation/cost balance.
+- Priority: P1 access-boundary blocker for the same concurrent stream change. Confidence HIGH by source and actual local Workers/D1 reproduction. Effort S/M alongside SOL-27. Fix risk MED: revocation/cost balance.
 - Evidence: production branch `apps/worker/src/chat/stream.ts:190–283` checks membership/session once at opening, then subscribes to broadcasts. Its heartbeat explicitly performs zero D1 queries; broadcasts enqueue without another authority check. The old injected polling branch still revalidates, so those integration tests can pass while production behaves differently.
-- User impact: a workspace member removed after opening the stream can continue to receive new private activity until the connection expires. Server logout/revoked session has the same stale authorization window. This conflicts with current trusted-scope and revocation requirements.
+- User impact: a workspace member removed after opening the stream can continue to receive new private activity until the connection expires (default five minutes in `packages/contracts/src/chat.ts:124`). Server logout/revoked session has the same stale authorization window. This conflicts with current trusted-scope and revocation requirements. The audit test removes membership in real local D1 and confirms a subsequent synthetic producer broadcast reaches that open default-branch stream; it does not prove deployed cross-isolate publication.
 - Smallest fix: restore bounded revocation enforcement through the existing scoped stream owner using current membership/session and deliberate invalidation/expiry. A checks-at-open-only stream cannot claim the old periodic revocation semantics. Combine with the existing transport repair; no heartbeat writes or generic authorization cache service.
 - Acceptance: open the actual default production branch, remove member/revoke session, then publish new activity; removed subscriber receives no post-revocation private event and closes with the correct signal. Retained members continue, scope is checked on reconnect, row-read budget is recorded.
 
@@ -283,12 +283,55 @@ These are unfinished journeys, not newly discovered implementations to duplicate
 
 ## Reproduction evidence
 
-`pnpm exec vitest run --config plans/qa/sol-audit-2026-10-05.config.ts`: **12/12 defect reproductions passed**, 1 file, 1.41 seconds on the latest run. These intentionally assert existing incorrect behavior; green is evidence of defects, NOT acceptance of the product. Covers SOL-01, SOL-02 (negation/question/quotation), SOL-03 (recipient-only exception/content-only data loss), SOL-04 (combined status/title patch), SOL-15 (null unsnooze), SOL-19 (invalid/underspecified deadlines), and SOL-20 (omitted assignee).
+`pnpm exec vitest run --config plans/qa/sol-audit-2026-10-05.config.ts`: **16/16 defect reproductions passed**, 1 file, 947 ms on the latest run. These intentionally assert existing incorrect behavior; green is evidence of defects, NOT acceptance of the product. Covers SOL-01, SOL-02 (negation/question/quotation), SOL-03 (recipient-only exception/content-only data loss), SOL-04 (combined status/title patch), SOL-15 (null unsnooze), SOL-19 (invalid/underspecified deadlines), SOL-20 (omitted assignee), SOL-25 (status questions/conditionals/quotes), and SOL-29 (zero-cursor collision).
 
-The config/test are confined to `plans/qa/`; no production source or existing tests modified. They use pure ledger handlers and local browser-state modules, not remote providers or production business data. Convert these into normal desired-behavior regressions in the owning suites during repair; do not make production verification depend on accepting bad behavior.
+`pnpm exec vitest run --config plans/qa/sol-audit-worker.config.ts`: **1/1 defect reproduction passed**, actual local Workers/D1, 3.22 seconds. Covers SOL-28 through the default production stream branch with actual migrations, scoped session and membership removal. The subsequent producer broadcast is synthetic, deliberately testing subscription authorization independently of producer persistence/actor fencing. Provider keys are explicitly blank in the test config; no remote provider or production-data operation is performed.
+
+All audit configs/tests/fixture wrappers/screenshots are confined to `plans/qa/`; no production source or existing tests modified. Convert these reproductions into desired-behavior regressions in the owning suites during repair; do not make production verification depend on accepting bad behavior.
+
+## Browser and source-check evidence
+
+- `pnpm check:design`: passed, 87 source files scanned. This does not establish semantic layout compliance.
+- `pnpm check:stories`: passed, 92 required fixture IDs across 16 story files. This does not establish that Storybook renders.
+- `pnpm exec eslint plans/qa/sol-audit-2026-10-05.config.ts plans/qa/sol-audit-2026-10-05.repro.test.ts plans/qa/sol-audit-worker.config.ts plans/qa/sol-audit-worker.repro.test.ts plans/qa/sol-audit-ui.ts`: passed. This is the audit-artifact lint check, not the application's full lint command.
+- `git diff --check`: passed. All five report screenshot links resolve; all seven audit text artifacts checked for trailing whitespace. Existing application changes are preserved.
+- Native Codex browser, audit-only wrapper around the existing synthetic Review fixture and production components. Verified Working expansion, action detail/undo-preview opening, Escape dismissal with focus return, source disclosure and navigation to a teammate's read-only chat. No mutating Undo, real account, microphone or external-provider action exercised.
+- Short synthetic conversation captured and visually inspected at [360 × 800](qa/sol-audit-short-360.jpg), [390 × 844](qa/sol-audit-short-390.jpg), [900 × 900](qa/sol-audit-short-900.jpg), [1280 × 900](qa/sol-audit-short-1280.jpg), and [1440 × 900](qa/sol-audit-short-1440.jpg). These are actual resized browser viewports, not touch-device/soft-keyboard or screen-reader evidence. Viewport override restored afterward.
+- Comparison used `design-tokens.md` section 12 and `docs/design/approved-reference.png`. Short text wraps within captured views; desktop has scoped sidebar/chat and source/action inspection uses the existing surfaces. Current composition visibly adds a model selector row inside the composer and substantial gaps around Working. The former conflicts with the currently approved no-toolbar recipe; structural resolution belongs to the other agent's already-assigned reference/model work. Checker green does not resolve that contract mismatch. No full visual acceptance claimed.
+- Original `ui-review.html` route fails (SOL-26); original Storybook iframe remained blank on localhost in both native Chrome and the in-app browser. Hostname warning was resolved by using localhost; the remaining blank-page cause is unconfirmed. No Storybook build claimed.
+
+## Recommended implementation order
+
+This is an order of repair, not authorization to implement everything or start new architectural gates.
+
+1. **Block incorrect or unauthorized work:** SOL-27/28/29 in the existing realtime assignment; SOL-02/25 intent; SOL-10 disputed drafts; SOL-06/12/16 account/scope cleanup and acceptance. Handle transport regression within its current owner rather than starting a competing stream implementation.
+2. **Make capture/recovery reliable:** SOL-01/05/11. Keep submitted payloads and UUIDs immutable, preserve unknown acceptance, and make visible Retry actually retry the failed operation.
+3. **Make ordinary corrections complete:** SOL-03/04/15/18/19/20. Prefer shared validators and existing ledger commands, with targeted fixtures and actual D1 atomic/replay checks where committing behavior changes.
+4. **Make memory useful after capture:** SOL-14 current canonical fields, SOL-13 evidence recovery, SOL-23 old chat lookup. A bounded read of existing projections provides more value than a new dashboard.
+5. **Complete the existing voice and follow-up journeys:** SOL-07/08/09, then GAP-A and draft handoff in GAP-C. Follow existing dependencies; do not promise one-off reminders/export/failed-run continuation until GAP-B/C/D owning boundaries exist.
+6. **Prove affordability and fidelity:** SOL-17 revalidated against concurrent source, SOL-22 actual runtime measurements, SOL-24 language semantics and SOL-26 working review wrappers. Run the owning application's required checks when implementing; no gate is completed by this report.
+
+## Coverage and boundaries
+
+| Journey / controls | Inspected evidence | Outstanding acceptance |
+|---|---|---|
+| Sign in, unavailable state, logout and account switching | App/SignIn/Unavailable source, session and scoped cleanup paths | Actual authenticated multi-tab and server-revocation browser flow |
+| New/own/team chats, history, source navigation, workspace selection | Production router/history/snapshot source; native drawer/source/read-only navigation | Concurrent CRUD/member work and full paginated search |
+| Composer Send/Retry/discard, draft reuse, offline delivery | Production composer/outbox/flush/transport source; defect reproductions | Actual browser storage eviction, network failure and cross-tab flush |
+| Working, thinking, Stop, inspect/undo | Source/actor/activity inspection; native disclosure/detail/focus; local Workers stream repro | Correct production publication/revocation, real stop/undo D1 flow and live provider capability |
+| Task/status/price/draft capture and correction | Tool validators, policy, adapter, pure handlers/reducers; focused reproductions | Actual committing-boundary regressions and multilingual interpretation |
+| Voice record/review/retry/recovery/playback | Recorder/session/panel/upload/server routes inspected | Actual Android/iPhone/Telegram codec evidence, microphone and retention playback |
+| Settings, credentials, language/timezone and Telegram | Production settings/connections/commands/source; official Telegram deep-link documentation reviewed | Credential removal, actual linked-account usability and schedule integration |
+| Briefs, explicit reminders, outward draft handoff, exports | Source/migrations/contracts and owning plans cross-checked | GAP-A/B/C/D remain implementation work, not feature acceptance |
+| Affordability, responsive UI and accessibility | Source scans, runtime ownership inspection, five native viewport screenshots | Actual CPU/rows measurement, Storybook rendering, touch keyboard and assistive-technology checks |
+
+Considered and not promoted into extra work: no CRM/dashboard, speculative vector search, new notification engine or second queue; projection reducers' shallow map copies alone are not a proved persistence defect because the executor snapshots fingerprints before handlers; existing multi-field bulk confirmation is enforced by the handler and should not be reported missing merely because the pure round collector does not call it. Keep these checks tied to real paths rather than adding speculative refactors.
 
 ## Evidence limitations and next audit passes
 
 - Root typecheck/lint/test/build have not been rerun for this report.
-- Started local Vite only for native-browser inspection. The existing `ui-review.html?scenario=short` renders Not Found: its memory router initializes to the fixture HTML pathname while the production router defines only `/`. No authenticated production flow has been tested.
-- Continue solo: account/logout isolation, voice capture and playback, history/source retrieval, provider/run recovery, scheduling and draft handoff, command discoverability, small-screen/a11y and cost. Check existing plans before creating any new implementation assignment.
+- Original development wrappers are broken; browser evidence above comes from the explicitly documented audit wrapper. No authenticated production flow has been tested.
+- No real provider, Telegram send, microphone/device codec, deployed multi-isolate stream or export action verified. No Cloudflare limit breach claimed without measurement.
+- Concurrent changes are still in progress. Revalidate the affected finding before repair; preserve the user's unrelated dirty work. No commit, push, PR, deploy, new gate or canonical plan-status update was performed.
+- Audit-created Vite and Storybook processes stopped after collecting evidence. Native viewport override reset; screenshots and local fixtures remain available under `plans/qa/` for review.
+- Next eligible work follows the ranked repair groups above and the existing dependency gates. This report completes the discovery pass; implementation acceptance remains with each owning gate.

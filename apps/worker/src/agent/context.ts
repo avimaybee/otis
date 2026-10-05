@@ -352,7 +352,7 @@ export async function getTurnContext(
 
   // 7. Render dynamic context for system prompt
   const effectiveNowIso = params.nowIso || new Date().toISOString();
-  const tz = memberPreferences?.briefTimezone ?? 'UTC';
+  const tz = memberPreferences?.briefTimezone ?? undefined;
 
   // Query unresolved disputed fields in this workspace
   const disputedRows = (
@@ -367,6 +367,43 @@ export async function getTurnContext(
       .bind(workspaceId)
       .all<{ field_name: string; entity_name: string }>()
   ).results || [];
+
+  // Query latest brief items to resolve ordinal references (e.g. "I did the second one")
+  let latestBriefItems: DynamicPromptContext['latestBriefItems'] = undefined;
+  try {
+    const latestBriefRow = await db
+      .prepare(
+        `SELECT id FROM briefs WHERE workspace_id = ? AND user_id = ? ORDER BY created_at DESC LIMIT 1`,
+      )
+      .bind(workspaceId, actorUserId)
+      .first<{ id: string }>();
+
+    if (latestBriefRow?.id) {
+      const itemRows = (
+        await db
+          .prepare(
+            `SELECT position, title, task_id, entity_id
+             FROM brief_items
+             WHERE brief_id = ?
+             ORDER BY position ASC
+             LIMIT 10`,
+          )
+          .bind(latestBriefRow.id)
+          .all<{ position: number; title: string; task_id: string | null; entity_id: string | null }>()
+      ).results || [];
+
+      if (itemRows.length > 0) {
+        latestBriefItems = itemRows.map((r) => ({
+          position: r.position,
+          title: r.title,
+          taskId: r.task_id,
+          entityId: r.entity_id,
+        }));
+      }
+    }
+  } catch {
+    // If briefs table does not exist or fails, degrade gracefully
+  }
 
   const dynamicContext: DynamicPromptContext = {
     workspaceName,
@@ -383,6 +420,7 @@ export async function getTurnContext(
       entityName: r.entity_name,
       fieldName: r.field_name,
     })),
+    latestBriefItems,
   };
 
   const systemPrompt = renderSystemPrompt(dynamicContext);

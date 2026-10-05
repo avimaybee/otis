@@ -24,7 +24,7 @@ const SCAN_ROOTS = ['apps/web/src', 'packages/design/src'];
 const DEFINITION_STORE = 'apps/web/src/globals.css';
 const TOKEN_FILE = 'design-tokens.md';
 /** Pinned at import; a token update is explicit and must re-pin here. */
-const TOKEN_SHA256 = '72764AFF69EBA6809F9F7949F276A6B23F1FDF2D00FB759723A378FC023F058C';
+const TOKEN_SHA256 = '00493EE66067E966AB4E97ED9313D581671C3BE78D9F2B83BBD2F2C2B1FF04A9';
 const SELF_TEST = process.argv.includes('--self-test');
 
 const failures = [];
@@ -93,7 +93,11 @@ function checkFile(file) {
       fail(file, 'font-size in CSS (use text-xs/sm/base/xl utilities)', `${at} ${line}`);
     }
     if (isCss && !isStore && /font-weight\s*:\s*(200|300|600|700|800|900)\b/.test(line)) {
-      fail(file, 'banned font-weight value (400/500 only)', `${at} ${line}`);
+      const isAllowed600 = /font-weight\s*:\s*600\b/.test(line) &&
+        /(\.otis-empty__title|\.otis-wordmark|\.otis-nav__brand)/.test(line);
+      if (!isAllowed600) {
+        fail(file, 'banned font-weight value (400/500 only, 600 wordmark/empty title only)', `${at} ${line}`);
+      }
     }
     // 3. Shadows, blur, gradients: only shadow-popover exists.
     if (/shadow-(xs|sm|md|lg|xl|2xl|inner)\b|drop-shadow|text-shadow/.test(line)) {
@@ -118,15 +122,19 @@ function checkFile(file) {
     }
     // 6. Sentence case everywhere; no tracked caps.
     if (/\buppercase\b|tracking-(wide|wider|widest)|text-transform\s*:|letter-spacing\s*:/.test(line)) {
-      fail(file, 'banned uppercase/tracking', `${at} ${line}`);
+      const isAllowedTracking = (isStore && /--text-xl--letter-spacing\s*:\s*-0\.01em\b/.test(line)) ||
+        (/letter-spacing\s*:\s*-0\.01em\b/.test(line) && /(\.otis-empty__title|\.otis-entry__title|text-xl)/.test(line));
+      if (!isAllowedTracking) {
+        fail(file, 'banned uppercase/tracking', `${at} ${line}`);
+      }
     }
     // 7. Highlight (yellow) never hides behind the neutral accent token.
     if (/('[^']*bg-accent[^']*highlight[^']*'|"[^"]*bg-accent[^"]*highlight[^"]*")/.test(line)) {
       fail(file, 'highlight used through the accent token', `${at} ${line}`);
     }
     // 8. Retired competing stores.
-    if (/--otis-(canvas|sidebar|surface|surface-hover|surface-raised|border|text-|action-|focus-ring|danger|warning|success|space-|radius-|font-|leading-|hit|duration|turn-gap|section-gap|control-|icon-size|gutter|topbar|sidebar-width|detail-width|content-width)|@fontsource-variable\/geist|radix-nova|Geist Variable/.test(line)) {
-      fail(file, 'retired palette/font reference (use approved CSS variables + Inter)', `${at} ${line}`);
+    if (/--otis-(canvas|sidebar|surface|surface-hover|surface-raised|border|text-|action-|focus-ring|danger|warning|success|space-|radius-|font-|leading-|hit|duration|turn-gap|section-gap|control-|icon-size|gutter|topbar|sidebar-width|detail-width|content-width)|@fontsource-variable\/inter|@fontsource-variable\/geist(?!-mono)|radix-nova|\bGeist Variable\b/.test(line)) {
+      fail(file, 'retired palette/font reference (use approved CSS variables + Instrument Sans)', `${at} ${line}`);
     }
     // 8b. No parallel TypeScript palette object. CSS variables are the store.
     if (!isCss && /\b(const|let|var)\s+(TOKENS|PALETTE|COLORS|THEME)\s*[:=]/.test(line)) {

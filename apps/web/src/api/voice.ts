@@ -95,6 +95,8 @@ export function voiceRouteReady(): boolean {
   return activeAdapter !== null;
 }
 
+const VOICE_REQUEST_TIMEOUT_MS = 45_000;
+
 async function voiceRequest<T>(
   path: string,
   init: RequestInit = {},
@@ -104,10 +106,28 @@ async function voiceRequest<T>(
   const headers = new Headers(init.headers);
   if (method !== 'GET') headers.set(AUTH_BOUNDS.CSRF_HEADER, '1');
   if (typeof init.body === 'string') headers.set('Content-Type', 'application/json');
+
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => {
+    controller.abort(new DOMException('Voice request timed out', 'TimeoutError'));
+  }, VOICE_REQUEST_TIMEOUT_MS);
+  if (init.signal) {
+    if (init.signal.aborted) {
+      controller.abort(init.signal.reason);
+    } else {
+      init.signal.addEventListener('abort', () => controller.abort(init.signal?.reason), { once: true });
+    }
+  }
+
   // A network failure (offline, DNS, aborted) keeps its transport error so
   // the recorder can offer the same-identity Retry; only HTTP answers map to
   // ApiError below.
-  const response = await fetchImpl(path, { ...init, headers, credentials: 'same-origin' });
+  let response: Response;
+  try {
+    response = await fetchImpl(path, { ...init, headers, credentials: 'same-origin', signal: controller.signal });
+  } finally {
+    clearTimeout(timeoutId);
+  }
   const text = await response.text();
   let payload: unknown = null;
   try {

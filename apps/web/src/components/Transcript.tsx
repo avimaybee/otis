@@ -7,6 +7,7 @@ import { toast } from 'sonner';
 import { ChevronDownIcon, CheckIcon, AlertCircleIcon, UndoIcon, TerminalIcon, FileTextIcon, SearchDocIcon, CopyIcon, ArrowDownIcon, PencilIcon } from './icons.js';
 import { Button } from './ui/button.js';
 import { ThinkingDisclosure } from './Thinking.js';
+import { VoiceMessagePlayer } from './VoiceMessagePlayer.js';
 import { reduceThinking } from '../api/thinking.js';
 import { dayKeyInZone, formatClockTime, formatDayLabel } from '../i18n/format.js';
 
@@ -56,16 +57,25 @@ function StepIcon({ label, state }: { label: string; state: WorkingStep['state']
   return <CheckIcon />;
 }
 
-export function WorkingDisclosure({ steps, finished, expanded, onToggle, onInspectAction }: { steps: WorkingStep[]; finished: boolean; expanded: boolean; onToggle: () => void; onInspectAction?: (actionId: string) => void }) {
+export function WorkingDisclosure({ steps, finished, expanded, onToggle, onInspectAction, isWaiting }: { steps: WorkingStep[]; finished: boolean; expanded: boolean; onToggle: () => void; onInspectAction?: (actionId: string) => void; isWaiting?: boolean }) {
   if (!steps.length) return null;
   const current = steps.find(step => step.state === 'running') ?? steps.at(-1)!;
   return (
-    <section className="otis-working" aria-label={finished ? 'Worked' : 'Working'} aria-live="off">
+    <section className="otis-working" aria-label={finished ? 'Worked' : isWaiting ? 'Paused' : 'Working'} aria-live="off">
       <button type="button" className="otis-working__disclosure mb-2 flex items-center gap-2 text-xs text-muted-foreground" aria-expanded={expanded} onClick={onToggle}>
-        {!finished && <span aria-hidden="true" className="size-2 shrink-0 rounded-full bg-highlight" />}
+        {!finished && (
+          <span
+            aria-hidden="true"
+            className={`size-2 shrink-0 rounded-full ${isWaiting ? 'bg-muted-foreground/60' : 'bg-highlight'}`}
+          />
+        )}
         <span className="size-4 text-subtle" aria-hidden="true"><ChevronDownIcon /></span>
         <span>
-          {finished ? `Worked · ${steps.length} step${steps.length === 1 ? '' : 's'}` : `${current.label}…`}
+          {finished
+            ? `Worked · ${steps.length} step${steps.length === 1 ? '' : 's'}`
+            : isWaiting
+            ? 'Paused · Needs your answer'
+            : `${current.label}…`}
         </span>
       </button>
       {expanded && (
@@ -73,7 +83,7 @@ export function WorkingDisclosure({ steps, finished, expanded, onToggle, onInspe
           {steps.map(step => (
             <li key={step.id} className={`otis-working__step otis-working__step--${step.state}`}>
               <span className="otis-working__step-icon">
-                {step.state === 'running' ? (
+                {step.state === 'running' && !isWaiting ? (
                   <span className="size-2 shrink-0 rounded-full bg-highlight" aria-hidden="true" />
                 ) : (
                   <StepIcon label={step.label} state={step.state} />
@@ -81,7 +91,7 @@ export function WorkingDisclosure({ steps, finished, expanded, onToggle, onInspe
               </span>
               <div className="otis-working__description">
                 <span>{step.label}</span>
-                {step.summary && <span className="text-subtle">{step.summary}</span>}
+                {step.summary && !step.label.includes(step.summary) && <span className="text-subtle">{step.summary}</span>}
               </div>
               {step.actionId && step.state === 'succeeded' && onInspectAction && (
                 <Button variant="ghost" size="sm" type="button" className="otis-working__inspect" onClick={() => onInspectAction(step.actionId!)}>
@@ -95,10 +105,11 @@ export function WorkingDisclosure({ steps, finished, expanded, onToggle, onInspe
     </section>
   );
 }
-function RunWork({ run, steps, activities, onInspectAction, onReply }: { run?: RunDetailResponse; steps: WorkingStep[]; activities: PublicActivity[]; onInspectAction: (id: string) => void; onReply?: (id: string) => void }) {
+function RunWork({ run, steps, activities, onInspectAction, onReply, hasAgentMessage = false }: { run?: RunDetailResponse; steps: WorkingStep[]; activities: PublicActivity[]; onInspectAction: (id: string) => void; onReply?: (id: string) => void; hasAgentMessage?: boolean }) {
   const [manual, setManual] = useState<boolean | null>(null);
   const finished = Boolean(run && ['succeeded', 'partial', 'failed', 'cancelled'].includes(run.status));
-  const expanded = manual ?? !finished;
+  const isWaiting = Boolean(run && (run.status === 'waiting_for_input' || Boolean(run.pending_clarification)));
+  const expanded = manual ?? (!finished && !isWaiting);
   const thinking = reduceThinking(activities, run?.status);
   // Legacy summaries lack block metadata and keep their existing rendering;
   // block-carrying records render only inside the nested Thinking disclosure.
@@ -108,7 +119,7 @@ function RunWork({ run, steps, activities, onInspectAction, onReply }: { run?: R
     return !payload || typeof payload.block_id !== 'string' || !payload.block_id;
   });
   return <div className="otis-run">
-    {run?.status === 'queued' && <p className="otis-run__status text-sm" role="status">Starting…</p>}
+    {run?.status === 'queued' && <p className="otis-run__status text-sm text-subtle" role="status">Received by Otis · Starting…</p>}
     {run?.status === 'running' && !steps.length && thinking.blocks.length === 0 && (
       <div className="mb-2 flex items-center gap-2 text-xs text-muted-foreground" role="status">
         <span aria-hidden="true" className="size-2 shrink-0 rounded-full bg-highlight" />
@@ -117,23 +128,31 @@ function RunWork({ run, steps, activities, onInspectAction, onReply }: { run?: R
     )}
     {steps.length === 0 && thinking.blocks.length > 0 && (
       <button type="button" className="otis-working__disclosure mb-2 flex items-center gap-2 text-xs text-muted-foreground" aria-expanded={expanded} onClick={() => setManual(!expanded)}>
-        {!finished && <span aria-hidden="true" className="size-2 shrink-0 rounded-full bg-highlight" />}
+        {!finished && <span aria-hidden="true" className={`size-2 shrink-0 rounded-full ${isWaiting ? 'bg-muted-foreground/60' : 'bg-highlight'}`} />}
         <span className="size-4 text-subtle" aria-hidden="true"><ChevronDownIcon /></span>
-        <span>{finished ? 'Worked' : 'Working…'}</span>
+        <span>{finished ? 'Worked' : isWaiting ? 'Paused · Needs your answer' : 'Working…'}</span>
       </button>
     )}
-    <WorkingDisclosure steps={steps} finished={finished} expanded={expanded} onToggle={() => setManual(!expanded)} onInspectAction={onInspectAction}/>
+    <WorkingDisclosure steps={steps} finished={finished} expanded={expanded} onToggle={() => setManual(!expanded)} onInspectAction={onInspectAction} isWaiting={isWaiting}/>
     {expanded && <ThinkingDisclosure blocks={thinking.blocks} />}
     {expanded && summaries.map(summary => { const payload = summary.payload as { text?: string; provider?: string }; return payload.text ? <details key={summary.id} className="otis-provider-summary text-xs"><summary>{payload.provider ?? 'Provider'} public summary</summary><p>{payload.text}</p></details> : null; })}
     {run?.pending_clarification && (
       <div className="otis-question text-base text-foreground" role="region" aria-label="Awaiting input">
-        <p>{run.pending_clarification.question}</p>
+        {!hasAgentMessage && <p>{run.pending_clarification.question}</p>}
+        {hasAgentMessage && (
+          <div className="mb-1 flex items-center justify-between gap-2 text-xs text-muted-foreground">
+            <span className="font-medium text-foreground">Needs your answer</span>
+          </div>
+        )}
         {onReply && (
           <Button variant="ghost" size="sm" type="button" className="otis-question__reply-btn self-start" onClick={() => onReply(run.pending_clarification!.id)}>
             Answer below
           </Button>
         )}
       </div>
+    )}
+    {run?.status === 'waiting_for_input' && !run.pending_clarification && (
+      <p className="otis-run__status text-sm text-subtle" role="status">Needs your answer</p>
     )}
     {run?.status === 'partial' && <p className="otis-run__status otis-run__status--error text-sm" role="status">Some changes were saved. The run could not finish; inspect the completed changes above.</p>}
     {run?.status === 'failed' && <div><p className="otis-run__status otis-run__status--error flex items-start gap-2 text-sm" role="status"><AlertCircleIcon /><span>{failureMessage(run.run.error_code)}</span></p>{run.run.error_code && <details className="otis-provider-summary text-xs"><summary>Error details</summary><p>{run.run.error_code}{run.run.error_message ? `: ${run.run.error_message}` : ''}</p></details>}</div>}
@@ -258,7 +277,7 @@ export function Transcript({ messages, members, currentUserId, steps, run, runs 
     <div className="otis-transcript flex-1 overflow-y-auto" ref={scrollRef} tabIndex={0} role="log" aria-label="Conversation" aria-live="polite" aria-busy={busy}>
       <div ref={contentRef} className={`otis-transcript__inner mx-auto flex w-full max-w-[760px] flex-col gap-6 px-4 py-6${!messages.length ? ' otis-transcript__inner--empty' : ''}`}>
         {hasOlder && <Button variant="ghost" size="sm" className="otis-load-older" type="button" disabled={loadingOlder} onClick={() => onLoadOlder?.()}>{olderError ?? (loadingOlder ? 'Loading…' : 'Load earlier messages')}</Button>}
-        {loading && !messages.length ? <p className="otis-run__status text-sm">Opening conversation…</p> : !messages.length && !steps.length && <div className="otis-empty"><h2 className="otis-empty__title text-xl">What’s happening?</h2></div>}
+        {loading && !messages.length ? <p className="otis-run__status text-sm">Opening conversation…</p> : !messages.length && !steps.length && <div className="otis-empty"><h2 className="otis-empty__title text-xl">What’s happening?</h2><p className="otis-empty__subtitle text-sm text-subtle mt-1">Keep track of visits, promises, and follow-ups.</p></div>}
         {messages.map((message, index) => {
           const isMember = message.author_kind === 'member'; const author = message.author_user_id ? message.author_display_name ?? members[message.author_user_id] ?? 'Teammate' : 'Otis';
           const runId = message.run_id; const firstAgent = !isMember && runId && !used.has(runId); if (firstAgent && runId) used.add(runId);
@@ -274,13 +293,34 @@ export function Transcript({ messages, members, currentUserId, steps, run, runs 
           const localDelivery = message.client_message_id ? delivery[message.client_message_id] : undefined;
           return <div key={message.client_message_id ?? message.id} className="otis-message-group" aria-live={historyFloor !== null && message.sequence < historyFloor ? 'off' : undefined}>
             {(index > 0 && dayKey(message.created_at) !== dayKey(messages[index - 1]!.created_at)) && <div className="otis-dayseparator text-xs"><span>{formatDay(message.created_at)}</span></div>}
-            {firstAgent && <RunWork run={runData} steps={runSteps} activities={runActivities} onInspectAction={onInspectAction} onReply={onReply}/>}
+            {firstAgent && <RunWork run={runData} steps={runSteps} activities={runActivities} onInspectAction={onInspectAction} onReply={onReply} hasAgentMessage={Boolean(message.content_text?.trim())}/>}
             <article className={`otis-turn group otis-turn--${isMember ? 'member' : 'agent'}`} data-author-kind={message.author_kind}>
               {isMember && message.author_user_id !== currentUserId && <div className="otis-turn__meta text-xs text-subtle">{author}</div>}
               {isMember
-                ? <div className="otis-turn__bubble ml-auto w-fit max-w-[85%] rounded-2xl bg-card px-4 py-2 text-base text-card-foreground nav:max-w-[80%]">{message.content_text || (message.media_id ? 'Voice note' : '')}</div>
+                ? <div className="otis-turn__bubble ml-auto w-fit max-w-[85%] rounded-2xl bg-card px-4 py-2 text-base text-card-foreground nav:max-w-[80%] whitespace-pre-wrap break-words">
+                    {message.media_id ? (
+                      <VoiceMessagePlayer
+                        workspaceId={message.workspace_id}
+                        mediaId={message.media_id}
+                        text={message.content_text}
+                      />
+                    ) : (
+                      message.content_text
+                    )}
+                  </div>
                 : <div className="otis-turn__body text-base text-foreground [&>p+p]:mt-3"><Markdown remarkPlugins={[remarkGfm]} skipHtml disallowedElements={['img']}>{message.content_text}</Markdown></div>}
               {!isMember && runData?.sources?.length && onInspectSource ? <div className="otis-sources" aria-label="Sources">{runData.sources.map(source => <Button variant="ghost" size="sm" type="button" key={source.memory_id} className="otis-source-link" onClick={() => onInspectSource(source.memory_id)}>{source.label}{source.provenance === 'inferred' ? ' · inferred' : ''}</Button>)}</div> : null}
+              {!isMember && runData?.actions?.length ? (
+                <div className="otis-outcome mt-2 flex items-center gap-2 text-xs text-subtle" role="status">
+                  <CheckIcon />
+                  <span>{runData.actions[0]?.summary ? `${runData.actions[0].summary} saved` : `${runData.actions.length} change${runData.actions.length === 1 ? '' : 's'} saved`}</span>
+                  {onInspectAction && (
+                    <Button variant="ghost" size="sm" type="button" className="otis-outcome__link h-auto p-0 text-xs text-muted-foreground underline-offset-4 hover:underline" onClick={() => onInspectAction(runData.actions[0]!.action_id)}>
+                      View changes
+                    </Button>
+                  )}
+                </div>
+              ) : null}
               {localDelivery && localDelivery.state !== 'saved' && (
                 <div className="otis-delivery">
                   {localDelivery.state === 'sending' && (
@@ -324,7 +364,7 @@ export function Transcript({ messages, members, currentUserId, steps, run, runs 
                 ) : null}
               </div>
             </article>
-            {noAnswerYet && <><RunWork run={runData} steps={runSteps} activities={runActivities} onInspectAction={onInspectAction} onReply={onReply}/>{chunks && (unfinishedRun ? (
+            {noAnswerYet && <><RunWork run={runData} steps={runSteps} activities={runActivities} onInspectAction={onInspectAction} onReply={onReply} hasAgentMessage={false}/>{chunks && (unfinishedRun ? (
               <div className="otis-turn__body otis-streamed text-base text-foreground [&>p+p]:mt-3" aria-live="off">
                 <p className="otis-run__status text-xs text-subtle">
                   {runData?.status === 'cancelled'
@@ -338,7 +378,7 @@ export function Transcript({ messages, members, currentUserId, steps, run, runs 
             ))}</>}
           </div>;
         })}
-        {!messages.length && steps.length > 0 && <RunWork run={run ?? undefined} steps={steps} activities={activities} onInspectAction={onInspectAction}/>}
+        {!messages.length && steps.length > 0 && <RunWork run={run ?? undefined} steps={steps} activities={activities} onInspectAction={onInspectAction} hasAgentMessage={false}/>}
       </div>
     </div>
     {(messages.length > 0 && (pendingUnread > 0 || !isAtBottom)) && (
@@ -379,12 +419,14 @@ export function activityToSteps(activities: PublicActivity[], runActions: RunDet
     }
     if (activity.type === 'action_applied') {
       const receipt = runActions.find(action => action.action_id === payload.action_id);
+      const label = stepLabel(payload.command_name ?? 'Saved a change', receipt?.summary);
+      const summary = receipt?.summary && label.includes(receipt.summary) ? null : (receipt?.summary ?? null);
       steps.push({
         id: activity.id,
-        label: stepLabel(payload.command_name ?? 'Saved a change', receipt?.summary),
+        label,
         state: receipt ? 'succeeded' : 'running',
         actionId: receipt?.action_id,
-        summary: receipt?.summary ?? null,
+        summary,
       });
     }
     if (activity.type === 'action_reverted') {
@@ -400,12 +442,14 @@ export function stepsFromRun(run: RunDetailResponse, activities: PublicActivity[
   return tools.map(step => {
     const receipt = run.actions.find(action => action.action_id === step.action_id && ['applied', 'already_applied'].includes(action.result_status));
     const undone = activities.some(item => item.type === 'action_reverted' && (item.payload as { action_id?: string }).action_id === step.action_id);
+    const label = stepLabel(step.tool_name, receipt?.summary);
+    const summary = receipt?.summary && label.includes(receipt.summary) ? null : (receipt?.summary ?? null);
     return {
       id: String(step.step_index),
-      label: stepLabel(step.tool_name, receipt?.summary),
+      label,
       state: undone ? 'undone' : step.status === 'planned' ? (activities.some(item => item.type === 'step_started' && (item.payload as { step_index?: number }).step_index === step.step_index) ? 'running' : 'queued') : step.status,
       actionId: receipt?.action_id,
-      summary: receipt?.summary ?? null,
+      summary,
     };
   });
 }

@@ -4,7 +4,12 @@ import { QueryClientProvider } from '@tanstack/react-query';
 import { RouterProvider, createMemoryHistory } from '@tanstack/react-router';
 import { createAppQueryClient } from './api/queries.js';
 import { SessionContext, createAppRouter } from './router.js';
+import '@fontsource-variable/instrument-sans';
+import '@fontsource-variable/bricolage-grotesque';
+import '@fontsource-variable/geist-mono';
+import './globals.css';
 import './index.css';
+import './components/ui/controls.css';
 
 const now = '2026-10-03T12:30:00Z';
 let model = 'mimo-25';
@@ -54,7 +59,7 @@ createRoot(document.getElementById('root')!).render(
       }}
     >
       <RouterProvider
-        router={createAppRouter({ history: createMemoryHistory({ initialEntries: [`${location.pathname}${location.search}`] }) })}
+        router={createAppRouter({ history: createMemoryHistory({ initialEntries: [`/${location.search || '?workspace=fixture&chat=bistro'}`] }) })}
       />
     </SessionContext.Provider>
   </QueryClientProvider>,

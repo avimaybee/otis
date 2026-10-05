@@ -206,8 +206,8 @@ describe('End-to-End UI to Backend Flow Verification', () => {
     await React.act(async () => sendButton.click());
 
     // Verify backend call flow
-    expect(createChatSpy).toHaveBeenCalledWith(WS, expect.stringMatching(/^new-/));
-    expect(sendMessageSpy).toHaveBeenCalledWith(WS, 'chat_new_1', expect.any(String), 'Hello Otis, need a proposal', undefined, undefined);
+    expect(createChatSpy).toHaveBeenCalledWith(WS, expect.stringMatching(/^new-/), expect.anything());
+    expect(sendMessageSpy).toHaveBeenCalledWith(WS, 'chat_new_1', expect.any(String), 'Hello Otis, need a proposal', undefined, undefined, expect.anything());
 
     // Verify URL navigation
     expect(location.search).toContain('chat=chat_new_1');
@@ -495,7 +495,7 @@ describe('End-to-End UI to Backend Flow Verification', () => {
     await React.act(async () => sendButton.click());
 
     // Verify clarification_id was passed to sendMessage
-    expect(sendSpy).toHaveBeenCalledWith(WS, 'chat_clarify_1', expect.any(String), 'At 2:00 PM', 'clarification_123', undefined);
+    expect(sendSpy).toHaveBeenCalledWith(WS, 'chat_clarify_1', expect.any(String), 'At 2:00 PM', 'clarification_123', undefined, expect.anything());
 
     await view.unmount();
   });
@@ -963,7 +963,7 @@ describe('008B new-chat ordering and recovery (R8)', () => {
     expect(view.host.textContent).toContain('Sending…');
     // Fast chat creation posted the message while the sidebar refetch hangs.
     expect(sendSpy).toHaveBeenCalledTimes(1);
-    expect(sendSpy).toHaveBeenCalledWith(WS, 'chat_new_9', expect.any(String), 'First hello', undefined, undefined);
+    expect(sendSpy).toHaveBeenCalledWith(WS, 'chat_new_9', expect.any(String), 'First hello', undefined, undefined, expect.anything());
     expect(navCalls).toBe(3);
     expect(location.search).toContain('chat=chat_new_9');
 

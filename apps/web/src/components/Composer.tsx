@@ -31,13 +31,14 @@ export interface VoiceComposerConfig {
   /** Story/test seam: replaces the internal recorder hook entirely. */
   controller?: VoiceController;
   /** Resolves only after durable outbox acceptance; rejection retains local bytes. */
-  onSent?: (result: { clientMessageId: string; media: VoiceMediaSummary; durationMs: number; mimeType: string }) => Promise<void>;
+  onSent?: (result: { clientMessageId: string; media: VoiceMediaSummary; durationMs: number; mimeType: string; chatId?: string }) => Promise<void>;
 }
 export interface ComposerProps {
   disabled?: boolean; disabledReason?: string; running: boolean;
   commands: CommandDescriptor[]; models?: ModelOption[]; workspaces?: { id: string; name: string }[];
   placeholder?: string; draftKey?: string; draftValue?: string | null; replyTo?: ClarificationContext;
   controlPending?: boolean; modelReady?: boolean; voice?: VoiceComposerConfig;
+  modelsError?: string; onRetryModels?: () => void;
   onCommand?: (text: string) => Promise<boolean>;
   onStop?: () => Promise<void>; onSend: (text: string) => void | boolean | Promise<boolean>;
 }
@@ -46,7 +47,7 @@ export interface SuggestionItem { name: string; label?: string; summary: string;
 export function deriveCandidates(_question: string, candidates?: string[] | null, _missingFields?: string[], _intendedOp?: string): string[] { return candidates ?? []; }
 
 export function Composer({ disabled, disabledReason, running, commands, models = [], workspaces = [],
-  placeholder = 'Message Otis', draftKey, draftValue, replyTo, controlPending, modelReady = true, voice, onCommand, onStop, onSend }: ComposerProps) {
+  placeholder = 'Message Otis', draftKey, draftValue, replyTo, controlPending, modelReady = true, voice, modelsError, onRetryModels, onCommand, onStop, onSend }: ComposerProps) {
   const id = useId();
   const input = useRef<HTMLTextAreaElement>(null);
   const sendingRef = useRef(false);
@@ -181,7 +182,7 @@ export function Composer({ disabled, disabledReason, running, commands, models =
   const followsDefault = !models.some(m => m.is_current && !m.is_default);
 
   return <div className="otis-composer"><div className="otis-composer__inner">
-    {replyTo && <div className="otis-reply-context text-xs"><span>Replying to Otis</span><Button variant="ghost" size="icon-xs" type="button" aria-label="Dismiss question" onClick={replyTo.onCancel}><CloseIcon/></Button></div>}
+    {replyTo && <div className="otis-reply-context text-xs flex items-center justify-between"><span className="truncate">Replying to Otis: {replyTo.question}</span><Button variant="ghost" size="icon-xs" type="button" aria-label="Dismiss question" onClick={replyTo.onCancel}><CloseIcon/></Button></div>}
     {replyTo?.candidates?.length ? <div className="otis-reply-choices" aria-label="Suggested responses">{replyTo.candidates.map(choice => <Button key={choice} variant="outline" size="sm" type="button" onClick={() => { commitDraft(choice); input.current?.focus(); }}>{choice}</Button>)}</div> : null}
     {pickerOpen && <Command label={modelQuery ? 'Models' : thinkingQuery ? 'Thinking effort options' : 'Commands'} value={suggestions[activeIndex]?.insert ?? ''} onValueChange={next => { const found = suggestions.findIndex(row => row.insert === next); if (found >= 0) setIndex(found); }} shouldFilter={false} loop>
       <CommandList id={`${id}-picker`}>
@@ -200,7 +201,7 @@ export function Composer({ disabled, disabledReason, running, commands, models =
         <>
           <label className="otis-visually-hidden" htmlFor={id}>{placeholder}</label>
           <TextareaAutosize id={id} ref={input} name="message" minRows={1} maxRows={6} className="otis-composer__input max-h-36 min-h-6 w-full resize-none bg-transparent text-base leading-6 outline-none placeholder:text-muted-foreground" placeholder={disabled ? disabledReason ?? placeholder : placeholder} autoComplete="off" value={value} disabled={disabled}
-            aria-describedby={`${id}-status`} aria-haspopup="listbox" aria-controls={pickerOpen ? `${id}-picker` : undefined} aria-autocomplete="list"
+            aria-describedby={`${id}-status`} aria-haspopup="listbox" aria-controls={pickerOpen ? `${id}-picker` : undefined} aria-activedescendant={pickerOpen && suggestions[activeIndex] ? `${id}-option-${activeIndex}` : undefined} aria-autocomplete="list"
             onChange={event => { commitDraft(event.target.value); setDismissed(false); setIndex(0); }}
             onKeyDown={event => {
               if (event.nativeEvent.isComposing || event.keyCode === 229) return;
@@ -213,6 +214,16 @@ export function Composer({ disabled, disabledReason, running, commands, models =
             }} />
           <div className="flex items-center justify-between gap-2 pt-1">
             <div className="flex items-center gap-2 flex-wrap">
+              {modelsError && (
+                <div className="flex items-center gap-2 text-xs text-destructive" role="alert">
+                  <span>{modelsError}</span>
+                  {onRetryModels && (
+                    <button type="button" className="underline hover:text-foreground" onClick={onRetryModels}>
+                      Retry
+                    </button>
+                  )}
+                </div>
+              )}
               {models.length > 0 && (
                 <DropdownMenu modal={false}>
                   <DropdownMenuTrigger asChild>
@@ -237,14 +248,22 @@ export function Composer({ disabled, disabledReason, running, commands, models =
                           <small className="text-xs">{models.find(m => m.is_default)?.display_name ?? 'No model configured'}</small>
                         </span>
                       </DropdownMenuRadioItem>
-                      {models.filter(m => m.available).map(m => (
-                        <DropdownMenuRadioItem key={m.command_key} value={m.command_key} disabled={controlPending}>
-                          <span className="otis-menu__label">
-                            <span>{m.display_name}</span>
-                            <small className="text-xs">{m.native_audio_supported ? 'Native voice' : m.voice_available ? 'Voice via transcription' : 'Voice unavailable'}</small>
-                          </span>
-                        </DropdownMenuRadioItem>
-                      ))}
+                      {models.filter(m => m.available).map(m => {
+                        const voiceLabel = m.native_audio_supported
+                          ? 'Native voice'
+                          : m.voice_available
+                          ? 'Voice via transcription'
+                          : null;
+                        return (
+                          <DropdownMenuRadioItem key={m.command_key} value={m.command_key} disabled={controlPending}>
+                            <span className="otis-menu__label">
+                              <span>{m.display_name}</span>
+                              {voiceLabel && <small className="text-xs">{voiceLabel}</small>}
+                            </span>
+                          </DropdownMenuRadioItem>
+                        );
+                      })}
+
                     </DropdownMenuRadioGroup>
                   </DropdownMenuContent>
                 </DropdownMenu>

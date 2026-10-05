@@ -1,0 +1,83 @@
+ M apps/web/.storybook/preview.tsx
+ M apps/web/package.json
+ M apps/web/src/App.tsx
+ M apps/web/src/ConversationScreen.tsx
+ M apps/web/src/api/client.ts
+ M apps/web/src/api/outbox.ts
+ M apps/web/src/api/snapshot.ts
+ M apps/web/src/api/voice.ts
+ M apps/web/src/components/ChatOverflow.tsx
+ M apps/web/src/components/Composer.tsx
+ M apps/web/src/components/DetailPane.tsx
+ M apps/web/src/components/HistoryNav.tsx
+ M apps/web/src/components/ProviderConnection.tsx
+ M apps/web/src/components/SettingsPane.tsx
+ M apps/web/src/components/SignInView.tsx
+ M apps/web/src/components/SourcePane.tsx
+ M apps/web/src/components/TelegramConnection.tsx
+ M apps/web/src/components/Transcript.tsx
+ M apps/web/src/components/UpdatePrompt.tsx
+ M apps/web/src/globals.css
+ M apps/web/src/hooks/useVoiceRecorder.ts
+ M apps/web/src/index.css
+ M apps/web/src/main.tsx
+ M apps/web/src/review/Review.tsx
+ M apps/web/src/router.tsx
+ M apps/web/src/ux-preview.tsx
+ M apps/web/test/full-e2e-flows.test.tsx
+ M apps/web/test/outbox.test.ts
+ M apps/web/test/scroll-route.test.tsx
+ M apps/web/test/voice-send.test.tsx
+ M apps/worker/package.json
+ M apps/worker/src/agent/activity.ts
+ M apps/worker/src/agent/context.ts
+ M apps/worker/src/agent/repository.ts
+ M apps/worker/src/brief/index.ts
+ M apps/worker/src/chat/stream.ts
+ M apps/worker/src/index.ts
+ M apps/worker/src/media/routes.ts
+ M apps/worker/src/media/transcription.ts
+ M apps/worker/src/routes/activity.ts
+ M apps/worker/src/routes/chats.ts
+ M apps/worker/src/routes/commands.ts
+ M apps/worker/src/routes/credentials.ts
+ M apps/worker/src/routes/scope.ts
+ M apps/worker/test/chat-api.integration.test.ts
+ M apps/worker/tsconfig.json
+ M design-tokens.md
+ M packages/agent/src/policy.ts
+ M packages/agent/src/prompt.ts
+ M packages/agent/src/tools.ts
+ M packages/agent/test/tools-and-policy.test.ts
+ M packages/brief/tsconfig.json
+ M packages/identity/src/credentials.ts
+ M packages/ledger/src/commands/recordDraft.ts
+ M packages/ledger/src/commands/tasks.ts
+ M packages/ledger/src/types.ts
+ M plans/2026-10-05-sol-usefulness-audit.md
+ M plans/qa/sol-audit-2026-10-05.repro.test.ts
+ M plans/qa/sol-audit-ui.ts
+ M plans/qa/sol-audit-worker.repro.test.ts
+ M pnpm-lock.yaml
+ M scripts/check-design.mjs
+ M tsconfig.json
+?? apps/web/src/components/VoiceMessagePlayer.tsx
+?? apps/web/test/voice-player.test.tsx
+?? apps/worker/src/brief/cron.ts
+?? apps/worker/src/brief/kernel.ts
+?? plans/2026-10-05-saas-ui-ux-transformation-mission.md
+?? plans/2026-10-05-sol-frontend-experience-audit.md
+?? plans/2026-10-05-sol-resolution-claim-audit.md
+?? plans/qa/sol-frontend-detail-1280.jpg
+?? plans/qa/sol-frontend-long-360.jpg
+?? plans/qa/sol-frontend-partial-390.jpg
+?? plans/qa/sol-frontend-question-360.jpg
+?? plans/qa/sol-frontend-settings-390.jpg
+?? plans/qa/sol-frontend-short-1440.jpg
+?? plans/qa/sol-frontend-short-900.jpg
+?? plans/qa/sol-resolution-browser/
+?? plans/qa/sol-resolution-claim-worker.config.ts
+?? plans/qa/sol-resolution-claim-worker.repro.test.ts
+?? plans/qa/sol-resolution-claim.config.ts
+?? plans/qa/sol-resolution-claim.repro.test.ts
+?? plans/qa/sol-resolution-source-hashes.json

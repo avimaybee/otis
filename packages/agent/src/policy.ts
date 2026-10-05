@@ -14,18 +14,39 @@ export const MAX_UNCONFIRMED_BULK_ENTITIES = 3;
  * Stated interest ("wants website", "interested in offer") is inferred interest,
  * NOT an explicit command to change lead status.
  */
+function stripQuotes(text: string): string {
+  return text
+    .replace(/"[^"\r\n]*"/g, ' ')
+    .replace(/[“”][^“”\r\n]*[“”]/g, ' ')
+    .replace(/«[^»\r\n]*»/g, ' ')
+    .replace(/(?:^|\s)'[^'\r\n]+'(?:\s|$)/g, ' ');
+}
+
+function splitSentences(text: string): string[] {
+  return text
+    .split(/(?<=[.!?\n])\s+/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
+const NEGATION_PATTERN = /\b(do\s+not|don't|dont|never|not|didn't|didnt|haven't|havent|hasn't|hasnt|won't|wont|cannot|can't|cant|should\s+not|shouldn't|stop|nu|niciodată|nem|soha)\b/i;
+const CONDITIONAL_PATTERN = /\b(if|whether|dacă|ha|suppose|assuming|maybe|perhaps|could|would)\b/i;
+
+/**
+ * Checks if the source text contains explicit instruction to mutate lead status.
+ * Stated interest ("wants website", "interested in offer") is inferred interest,
+ * NOT an explicit command to change lead status. Questions, quotes, and conditionals
+ * are not explicit commands.
+ */
 export function isExplicitStatusIntent(
   sourceText: string,
   proposedStatus: LeadStatus,
 ): { isExplicit: boolean; reason?: string } {
-  const lower = sourceText.toLowerCase();
-
-  // Negation pattern (English, Romanian, Hungarian)
-  const negationPattern = /\b(do\s+not|don't|dont|never|not|should\s+not|shouldn't|stop|cannot|can't|nu|nem)\b/i;
-  if (negationPattern.test(lower)) {
+  const unquoted = stripQuotes(sourceText).trim();
+  if (!unquoted) {
     return {
       isExplicit: false,
-      reason: `Source text contains negation ('${lower.match(negationPattern)?.[0]}'). Not an explicit instruction to set status to '${proposedStatus}'.`,
+      reason: 'No explicit status mutation directive found in source text.',
     };
   }
 
@@ -40,13 +61,6 @@ export function isExplicitStatusIntent(
     new: [/\b(mark\b.*?\b(as\s+|it\s+)?new|set\b.*?\b(to\s+|status\s+to\s+)?new)\b/i],
   };
 
-  const regexes = explicitKeywords[proposedStatus] || [];
-  for (const rx of regexes) {
-    if (rx.test(lower)) {
-      return { isExplicit: true };
-    }
-  }
-
   // Common inferred interest patterns that must NOT be treated as explicit status change
   const inferredPatterns = [
     /\bwants?\b/i,
@@ -57,8 +71,54 @@ export function isExplicitStatusIntent(
     /\boffered\b/i,
   ];
 
+  const sentences = splitSentences(unquoted);
+  const regexes = explicitKeywords[proposedStatus] || [];
+
+  let foundCandidate = false;
+  let rejectedReason: string | undefined;
+
+  for (const sentence of sentences) {
+    const sLower = sentence.toLowerCase();
+    const matchesKeyword = regexes.some((rx) => rx.test(sLower));
+    if (!matchesKeyword) continue;
+
+    foundCandidate = true;
+
+    // Questions are inquiries, not direct mutation instructions
+    if (sentence.includes('?') || /^(has|have|did|is|are|will|would|could|can)\s+[a-z0-9_-]+\s+/i.test(sentence)) {
+      rejectedReason = 'Source text contains question or inquiry about status, not an explicit instruction.';
+      continue;
+    }
+
+    // Conditional / hypothetical check
+    if (CONDITIONAL_PATTERN.test(sLower)) {
+      rejectedReason = 'Source text is conditional or hypothetical, not an explicit instruction.';
+      continue;
+    }
+
+    // Negation check
+    if (NEGATION_PATTERN.test(sLower)) {
+      rejectedReason = `Source text contains negation ('${sLower.match(NEGATION_PATTERN)?.[0]}'). Not an explicit instruction to set status to '${proposedStatus}'.`;
+      continue;
+    }
+
+    // Inferred pattern check within sentence
+    const inferred = inferredPatterns.find((rx) => rx.test(sLower));
+    if (inferred) {
+      rejectedReason = `Source text indicates interest or discussion ('${inferred.source}'), not an explicit instruction to set status to '${proposedStatus}'. Requires clarification.`;
+      continue;
+    }
+
+    // Valid affirmative instruction
+    return { isExplicit: true };
+  }
+
+  if (foundCandidate && rejectedReason) {
+    return { isExplicit: false, reason: rejectedReason };
+  }
+
   for (const rx of inferredPatterns) {
-    if (rx.test(lower)) {
+    if (rx.test(unquoted.toLowerCase())) {
       return {
         isExplicit: false,
         reason: `Source text indicates interest or discussion ('${rx.source}'), not an explicit instruction to set status to '${proposedStatus}'. Requires clarification.`,
@@ -74,18 +134,58 @@ export function isExplicitStatusIntent(
 
 /**
  * Checks if the source text contains an explicit statement by a member that they sent a message.
+ * Questions, quotes, conditionals, and negations are rejected.
  */
 export function isExplicitSentConfirmation(sourceText: string): { isConfirmed: boolean; reason?: string } {
-  const lower = sourceText.toLowerCase();
+  const unquoted = stripQuotes(sourceText).trim();
+  if (!unquoted) {
+    return {
+      isConfirmed: false,
+      reason: 'No source-backed explicit statement that the member sent the message.',
+    };
+  }
+
   const explicitSentPatterns = [
     /\b(i\s+)?(sent|already\s+sent|just\s+sent|have\s+sent|delivered|emailed|messaged)\b/i,
     /\b(am\s+trimis|trimis|elküldtem|elküldve)\b/i,
   ];
-  for (const rx of explicitSentPatterns) {
-    if (rx.test(lower)) {
-      return { isConfirmed: true };
+
+  const sentences = splitSentences(unquoted);
+  let foundCandidate = false;
+  let rejectedReason: string | undefined;
+
+  for (const sentence of sentences) {
+    const sLower = sentence.toLowerCase();
+    const matchesKeyword = explicitSentPatterns.some((rx) => rx.test(sLower));
+    if (!matchesKeyword) continue;
+
+    foundCandidate = true;
+
+    // Questions are inquiries, not confirmed actions
+    if (sentence.includes('?') || /^(did|have|has|would|could|can)\s+/i.test(sentence)) {
+      rejectedReason = 'Source text is a question, not an explicit confirmation that the message was sent.';
+      continue;
     }
+
+    // Conditional / hypothetical check
+    if (CONDITIONAL_PATTERN.test(sLower)) {
+      rejectedReason = 'Source text is conditional or hypothetical, not a completed send confirmation.';
+      continue;
+    }
+
+    // Negation check
+    if (NEGATION_PATTERN.test(sLower)) {
+      rejectedReason = `Source text contains negation ('${sLower.match(NEGATION_PATTERN)?.[0]}'). Message was not confirmed sent.`;
+      continue;
+    }
+
+    return { isConfirmed: true };
   }
+
+  if (foundCandidate && rejectedReason) {
+    return { isConfirmed: false, reason: rejectedReason };
+  }
+
   return {
     isConfirmed: false,
     reason: 'No source-backed explicit statement that the member sent the message.',

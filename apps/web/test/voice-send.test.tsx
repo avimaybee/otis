@@ -497,7 +497,7 @@ describe('conversation voice send integration', () => {
       resolveUpload({ media: storyMedia });
     });
     await waitFor(() => sendMessage.mock.calls.length === 1);
-    expect(sendMessage).toHaveBeenCalledWith(WS, CHAT, clientMessageId, '', undefined, storyMedia.media_id);
+    expect(sendMessage).toHaveBeenCalledWith(WS, CHAT, clientMessageId, '', undefined, storyMedia.media_id, expect.anything());
     await waitFor(() => view.host.querySelector('textarea') !== null);
     expect(await listVoiceSessions({ userId: USER, workspaceId: WS, chatId: CHAT })).toHaveLength(0);
     await view.unmount();

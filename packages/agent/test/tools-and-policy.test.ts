@@ -10,6 +10,7 @@ import {
   checkBulkOperationPolicy,
   checkPreferenceScopePolicy,
   checkUntrustedContentPolicy,
+  isExplicitSentConfirmation,
   isExplicitStatusIntent,
   validateCreateTaskArgs,
   validateDraftMessageArgs,
@@ -287,6 +288,33 @@ describe('006A: Pure Policy Rules', () => {
     // Negated status commands must NOT be treated as explicit intent
     expect(isExplicitStatusIntent('Do not mark Bistro as warm.', 'warm').isExplicit).toBe(false);
     expect(isExplicitStatusIntent("Don't mark Bistro as warm", 'warm').isExplicit).toBe(false);
+
+    // SOL-25: Questions, conditionals, and quotes must NOT trigger explicit status changes
+    expect(isExplicitStatusIntent('Has Bistro signed?', 'won').isExplicit).toBe(false);
+    expect(isExplicitStatusIntent('If we signed, would it count as won?', 'won').isExplicit).toBe(false);
+    expect(isExplicitStatusIntent('The client asked: "Have we signed?"', 'won').isExplicit).toBe(false);
+    expect(isExplicitStatusIntent('Could they be cold?', 'cold').isExplicit).toBe(false);
+  });
+
+  it('SOL-02: requires affirmative member statement for sent confirmation and rejects questions/negations/quotes', () => {
+    // Negations
+    expect(isExplicitSentConfirmation('I have not sent it').isConfirmed).toBe(false);
+    expect(isExplicitSentConfirmation('Nu am trimis mesajul').isConfirmed).toBe(false);
+    expect(isExplicitSentConfirmation('Nem küldtem el').isConfirmed).toBe(false);
+
+    // Questions
+    expect(isExplicitSentConfirmation('Have you sent it?').isConfirmed).toBe(false);
+    expect(isExplicitSentConfirmation('Did you send the offer?').isConfirmed).toBe(false);
+
+    // Quotes / reported speech
+    expect(isExplicitSentConfirmation('They said: "I sent it"').isConfirmed).toBe(false);
+    expect(isExplicitSentConfirmation('Client asked: "Have you sent it?"').isConfirmed).toBe(false);
+
+    // Affirmative confirmations
+    expect(isExplicitSentConfirmation('I sent it').isConfirmed).toBe(true);
+    expect(isExplicitSentConfirmation('Already sent the offer to Dan').isConfirmed).toBe(true);
+    expect(isExplicitSentConfirmation('Am trimis oferta').isConfirmed).toBe(true);
+    expect(isExplicitSentConfirmation('Elküldtem a fájlt').isConfirmed).toBe(true);
   });
 
   it('enforces bulk scope policy: more than 3 distinct targets requires explicit confirmation', () => {

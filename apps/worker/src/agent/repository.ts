@@ -158,22 +158,99 @@ export async function executeAgentTool(
     // --- Read / Query Tools ---
     case 'find_entities': {
       const feArgs = args as FindEntitiesToolArgs;
+      const queryTrim = (feArgs.query || '').trim();
+      const likePattern = `%${queryTrim}%`;
+
+      // Bounded candidate retrieval (SOL-22): prioritize matches and bound to 100 max
       const entitiesRows = (
         await db
-          .prepare(`SELECT id, name FROM entities WHERE workspace_id = ?`)
-          .bind(workspaceId)
+          .prepare(
+            `SELECT id, name FROM entities WHERE workspace_id = ? AND (name LIKE ? OR id = ?) LIMIT 100`
+          )
+          .bind(workspaceId, likePattern, queryTrim)
           .all<{ id: string; name: string }>()
       ).results || [];
 
+      const candidateEntities = entitiesRows;
+      if (candidateEntities.length < 25) {
+        const fallbackRows = (
+          await db
+            .prepare(
+              `SELECT id, name FROM entities WHERE workspace_id = ? ORDER BY updated_at DESC LIMIT 50`
+            )
+            .bind(workspaceId)
+            .all<{ id: string; name: string }>()
+        ).results || [];
+        const seenIds = new Set(candidateEntities.map(r => r.id));
+        for (const row of fallbackRows) {
+          if (!seenIds.has(row.id)) {
+            candidateEntities.push(row);
+            seenIds.add(row.id);
+          }
+        }
+      }
+
       const aliasesRows = (
         await db
-          .prepare(`SELECT id, entity_id, alias FROM entity_aliases WHERE workspace_id = ?`)
-          .bind(workspaceId)
+          .prepare(
+            `SELECT id, entity_id, alias FROM entity_aliases WHERE workspace_id = ? AND (alias LIKE ? OR entity_id = ?) LIMIT 100`
+          )
+          .bind(workspaceId, likePattern, queryTrim)
           .all<{ id: string; entity_id: string; alias: string }>()
       ).results || [];
 
-      const matchResult = rankEntityMatches(feArgs.query, entitiesRows, aliasesRows);
+      const matchResult = rankEntityMatches(feArgs.query, candidateEntities, aliasesRows);
       const candidates = feArgs.limit ? matchResult.candidates.slice(0, feArgs.limit) : matchResult.candidates;
+
+      if (candidates.length > 0) {
+        const entIds = candidates.map((c) => c.id);
+        const placeholders = entIds.map(() => '?').join(',');
+        const fieldRows = (await db.prepare(
+          `SELECT entity_id, field_name, state, value_text, value_json, provenance, revision, updated_at, candidate_event_ids_json, last_confirmed_value_text
+           FROM entity_state
+           WHERE workspace_id = ? AND entity_id IN (${placeholders})`
+        ).bind(workspaceId, ...entIds).all<{
+          entity_id: string;
+          field_name: string;
+          state: string;
+          value_text: string | null;
+          value_json: string | null;
+          provenance: string;
+          revision: number;
+          updated_at: string;
+          candidate_event_ids_json: string | null;
+          last_confirmed_value_text: string | null;
+        }>()).results || [];
+
+        const fieldsByEntity: Record<string, Record<string, unknown>> = {};
+        for (const fr of fieldRows) {
+          const entityFields = fieldsByEntity[fr.entity_id] ?? (fieldsByEntity[fr.entity_id] = {});
+          let val: unknown = fr.value_text;
+          if (fr.value_json) {
+            try { val = JSON.parse(fr.value_json); } catch { /* keep text */ }
+          }
+          let candIds: unknown = undefined;
+          if (fr.candidate_event_ids_json) {
+            try { candIds = JSON.parse(fr.candidate_event_ids_json); } catch { candIds = undefined; }
+          }
+          entityFields[fr.field_name] = {
+            state: fr.state,
+            value: fr.state === 'disputed' ? null : val,
+            provenance: fr.provenance,
+            revision: fr.revision,
+            updated_at: fr.updated_at,
+            candidate_event_ids: candIds,
+            last_confirmed_value: fr.last_confirmed_value_text,
+          };
+        }
+
+        for (const cand of candidates) {
+          (cand as unknown as Record<string, unknown>).fields = fieldsByEntity[cand.id] || {};
+        }
+        if (matchResult.bestMatch) {
+          (matchResult.bestMatch as unknown as Record<string, unknown>).fields = fieldsByEntity[matchResult.bestMatch.id] || {};
+        }
+      }
 
       return {
         status: 'applied',
@@ -213,6 +290,52 @@ export async function executeAgentTool(
         sql += ` ORDER BY id ASC LIMIT ?`;
         binds.push(limit);
         const rows = (await db.prepare(sql).bind(...binds).all()).results || [];
+        if (rows.length > 0) {
+          const entityIds = rows.map((r) => String(r.id));
+          const placeholders = entityIds.map(() => '?').join(',');
+          const fieldRows = (await db.prepare(
+            `SELECT entity_id, field_name, state, value_text, value_json, provenance, revision, updated_at, candidate_event_ids_json, last_confirmed_value_text
+             FROM entity_state
+             WHERE workspace_id = ? AND entity_id IN (${placeholders})`
+          ).bind(workspaceId, ...entityIds).all<{
+            entity_id: string;
+            field_name: string;
+            state: string;
+            value_text: string | null;
+            value_json: string | null;
+            provenance: string;
+            revision: number;
+            updated_at: string;
+            candidate_event_ids_json: string | null;
+            last_confirmed_value_text: string | null;
+          }>()).results || [];
+
+          const fieldsByEntity: Record<string, Record<string, unknown>> = {};
+          for (const fr of fieldRows) {
+            const entityFields = fieldsByEntity[fr.entity_id] ?? (fieldsByEntity[fr.entity_id] = {});
+            let val: unknown = fr.value_text;
+            if (fr.value_json) {
+              try { val = JSON.parse(fr.value_json); } catch { /* keep text */ }
+            }
+            let candIds: unknown = undefined;
+            if (fr.candidate_event_ids_json) {
+              try { candIds = JSON.parse(fr.candidate_event_ids_json); } catch { candIds = undefined; }
+            }
+            entityFields[fr.field_name] = {
+              state: fr.state,
+              value: fr.state === 'disputed' ? null : val,
+              provenance: fr.provenance,
+              revision: fr.revision,
+              updated_at: fr.updated_at,
+              candidate_event_ids: candIds,
+              last_confirmed_value: fr.last_confirmed_value_text,
+            };
+          }
+
+          for (const row of rows) {
+            (row as Record<string, unknown>).fields = fieldsByEntity[String(row.id)] || {};
+          }
+        }
         return { status: 'applied', action_id: actionId, data: rows };
       }
 
@@ -539,22 +662,48 @@ export async function executeAgentTool(
     // --- Ledger Commands ---
     case 'upsert_entity': {
       const ueArgs = args as UpsertEntityToolArgs;
-      // Match first to avoid near-duplicates
+      const nameTrim = (ueArgs.name || '').trim();
+      const likePattern = `%${nameTrim}%`;
+
+      // Match first to avoid near-duplicates (SOL-22 bounded candidates)
       const entitiesRows = (
         await db
-          .prepare(`SELECT id, name FROM entities WHERE workspace_id = ?`)
-          .bind(workspaceId)
+          .prepare(
+            `SELECT id, name FROM entities WHERE workspace_id = ? AND (name LIKE ? OR id = ?) LIMIT 100`
+          )
+          .bind(workspaceId, likePattern, nameTrim)
           .all<{ id: string; name: string }>()
       ).results || [];
 
+      const candidateEntities = entitiesRows;
+      if (candidateEntities.length < 25) {
+        const fallbackRows = (
+          await db
+            .prepare(
+              `SELECT id, name FROM entities WHERE workspace_id = ? ORDER BY updated_at DESC LIMIT 50`
+            )
+            .bind(workspaceId)
+            .all<{ id: string; name: string }>()
+        ).results || [];
+        const seenIds = new Set(candidateEntities.map(r => r.id));
+        for (const row of fallbackRows) {
+          if (!seenIds.has(row.id)) {
+            candidateEntities.push(row);
+            seenIds.add(row.id);
+          }
+        }
+      }
+
       const aliasesRows = (
         await db
-          .prepare(`SELECT id, entity_id, alias FROM entity_aliases WHERE workspace_id = ?`)
-          .bind(workspaceId)
+          .prepare(
+            `SELECT id, entity_id, alias FROM entity_aliases WHERE workspace_id = ? AND (alias LIKE ? OR entity_id = ?) LIMIT 100`
+          )
+          .bind(workspaceId, likePattern, nameTrim)
           .all<{ id: string; entity_id: string; alias: string }>()
       ).results || [];
 
-      const matchRes = rankEntityMatches(ueArgs.name, entitiesRows, aliasesRows);
+      const matchRes = rankEntityMatches(ueArgs.name, candidateEntities, aliasesRows);
       if (matchRes.bestMatch) {
         // Return existing unambiguous entity
         return {
@@ -710,29 +859,17 @@ export async function executeAgentTool(
 
     case 'draft_message': {
       const dmArgs = args as DraftMessageToolArgs;
-      if (dmArgs.entity_id) {
-        const disputedRows = (
-          await db
-            .prepare(
-              `SELECT field_name, value_text, value_json FROM entity_state WHERE workspace_id = ? AND entity_id = ? AND state = 'disputed'`,
-            )
-            .bind(workspaceId, dmArgs.entity_id)
-            .all<{ field_name: string; value_text: string | null; value_json: string | null }>()
-        ).results || [];
-        for (const row of disputedRows) {
-          const val = row.value_text || (row.value_json ? String(row.value_json) : null);
-          if (val && dmArgs.content.toLowerCase().includes(val.toLowerCase())) {
-            return {
-              status: 'needs_clarification',
-              action_id: actionId,
-              clarification: {
-                prompt: `Field '${row.field_name}' is currently in dispute (${val}). It cannot be used as settled content in an outward draft without explicit confirmation.`,
-                missing_fields: ['dispute_confirmation'],
-                candidates: ['confirm_disputed_value', 'change_content'],
-              },
-            };
-          }
-        }
+      const dispute = await checkDraftDisputedValues(db, workspaceId, dmArgs.entity_id ?? null, dmArgs.content);
+      if (dispute.inDispute) {
+        return {
+          status: 'needs_clarification',
+          action_id: actionId,
+          clarification: {
+            prompt: `Field '${dispute.fieldName}' is currently in dispute (competing values: ${dispute.disputedValues?.join(', ')}). It cannot be used as settled content in an outward draft without explicit confirmation.`,
+            missing_fields: ['dispute_confirmation'],
+            candidates: ['confirm_disputed_value', 'change_content'],
+          },
+        };
       }
       return executeLedgerCommand(
         db,
@@ -752,6 +889,24 @@ export async function executeAgentTool(
 
     case 'update_draft': {
       const udArgs = args as UpdateDraftToolArgs;
+      if (udArgs.content) {
+        const existingDraft = await db
+          .prepare(`SELECT entity_id FROM draft_projections WHERE workspace_id = ? AND id = ?`)
+          .bind(workspaceId, udArgs.draft_id)
+          .first<{ entity_id: string | null }>();
+        const dispute = await checkDraftDisputedValues(db, workspaceId, existingDraft?.entity_id ?? null, udArgs.content);
+        if (dispute.inDispute) {
+          return {
+            status: 'needs_clarification',
+            action_id: actionId,
+            clarification: {
+              prompt: `Field '${dispute.fieldName}' is currently in dispute (competing values: ${dispute.disputedValues?.join(', ')}). It cannot be used as settled content in an outward draft without explicit confirmation.`,
+              missing_fields: ['dispute_confirmation'],
+              candidates: ['confirm_disputed_value', 'change_content'],
+            },
+          };
+        }
+      }
       return executeLedgerCommand(
         db,
         ledgerContext,
@@ -760,6 +915,7 @@ export async function executeAgentTool(
           draft_id: udArgs.draft_id,
           content_text: udArgs.content,
           recipient_address: udArgs.recipient,
+          expected_revision: udArgs.expected_revision,
         },
         DEFAULT_COMMAND_HANDLERS['record_draft']!,
         undefined,
@@ -897,4 +1053,114 @@ export async function executeAgentTool(
         error: { code: 'unknown_tool', message: `Tool '${toolName}' is not implemented.` },
       };
   }
+}
+
+async function checkDraftDisputedValues(
+  db: D1Database,
+  workspaceId: string,
+  entityId: string | null,
+  draftContent: string,
+): Promise<{ inDispute: boolean; fieldName?: string; disputedValues?: string[] }> {
+  const query = entityId
+    ? db.prepare(`SELECT field_name, candidate_event_ids_json, last_confirmed_value_text FROM entity_state WHERE workspace_id = ? AND entity_id = ? AND state = 'disputed'`).bind(workspaceId, entityId)
+    : db.prepare(`SELECT field_name, candidate_event_ids_json, last_confirmed_value_text FROM entity_state WHERE workspace_id = ? AND state = 'disputed'`).bind(workspaceId);
+  const disputedRows = (
+    await query.all<{ field_name: string; candidate_event_ids_json: string | null; last_confirmed_value_text: string | null }>()
+  ).results || [];
+
+  for (const row of disputedRows) {
+    const candidateIds: string[] = row.candidate_event_ids_json
+      ? (JSON.parse(row.candidate_event_ids_json) as string[])
+      : [];
+
+    const candidateValues: string[] = [];
+
+    if (candidateIds.length > 0) {
+      const placeholders = candidateIds.map(() => '?').join(',');
+      const candidateEvents = (
+        await db
+          .prepare(
+            `SELECT kind, payload_json FROM events WHERE workspace_id = ? AND id IN (${placeholders})`,
+          )
+          .bind(workspaceId, ...candidateIds)
+          .all<{ kind: string; payload_json: string }>()
+      ).results || [];
+
+      for (const evt of candidateEvents) {
+        try {
+          const payload = JSON.parse(evt.payload_json) as Record<string, unknown>;
+          if (evt.kind === 'quote') {
+            const amount = payload['amount'];
+            const currency = payload['currency'] ? String(payload['currency']) : '';
+            if (typeof amount === 'number') {
+              candidateValues.push(String(amount));
+              if (amount >= 100 && amount % 100 === 0) {
+                const major = amount / 100;
+                candidateValues.push(String(major));
+                candidateValues.push(major.toLocaleString());
+              }
+              if (currency) {
+                candidateValues.push(`${amount} ${currency}`);
+                if (amount >= 100 && amount % 100 === 0) {
+                  const major = amount / 100;
+                  candidateValues.push(`${major} ${currency}`);
+                  candidateValues.push(`${major}${currency}`);
+                }
+              }
+            } else if (typeof amount === 'string') {
+              candidateValues.push(amount);
+            }
+          } else if (evt.kind === 'field_change') {
+            const val = payload['new_value'];
+            if (val !== undefined && val !== null) {
+              if (typeof val === 'object' && val !== null) {
+                const innerAmount = (val as Record<string, unknown>)['amount'];
+                if (typeof innerAmount === 'number') {
+                  candidateValues.push(String(innerAmount));
+                  if (innerAmount >= 100 && innerAmount % 100 === 0) {
+                    candidateValues.push(String(innerAmount / 100));
+                  }
+                }
+                candidateValues.push(JSON.stringify(val));
+              } else {
+                candidateValues.push(String(val));
+              }
+            }
+          }
+        } catch {
+          // ignore malformed payload
+        }
+      }
+    }
+
+    if (row.last_confirmed_value_text) {
+      candidateValues.push(row.last_confirmed_value_text);
+    }
+
+    const contentLower = draftContent.toLowerCase();
+    for (const val of candidateValues) {
+      const cleanVal = val.trim();
+      if (!cleanVal || cleanVal.length < 2) continue;
+      const isNum = /^\d+[\d,.]*$/.test(cleanVal);
+      if (isNum) {
+        const escaped = cleanVal.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const numRegex = new RegExp(`(?:^|[^0-9a-zA-Z])${escaped}(?:$|[^0-9a-zA-Z])`, 'i');
+        if (numRegex.test(draftContent)) {
+          return {
+            inDispute: true,
+            fieldName: row.field_name,
+            disputedValues: Array.from(new Set(candidateValues)),
+          };
+        }
+      } else if (contentLower.includes(cleanVal.toLowerCase())) {
+        return {
+          inDispute: true,
+          fieldName: row.field_name,
+          disputedValues: Array.from(new Set(candidateValues)),
+        };
+      }
+    }
+  }
+
+  return { inDispute: false };
 }

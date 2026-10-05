@@ -9,6 +9,7 @@
     { "path": "./packages/channels" },
     { "path": "./packages/sheet" },
     { "path": "./packages/design" },
+    { "path": "./packages/brief" },
     { "path": "./apps/worker" },
     { "path": "./apps/web" }
   ]

@@ -91,9 +91,10 @@ export interface ResolveConflictArgs {
 export interface RecordDraftArgs {
   draft_id?: string;
   entity_id?: string | null;
-  channel: 'whatsapp' | 'email' | 'sms' | 'other';
+  channel?: 'whatsapp' | 'email' | 'sms' | 'other';
   recipient_address?: string | null;
-  content_text: string;
+  content_text?: string;
+  expected_revision?: number;
 }
 
 export interface MarkMessageSentArgs {

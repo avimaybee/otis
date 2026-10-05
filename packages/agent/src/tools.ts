@@ -495,6 +495,29 @@ export function validateResolveConflictArgs(raw: unknown): ValidationResult<Reso
   };
 }
 
+function isValidCalendarDate(dateStr: string): boolean {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dateStr);
+  if (!match) return false;
+  const year = parseInt(match[1]!, 10);
+  const month = parseInt(match[2]!, 10);
+  const day = parseInt(match[3]!, 10);
+  if (month < 1 || month > 12) return false;
+  if (day < 1 || day > 31) return false;
+  const d = new Date(Date.UTC(year, month - 1, day));
+  return d.getUTCFullYear() === year && d.getUTCMonth() === month - 1 && d.getUTCDate() === day;
+}
+
+function isValidIanaTimezone(tz: string): boolean {
+  try {
+    Intl.DateTimeFormat(undefined, { timeZone: tz });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+const ISO_INSTANT_REGEX = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2})$/i;
+
 export function validateTaskDue(due: unknown): ValidationResult<TaskDue> {
   if (due === null) return { ok: true, data: null };
   if (!due || typeof due !== 'object' || Array.isArray(due)) {
@@ -507,11 +530,11 @@ export function validateTaskDue(due: unknown): ValidationResult<TaskDue> {
   if (obj['kind'] === 'date') {
     const unk = checkNoUnknownKeys(obj, new Set(['kind', 'local_date', 'timezone']), 'due.date');
     if (unk) return unk;
-    if (typeof obj['local_date'] !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(obj['local_date'])) {
-      return fail('invalid_due_date', "Date due requires 'local_date' in YYYY-MM-DD format.");
+    if (typeof obj['local_date'] !== 'string' || !isValidCalendarDate(obj['local_date'])) {
+      return fail('invalid_due_date', "Date due requires a valid calendar date 'local_date' in YYYY-MM-DD format.");
     }
-    if (typeof obj['timezone'] !== 'string' || !obj['timezone'].trim()) {
-      return fail('invalid_due_date', "Date due requires an IANA 'timezone'.");
+    if (typeof obj['timezone'] !== 'string' || !isValidIanaTimezone(obj['timezone'].trim())) {
+      return fail('invalid_due_timezone', "Date due requires a valid IANA 'timezone'.");
     }
     return { ok: true, data: { kind: 'date', local_date: obj['local_date'], timezone: obj['timezone'].trim() } };
   }
@@ -519,11 +542,11 @@ export function validateTaskDue(due: unknown): ValidationResult<TaskDue> {
   if (obj['kind'] === 'instant') {
     const unk = checkNoUnknownKeys(obj, new Set(['kind', 'at', 'timezone']), 'due.instant');
     if (unk) return unk;
-    if (typeof obj['at'] !== 'string' || isNaN(Date.parse(obj['at']))) {
-      return fail('invalid_due_instant', "Instant due requires valid ISO string 'at'.");
+    if (typeof obj['at'] !== 'string' || !ISO_INSTANT_REGEX.test(obj['at']) || isNaN(Date.parse(obj['at']))) {
+      return fail('invalid_due_instant', "Instant due requires a valid offset-bearing ISO string 'at'.");
     }
-    if (typeof obj['timezone'] !== 'string' || !obj['timezone'].trim()) {
-      return fail('invalid_due_instant', "Instant due requires an IANA 'timezone'.");
+    if (typeof obj['timezone'] !== 'string' || !isValidIanaTimezone(obj['timezone'].trim())) {
+      return fail('invalid_due_timezone', "Instant due requires a valid IANA 'timezone'.");
     }
     return { ok: true, data: { kind: 'instant', at: obj['at'], timezone: obj['timezone'].trim() } };
   }
@@ -566,9 +589,11 @@ export function validateCreateTaskArgs(raw: unknown): ValidationResult<CreateTas
       title,
       entity_id: typeof obj['entity_id'] === 'string' && obj['entity_id'].trim() ? obj['entity_id'].trim() : null,
       assignee_user_id:
-        typeof obj['assignee_user_id'] === 'string' && obj['assignee_user_id'].trim()
-          ? obj['assignee_user_id'].trim()
-          : null,
+        obj['assignee_user_id'] === undefined
+          ? undefined
+          : typeof obj['assignee_user_id'] === 'string' && obj['assignee_user_id'].trim()
+            ? obj['assignee_user_id'].trim()
+            : null,
       due: dueRes.data,
       explicit_no_deadline: explicitNoDeadline,
     },
@@ -607,7 +632,19 @@ export function validateUpdateTaskArgs(raw: unknown): ValidationResult<UpdateTas
   }
 
   const title = typeof obj['title'] === 'string' && obj['title'].trim() ? obj['title'].trim() : undefined;
-  const snoozeUntil = typeof obj['snooze_until'] === 'string' && obj['snooze_until'].trim() ? obj['snooze_until'].trim() : undefined;
+  const snoozeUntil =
+    obj['snooze_until'] === null
+      ? null
+      : typeof obj['snooze_until'] === 'string' && obj['snooze_until'].trim()
+        ? obj['snooze_until'].trim()
+        : undefined;
+
+  if (typeof obj['snooze_until'] === 'string' && obj['snooze_until'].trim()) {
+    if (!ISO_INSTANT_REGEX.test(obj['snooze_until'].trim()) || isNaN(Date.parse(obj['snooze_until'].trim()))) {
+      return fail('invalid_snooze_until', "Field 'snooze_until' must be a valid offset-bearing ISO instant or null.");
+    }
+  }
+
   const expectedRevision = typeof obj['expected_revision'] === 'number' && Number.isInteger(obj['expected_revision']) ? obj['expected_revision'] : undefined;
 
   if (title === undefined && status === undefined && due === undefined && snoozeUntil === undefined) {

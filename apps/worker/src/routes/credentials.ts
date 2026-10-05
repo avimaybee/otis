@@ -7,6 +7,7 @@
 import type { CredentialStatusResponse, PutCredentialRequest } from '@otis/contracts';
 import {
   CredentialError,
+  deleteWorkspaceCredential,
   getCredentialMetadata,
   importWrappingKey,
   setWorkspaceCredential,
@@ -89,6 +90,34 @@ export async function handlePutCredential(
     if (err && typeof err === 'object' && 'status' in err) {
       const e = err as { status: number; code: string; message: string };
       return jsonError(e.status, e.code, e.message, requestId);
+    }
+    throw err;
+  }
+}
+
+export async function handleDeleteCredential(
+  request: Request,
+  env: Env,
+  workspaceId: string,
+  provider: string,
+  requestId: string,
+): Promise<Response> {
+  const scope = await requireWorkspaceScope(request, env.DB, workspaceId, requestId, { csrf: true });
+  if (scope instanceof Response) return scope;
+  if (!PROVIDERS.includes(provider as (typeof PROVIDERS)[number])) {
+    return jsonError(404, 'unknown_provider', 'Unknown provider.', requestId);
+  }
+
+  try {
+    await deleteWorkspaceCredential(env.DB, {
+      workspaceId,
+      provider: provider as (typeof PROVIDERS)[number],
+      actorUserId: scope.user.id,
+    });
+    return jsonSuccess({ status: 'ok', deleted: true }, 200, { 'x-request-id': requestId });
+  } catch (err) {
+    if (err instanceof CredentialError) {
+      return jsonError(credentialStatus(err), err.code, err.message, requestId);
     }
     throw err;
   }

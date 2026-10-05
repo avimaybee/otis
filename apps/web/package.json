@@ -11,7 +11,9 @@
     "build-storybook": "storybook build"
   },
   "dependencies": {
-    "@fontsource-variable/inter": "^5.3.0",
+    "@fontsource-variable/bricolage-grotesque": "^5.3.0",
+    "@fontsource-variable/geist-mono": "^5.3.0",
+    "@fontsource-variable/instrument-sans": "^5.3.0",
     "@otis/commands": "workspace:*",
     "@otis/contracts": "workspace:*",
     "@otis/design": "workspace:*",

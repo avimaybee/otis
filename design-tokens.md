@@ -137,20 +137,26 @@ Rules that follow:
 
 ## 5. Typography
 
-One family: Inter, self-hosted as a variable font (`@fontsource-variable/inter`, include the `latin` and `latin-ext` subsets). Fallback: `system-ui, "Segoe UI", Roboto, sans-serif`. Latin-ext is required for Romanian `ș ț` and Hungarian `ő ű`. Verify them in the rendered UI.
+Three approved families (maximum three faces across the product):
+1. **UI and prose**: Instrument Sans, self-hosted variable font (`@fontsource-variable/instrument-sans`, include the `latin` and `latin-ext` subsets). Fallback: `system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif`. Used at weights 400 and 500 only.
+2. **Wordmark and empty-state title**: Bricolage Grotesque, self-hosted variable font (`@fontsource-variable/bricolage-grotesque`, include the `latin` and `latin-ext` subsets). Fallback: `system-ui, sans-serif`. Used strictly at weight 600 in these two places only.
+3. **Technical detail only**: Geist Mono, self-hosted variable font (`@fontsource-variable/geist-mono`, include the `latin` and `latin-ext` subsets) at 13 px (`text-xs font-mono`). Fallback: `ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace`. Used for inspectable tool output and raw IDs; never business prose.
+
+Latin-ext is required for Romanian `ș ț` (comma-below `U+0219`/`U+021B`) and Hungarian `ő ű` (double acute `U+0151`/`U+0171`). Verify them in the rendered UI.
 
 | Role | Size / line height | Weight | Tailwind class | Use |
 |---|---|---|---|---|
 | Body | 16 / 24 | 400 | `text-base` | Messages, composer, sidebar rows, headers |
 | UI | 14 / 20 | 500 | `text-sm` | Buttons, menu items, form labels, settings rows |
 | Meta | 13 / 18 | 400 | `text-xs` | Working line, pills, timestamps, section labels |
-| Title | 20 / 26 | 500 | `text-xl` | Sign-in title, empty state, rare screen titles |
+| Title | 20 / 26 | 500 (600 empty title only) | `text-xl` | Sign-in title, empty state, rare screen titles |
+| Detail | 13 / 18 | 400 | `text-xs font-mono` | Technical tool inspectables, raw IDs |
 
 Rules:
-- Weights are 400 and 500 only. No 600, no 700, no `font-semibold`, no `font-bold`.
+- Weights are 400 and 500 in general UI and prose. Weight 600 is permitted strictly on the wordmark and the empty-state title. No other 600, no 700, no `font-bold`.
 - The only sizes allowed in the app are the four above. No `text-lg`, `text-2xl` or larger, no arbitrary `text-[Npx]`.
-- Sentence case everywhere. No all-caps, no tracked uppercase labels, no letter-spacing changes.
-- Prose measure is 60 to 70 characters, enforced by the 760 px column.
+- Sentence case everywhere. No all-caps, no tracked uppercase labels. Body letter-spacing stays 0; use -0.01em on the 20 px titles only.
+- Prose measure at 16 px in the 760 px column is closer to ~90 characters. Short replies don't hit it, and Otis keeps answers short so replies stay readable without narrowing the column.
 - Use `tabular-nums` for money, counts and times (`font-variant-numeric: tabular-nums`).
 - No monospace for business content. Monospace only inside inspectable technical detail.
 - Body color is `text-foreground`. Secondary is `text-muted-foreground`. Metadata is `text-subtle`.
@@ -423,7 +429,9 @@ Do not add shadcn Card, Badge or Alert wrappers around transcript content. Do no
   --color-warning: var(--warning);
   --color-success: var(--success);
 
-  --font-sans: "Inter Variable", "Inter", system-ui, "Segoe UI", Roboto, sans-serif;
+  --font-sans: "Instrument Sans Variable", "Instrument Sans", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --font-wordmark: "Bricolage Grotesque Variable", "Bricolage Grotesque", system-ui, sans-serif;
+  --font-mono: "Geist Mono Variable", "Geist Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
 
   --radius-sm: 4px;
   --radius-md: 8px;
@@ -439,6 +447,7 @@ Do not add shadcn Card, Badge or Alert wrappers around transcript content. Do no
   --text-base--line-height: 1.5rem;
   --text-xl: 1.25rem;
   --text-xl--line-height: 1.625rem;
+  --text-xl--letter-spacing: -0.01em;
 
   --shadow-popover: 0 8px 24px rgb(0 0 0 / 0.4), 0 2px 6px rgb(0 0 0 / 0.3);
 
@@ -531,7 +540,7 @@ exit $fail
 Check the rendered screen, not the code, at 360 x 800, 390 x 844, about 900, 1280 and 1440 px.
 
 1. The transcript column is at most 760 px wide and centered. Composer and transcript share the same left and right edges.
-2. Body text is 16 px Inter, not a system fallback. `ș ț ő ű` render correctly.
+2. Body text is 16 px Instrument Sans, not a system fallback. `ș ț ő ű` render correctly.
 3. Assistant text has no container. User messages are right-aligned, one `#242424` fill, 20 px radius, 8 / 16 px padding.
 4. Gap between message groups is 24 px. Paragraph gap is 12 px.
 5. The empty composer is 52 px tall, one line, no toolbar row, placeholder "Message Otis".
@@ -575,7 +584,7 @@ Reference lines:
 
 - Hex colors or palette objects in components
 - Any accent other than `highlight`, or highlight outside the five places
-- Font weights 600 or 700, sizes outside the four in section 5, all-caps labels
+- Font weights 600 or 700 (outside the wordmark and empty-state title at 600), sizes outside the four in section 5, all-caps labels
 - Cards, borders or shadows around messages, rows or the composer
 - A toolbar, model chips or dropdowns inside the composer
 - Persistent timestamps and action icons under every message

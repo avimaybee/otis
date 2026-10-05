@@ -24,6 +24,7 @@ import {
   decryptWorkspaceCredential,
   importWrappingKey,
 } from '@otis/identity';
+import { generateChatTitle } from '../inbox/repository.js';
 import { failRunTerminal } from '../actor/dispatch.js';
 import {
   loadMediaRow,
@@ -259,9 +260,9 @@ async function commitTranscript(
       AND (t.run_id IS NULL OR EXISTS (SELECT 1 FROM agent_runs r WHERE r.id = t.run_id AND r.status = 'queued'))
   )`;
   const message = await db
-    .prepare(`SELECT id, content_text FROM chat_messages WHERE run_id = ? AND media_id = ?`)
+    .prepare(`SELECT id, chat_id, content_text FROM chat_messages WHERE run_id = ? AND media_id = ?`)
     .bind(params.job.run_id, params.media.id)
-    .first<{ id: string; content_text: string }>();
+    .first<{ id: string; chat_id: string; content_text: string }>();
   const existingText = message?.content_text?.trim() ?? '';
   const nextText = existingText
     ? `${existingText}\n\n[Voice transcript] ${params.commit.transcriptText}`
@@ -305,6 +306,16 @@ async function commitTranscript(
         .prepare(`UPDATE chat_messages SET content_text = ?, updated_at = ? WHERE id = ?`)
         .bind(nextText, params.commitNowIso, message.id),
     );
+    if (nextText) {
+      const autoTitle = generateChatTitle(nextText);
+      statements.push(
+        db
+          .prepare(
+            `UPDATE chats SET title = ?, updated_at = ? WHERE id = ? AND workspace_id = ? AND title IN ('New conversation', 'Untitled conversation')`,
+          )
+          .bind(autoTitle, params.commitNowIso, message.chat_id, params.media.workspace_id),
+      );
+    }
   }
   try {
     await db.batch(statements);

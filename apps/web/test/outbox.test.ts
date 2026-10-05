@@ -56,7 +56,7 @@ describe('outbox identities', () => {
     expect(retried.text).toBe('hi');
     expect(retried.clarificationId).toBe('clar-1');
     expect(retried.state).toBe('sending');
-    expect(retried.attempts).toBe(2);
+    expect(retried.attempts).toBe(0);
   });
 
   it('marks saved mapping without creating another identity', () => {

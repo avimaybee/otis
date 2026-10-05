@@ -35,7 +35,7 @@ import {
   importWrappingKey,
   recordVoiceFormatEvidence,
 } from '@otis/identity';
-import { resolveModelForChat, resolveVoiceRouteForWorkspace } from '../providers/service.js';
+import { extractPlatformKeys, resolveModelForChat, resolveVoiceRouteForWorkspace } from '../providers/service.js';
 import { inspectAudioBytes } from './container.js';
 import { handleGetVoiceSettings, handleUpdateVoiceSettings } from '../routes/voiceSettings.js';
 import {
@@ -100,20 +100,24 @@ async function voiceUploadAvailability(
   userId: string,
   format: string,
 ): Promise<{ route: VoiceRouteOutcome; verificationSample: boolean }> {
+  const platformKeys = extractPlatformKeys(env);
   const model = await resolveModelForChat(env.DB, {
     workspaceId,
     actorUserId: userId,
     chatId,
+    platformKeys,
   });
   const route = await resolveVoiceRouteForWorkspace(env.DB, {
     workspaceId,
     model: model.available ? model.entry : null,
     audioMimeOrExt: format,
+    platformKeys,
   });
   if (route.route !== 'unavailable') return { route, verificationSample: false };
   const stored = await getWorkspaceVoiceSettings(env.DB, workspaceId);
   const credential = await getCredentialMetadata(env.DB, { workspaceId, provider: 'groq' });
-  const verificationSample = stored.enabled && stored.model !== null && credential?.status === 'available';
+  const hasGroq = credential?.status === 'available' || !!platformKeys.groq;
+  const verificationSample = stored.enabled && stored.model !== null && hasGroq;
   return { route, verificationSample };
 }
 
@@ -526,33 +530,33 @@ export async function handleVerifyVoiceFormat(
   if (!stored.enabled || !stored.model) {
     return jsonError(422, 'voice_not_configured', 'Enable voice and choose an STT model before verifying a format.', requestId);
   }
+  const platformKeys = extractPlatformKeys(env);
   const credential = await getCredentialMetadata(env.DB, { workspaceId, provider: 'groq' });
-  if (credential?.status !== 'available') {
-    return jsonError(422, 'stt_credential_unavailable', 'Workspace Groq transcription credential is not available.', requestId);
+  let rawKey: string | null = null;
+  if (credential?.status === 'available') {
+    if (!env.CREDENTIALS_KEY) {
+      return jsonError(500, 'server_misconfigured', 'Credential storage is not configured.', requestId);
+    }
+    let wrappingKey: CryptoKey;
+    try {
+      wrappingKey = await importWrappingKey(env.CREDENTIALS_KEY);
+      rawKey = (
+        await decryptWorkspaceCredential(env.DB, { workspaceId, provider: 'groq', wrappingKey })
+      ).rawKey;
+    } catch {
+      return jsonError(422, 'stt_credential_unreadable', 'The Groq transcription key could not be used.', requestId);
+    }
+  } else if (platformKeys.groq) {
+    rawKey = platformKeys.groq;
+  } else {
+    return jsonError(422, 'stt_credential_unavailable', 'Groq transcription credential is not available.', requestId);
   }
-  if (!env.CREDENTIALS_KEY) {
-    return jsonError(500, 'server_misconfigured', 'Credential storage is not configured.', requestId);
-  }
-  let wrappingKey: CryptoKey;
-  try {
-    wrappingKey = await importWrappingKey(env.CREDENTIALS_KEY);
-  } catch {
-    return jsonError(500, 'server_misconfigured', 'Credential storage is misconfigured.', requestId);
-  }
+
   const object = await env.STORAGE.get(row.object_key);
   if (!object) {
     return jsonError(410, 'audio_unavailable', 'The verification sample bytes are no longer available.', requestId);
   }
   const bytes = new Uint8Array(await object.arrayBuffer());
-
-  let rawKey: string;
-  try {
-    rawKey = (
-      await decryptWorkspaceCredential(env.DB, { workspaceId, provider: 'groq', wrappingKey })
-    ).rawKey;
-  } catch {
-    return jsonError(422, 'stt_credential_unreadable', 'The Groq transcription key could not be used.', requestId);
-  }
 
   const model = GROQ_STT_MODELS.find((candidate) => candidate === stored.model)!;
   const extension = row.format === 'audio/ogg' ? 'ogg' : row.format === 'audio/mp4' ? 'm4a' : 'webm';

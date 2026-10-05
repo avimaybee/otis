@@ -207,6 +207,32 @@ describe('Chat API: transcript, activity and run status', () => {
     expect(teammate.is_author).toBe(false);
   });
 
+  it('rejects with 403 session_mismatch when x-expected-user-id does not match session user (SOL-16)', async () => {
+    const res = await call(`/api/workspaces/${WS}/chats`, {
+      method: 'POST',
+      cookie: hunorCookie,
+      headers: {
+        ...CSRF,
+        'x-expected-user-id': AVI,
+      },
+      body: JSON.stringify({ client_chat_id: 'chat-mismatch-test' }),
+    });
+    expect(res.status).toBe(403);
+    const body = await res.json() as { error: { code: string } };
+    expect(body.error.code).toBe('session_mismatch');
+
+    const okRes = await call(`/api/workspaces/${WS}/chats`, {
+      method: 'POST',
+      cookie: hunorCookie,
+      headers: {
+        ...CSRF,
+        'x-expected-user-id': HUNOR,
+      },
+      body: JSON.stringify({ client_chat_id: 'chat-match-test' }),
+    });
+    expect(okRes.status).toBe(201);
+  });
+
   it('denies a non-member and does not leak the chat existence', async () => {
     const res = await call(`/api/workspaces/${WS}/chats/${aviChat}`, { cookie: outsiderCookie });
     expect(res.status).toBe(404);
@@ -1535,5 +1561,15 @@ describe('UI command controls remain auditable without becoming chat messages', 
     expect(await env.DB.prepare(`SELECT COUNT(*) AS n FROM chat_messages WHERE chat_id = ?`).bind(chat.id).first()).toEqual({ n: 0 });
     expect(await env.DB.prepare(`SELECT executor_kind, status FROM agent_runs WHERE id = ?`).bind(result.run_id).first()).toEqual({ executor_kind: 'command', status: 'succeeded' });
   });
+  it('deletes an existing chat with messages/runs and handles non-existent chat', async () => {
+    const chat = await createChat(env.DB, { workspaceId: WS, authorUserId: AVI, clientChatId: 'new-b6ed665d-2121-490c-962c-710f03ccc7cf' });
+    await call(`/api/workspaces/${WS}/chats/${chat.id}/commands`, { method: 'POST', cookie: aviCookie, headers: CSRF, body: JSON.stringify({ text: '/help', client_message_id: 'delete-test-cmd', presentation: 'control' }) });
+    const deleteRes = await call(`/api/workspaces/${WS}/chats/${chat.id}`, { method: 'DELETE', cookie: aviCookie, headers: CSRF });
+    expect(deleteRes.status).toBe(200);
+
+    const nonExistent = await call(`/api/workspaces/${WS}/chats/chat_does_not_exist`, { method: 'DELETE', cookie: aviCookie, headers: CSRF });
+    expect(nonExistent.status).toBe(404);
+  });
 });
+
 

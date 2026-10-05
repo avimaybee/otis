@@ -71,6 +71,10 @@ async function authenticateWorkspaceMember(
   }
 
   const userId = String(session['user_id']);
+  const expectedUserId = request.headers.get('x-expected-user-id');
+  if (expectedUserId && expectedUserId !== userId) {
+    return { error: jsonError(403, 'session_mismatch', 'Authenticated session does not match expected user.', requestId) };
+  }
   try {
     const context = await buildWorkspaceContext(env.DB, {
       workspaceId,
@@ -243,6 +247,7 @@ export async function handleDeleteChat(
     if (err instanceof NotFoundError) return jsonError(404, 'not_found', err.message, requestId);
     throw err;
   }
+
 }
 
 /**

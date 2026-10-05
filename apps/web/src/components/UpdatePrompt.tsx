@@ -4,6 +4,7 @@ import { toast } from 'sonner';
 import { Button } from './ui/button.js';
 import { entriesForUser } from '../api/outbox.js';
 import { flushUserDraftSaves, hasUnsafeDrafts } from '../api/drafts.js';
+import { isVoiceRecordingActive } from '../hooks/useVoiceRecorder.js';
 
 /**
  * Safe service-worker update prompt. It never auto-reloads: the notice
@@ -34,6 +35,10 @@ export function UpdatePrompt({ userId, onReload }: { userId: string; onReload?: 
   if (!needRefresh[0] || dismissed) return null;
   const reload = async () => {
     if (applying) return;
+    if (isVoiceRecordingActive()) {
+      toast('Finish recording first — an update is ready and will apply afterwards.');
+      return;
+    }
     const hasUnsent = () => entriesForUser(userId).some(entry => entry.state !== 'saved');
     if (hasUnsent()) {
       toast('Finish sending first — an update is ready and will apply afterwards.');
@@ -77,12 +82,32 @@ export function UpdatePrompt({ userId, onReload }: { userId: string; onReload?: 
     void updateServiceWorker(true);
   };
   return (
-    <div className="otis-connection text-xs" role="status">
+    <div
+      className="fixed top-3 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2 px-4 py-2 rounded-full bg-card border border-border shadow-popover text-xs text-foreground animate-in fade-in slide-in-from-top-2 duration-200"
+      role="status"
+    >
+
+      <span className="size-2 rounded-full bg-highlight shrink-0" aria-hidden="true" />
       <span>An Otis update is ready.</span>
-      <Button variant="ghost" size="sm" type="button" aria-busy={applying} disabled={applying} onClick={() => void reload()}>
+      <Button
+        variant="ghost"
+        size="sm"
+        type="button"
+        className="h-6 px-2 text-xs font-medium text-highlight hover:text-foreground hover:bg-accent rounded-full transition-colors"
+        aria-busy={applying}
+        disabled={applying}
+        onClick={() => void reload()}
+      >
         {applying ? 'Updating…' : 'Reload to update'}
       </Button>
-      <Button variant="ghost" size="sm" type="button" aria-label="Dismiss update" onClick={() => setDismissed(true)}>
+      <Button
+        variant="ghost"
+        size="sm"
+        type="button"
+        className="h-6 px-2 text-xs text-muted-foreground hover:text-foreground hover:bg-accent rounded-full transition-colors"
+        aria-label="Dismiss update"
+        onClick={() => setDismissed(true)}
+      >
         Later
       </Button>
     </div>

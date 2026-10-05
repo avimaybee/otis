@@ -30,6 +30,7 @@ import {
   rehydrateVoiceSessions,
 } from '../api/voiceSessions.js';
 import { uploadVoiceNote, voiceFilename, type VoiceUploadAdapter } from '../api/voice.js';
+import { api } from '../api/client.js';
 
 export const VOICE_MAX_DURATION_MS = VOICE_BOUNDS.MAX_DURATION_SECONDS * 1000;
 const TICK_MS = 250;
@@ -149,7 +150,13 @@ export interface UseVoiceRecorderOptions {
     media: VoiceMediaSummary;
     durationMs: number;
     mimeType: string;
+    chatId?: string;
   }) => Promise<void>;
+}
+
+let activeRecordingsCount = 0;
+export function isVoiceRecordingActive(): boolean {
+  return activeRecordingsCount > 0;
 }
 
 const INITIAL_STATE: VoiceControllerState = {
@@ -303,8 +310,20 @@ export function useVoiceRecorder({
   const mounted = useRef(true);
   const scopeRef = useRef(scope);
   scopeRef.current = scope;
+
+  useEffect(() => {
+    const isActivelyRecording = ['requesting', 'recording', 'finalizing'].includes(state.phase);
+    if (isActivelyRecording) {
+      activeRecordingsCount++;
+      return () => {
+        activeRecordingsCount = Math.max(0, activeRecordingsCount - 1);
+      };
+    }
+    return undefined;
+  }, [state.phase]);
+
   /** Finalized upload cached per recording identity, reused on attach retry. */
-  const uploadedRef = useRef<{ clientMessageId: string; media: VoiceMediaSummary } | null>(null);
+  const uploadedRef = useRef<{ clientMessageId: string; media: VoiceMediaSummary; chatId?: string } | null>(null);
 
   const recorderRef = useRef<VoiceMediaRecorder | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -652,10 +671,6 @@ export function useVoiceRecorder({
       }));
       return;
     }
-    if (!scope.chatId) {
-      setState(previous => ({ ...previous, error: 'Open a conversation before sending a voice note.', errorCode: 'upload' }));
-      return;
-    }
     if (!onSent) {
       setState(previous => ({ ...previous, error: 'Voice send is not connected. The recording is kept on this device.', errorCode: 'upload' }));
       return;
@@ -668,21 +683,26 @@ export function useVoiceRecorder({
     // Captured at send start: a scope move or logout during a slow upload
     // must never invoke the send owner or delete bytes for another scope.
     const started = { userId: scope.userId, workspaceId: scope.workspaceId, chatId: scope.chatId };
+    let uploadChatId = started.chatId;
     const stillCurrent = () => {
       const live = scopeRef.current;
       return mounted.current
         && live !== null
         && live.userId === started.userId
         && live.workspaceId === started.workspaceId
-        && live.chatId === started.chatId;
+        && (live.chatId === started.chatId || (started.chatId === null && (live.chatId === null || live.chatId === uploadChatId)));
     };
     setState(previous => ({ ...previous, uploadState: 'uploading', error: null, errorCode: null }));
     try {
       let uploaded = uploadedRef.current;
       if (!uploaded || uploaded.clientMessageId !== current.review.clientMessageId) {
+        if (!uploadChatId) {
+          const created = await api.createChat(started.workspaceId, current.review.clientMessageId, started.userId);
+          uploadChatId = created.chat.id;
+        }
         const result = await uploadVoiceNote(adapter, {
           workspaceId: started.workspaceId,
-          chatId: started.chatId,
+          chatId: uploadChatId,
           clientMessageId: current.review.clientMessageId,
           blob,
           mimeType: current.review.mimeType,
@@ -690,7 +710,7 @@ export function useVoiceRecorder({
           filename: voiceFilename(current.review.mimeType),
         });
         if (!stillCurrent()) return;
-        uploaded = { clientMessageId: current.review.clientMessageId, media: result.media };
+        uploaded = { clientMessageId: current.review.clientMessageId, media: result.media, chatId: uploadChatId };
         uploadedRef.current = uploaded;
       }
       // Local bytes are deleted only after the send owner confirms durable
@@ -701,6 +721,7 @@ export function useVoiceRecorder({
         media: uploaded.media,
         durationMs: current.review.durationMs,
         mimeType: current.review.mimeType,
+        chatId: uploaded.chatId,
       });
       if (!stillCurrent()) return;
       await deleteVoiceSession(current.review.sessionId);

@@ -74,8 +74,8 @@
 .otis-turn__body li > p { margin: 4px 0; }
 .otis-turn__body h1, .otis-turn__body h2, .otis-turn__body h3, .otis-turn__body h4 { margin: 16px 0 8px; font-weight: 500; font-size: inherit; }
 .otis-turn__body blockquote { padding-left: 12px; border-left: 1px solid var(--border); color: var(--muted-foreground); }
-.otis-turn__body code { padding: 4px; border-radius: 4px; background: var(--muted); }
-.otis-turn__body pre { overflow-x: auto; padding: 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--card); white-space: pre; }
+.otis-turn__body code { padding: 4px; border-radius: 4px; background: var(--muted); font-family: var(--font-mono); }
+.otis-turn__body pre { overflow-x: auto; padding: 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--card); white-space: pre; font-family: var(--font-mono); }
 .otis-turn__body pre code { padding: 0; background: transparent; }
 .otis-turn__body table { display: block; max-width: 100%; overflow-x: auto; border-collapse: collapse; margin: 12px 0; }
 .otis-turn__body th, .otis-turn__body td { padding: 8px; border: 1px solid var(--border); text-align: left; }
@@ -143,6 +143,7 @@
 /* Sidebar: full-bleed rows, no radius; selected row has the 2px highlight bar. */
 .otis-sidebar { display: none; width: 280px; flex: none; flex-direction: column; min-height: 0; padding: 8px 0; background: var(--sidebar); border-right: 1px solid var(--sidebar-border); }
 .otis-nav__brand { display: flex; height: 44px; align-items: center; justify-content: space-between; padding: 0 16px; }
+.otis-nav__brand span, .otis-wordmark { font-family: var(--font-wordmark); font-weight: 600; }
 .otis-nav__workspace-label { padding: 8px 16px; margin: 0 0 8px; }
 .otis-nav__action, .otis-nav__row { display: flex; flex: none; width: 100%; align-items: center; gap: 8px; padding: 8px 16px; border: 0; border-left: 2px solid transparent; background: transparent; text-align: left; color: var(--muted-foreground); transition: background-color 150ms ease-out, color 150ms ease-out; }
 .otis-nav__action { min-height: 44px; }
@@ -186,7 +187,7 @@ blockquote.otis-detail__value { margin: 0; padding-left: 12px; border-left: 1px 
 .otis-button { display: inline-flex; min-height: 44px; align-items: center; justify-content: center; gap: 8px; }
 a.otis-button, a.otis-button:hover { text-decoration: none; }
 .otis-empty { display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 32px 8px 48px; color: var(--muted-foreground); text-align: center; }
-.otis-empty__title { margin: 0; font-weight: 500; }
+.otis-empty__title { margin: 0; font-family: var(--font-wordmark); font-weight: 600; letter-spacing: -0.01em; }
 .otis-access { display: flex; flex: 1; width: 100%; max-width: 480px; flex-direction: column; gap: 16px; justify-content: center; margin: auto; padding: 24px; }
 .otis-entry { display: flex; min-height: 100dvh; align-items: center; justify-content: center; padding: 32px 24px; }
 .otis-entry__inner { display: flex; width: 100%; max-width: 384px; flex-direction: column; gap: 16px; }

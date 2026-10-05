@@ -19,7 +19,7 @@ import { ConversationScreen } from './ConversationScreen.js';
 
 export interface SessionContextValue {
   userId: string;
-  workspaces: { id: string; name: string }[];
+  workspaces: { id: string; name: string; role?: string }[];
   members: Record<string, string>;
   onSignOut: () => void;
   onRefreshSession?: () => Promise<void>;
@@ -60,7 +60,7 @@ function ConversationRouteView() {
   const workspaceId = session.workspaces.some(item => item.id === search.workspace) ? search.workspace! : fallbackWorkspace;
   // Absent ?chat restores the last view; explicit chat=new stays a new chat.
   // Both render with chat=null until the authoritative chat exists.
-  const chat: string | null = !search.chat || search.chat === 'new' || search.chat.startsWith('new-') ? null : search.chat;
+  const chat: string | null = !search.chat || search.chat === 'new' ? null : search.chat;
   return (
     <ConversationScreen
       workspaceId={workspaceId}

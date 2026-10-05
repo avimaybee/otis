@@ -8,3 +8,5 @@
 
 export * from './types.js';
 export * from './service.js';
+export * from './kernel.js';
+export * from './cron.js';

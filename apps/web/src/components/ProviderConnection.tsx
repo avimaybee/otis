@@ -35,6 +35,26 @@ export function ProviderConnection({ workspaceId, provider, name, onUpdated }: {
     } catch { setError('Could not finish connecting. Check the key and try again.'); setStatus('Needs checking'); }
     finally { setBusy(false); }
   };
+  const removeKey = async () => {
+    if (busy) return;
+    setBusy(true); setError('');
+    try {
+      await api.deleteCredential(workspaceId, provider);
+      setEditing(false);
+      setKey('');
+      try {
+        const res = await api.credentialStatus(workspaceId, provider);
+        setStatus(res.credential?.status === 'available' ? 'Connected' : res.credential ? 'Needs checking' : 'Not connected');
+      } catch {
+        setStatus('Not connected');
+      }
+      onUpdated();
+    } catch {
+      setError('Could not remove key. Try again.');
+    } finally {
+      setBusy(false);
+    }
+  };
   return <div className="otis-settings__provider">
     <div className="otis-settings__row">
       <div>
@@ -46,9 +66,16 @@ export function ProviderConnection({ workspaceId, provider, name, onUpdated }: {
           </Badge>
         </div>
       </div>
-      <Button variant="outline" size="sm" disabled={busy} onClick={() => { setEditing(!editing); setKey(''); setError(''); }}>
-        {editing ? 'Cancel' : status === 'Connected' ? 'Replace key' : 'Connect'}
-      </Button>
+      <div className="flex items-center gap-2">
+        {(status === 'Connected' || status === 'Needs checking') && !editing && (
+          <Button variant="ghost" size="sm" disabled={busy} onClick={() => void removeKey()}>
+            Remove
+          </Button>
+        )}
+        <Button variant="outline" size="sm" disabled={busy} onClick={() => { setEditing(!editing); setKey(''); setError(''); }}>
+          {editing ? 'Cancel' : status === 'Connected' ? 'Replace key' : 'Connect'}
+        </Button>
+      </div>
     </div>
     {editing && <form className="mt-3 flex flex-col gap-2" onSubmit={event => { event.preventDefault(); void save(); }}>
       <label htmlFor={id} className="text-sm font-medium">{name} API key</label>

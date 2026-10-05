@@ -48,6 +48,10 @@ export async function requireWorkspaceScope(
   if (!verified) {
     return jsonError(401, 'session_expired', 'Session is invalid or expired.', requestId);
   }
+  const expectedUserId = request.headers.get('x-expected-user-id');
+  if (expectedUserId && expectedUserId !== verified.user.id) {
+    return jsonError(403, 'session_mismatch', 'Authenticated session does not match expected user.', requestId);
+  }
   const membership = await checkMembership(db, workspaceId, verified.user.id);
   if (!membership) {
     return jsonError(404, 'workspace_not_found', 'Workspace not found or access denied.', requestId);

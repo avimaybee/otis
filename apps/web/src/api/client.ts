@@ -57,6 +57,8 @@ export function parseRetryAfterMs(value: string | null | undefined): number | un
   return undefined;
 }
 
+const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
+
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const method = init.method ?? 'GET';
   const started = Date.now();
@@ -66,12 +68,26 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   }
   if (init.body) headers.set('Content-Type', 'application/json');
 
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => {
+    controller.abort(new DOMException('Request timed out', 'TimeoutError'));
+  }, DEFAULT_REQUEST_TIMEOUT_MS);
+  if (init.signal) {
+    if (init.signal.aborted) {
+      controller.abort(init.signal.reason);
+    } else {
+      init.signal.addEventListener('abort', () => controller.abort(init.signal?.reason), { once: true });
+    }
+  }
+
   let response: Response;
   try {
-    response = await fetch(path, { ...init, headers, credentials: 'same-origin' });
+    response = await fetch(path, { ...init, headers, credentials: 'same-origin', signal: controller.signal });
   } catch (err) {
     failureLog('api', 'network failure before HTTP', { method, path, ms: Date.now() - started, error: String(err) });
     throw err;
+  } finally {
+    clearTimeout(timeoutId);
   }
   const text = await response.text();
   let payload: unknown = null;
@@ -107,9 +123,10 @@ export const api = {
       `/api/workspaces/${workspaceId}/chats?filter=${filter}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`,
     ),
 
-  createChat: (workspaceId: string, clientChatId: string) =>
+  createChat: (workspaceId: string, clientChatId: string, expectedUserId?: string) =>
     request<{ chat: Chat }>(`/api/workspaces/${workspaceId}/chats`, {
       method: 'POST',
+      headers: expectedUserId ? { 'x-expected-user-id': expectedUserId } : undefined,
       body: JSON.stringify({ client_chat_id: clientChatId }),
     }),
 
@@ -124,9 +141,10 @@ export const api = {
     );
   },
 
-  sendMessage: (workspaceId: string, chatId: string, clientMessageId: string, text: string, clarificationId?: string, mediaId?: string) =>
+  sendMessage: (workspaceId: string, chatId: string, clientMessageId: string, text: string, clarificationId?: string, mediaId?: string, expectedUserId?: string) =>
     request<AcceptMessageResponse>(`/api/workspaces/${workspaceId}/chats/${chatId}/messages`, {
       method: 'POST',
+      headers: expectedUserId ? { 'x-expected-user-id': expectedUserId } : undefined,
       body: JSON.stringify({
         client_message_id: clientMessageId,
         text,
@@ -135,9 +153,11 @@ export const api = {
       }),
     }),
 
-  executeCommand: (workspaceId: string, chatId: string, clientMessageId: string, text: string) =>
+  executeCommand: (workspaceId: string, chatId: string, clientMessageId: string, text: string, expectedUserId?: string) =>
     request<AcceptMessageResponse>(`/api/workspaces/${workspaceId}/chats/${chatId}/commands`, {
-      method: 'POST', body: JSON.stringify({ client_message_id: clientMessageId, text, presentation: 'control' }),
+      method: 'POST',
+      headers: expectedUserId ? { 'x-expected-user-id': expectedUserId } : undefined,
+      body: JSON.stringify({ client_message_id: clientMessageId, text, presentation: 'control' }),
     }),
 
   activity: (workspaceId: string, chatId: string, after: number) =>
@@ -212,6 +232,7 @@ export const api = {
   updateWorkspaceSettings: (workspaceId: string, body: { default_model: string | null }) => request<{ settings: WorkspaceSettings }>(`/api/workspaces/${workspaceId}/settings`, { method: 'PUT', body: JSON.stringify(body) }),
   credentialStatus: (workspaceId: string, provider: ProviderName) => request<CredentialStatusResponse>(`/api/workspaces/${workspaceId}/credentials/${provider}`),
   putCredential: (workspaceId: string, provider: ProviderName, key: string) => request<CredentialStatusResponse>(`/api/workspaces/${workspaceId}/credentials/${provider}`, { method: 'PUT', body: JSON.stringify({ key }) }),
+  deleteCredential: (workspaceId: string, provider: ProviderName) => request<{ status: string; deleted: boolean }>(`/api/workspaces/${workspaceId}/credentials/${provider}`, { method: 'DELETE' }),
   verifyCredential: (workspaceId: string, provider: ProviderName) => request<{ verified: boolean }>(`/api/workspaces/${workspaceId}/credentials/${provider}/verify`, { method: 'POST', body: JSON.stringify({}) }),
 
   issueTelegramLink: (workspaceId: string) =>

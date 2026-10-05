@@ -35,6 +35,7 @@ import { acceptWebMessage, getChat } from '../inbox/repository.js';
 import { handleCommitUndo, handleUndoPreview } from './actions.js';
 import { listAvailableModels, PRODUCTION_REGISTRY, resolveVoiceRoute } from '@otis/agent';
 import type { ModelEntry, ThinkingChoice } from '@otis/agent';
+import { buildTodayBrief, productionBriefKernel } from '../brief/index.js';
 import type { Env } from '../index.js';
 import { jsonError, jsonSuccess } from '../middleware/errors.js';
 import { requireWorkspaceScope } from './scope.js';
@@ -456,12 +457,29 @@ export async function executeCommand(
     }
 
     case 'today': {
-      const timezone = await context.db.prepare(`SELECT brief_timezone FROM member_settings WHERE workspace_id = ? AND user_id = ?`).bind(context.workspaceId, context.userId).first<{ brief_timezone: string | null }>();
-      const zone = timezone?.brief_timezone;
-      if (!zone) return { kind: 'reply', text: 'Choose your timezone in Settings so I can identify today’s due work. You do not need a scheduled brief.', effects: [] };
-      const today = new Intl.DateTimeFormat('en-CA', { timeZone: zone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
-      const rows = (await context.db.prepare(`SELECT title, due_local_date, due_instant FROM tasks WHERE workspace_id = ? AND status = 'open' AND assignee_user_id = ? AND (snooze_until IS NULL OR snooze_until <= ?) AND ((due_kind = 'date' AND due_local_date <= ?) OR (due_kind = 'instant' AND due_instant <= ?)) ORDER BY COALESCE(due_local_date, due_instant), id LIMIT 25`).bind(context.workspaceId, context.userId, new Date().toISOString(), today, new Date().toISOString()).all<{ title: string; due_local_date: string | null; due_instant: string | null }>()).results;
-      return { kind: 'reply', text: rows.length ? `Due work for ${today}:\n${rows.map(row => `- ${row.title} · ${row.due_local_date ?? row.due_instant}`).join('\n')}` : 'You have no due work right now.', effects: [] };
+      const timezoneRow = await context.db
+        .prepare(`SELECT brief_timezone FROM member_settings WHERE workspace_id = ? AND user_id = ?`)
+        .bind(context.workspaceId, context.userId)
+        .first<{ brief_timezone: string | null }>();
+      const zone = timezoneRow?.brief_timezone;
+      if (!zone) {
+        return {
+          kind: 'reply',
+          text: 'Choose your timezone in Settings so I can identify today’s due work. You do not need a scheduled brief.',
+          effects: [],
+        };
+      }
+      const nowIso = new Date().toISOString();
+      const briefResult = await buildTodayBrief(context.db, productionBriefKernel, {
+        workspaceId: context.workspaceId,
+        userId: context.userId,
+        nowIso,
+        staleAfterDays: 14,
+      });
+      if (briefResult.status === 'skipped') {
+        return { kind: 'reply', text: 'You are not a member of this workspace.', effects: [] };
+      }
+      return { kind: 'reply', text: briefResult.text || 'You have no due work right now.', effects: [] };
     }
     default:
       // Gated commands report their availability without calling a provider.

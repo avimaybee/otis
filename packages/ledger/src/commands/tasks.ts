@@ -122,7 +122,9 @@ export function handleUpdateTask(
   }
 
   // Handle status transitions
-  if (args.status === 'done' && task.status !== 'done') {
+  const hasOtherFields = args.title !== undefined || args.due !== undefined || args.snooze_until !== undefined;
+
+  if (!hasOtherFields && args.status === 'done' && task.status !== 'done') {
     const event = createLedgerEvent(context, nextSequence, {
       entity_id: task.entity_id,
       kind: 'task_done',
@@ -145,7 +147,7 @@ export function handleUpdateTask(
     };
   }
 
-  if (args.status === 'cancelled' && task.status !== 'cancelled') {
+  if (!hasOtherFields && args.status === 'cancelled' && task.status !== 'cancelled') {
     const event = createLedgerEvent(context, nextSequence, {
       entity_id: task.entity_id,
       kind: 'task_cancelled',

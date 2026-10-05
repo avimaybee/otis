@@ -18,8 +18,35 @@ export function handleRecordDraft(
   events: LedgerEvent[];
   nextState?: LedgerProjectionState;
 } {
-  const trimmedText = args.content_text.trim();
-  if (!trimmedText) {
+  const draftId = args.draft_id || `dft_${crypto.randomUUID()}`;
+  const existing = state.drafts.get(draftId);
+
+  if (existing && args.expected_revision !== undefined && existing.revision !== args.expected_revision) {
+    return {
+      result: {
+        status: 'conflict',
+        error: {
+          code: 'revision_conflict',
+          message: `Stale draft revision: expected ${args.expected_revision}, current is ${existing.revision}.`,
+        },
+      },
+      events: [],
+    };
+  }
+
+  let trimmedText: string | undefined;
+  if (args.content_text !== undefined) {
+    trimmedText = args.content_text.trim();
+    if (!trimmedText) {
+      return {
+        result: {
+          status: 'rejected',
+          error: { code: 'bad_request', message: 'Draft content text cannot be empty.' },
+        },
+        events: [],
+      };
+    }
+  } else if (!existing) {
     return {
       result: {
         status: 'rejected',
@@ -29,19 +56,33 @@ export function handleRecordDraft(
     };
   }
 
-  const draftId = args.draft_id || `dft_${crypto.randomUUID()}`;
-  const existing = state.drafts.get(draftId);
+  const channel = args.channel || (existing ? existing.channel : undefined);
+  if (!channel) {
+    return {
+      result: {
+        status: 'rejected',
+        error: { code: 'bad_request', message: 'Draft channel is required.' },
+      },
+      events: [],
+    };
+  }
 
   const event = createLedgerEvent(context, nextSequence, {
-    entity_id: args.entity_id || null,
+    entity_id: args.entity_id !== undefined ? (args.entity_id || null) : (existing ? existing.entity_id : null),
     kind: existing ? 'draft_updated' : 'draft_created',
-    payload: {
-      draft_id: draftId,
-      entity_id: args.entity_id || null,
-      channel: args.channel,
-      recipient_address: args.recipient_address || null,
-      content_text: trimmedText,
-    },
+    payload: existing
+      ? {
+          draft_id: draftId,
+          content_text: trimmedText,
+          recipient_address: args.recipient_address !== undefined ? (args.recipient_address || null) : undefined,
+        }
+      : {
+          draft_id: draftId,
+          entity_id: args.entity_id || null,
+          channel,
+          recipient_address: args.recipient_address || null,
+          content_text: trimmedText!,
+        },
     provenance: 'stated',
   });
 
@@ -54,7 +95,7 @@ export function handleRecordDraft(
       action_id: context.action_id,
       affected_resource_ids: [draftId],
       event_ids: [event.id],
-      summary: `${existing ? 'Updated' : 'Recorded'} draft for channel '${args.channel}'.`,
+      summary: `${existing ? 'Updated' : 'Recorded'} draft for channel '${channel}'.`,
       data: { draft_id: draftId },
     },
     events: [event],

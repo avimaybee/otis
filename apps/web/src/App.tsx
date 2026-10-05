@@ -19,9 +19,34 @@ import { Button } from './components/ui/button.js';
 import { Input } from './components/ui/input.js';
 import { clearUserOutbox } from './api/outbox.js';
 import { deleteDraftsForUser } from './api/drafts.js';
+import { deleteVoiceSessionsForUser } from './api/voiceSessions.js';
 import { unregisterFlushOwner } from './api/flush.js';
 import { clearUserQueries, createAppQueryClient } from './api/queries.js';
-import { api } from './api/client.js';
+import { api, ApiError } from './api/client.js';
+import { Alert, AlertDescription } from './components/ui/alert.js';
+
+function extractInviteToken(): string | null {
+  try {
+    if (typeof window === 'undefined') return null;
+    const url = new URL(window.location.href);
+    return url.searchParams.get('invite');
+  } catch {
+    return null;
+  }
+}
+
+function removeInviteParam(): void {
+  try {
+    if (typeof window === 'undefined') return;
+    const url = new URL(window.location.href);
+    if (url.searchParams.has('invite')) {
+      url.searchParams.delete('invite');
+      window.history.replaceState({}, '', url.pathname + (url.search ? url.search : '') + url.hash);
+    }
+  } catch {
+    // ignore
+  }
+}
 
 function NoWorkspaceView({ user, onCreated, onSignOut }: { user: User; onCreated: () => void; onSignOut: () => void }) {
   const [name, setName] = useState(user.display_name ? `${user.display_name}’s Workspace` : 'My Workspace');
@@ -51,10 +76,13 @@ function NoWorkspaceView({ user, onCreated, onSignOut }: { user: User; onCreated
           You don’t have a workspace yet. Create one now to begin remembering, organizing, and chatting with Otis.
         </p>
         <form onSubmit={handleCreate} className="flex flex-col gap-2 w-full max-w-sm mt-2">
+          <label htmlFor="otis-create-ws-name" className="otis-visually-hidden">Workspace name</label>
           <Input
+            id="otis-create-ws-name"
             value={name}
             onChange={(e) => setName(e.target.value)}
             placeholder="Workspace name"
+            aria-label="Workspace name"
             disabled={creating}
             required
           />
@@ -126,6 +154,52 @@ export function App() {
     void loadSession();
   }, [loadSession]);
 
+  useEffect(() => {
+    const onStorage = (event: StorageEvent) => {
+      if (event.key === 'otis_auth_event') {
+        void loadSession();
+      }
+    };
+    const onVisibilityOrFocus = () => {
+      if (document.visibilityState === 'visible' && (state.status === 'ready' || state.status === 'no_workspace')) {
+        void loadSession();
+      }
+    };
+    window.addEventListener('storage', onStorage);
+    window.addEventListener('focus', onVisibilityOrFocus);
+    document.addEventListener('visibilitychange', onVisibilityOrFocus);
+    return () => {
+      window.removeEventListener('storage', onStorage);
+      window.removeEventListener('focus', onVisibilityOrFocus);
+      document.removeEventListener('visibilitychange', onVisibilityOrFocus);
+    };
+  }, [state.status, loadSession]);
+
+  const [inviteError, setInviteError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const inviteToken = extractInviteToken();
+    if (!inviteToken || (state.status !== 'ready' && state.status !== 'no_workspace')) return;
+
+    let cancelled = false;
+    setInviteError(null);
+    api.acceptInvite(inviteToken)
+      .then(async (result) => {
+        if (cancelled) return;
+        removeInviteParam();
+        await loadSession();
+        router.navigate({ to: '/', search: { workspace: result.workspace_id, chat: 'new' } });
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        removeInviteParam();
+        const msg = err instanceof ApiError ? err.message : (err instanceof Error ? err.message : 'Could not accept invitation.');
+        setInviteError(msg);
+      });
+
+    return () => { cancelled = true; };
+  }, [state.status, loadSession, router]);
+
   if (state.status === 'loading') {
     return (
       <div className="otis-entry">
@@ -139,19 +213,63 @@ export function App() {
   if (state.status === 'unavailable') return <UnavailableScreen offline={deviceOffline()} onRetry={() => void loadSession()} />;
 
   if (state.status === 'signed_out') {
-    return <SignInView onSignedIn={() => void loadSession()} />;
+    return (
+      <SignInView
+        onSignedIn={() => {
+          try {
+            localStorage.setItem('otis_auth_event', JSON.stringify({ type: 'sign_in', timestamp: Date.now() }));
+          } catch {
+            /* storage quota or private browsing */
+          }
+          void loadSession();
+        }}
+      />
+    );
   }
+
+  const performSignOut = async (userId?: string) => {
+    try {
+      await fetch('/api/auth/session', {
+        method: 'DELETE',
+        headers: { 'x-otis-csrf': '1' },
+        credentials: 'same-origin',
+      });
+    } catch {
+      /* Server session cleanup failure should not prevent client-side cleanup */
+    }
+    await clientSignOut();
+    try {
+      localStorage.setItem('otis_auth_event', JSON.stringify({ type: 'sign_out', userId, timestamp: Date.now() }));
+    } catch {
+      /* storage quota or private browsing */
+    }
+    if (userId) {
+      unregisterFlushOwner(userId);
+      clearUserQueries(queryClient, userId);
+      clearUserOutbox(userId);
+      await Promise.allSettled([
+        deleteDraftsForUser(userId),
+        deleteVoiceSessionsForUser(userId),
+      ]);
+    }
+    setState({ status: 'signed_out' });
+  };
 
   if (state.status === 'no_workspace') {
     return (
-      <NoWorkspaceView
-        user={state.user}
-        onCreated={() => void loadSession()}
-        onSignOut={async () => {
-          await clientSignOut();
-          setState({ status: 'signed_out' });
-        }}
-      />
+      <>
+        {inviteError && (
+          <Alert variant="destructive" className="fixed top-2 right-2 z-50 max-w-sm">
+            <AlertDescription>{inviteError}</AlertDescription>
+            <Button variant="ghost" size="sm" className="mt-1 h-6 px-2 text-xs" onClick={() => setInviteError(null)}>Dismiss</Button>
+          </Alert>
+        )}
+        <NoWorkspaceView
+          user={state.user}
+          onCreated={() => void loadSession()}
+          onSignOut={() => void performSignOut(state.user.id)}
+        />
+      </>
     );
   }
 
@@ -159,27 +277,25 @@ export function App() {
   if (state.user.display_name) members[state.user.id] = state.user.display_name;
 
   const signOut = async () => {
-    const userId = state.user.id;
-    await fetch('/api/auth/session', {
-      method: 'DELETE',
-      headers: { 'x-otis-csrf': '1' },
-      credentials: 'same-origin',
-    });
-    await clientSignOut();
-    unregisterFlushOwner(userId);
-    clearUserQueries(queryClient, userId);
-    clearUserOutbox(userId);
-    void deleteDraftsForUser(userId);
-    setState({ status: 'signed_out' });
+    await performSignOut(state.user.id);
   };
 
   return (
     <QueryClientProvider client={queryClient}>
+      <a href="#main-content" className="sr-only focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-50 focus:p-2 focus:bg-background focus:text-foreground focus:ring-2 focus:ring-ring">
+        Skip to main content
+      </a>
+      {inviteError && (
+        <Alert variant="destructive" className="fixed top-2 right-2 z-50 max-w-sm">
+          <AlertDescription>{inviteError}</AlertDescription>
+          <Button variant="ghost" size="sm" className="mt-1 h-6 px-2 text-xs" onClick={() => setInviteError(null)}>Dismiss</Button>
+        </Alert>
+      )}
       <UpdatePrompt userId={state.user.id} />
       <SessionContext.Provider
         value={{
           userId: state.user.id,
-          workspaces: state.workspaces.map((workspace) => ({ id: workspace.id, name: workspace.name })),
+          workspaces: state.workspaces.map((workspace) => ({ id: workspace.id, name: workspace.name, role: workspace.role })),
           members,
           onSignOut: signOut,
           onRefreshSession: loadSession,

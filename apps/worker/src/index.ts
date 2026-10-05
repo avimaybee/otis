@@ -50,8 +50,11 @@ import {
 } from './actor/dispatch.js';
 import { AgentHandler } from './agent/handler.js';
 import { PRODUCTION_REGISTRY, type FetchFn } from '@otis/agent';
-import { importWrappingKey } from '@otis/identity';
+import { extractSessionToken, importWrappingKey } from '@otis/identity';
+import { requireWorkspaceScope } from './routes/scope.js';
+import { createActivityStream } from './chat/stream.js';
 import { processMemoryRefreshJobs } from './agent/memory.js';
+import { processScheduledDailyBriefs } from './brief/cron.js';
 import { handleVoiceMediaRoute } from './media/routes.js';
 import { processTranscriptionJobs, type TranscriptionProcessResult } from './media/transcription.js';
 import { cleanupExpiredMedia } from './media/cleanup.js';
@@ -64,6 +67,7 @@ import {
   handleTransferOwnership,
 } from './routes/members.js';
 import {
+  handleDeleteCredential,
   handleGetCredentialStatus,
   handlePutCredential,
   handleVerifyCredential,
@@ -318,6 +322,32 @@ export class WorkspaceActor {
   }
 
   async fetch(request: Request): Promise<Response> {
+    const url = new URL(request.url);
+    const streamMatch = url.pathname.match(
+      /^\/api\/workspaces\/([^/]+)\/chats\/([^/]+)\/activity$/,
+    );
+    if (streamMatch && url.searchParams.get('stream') === 'sse') {
+      const workspaceId = streamMatch[1]!;
+      const chatId = streamMatch[2]!;
+      const token = extractSessionToken(request);
+      if (!token) {
+        return jsonError(401, 'unauthorized', 'Session token missing or expired.', 'actor');
+      }
+      const scope = await requireWorkspaceScope(request, this.env.DB, workspaceId, 'actor');
+      if (scope instanceof Response) return scope;
+
+      const afterRaw = url.searchParams.get('after');
+      const after = afterRaw === null ? 0 : Number(afterRaw);
+      return createActivityStream(this.env.DB, {
+        workspaceId,
+        chatId,
+        afterCursor: Number.isSafeInteger(after) && after >= 0 ? after : 0,
+        sessionToken: token,
+        userId: scope.user.id,
+        requestId: request.headers.get('x-request-id') ?? 'actor',
+      });
+    }
+
     if (request.method === 'GET') {
       return new Response(JSON.stringify({ status: 'active' }), {
         headers: { 'Content-Type': 'application/json' },
@@ -622,6 +652,9 @@ export default {
         if (request.method === 'PUT' && workspaceId && provider) {
           return await handlePutCredential(request, env, workspaceId, provider, requestId);
         }
+        if (request.method === 'DELETE' && workspaceId && provider) {
+          return await handleDeleteCredential(request, env, workspaceId, provider, requestId);
+        }
         return jsonError(405, 'method_not_allowed', 'Method not allowed.', requestId);
       }
 
@@ -852,6 +885,12 @@ export default {
       await processMemoryRefreshJobs(env.DB);
     } catch (err) {
       console.error('scheduled memory refresh failed:', err);
+    }
+
+    try {
+      await processScheduledDailyBriefs(env.DB);
+    } catch (err) {
+      console.error('scheduled daily brief sweep failed:', err);
     }
 
     // Housekeeping: bounded prune of legacy guard rows left by earlier migrations

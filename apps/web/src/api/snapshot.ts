@@ -39,7 +39,10 @@ export async function fetchChatSnapshot(workspaceId: string, chatId: string): Pr
     api.clarifications(workspaceId, chatId),
   ]);
   const runIds = [...new Set(page.messages.flatMap(message => (message.run_id ? [message.run_id] : [])))];
-  const runData = await Promise.all(runIds.map(id => api.run(workspaceId, id)));
+  const runResults = await Promise.allSettled(runIds.map(id => api.run(workspaceId, id)));
+  const runData = runResults
+    .filter((r): r is PromiseFulfilledResult<RunDetailResponse> => r.status === 'fulfilled')
+    .map(r => r.value);
   const activities = [...new Map(
     [...firstActivity.activities, ...runData.flatMap(run => run.activities)].map(activity => [activity.id, activity]),
   ).values()].sort((left, right) => left.cursor - right.cursor);
