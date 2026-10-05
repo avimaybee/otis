@@ -60,7 +60,12 @@ export function createActivityStream(db: D1Database, options: StreamOptions): Re
   let closed = false;
   const startedAt = now();
   const queryCount = { count: 0 };
-  const sessionCache = { sessionVerifiedAt: 0, sessionValid: false };
+  const sessionCache = {
+    sessionVerifiedAt: 0,
+    sessionValid: false,
+    membershipVerifiedAt: 0,
+    membershipValid: false,
+  };
 
   // Explicit pollIntervalMs is provided in deterministic integration tests
   if (options.pollIntervalMs !== undefined) {
@@ -226,20 +231,8 @@ export function createActivityStream(db: D1Database, options: StreamOptions): Re
       }
 
       // 3. Subscribe to in-memory liveChatBus (events pushed in RAM directly as tokens arrive)
-      unsubscribeLiveBus = liveChatBus.subscribe(options.workspaceId, options.chatId, async (event) => {
+      unsubscribeLiveBus = liveChatBus.subscribe(options.workspaceId, options.chatId, (event) => {
         if (closed) return;
-        const isMember = await verifyStreamMembership(db, options, queryCount, sessionCache, now());
-        if (!isMember) {
-          closed = true;
-          unsubscribeLiveBus?.();
-          try {
-            controller.enqueue(formatEvent('membership_revoked', { workspace_id: options.workspaceId }));
-            controller.close();
-          } catch {
-            // Already closed or cancelled by reader
-          }
-          return;
-        }
         try {
           controller.enqueue(formatEvent(event.name, event.data, event.id));
           if (event.id !== undefined && event.id > cursor) {
@@ -250,8 +243,8 @@ export function createActivityStream(db: D1Database, options: StreamOptions): Re
         }
       });
 
-      // 4. In-memory heartbeat timer (ZERO D1 queries while connection remains open)
-      heartbeatTimer = setInterval(() => {
+      // 4. In-memory heartbeat timer with periodic membership re-check and D1 catch-up
+      heartbeatTimer = setInterval(async () => {
         if (closed) {
           if (heartbeatTimer) clearInterval(heartbeatTimer);
           return;
@@ -267,11 +260,33 @@ export function createActivityStream(db: D1Database, options: StreamOptions): Re
           return;
         }
         try {
+          const isMember = await verifyStreamMembership(db, options, queryCount, sessionCache, now());
+          if (!isMember) {
+            closed = true;
+            if (heartbeatTimer) clearInterval(heartbeatTimer);
+            unsubscribeLiveBus?.();
+            controller.enqueue(formatEvent('membership_revoked', { workspace_id: options.workspaceId }));
+            controller.close();
+            return;
+          }
+          const read = await readChatActivity(
+            db,
+            { workspaceId: options.workspaceId, chatId: options.chatId, afterCursor: cursor },
+            queryCount,
+          );
+          for (const activity of read.activities) {
+            controller.enqueue(formatEvent('activity', activity, activity.cursor));
+            cursor = Math.max(cursor, activity.cursor);
+          }
           controller.enqueue(formatEvent('heartbeat', { cursor }));
         } catch {
-          closed = true;
-          if (heartbeatTimer) clearInterval(heartbeatTimer);
-          unsubscribeLiveBus?.();
+          try {
+            controller.enqueue(formatEvent('heartbeat', { cursor }));
+          } catch {
+            closed = true;
+            if (heartbeatTimer) clearInterval(heartbeatTimer);
+            unsubscribeLiveBus?.();
+          }
         }
       }, heartbeatMs);
     },
@@ -298,7 +313,7 @@ async function verifyStreamMembership(
   db: D1Database,
   options: StreamOptions,
   queryCount: { count: number },
-  cache?: { sessionVerifiedAt: number; sessionValid: boolean },
+  cache?: { sessionVerifiedAt: number; sessionValid: boolean; membershipVerifiedAt: number; membershipValid: boolean },
   nowMs: number = Date.now(),
 ): Promise<boolean> {
   if (!options.sessionToken) return false;
@@ -314,7 +329,17 @@ async function verifyStreamMembership(
       cache.sessionVerifiedAt = nowMs;
     }
   }
-  queryCount.count += 1;
-  const membership = await checkMembership(db, options.workspaceId, options.userId);
-  return membership !== null;
+  if (!cache || !cache.membershipValid || nowMs - cache.membershipVerifiedAt > 30_000) {
+    queryCount.count += 1;
+    const membership = await checkMembership(db, options.workspaceId, options.userId);
+    if (!membership) {
+      if (cache) cache.membershipValid = false;
+      return false;
+    }
+    if (cache) {
+      cache.membershipValid = true;
+      cache.membershipVerifiedAt = nowMs;
+    }
+  }
+  return true;
 }

@@ -172,6 +172,34 @@ export function computeUndoPreview(
     }
   }
 
+  const affectedContext: { id: string; summary: string; changes: string[] }[] = [];
+  for (const evt of allEvents) {
+    if (selectedActionSet.has(evt.action_id) && evt.kind !== 'revert' && !alreadyRevertedEventIds.has(evt.id)) {
+      if (['memory_note', 'memory_forgotten', 'draft_created', 'draft_updated', 'note', 'visit', 'contact', 'quote'].includes(evt.kind)) {
+        const payload = (evt.payload ?? {}) as Record<string, unknown>;
+        let desc = '';
+        if (evt.kind === 'memory_note') {
+          const raw = String(payload['content'] ?? payload['text'] ?? 'context note');
+          desc = `Saved context: "${raw.slice(0, 60)}${raw.length > 60 ? '…' : ''}" will be removed.`;
+        } else if (evt.kind === 'memory_forgotten') {
+          desc = `Forgotten memory will be restored.`;
+        } else if (evt.kind === 'draft_created' || evt.kind === 'draft_updated') {
+          desc = `Outward draft (${String(payload['channel'] ?? 'message')}) will be discarded.`;
+        } else if (evt.kind === 'note') {
+          const raw = String(payload['text'] ?? payload['content'] ?? 'note');
+          desc = `Note: "${raw.slice(0, 60)}${raw.length > 60 ? '…' : ''}" will be removed.`;
+        } else {
+          desc = `${evt.kind.replace(/_/g, ' ')} record will be reverted.`;
+        }
+        affectedContext.push({
+          id: evt.id,
+          summary: evt.kind.replace(/_/g, ' '),
+          changes: [desc],
+        });
+      }
+    }
+  }
+
   return {
     target_action_id: targetActionId,
     mode,
@@ -179,6 +207,7 @@ export function computeUndoPreview(
     affected_event_ids: selectedEventIds,
     affected_entities: affectedEntities,
     affected_tasks: affectedTasks,
+    affected_context: affectedContext,
     dependencies: uniqueDeps,
     expected_revision: expectedRevision,
   };

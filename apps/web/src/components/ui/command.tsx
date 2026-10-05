@@ -27,13 +27,25 @@ Command.displayName = CommandPrimitive.displayName;
 const CommandList = React.forwardRef<
   React.ElementRef<typeof CommandPrimitive.List>,
   React.ComponentPropsWithoutRef<typeof CommandPrimitive.List>
->(({ className, ...props }, ref) => (
-  <CommandPrimitive.List
-    ref={ref}
-    className={cn("overflow-y-auto overflow-x-hidden", className)}
-    {...props}
-  />
-));
+>(({ className, id: customId, ...props }, ref) => {
+  const innerRef = React.useRef<HTMLDivElement | null>(null);
+  React.useImperativeHandle(ref, () => innerRef.current as HTMLDivElement);
+
+  React.useLayoutEffect(() => {
+    if (customId && innerRef.current) {
+      innerRef.current.id = customId;
+    }
+  }, [customId]);
+
+  return (
+    <CommandPrimitive.List
+      ref={innerRef}
+      id={customId}
+      className={cn("overflow-y-auto overflow-x-hidden", className)}
+      {...props}
+    />
+  );
+});
 CommandList.displayName = CommandPrimitive.List.displayName;
 
 const CommandItem = React.forwardRef<

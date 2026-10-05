@@ -341,6 +341,16 @@ export function ConversationScreen({ workspaceId, chat: routeChat, chatParamPres
     ? snapshot?.questions.find(question => question.id === replyId && question.answerable_by_caller)
     : pendingQuestion;
 
+  useEffect(() => {
+    if (!running || accessLost || !workspaceId || !activeChatId) return;
+    const runId = running.run.id;
+    const timer = setTimeout(() => {
+      refreshRun(workspaceId, activeChatId, runId);
+      refreshMessages(workspaceId, activeChatId);
+    }, 2500);
+    return () => clearTimeout(timer);
+  }, [running, accessLost, workspaceId, activeChatId, refreshRun, refreshMessages]);
+
   const switchWorkspace = useCallback((id: string) => { if (!workspaces.some(workspace => workspace.id === id)) return; let last: string | null = null; try { last = sessionStorage.getItem(`otis:view:${userId}:${id}`); } catch { /* start new */ } navigate(id, last === 'new' ? null : last); }, [workspaces, userId, navigate]);
 
   const deliverEntry = useCallback(async (entry: OutboxEntry): Promise<boolean> => {

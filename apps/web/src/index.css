@@ -152,6 +152,11 @@
   .otis-nav__row { min-height: 44px; }
 }
 .otis-nav__action:hover, .otis-nav__row:hover { background: var(--sidebar-hover); color: var(--foreground); }
+.otis-nav__options-btn { display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; padding: 0; border: 0; border-radius: 8px; background: transparent; color: var(--muted-foreground); transition: background-color 150ms ease-out, color 150ms ease-out; }
+.otis-nav__options-btn:hover { background: var(--accent); color: var(--foreground); }
+@media (max-width: 600px), (pointer: coarse) {
+  .otis-nav__options-btn { width: 36px; height: 36px; }
+}
 .otis-nav__row[aria-current='page'] { border-left-color: var(--highlight); background: var(--sidebar-accent); padding-left: 14px; color: var(--sidebar-accent-foreground); }
 .otis-nav__history { flex: 1; min-height: 0; overflow-y: auto; scrollbar-width: thin; margin-top: 8px; border-top: 1px solid var(--sidebar-border); padding-top: 8px; }
 .otis-nav__heading { margin: 16px 0 4px; padding: 8px 16px; color: var(--subtle); }

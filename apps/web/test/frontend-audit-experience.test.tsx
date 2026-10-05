@@ -11,6 +11,7 @@ import { ChatOverflow } from '../src/components/ChatOverflow.js';
 import { HistoryNav } from '../src/components/HistoryNav.js';
 import { ProviderConnection } from '../src/components/ProviderConnection.js';
 import { Command, CommandItem, CommandList } from '../src/components/ui/command.js';
+import { ErrorBoundary } from '../src/components/ErrorBoundary.js';
 import { TestQueryProvider } from './query.js';
 import { api } from '../src/api/client.js';
 import type { ChatMessage, MemberSettings, RunDetailResponse } from '@otis/contracts';
@@ -1022,21 +1023,58 @@ describe('Frontend Experience Audit & Confidence Verification (FE-01 - FE-16)', 
   });
 
   describe('LIVE-13: Command Suggestions ARIA ID Resolution', () => {
-    it('preserves custom DOM id on CommandItem for aria-activedescendant resolution', async () => {
+    it('preserves custom DOM id on CommandItem and CommandList for ARIA resolution', async () => {
       const view = await mount(
         <Command label="Commands">
-          <CommandList>
+          <CommandList id="cmd-list-picker">
             <CommandItem id="cmd-option-0" value="/model">/model</CommandItem>
             <CommandItem id="cmd-option-1" value="/help">/help</CommandItem>
           </CommandList>
         </Command>,
       );
 
+      const list = view.host.querySelector('#cmd-list-picker');
       const item0 = view.host.querySelector('#cmd-option-0');
       const item1 = view.host.querySelector('#cmd-option-1');
+      expect(list).toBeTruthy();
+      expect(list?.getAttribute('id')).toBe('cmd-list-picker');
       expect(item0).toBeTruthy();
       expect(item1).toBeTruthy();
       expect(item0?.getAttribute('id')).toBe('cmd-option-0');
+
+      await view.unmount();
+    });
+  });
+
+  describe('LIVE-14: HistoryNav Option Touch Target Isolation', () => {
+    it('renders dedicated nonoverlapping options button class for chat rows', async () => {
+      const view = await mount(
+        <HistoryNav
+          workspaces={[{ id: 'ws_test', name: 'Kerning' }]}
+          workspaceId="ws_test"
+          workspaceName="Kerning"
+          ownChats={[{
+            id: 'chat_1',
+            workspace_id: 'ws_test',
+            title: 'Client discussion',
+            author_user_id: 'usr_1',
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          }]}
+          teamChats={[]}
+          activeChatId={null}
+          onSelectChat={vi.fn()}
+          onNewChat={vi.fn()}
+          onSwitchWorkspace={vi.fn()}
+          onOpenSettings={vi.fn()}
+          onRenameChat={vi.fn()}
+          onDeleteChat={vi.fn()}
+        />,
+      );
+
+      const optionsBtn = view.host.querySelector('.otis-nav__options-btn');
+      expect(optionsBtn).toBeTruthy();
+      expect(optionsBtn?.getAttribute('aria-label')).toContain('Options for Client discussion');
 
       await view.unmount();
     });
@@ -1101,8 +1139,31 @@ describe('Frontend Experience Audit & Confidence Verification (FE-01 - FE-16)', 
     });
   });
 
+  describe('LIVE-18: Blank Startup Resilience via ErrorBoundary', () => {
+    it('catches runtime errors and renders recovery UI with Reload button', async () => {
+      const ProblemChild = () => {
+        throw new Error('Test hydration failure');
+      };
+
+      // Suppress console.error in test runner output
+      const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+      const view = await mount(
+        <ErrorBoundary>
+          <ProblemChild />
+        </ErrorBoundary>,
+      );
+
+      expect(view.host.textContent).toContain('Something went wrong');
+      expect(view.host.textContent).toContain('Reload Otis');
+
+      errorSpy.mockRestore();
+      await view.unmount();
+    });
+  });
+
   describe('LIVE-19 & LIVE-20: DetailPane Memory Change Reversal & Focus Restoration', () => {
-    it('describes memory reversals when affected entities and tasks are empty', async () => {
+    it('describes memory reversals and affected context items individually', async () => {
       vi.spyOn(api, 'action').mockResolvedValue({
         action: {
           action_id: 'act_1',
@@ -1131,6 +1192,10 @@ describe('Frontend Experience Audit & Confidence Verification (FE-01 - FE-16)', 
           affected_event_ids: [],
           affected_entities: [],
           affected_tasks: [],
+          affected_context: [
+            { id: 'evt_1', summary: 'memory note', changes: ['Saved context: "Apex Paperworks note" will be removed.'] },
+            { id: 'evt_2', summary: 'memory forgotten', changes: ['Forgotten memory will be restored.'] },
+          ],
           dependencies: [],
           expected_revision: 1,
         },
@@ -1158,7 +1223,8 @@ describe('Frontend Experience Audit & Confidence Verification (FE-01 - FE-16)', 
 
       // Revert 3 saved changes describes reversal context
       expect(view.host.textContent).toContain('Revert 3 saved changes?');
-      expect(view.host.textContent).toContain('Reverts 3 saved context changes from this run');
+      expect(view.host.textContent).toContain('Saved context: "Apex Paperworks note" will be removed.');
+      expect(view.host.textContent).toContain('Forgotten memory will be restored.');
 
       await view.unmount();
 

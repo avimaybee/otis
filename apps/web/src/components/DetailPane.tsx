@@ -130,13 +130,16 @@ export function DetailPane({ workspaceId, chatId, actionId, onClose, onUndone, o
         {preview && (
           <div className="otis-detail__section">
             <p className="text-sm">Revert {preview.preview.selected_action_ids.length} saved change{onlyOne ? '' : 's'}?</p>
-            {preview.preview.affected_entities.length > 0 || preview.preview.affected_tasks.length > 0 ? (
+            {preview.preview.affected_entities.length > 0 || preview.preview.affected_tasks.length > 0 || (preview.preview.affected_context && preview.preview.affected_context.length > 0) ? (
               <ul className="otis-working__steps text-xs">
                 {preview.preview.affected_entities.map(entity => (
                   <li className="otis-detail__value" key={entity.id}>{entity.name}: {entity.changes.join(' ')}</li>
                 ))}
                 {preview.preview.affected_tasks.map(task => (
                   <li className="otis-detail__value" key={task.id}>{task.title}: {task.changes.join(' ')}</li>
+                ))}
+                {preview.preview.affected_context?.map(ctx => (
+                  <li className="otis-detail__value" key={ctx.id}>{ctx.changes.join(' ')}</li>
                 ))}
               </ul>
             ) : (

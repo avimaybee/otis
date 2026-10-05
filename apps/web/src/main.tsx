@@ -1,6 +1,7 @@
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { App } from './App.js';
+import { ErrorBoundary } from './components/ErrorBoundary.js';
 import { configureVoiceUpload, createWorkerVoiceAdapter } from './api/voice.js';
 import '@fontsource-variable/instrument-sans';
 import '@fontsource-variable/bricolage-grotesque';
@@ -22,6 +23,8 @@ if (!container) {
 const root = createRoot(container);
 root.render(
   <StrictMode>
-    <App />
+    <ErrorBoundary>
+      <App />
+    </ErrorBoundary>
   </StrictMode>
 );

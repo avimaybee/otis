@@ -148,16 +148,40 @@ export async function handleGetRun(
     status: run.status,
   };
   const memoryIds = new Set<string>();
-  for (const step of steps.filter(step => ['search_memory', 'get_memory'].includes(step.tool_name))) {
-    const data = (step.result as { data?: unknown } | null)?.data;
-    for (const entry of Array.isArray(data) ? data : data ? [data] : []) {
-      if (entry && typeof entry === 'object' && typeof entry.id === 'string' && memoryIds.size < 12) memoryIds.add(entry.id);
+  for (const step of steps) {
+    if (['search_memory', 'get_memory', 'remember_context', 'forget_memory'].includes(step.tool_name)) {
+      const res = step.result as Record<string, unknown> | null;
+      const data = res?.['data'] ?? res;
+      for (const entry of Array.isArray(data) ? data : data ? [data] : []) {
+        if (entry && typeof entry === 'object') {
+          const entryObj = entry as Record<string, unknown>;
+          const id = typeof entryObj['id'] === 'string'
+            ? entryObj['id']
+            : typeof entryObj['memory_id'] === 'string'
+            ? entryObj['memory_id']
+            : typeof entryObj['entry_id'] === 'string'
+            ? entryObj['entry_id']
+            : null;
+          if (id && memoryIds.size < 12) memoryIds.add(id);
+        }
+      }
     }
   }
   body.sources = [];
   for (const id of memoryIds) {
-    const row = await env.DB.prepare(`SELECT m.id, m.provenance, m.observed_at, u.display_name FROM memory_entries m LEFT JOIN users u ON u.id = m.author_user_id WHERE m.workspace_id = ? AND m.id = ? AND m.status = 'active'`).bind(workspaceId, id).first<{ id: string; provenance: 'stated' | 'inferred'; observed_at: string; display_name: string | null }>();
-    if (row) body.sources.push({ memory_id: row.id, provenance: row.provenance, label: `${row.display_name ?? 'Workspace'} · ${row.observed_at.slice(0, 10)}` });
+    const row = await env.DB.prepare(
+      `SELECT m.id, m.provenance, m.observed_at, u.display_name
+       FROM memory_entries m
+       LEFT JOIN users u ON u.id = m.author_user_id
+       WHERE m.workspace_id = ? AND m.id = ?`
+    ).bind(workspaceId, id).first<{ id: string; provenance: 'stated' | 'inferred'; observed_at: string; display_name: string | null }>();
+    if (row) {
+      body.sources.push({
+        memory_id: row.id,
+        provenance: row.provenance ?? 'stated',
+        label: `${row.display_name ?? 'Workspace'} · ${row.observed_at ? row.observed_at.slice(0, 10) : 'Note'}`,
+      });
+    }
   }
 
   return jsonSuccess(body, 200, { 'x-request-id': requestId });

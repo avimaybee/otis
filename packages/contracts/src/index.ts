@@ -919,6 +919,7 @@ export interface UndoPreview {
   affected_event_ids: string[];
   affected_entities: { id: string; name: string; changes: string[] }[];
   affected_tasks: { id: string; title: string; changes: string[] }[];
+  affected_context?: { id: string; summary: string; changes: string[] }[];
   dependencies: UndoPreviewDependency[];
   expected_revision: number;
 }

@@ -717,25 +717,40 @@ All audit findings and live deployment pass items have been addressed and valida
    - Enforced `min-height: 44px` on mobile settings row buttons and footer actions under `@media (max-width: 600px)`.
 9. **LIVE-13 (Command suggestions ARIA element references):**
    - Updated `CommandItem` in `apps/web/src/components/ui/command.tsx` to set custom DOM IDs so the textarea's `aria-activedescendant` matches the rendered list item element ID.
+   - Updated `CommandList` in `apps/web/src/components/ui/command.tsx` to assign custom DOM IDs matching `aria-controls` via `useLayoutEffect` and imperative ref binding.
    - Conditionally set `aria-expanded={pickerOpen ? 'true' : undefined}` on textarea.
 10. **LIVE-14 (History touch target overlap):**
     - Updated `.otis-nav__row` in `index.css` to `min-height: 40px` and `min-height: 44px` on `@media (max-width: 600px), (pointer: coarse)`.
+    - Added dedicated `.otis-nav__options-btn` styling to isolate options buttons without pseudo-element hit-area collisions, ensuring adjacent 44px coarse targets remain completely nonoverlapping.
 11. **LIVE-15 (History filter Escape bubbling prevention):**
     - Added `event.stopPropagation()` to search input Escape handler in `HistoryNav.tsx`, ensuring Escape closes only the search filter without dismissing the parent history drawer or losing focus.
-12. **LIVE-17 (Consolidation of repetitive read steps):**
+12. **LIVE-16 (Memory recall provenance & source inspection):**
+    - Extracted referenced memory IDs from `search_memory`, `get_memory`, `remember_context`, and `forget_memory` tool executions in `apps/worker/src/routes/runs.ts`.
+    - Resolved memory entry records in `memory_entries` to supply provenance metadata (author, created_at, content snippet) into `body.sources` so recall answers provide inspectable sources.
+13. **LIVE-17 (Consolidation of repetitive read steps):**
     - Implemented `consolidateWorkingSteps` in `Transcript.tsx` to group consecutive identical read steps without actions into a single row (e.g. `"Reading saved records (4)"`).
-13. **LIVE-19 (Context & memory undo preview description):**
-    - Added human-readable fallback in `DetailPane.tsx` when `affected_entities` and `affected_tasks` are empty (e.g. Memory reversals), clearly explaining what context changes are being reverted.
-    - Sanitized internal technical IDs in "What changed" display.
-14. **LIVE-20 (Desktop change inspection focus restoration):**
+14. **LIVE-18 (Blank canvas startup resilience & recovery):**
+    - Created `ErrorBoundary.tsx` conforming to Otis design tokens, providing clear error display and a "Reload Otis" recovery action.
+    - Wrapped `<App />` with `<ErrorBoundary>` in `apps/web/src/main.tsx`.
+    - Added initial loading skeleton and `<noscript>` fallback directly inside `#root` in `apps/web/index.html`.
+15. **LIVE-19 (Context & memory undo preview description):**
+    - Added `affected_context` to `UndoPreview` in `packages/contracts/src/index.ts`.
+    - Updated `computeUndoPreview` in `packages/ledger/src/commands/undo.ts` to inspect memory and context events (notes, forgotten memories, drafts) and emit individual detailed change entries.
+    - Updated `DetailPane.tsx` to render each affected context change item individually with sanitized titles.
+16. **LIVE-20 (Desktop change inspection focus restoration):**
     - Added `previousFocusRef` lifecycle hook in `DetailPane.tsx` to restore focus to the trigger ("View changes" / "Inspect") when the desktop panel unmounts.
-15. **LIVE-21 (Intermediate-width inspection dialog layout):**
+17. **LIVE-21 (Intermediate-width inspection dialog layout):**
     - Replaced 100% full-screen canvas takeover at intermediate widths with `.otis-overlay--detail` modal bounded to `min(540px, calc(100vw - 32px))` centered on desktop/tablet, while retaining full-screen mobile sheet on phones.
+18. **Web Streaming & Live Dispatch Reliability:**
+    - Eliminated duplicate per-token async D1 queries inside `liveChatBus.subscribe` in `apps/worker/src/chat/stream.ts`.
+    - Cached session and membership checks for 30s to stay comfortably within Cloudflare Free worker CPU limits.
+    - Added periodic catch-up read in 15s stream heartbeat to discover events committed by parallel queue runs.
+    - Added resilient 2.5s fallback refresh in `apps/web/src/ConversationScreen.tsx` for pending/running executions.
 
 **Verification results:**
-- `pnpm check:design`: 0 violations across 88 files.
+- `pnpm check:design`: 0 violations across 89 files.
 - `pnpm check:stories`: 92 required fixture IDs covered across 16 story files.
 - `pnpm typecheck`: 0 errors.
 - `pnpm lint`: 0 errors.
-- `pnpm test`: 815 passed, 1 skipped (0 failures).
+- `pnpm test`: 817 passed, 1 skipped (0 failures).
 - `pnpm build`: Clean production build with Vite client bundle and Cloudflare Worker deploy dry-run.

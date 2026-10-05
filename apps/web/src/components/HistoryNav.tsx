@@ -42,7 +42,7 @@ export function HistoryNav(props: HistoryNavProps) {
         <div className={`absolute right-2 ${props.variant === 'drawer' ? 'opacity-100' : 'opacity-0 group-hover:opacity-100 group-focus-within:opacity-100'} transition-opacity`}>
           <DropdownMenu modal={false}>
             <DropdownMenuTrigger asChild>
-              <Button variant="ghost" size="icon-xs" type="button" className="otis-iconbutton size-6 p-0 text-muted-foreground hover:text-foreground" aria-label={`Options for ${chat.title || 'conversation'}`}>
+              <Button variant="ghost" size="icon-xs" type="button" className="otis-nav__options-btn size-8 p-0 text-muted-foreground hover:text-foreground" aria-label={`Options for ${chat.title || 'conversation'}`}>
                 <MoreVerticalIcon />
               </Button>
             </DropdownMenuTrigger>
