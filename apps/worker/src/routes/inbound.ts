@@ -17,7 +17,7 @@ import { jsonError, jsonSuccess } from '../middleware/errors.js';
 import { acceptTelegramInbound } from '../inbox/telegram.js';
 import { deliverTelegramOutbox, sendTelegramChatAction } from '../inbox/telegramDelivery.js';
 import { publishDispatchHint, publishTelegramDeliveryHint } from '../dispatchHint.js';
-import { processTranscriptionJobs } from '../media/transcription.js';
+import { processTranscriptionJobs, scheduleNextTranscriptionWake } from '../media/transcription.js';
 import { extractPlatformKeys } from '../providers/service.js';
 
 export async function handleTelegramWebhook(
@@ -81,6 +81,12 @@ export async function handleTelegramWebhook(
         ...(env.CREDENTIALS_KEY ? { wrappingKeyMaterial: env.CREDENTIALS_KEY } : {}),
         ...(env.GROQ_API_KEY ? { platformApiKey: env.GROQ_API_KEY } : {}),
         limit: 2,
+      }).then(async (outcome) => {
+        // A deferred retry with no wake behind it would sleep until the cron
+        // sweep: anchor the follow-up to the job's own durable due instant.
+        if (outcome && outcome.deferred > 0) {
+          await scheduleNextTranscriptionWake({ db: env.DB, queue: env.DISPATCH_QUEUE }, result.workspace_id!);
+        }
       }).catch(() => undefined);
       if (ctx) ctx.waitUntil(pass);
       else void pass;

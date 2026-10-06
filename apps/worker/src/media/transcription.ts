@@ -72,6 +72,55 @@ export interface TranscriptionProcessResult {
 const CLAIM_TTL_SECONDS = 120;
 const MAX_BACKOFF_MS = 5 * 60 * 1000;
 
+/** Longest retry wake an entrypoint schedules; beyond this cron is the backstop. */
+export const TRANSCRIPTION_RETRY_WAKE_CEILING_SECONDS = 300;
+
+export interface TranscriptionWakeQueue {
+  send: (message: { workspace_id: string }, options?: { delaySeconds?: number }) => Promise<unknown>;
+}
+
+export interface TranscriptionWakeBindings {
+  db: D1Database;
+  queue?: TranscriptionWakeQueue | undefined;
+}
+
+/**
+ * Schedules exactly one follow-up dispatch wake at the earliest remaining
+ * pending job's durable due time (its own next_attempt_at, or now for a
+ * not-yet-attempted job). Never a fixed poll: an early or duplicate wake-up
+ * finds nothing to claim and schedules nothing, and a due time beyond the
+ * ceiling is left to the five-minute cron sweep. No pending jobs means no
+ * wake. Queue and actor paths invoke it only after a pass that claimed work,
+ * so early wakes stay silent and never poll; acceptance routes invoke it
+ * when their immediate pass defers, anchoring the first retry wake.
+ */
+export async function scheduleNextTranscriptionWake(
+  bindings: TranscriptionWakeBindings,
+  workspaceId: string,
+): Promise<void> {
+  if (!bindings.queue) return;
+  try {
+    const row = await bindings.db
+      .prepare(
+        `SELECT MIN(COALESCE(next_attempt_at, ?)) AS due_at FROM media_transcriptions
+         WHERE workspace_id = ? AND route = 'groq_stt' AND state = 'pending'`,
+      )
+      .bind(new Date().toISOString(), workspaceId)
+      .first<{ due_at: string | null }>();
+    const dueAt = row?.due_at;
+    if (!dueAt) return;
+    const delayMs = new Date(dueAt).getTime() - Date.now();
+    if (!Number.isFinite(delayMs)) return;
+    const delaySeconds = Math.min(
+      TRANSCRIPTION_RETRY_WAKE_CEILING_SECONDS,
+      Math.max(1, Math.ceil(delayMs / 1000)),
+    );
+    await bindings.queue.send({ workspace_id: workspaceId }, { delaySeconds });
+  } catch (err) {
+    console.error(`voice transcription retry wake failed for workspace '${workspaceId}':`, err);
+  }
+}
+
 function addMs(iso: string, ms: number): string {
   return new Date(new Date(iso).getTime() + ms).toISOString();
 }

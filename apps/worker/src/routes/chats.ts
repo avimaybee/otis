@@ -31,7 +31,7 @@ import { validateChatMessageRequest } from '@otis/contracts';
 import { parseCommandText } from '@otis/commands';
 import { handleExecuteCommand } from './commands.js';
 import { handleReplyToClarification } from './clarifications.js';
-import { processTranscriptionJobs } from '../media/transcription.js';
+import { processTranscriptionJobs, scheduleNextTranscriptionWake } from '../media/transcription.js';
 import { extractPlatformKeys } from '../providers/service.js';
 
 /**
@@ -349,6 +349,12 @@ export async function handleCreateMessage(
         ...(env.CREDENTIALS_KEY ? { wrappingKeyMaterial: env.CREDENTIALS_KEY } : {}),
         ...(env.GROQ_API_KEY ? { platformApiKey: env.GROQ_API_KEY } : {}),
         limit: 2,
+      }).then(async (outcome) => {
+        // Same parked-work rule as Telegram acceptance: a deferred retry
+        // with no wake behind it would otherwise sleep until the cron sweep.
+        if (outcome && outcome.deferred > 0) {
+          await scheduleNextTranscriptionWake({ db: env.DB, queue: env.DISPATCH_QUEUE }, workspaceId);
+        }
       }).catch(() => undefined);
       if (ctx) ctx.waitUntil(pass);
       else void pass;

@@ -56,7 +56,7 @@ import { createActivityStream } from './chat/stream.js';
 import { processMemoryRefreshJobs } from './agent/memory.js';
 import { processScheduledDailyBriefs } from './brief/cron.js';
 import { handleVoiceMediaRoute } from './media/routes.js';
-import { processTranscriptionJobs, type TranscriptionProcessResult } from './media/transcription.js';
+import { processTranscriptionJobs, scheduleNextTranscriptionWake, type TranscriptionProcessResult } from './media/transcription.js';
 import { cleanupExpiredMedia } from './media/cleanup.js';
 import {
   handleAcceptInvite,
@@ -228,41 +228,6 @@ async function advanceVoiceTranscriptions(
   }
 }
 
-/** Longest retry wake the entrypoint schedules; beyond this cron is the backstop. */
-const TRANSCRIPTION_RETRY_WAKE_CEILING_SECONDS = 300;
-
-/**
- * After an entrypoint transcription pass actually claimed work, schedules
- * exactly one follow-up dispatch wake at the earliest remaining pending job's
- * durable due time (its own next_attempt_at, or now for a not-yet-attempted
- * job). Never a fixed poll: an early or duplicate wake-up finds nothing to
- * claim and schedules nothing, and a due time beyond the ceiling is left to
- * the five-minute cron sweep.
- */
-async function scheduleNextTranscriptionWake(env: Env, workspaceId: string): Promise<void> {
-  if (!env.DISPATCH_QUEUE) return;
-  try {
-    const row = await env.DB
-      .prepare(
-        `SELECT MIN(COALESCE(next_attempt_at, ?)) AS due_at FROM media_transcriptions
-         WHERE workspace_id = ? AND route = 'groq_stt' AND state = 'pending'`,
-      )
-      .bind(new Date().toISOString(), workspaceId)
-      .first<{ due_at: string | null }>();
-    const dueAt = row?.due_at;
-    if (!dueAt) return;
-    const delayMs = new Date(dueAt).getTime() - Date.now();
-    if (!Number.isFinite(delayMs)) return;
-    const delaySeconds = Math.min(
-      TRANSCRIPTION_RETRY_WAKE_CEILING_SECONDS,
-      Math.max(1, Math.ceil(delayMs / 1000)),
-    );
-    await env.DISPATCH_QUEUE.send({ workspace_id: workspaceId }, { delaySeconds });
-  } catch (err) {
-    console.error(`voice transcription retry wake failed for workspace '${workspaceId}':`, err);
-  }
-}
-
 export async function createWorkerAgentHandler(env: Env): Promise<TurnHandler> {
   if (env.DISPATCH_TEST_HANDLER) {
     workerDebug('handler', 'scripted test handler selected', {});
@@ -364,7 +329,12 @@ export class WorkspaceActor {
         if (pass.ready.length > 0) {
           dispatchResult = await dispatchWorkspace(this.env.DB, workspaceId, { budget, handler });
         }
-        await scheduleNextTranscriptionWake(this.env, workspaceId);
+        // Exactly-once retry wake: only a pass that actually claimed work
+        // schedules its follow-up. Early or duplicate wakes find nothing due
+        // and must stay silent, or every one would mint another delayed
+        // hint and the queue would poll. Acceptance routes anchor the first
+        // wake when their immediate pass defers.
+        await scheduleNextTranscriptionWake({ db: this.env.DB, queue: this.env.DISPATCH_QUEUE }, workspaceId);
       }
     }
     await deliverAndScheduleContinuation(this.env, workspaceId);
@@ -1133,7 +1103,9 @@ export default {
             if (pass.ready.length > 0) {
               dispatchResult = await dispatchWorkspace(env.DB, workspaceId, { budget: 3, handler });
             }
-            await scheduleNextTranscriptionWake(env, workspaceId);
+            // Exactly-once retry wake (see the actor path above): silent
+            // unless this pass claimed work.
+            await scheduleNextTranscriptionWake({ db: env.DB, queue: env.DISPATCH_QUEUE }, workspaceId);
           }
         }
         await deliverAndScheduleContinuation(env, workspaceId);
