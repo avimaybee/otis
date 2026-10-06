@@ -6,7 +6,7 @@
  * authentication.
  */
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { QueryClientProvider } from '@tanstack/react-query';
 import { RouterProvider } from '@tanstack/react-router';
 import type { User, WorkspaceSummary } from '@otis/contracts';
@@ -128,25 +128,56 @@ export function App() {
   // once the session identity is known rather than here.
   const [router] = useState(() => createAppRouter());
 
+  // Session generation: sign-out/account-switch retires in-flight /api/me
+  // responses so a stale success can never restore the old session UI.
+  // The single in-flight flight is shared by concurrent triggers.
+  const sessionGeneration = useRef(0);
+  const inflightSession = useRef<Promise<void> | null>(null);
+  const inflightGeneration = useRef(0);
+
   const loadSession = useCallback(async () => {
+    // Coalesce concurrent triggers (focus + visibility + storage + invite):
+    // one /api/me flight serves every waiter instead of N parallel reads.
+    // A flight from a previous session generation is never joined: after a
+    // sign-out the next load always starts fresh instead of inheriting a
+    // discarded response.
+    if (inflightSession.current && inflightGeneration.current === sessionGeneration.current) {
+      await inflightSession.current.catch(() => undefined);
+      return;
+    }
+    const generation = sessionGeneration.current;
+    inflightGeneration.current = generation;
+    const work = (async () => {
+      try {
+        const response = await fetch('/api/me', { credentials: 'same-origin' });
+        // A sign-out or account switch during flight invalidates this
+        // response: a stale success must never restore the old session UI.
+        if (sessionGeneration.current !== generation) return;
+        if (!response.ok) {
+          setState({ status: response.status === 401 ? 'signed_out' : 'unavailable' });
+          return;
+        }
+        const body = (await response.json()) as { user: User; workspaces: WorkspaceSummary[] };
+        if (sessionGeneration.current !== generation) return;
+        if (body.workspaces.length === 0) {
+          setState({ status: 'no_workspace', user: body.user });
+          return;
+        }
+        setState({
+          status: 'ready',
+          user: body.user,
+          workspaces: body.workspaces,
+        });
+      } catch {
+        if (sessionGeneration.current !== generation) return;
+        setState({ status: 'unavailable' });
+      }
+    })();
+    inflightSession.current = work;
     try {
-      const response = await fetch('/api/me', { credentials: 'same-origin' });
-      if (!response.ok) {
-        setState({ status: response.status === 401 ? 'signed_out' : 'unavailable' });
-        return;
-      }
-      const body = (await response.json()) as { user: User; workspaces: WorkspaceSummary[] };
-      if (body.workspaces.length === 0) {
-        setState({ status: 'no_workspace', user: body.user });
-        return;
-      }
-      setState({
-        status: 'ready',
-        user: body.user,
-        workspaces: body.workspaces,
-      });
-    } catch {
-      setState({ status: 'unavailable' });
+      await work;
+    } finally {
+      if (inflightSession.current === work) inflightSession.current = null;
     }
   }, []);
 
@@ -228,6 +259,12 @@ export function App() {
   }
 
   const performSignOut = async (userId?: string) => {
+    // Invalidate private UI first: the session screen replaces everything
+    // before any network or cleanup work, so no private content lingers
+    // behind a slow sign-out. Stale session reads die on the generation.
+    sessionGeneration.current += 1;
+    inflightSession.current = null;
+    setState({ status: 'signed_out' });
     try {
       await fetch('/api/auth/session', {
         method: 'DELETE',
@@ -252,7 +289,6 @@ export function App() {
         deleteVoiceSessionsForUser(userId),
       ]);
     }
-    setState({ status: 'signed_out' });
   };
 
   if (state.status === 'no_workspace') {
