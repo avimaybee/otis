@@ -304,7 +304,8 @@ export function Composer({ disabled, disabledReason, running, commands, models =
     setSending(true); setError('');
     sendingRef.current = false;
     try {
-      await onSend(text, imageMediaIds);
+      if (imageMediaIds === undefined) await onSend(text);
+      else await onSend(text, imageMediaIds);
     } catch { setError('Message not confirmed. It is kept in the conversation with Retry.'); }
     finally { setSending(false); }
   };
