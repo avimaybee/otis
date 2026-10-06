@@ -137,10 +137,14 @@ function countDb(db: D1Database, options?: { poisonTail?: boolean }) {
         inner: inners.get(s)?.inner ?? s,
       }));
       // Test-only late failure: with poisonTail, a deliberately invalid
-      // statement is appended AFTER every production-generated statement, so
-      // the batch fails at its true end. No production hook or abstraction.
+      // statement is appended AFTER every production-generated statement of
+      // the commit (write) batch, so the batch fails at its true end. Pure
+      // read batches (projection loads) never take the poison: they precede
+      // the commit and their failure could not prove write rollback. No
+      // production hook or abstraction.
       const POISON_SQL = 'INSERT INTO entities (id) VALUES (NULL)';
-      if (options?.poisonTail) {
+      const hasWrite = pairs.some((p) => verbOf(p.sql) !== 'SELECT');
+      if (options?.poisonTail && hasWrite) {
         pairs.push({ sql: POISON_SQL, binds: [], inner: db.prepare(POISON_SQL) });
       }
       try {

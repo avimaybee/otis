@@ -164,16 +164,54 @@ export async function getWorkspaceProjectionState(
     memorySuppressions: new Map(),
   };
 
-  // 1. Entities
-  const entityRows = (
-    await db
+  // The seven workspace-scoped reads are independent, so they go out as
+  // two batch roundtrips (core tables, then memory tables) instead of seven
+  // serial reads. Result order matches statement order; the mapping below is
+  // unchanged. Memory reads stay in their own batch because harnesses that
+  // apply only the core migrations have no memory tables: a missing table
+  // must skip the memory maps, never fail the whole projection.
+  const core = await db.batch([
+    db
       .prepare(
         `SELECT id, workspace_id, name, kind, status, assigned_user_id, created_at, updated_at
-         FROM entities WHERE workspace_id = ?`
+         FROM entities WHERE workspace_id = ?`,
       )
-      .bind(workspaceId)
-      .all<Record<string, unknown>>()
-  ).results || [];
+      .bind(workspaceId),
+    db
+      .prepare(
+        `SELECT id, workspace_id, entity_id, alias, source_event_id, created_at
+         FROM entity_aliases WHERE workspace_id = ?`,
+      )
+      .bind(workspaceId),
+    db
+      .prepare(
+        `SELECT id, workspace_id, entity_id, field_name, state, value_text, value_json,
+                provenance, source_event_id, candidate_event_ids_json, last_confirmed_value_text,
+                last_confirmed_value_json, revision, updated_at
+         FROM entity_state WHERE workspace_id = ?`,
+      )
+      .bind(workspaceId),
+    db
+      .prepare(
+        `SELECT id, workspace_id, entity_id, title, assignee_user_id, status, due_kind,
+                due_local_date, due_instant, due_timezone, snooze_until, source_event_id,
+                revision, created_at, updated_at
+         FROM tasks WHERE workspace_id = ?`,
+      )
+      .bind(workspaceId),
+    db
+      .prepare(
+        `SELECT id, workspace_id, entity_id, channel, recipient_address, content_text,
+                status, source_event_id, revision, created_at, updated_at
+         FROM draft_projections WHERE workspace_id = ?`,
+      )
+      .bind(workspaceId),
+  ]);
+  const rowsAt = (index: number): Record<string, unknown>[] =>
+    ((core[index] as unknown as { results?: Record<string, unknown>[] }).results ?? []);
+
+  // 1. Entities
+  const entityRows = rowsAt(0);
 
   for (const r of entityRows) {
     const e: Entity = {
@@ -190,15 +228,7 @@ export async function getWorkspaceProjectionState(
   }
 
   // 2. Aliases
-  const aliasRows = (
-    await db
-      .prepare(
-        `SELECT id, workspace_id, entity_id, alias, source_event_id, created_at
-         FROM entity_aliases WHERE workspace_id = ?`
-      )
-      .bind(workspaceId)
-      .all<Record<string, unknown>>()
-  ).results || [];
+  const aliasRows = rowsAt(1);
 
   for (const r of aliasRows) {
     const a: EntityAlias = {
@@ -214,17 +244,7 @@ export async function getWorkspaceProjectionState(
   }
 
   // 3. Entity State Fields
-  const fieldRows = (
-    await db
-      .prepare(
-        `SELECT id, workspace_id, entity_id, field_name, state, value_text, value_json,
-                provenance, source_event_id, candidate_event_ids_json, last_confirmed_value_text,
-                last_confirmed_value_json, revision, updated_at
-         FROM entity_state WHERE workspace_id = ?`
-      )
-      .bind(workspaceId)
-      .all<Record<string, unknown>>()
-  ).results || [];
+  const fieldRows = rowsAt(2);
 
   for (const r of fieldRows) {
     const f: EntityStateField = {
@@ -254,17 +274,7 @@ export async function getWorkspaceProjectionState(
   }
 
   // 4. Tasks
-  const taskRows = (
-    await db
-      .prepare(
-        `SELECT id, workspace_id, entity_id, title, assignee_user_id, status, due_kind,
-                due_local_date, due_instant, due_timezone, snooze_until, source_event_id,
-                revision, created_at, updated_at
-         FROM tasks WHERE workspace_id = ?`
-      )
-      .bind(workspaceId)
-      .all<Record<string, unknown>>()
-  ).results || [];
+  const taskRows = rowsAt(3);
 
   for (const r of taskRows) {
     const t: Task = {
@@ -288,16 +298,7 @@ export async function getWorkspaceProjectionState(
   }
 
   // 5. Drafts
-  const draftRows = (
-    await db
-      .prepare(
-        `SELECT id, workspace_id, entity_id, channel, recipient_address, content_text,
-                status, source_event_id, revision, created_at, updated_at
-         FROM draft_projections WHERE workspace_id = ?`
-      )
-      .bind(workspaceId)
-      .all<Record<string, unknown>>()
-  ).results || [];
+  const draftRows = rowsAt(4);
 
   for (const r of draftRows) {
     const d: DraftProjection = {
@@ -318,17 +319,25 @@ export async function getWorkspaceProjectionState(
 
   // 6. Memory Entries
   try {
-    const memoryRows = (
-      await db
+    const memoryBatch = await db.batch([
+      db
         .prepare(
           `SELECT id, workspace_id, scope, subject_id, category, content, status, provenance,
                   source_event_id, source_message_id, author_user_id, observed_at, created_at,
                   superseding_event_id, business_revision
-           FROM memory_entries WHERE workspace_id = ?`
+           FROM memory_entries WHERE workspace_id = ?`,
         )
-        .bind(workspaceId)
-        .all<Record<string, unknown>>()
-    ).results || [];
+        .bind(workspaceId),
+      db
+        .prepare(
+          `SELECT id, workspace_id, target_memory_id, source_event_id, source_message_id,
+                  suppression_event_id, revision, created_at
+           FROM memory_suppressions WHERE workspace_id = ?`,
+        )
+        .bind(workspaceId),
+    ]);
+    const memoryRows =
+      ((memoryBatch[0] as unknown as { results?: Record<string, unknown>[] }).results ?? []);
 
     for (const r of memoryRows) {
       const m: MemoryEntry = {
@@ -350,22 +359,10 @@ export async function getWorkspaceProjectionState(
       };
       state.memoryEntries.set(m.id, m);
     }
-  } catch (err) {
-    if (!String(err).includes('no such table')) throw err;
-  }
 
-  // 7. Memory Suppressions
-  try {
-    const suppressionRows = (
-      await db
-        .prepare(
-          `SELECT id, workspace_id, target_memory_id, source_event_id, source_message_id,
-                  suppression_event_id, revision, created_at
-           FROM memory_suppressions WHERE workspace_id = ?`
-        )
-        .bind(workspaceId)
-        .all<Record<string, unknown>>()
-    ).results || [];
+    // 7. Memory Suppressions
+    const suppressionRows =
+      ((memoryBatch[1] as unknown as { results?: Record<string, unknown>[] }).results ?? []);
 
     for (const r of suppressionRows) {
       const s: MemorySuppression = {
