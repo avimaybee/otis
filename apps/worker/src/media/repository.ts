@@ -544,6 +544,47 @@ export function mediaValidatedGuardStatement(
     );
 }
 
+/**
+ * Acceptance guard for one attached still image: at commit it must still be
+ * the caller's validated, unexpired image object. The kind is rechecked
+ * because a retried claim can rotate a row's container.
+ */
+export function imageAttachmentGuardStatement(
+  db: D1Database,
+  params: { workspaceId: string; mediaId: string; uploaderUserId: string; nowIso: string },
+): D1PreparedStatement {
+  return db
+    .prepare(
+      `INSERT INTO acceptance_guards (id, guard_ok)
+       VALUES (?, (SELECT 1 FROM media_objects
+         WHERE id = ? AND workspace_id = ? AND uploader_user_id = ? AND state = 'validated'
+           AND format IN ('image/jpeg', 'image/png', 'image/webp') AND expires_at > ?))`,
+    )
+    .bind(
+      `guard_${crypto.randomUUID()}`,
+      params.mediaId,
+      params.workspaceId,
+      params.uploaderUserId,
+      params.nowIso,
+    );
+}
+
+/**
+ * Durable message→image receipt committed with acceptance: the link rows
+ * are what the turn loader reads, so consumed media is always referenced.
+ */
+export function linkImageAttachmentStatement(
+  db: D1Database,
+  params: { chatMessageId: string; workspaceId: string; mediaId: string; position: number; nowIso: string },
+): D1PreparedStatement {
+  return db
+    .prepare(
+      `INSERT INTO message_image_attachments (chat_message_id, media_id, workspace_id, position, created_at)
+       VALUES (?, ?, ?, ?, ?)`,
+    )
+    .bind(params.chatMessageId, params.mediaId, params.workspaceId, params.position, params.nowIso);
+}
+
 /** Media transition committed with acceptance; guarded on the validated state. */
 export function markMediaTranscribingStatement(
   db: D1Database,

@@ -10,12 +10,14 @@ import type {
   ChatListResponse,
   AcceptMessageResponse,
 } from '@otis/contracts';
-import { DOMAIN_BOUNDS, STEERING_BOUNDS } from '@otis/contracts';
+import { DOMAIN_BOUNDS, IMAGE_BOUNDS, STEERING_BOUNDS } from '@otis/contracts';
 import { sha256 } from '@otis/identity';
 import { PRODUCTION_REGISTRY } from '@otis/agent';
 import { resolveModelForChat, resolveVoiceRouteForWorkspace, type PlatformKeys } from '../providers/service.js';
 import {
   loadMediaRow,
+  imageAttachmentGuardStatement,
+  linkImageAttachmentStatement,
   markMediaTranscribingStatement,
   mediaValidatedGuardStatement,
   transcriptionIntentStatement,
@@ -482,6 +484,8 @@ export async function acceptWebMessage(
     clientMessageId: string;
     text?: string;
     mediaId?: string;
+    /** Validated still-image uploads attached to this message (fresh messages only). */
+    imageMediaIds?: string[];
     /** Command completion is committed with acceptance, using the same dedupe/guard path. */
     command?: {
       reply: string;
@@ -501,9 +505,14 @@ export async function acceptWebMessage(
 ): Promise<AcceptMessageResponse> {
   const text = (params.text || '').trim();
   const mediaId = params.mediaId || null;
+  const imageMediaIds = [...new Set(params.imageMediaIds ?? [])];
 
-  if (!text && !mediaId) {
+  if (!text && !mediaId && imageMediaIds.length === 0) {
     throw new ValidationError('Message must contain text or a media attachment.');
+  }
+
+  if (imageMediaIds.length > IMAGE_BOUNDS.MAX_PER_MESSAGE) {
+    throw new ValidationError(`At most ${IMAGE_BOUNDS.MAX_PER_MESSAGE} images may be attached to a message.`);
   }
 
   if (text.length > DOMAIN_BOUNDS.MAX_INPUT_CHARS) {
@@ -516,6 +525,7 @@ export async function acceptWebMessage(
   const canonicalPayload = JSON.stringify({
     text,
     media_id: mediaId,
+    ...(imageMediaIds.length > 0 ? { image_media_ids: [...imageMediaIds].sort() } : {}),
     ...(params.command?.presentation === 'control' ? { presentation: 'control' } : {}),
     ...(params.answerContext ? { answer: params.answerContext } : {}),
   });
@@ -531,6 +541,29 @@ export async function acceptWebMessage(
   // object for this chat, and the route is snapshotted now. A steering voice
   // note would attach to a run that is already executing, so it is refused
   // until the active turn finishes.
+  //
+  // Image attachments follow the same ownership/chat/state/expiry checks but
+  // skip the STT route: images are prompt input, never transcription jobs.
+  // Each upload claim carries its own client UUID, so unlike voice there is
+  // no claim-UUID match against this message. Steering/answer runs and
+  // control commands cannot carry images: the turn loader only reads the
+  // fresh message's attachments, and control replies persist no user message
+  // to link against.
+  const needsModel = Boolean(mediaId) || imageMediaIds.length > 0;
+  const resolvedChatModel = needsModel
+    ? await resolveModelForChat(db, {
+      workspaceId: params.workspaceId,
+      actorUserId: params.userId,
+      chatId: params.chatId,
+      platformKeys: params.platformKeys,
+    })
+    : null;
+  if (imageMediaIds.length > 0 && (params.steerRunId || params.answerRunId)) {
+    throw new ValidationError('Images cannot be added to a running turn yet. Wait for it to finish, then send them with a new message.');
+  }
+  if (imageMediaIds.length > 0 && params.command?.presentation === 'control') {
+    throw new ValidationError('Images cannot be attached to commands.');
+  }
   let mediaContext: {
     mediaId: string;
     format: 'audio/webm' | 'audio/mp4' | 'audio/ogg';
@@ -558,15 +591,9 @@ export async function acceptWebMessage(
     if (media.expires_at <= new Date().toISOString()) {
       throw new ValidationError('The voice recording expired before it was sent.');
     }
-    const model = await resolveModelForChat(db, {
-      workspaceId: params.workspaceId,
-      actorUserId: params.userId,
-      chatId: params.chatId,
-      platformKeys: params.platformKeys,
-    });
     const route = await resolveVoiceRouteForWorkspace(db, {
       workspaceId: params.workspaceId,
-      model: model.available ? model.entry : null,
+      model: resolvedChatModel?.available ? resolvedChatModel.entry : null,
       audioMimeOrExt: media.format ?? media.content_type ?? '',
       platformKeys: params.platformKeys,
     });
@@ -579,6 +606,47 @@ export async function acceptWebMessage(
       route: route.route,
       sttModel: route.route === 'groq_stt' ? route.sttModel : null,
     };
+  }
+
+  let imageContext: Array<{ mediaId: string; format: string; contentType: string }> | null = null;
+  if (imageMediaIds.length > 0) {
+    imageContext = [];
+    for (const imageId of imageMediaIds) {
+      const media = await loadMediaRow(db, params.workspaceId, imageId);
+      if (
+        !media ||
+        media.chat_id !== params.chatId ||
+        media.uploader_user_id !== params.userId ||
+        (media.format !== 'image/jpeg' && media.format !== 'image/png' && media.format !== 'image/webp')
+      ) {
+        throw new ValidationError('An attached image is not available for this message.');
+      }
+      if (media.state !== 'validated') {
+        throw new ValidationError('An attached image is not ready to send.');
+      }
+      if (media.expires_at <= new Date().toISOString()) {
+        throw new ValidationError('An attached image expired before it was sent.');
+      }
+      const alreadyLinked = await db
+        .prepare(`SELECT 1 FROM message_image_attachments WHERE media_id = ?`)
+        .bind(imageId)
+        .first();
+      if (alreadyLinked) {
+        throw new ValidationError('An attached image was already sent with another message.');
+      }
+      imageContext.push({
+        mediaId: imageId,
+        format: media.format,
+        contentType: media.content_type ?? media.format,
+      });
+    }
+    // Fail at send time when the chat's model provably cannot take images;
+    // the handler rechecks the pinned entry before provider spend.
+    if (resolvedChatModel?.available && resolvedChatModel.entry.capabilities.vision === 'unsupported') {
+      throw new ValidationError(
+        `Model '${resolvedChatModel.entry.commandKey}' does not accept image input. Send text only or switch models.`,
+      );
+    }
   }
 
   // 1. Deduplication check on transport key: (channel = 'web', external_id = clientMessageId)
@@ -796,6 +864,26 @@ export async function acceptWebMessage(
           now,
         )] : []),
 
+      // Durable image receipts: one guarded link row per attached image,
+      // committed atomically with the message. Only the ordinary user
+      // message path persists links (control commands persist no message,
+      // and steering/answer images are refused above).
+      ...(imageContext && params.command?.presentation !== 'control' ? imageContext.flatMap((attachment, position) => [
+        imageAttachmentGuardStatement(db, {
+          workspaceId: params.workspaceId,
+          mediaId: attachment.mediaId,
+          uploaderUserId: params.userId,
+          nowIso: now,
+        }),
+        linkImageAttachmentStatement(db, {
+          chatMessageId,
+          workspaceId: params.workspaceId,
+          mediaId: attachment.mediaId,
+          position,
+          nowIso: now,
+        }),
+      ]) : []),
+
       db
         .prepare(
           `INSERT INTO run_activity (id, workspace_id, chat_id, run_id, cursor, type, payload_json, created_at)
@@ -807,7 +895,7 @@ export async function acceptWebMessage(
           params.chatId,
           runId,
           params.chatId,
-          JSON.stringify({ client_message_id: params.clientMessageId, text, media_id: mediaId, ...(params.command?.presentation === 'control' ? { presentation: 'control' } : {}), ...(params.steerRunId ? { steering_message_id: chatMessageId } : {}) }),
+          JSON.stringify({ client_message_id: params.clientMessageId, text, media_id: mediaId, ...(imageContext ? { image_media_ids: imageContext.map((a) => a.mediaId) } : {}), ...(params.command?.presentation === 'control' ? { presentation: 'control' } : {}), ...(params.steerRunId ? { steering_message_id: chatMessageId } : {}) }),
           now,
         ),
 

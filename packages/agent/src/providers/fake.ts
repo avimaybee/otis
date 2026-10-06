@@ -62,6 +62,8 @@ export interface FakeCallRecord {
 export class FakeProviderAdapter implements ProviderAdapter {
   readonly provider: ProviderName;
   readonly calls: FakeCallRecord[] = [];
+  /** Full turn inputs in call order, so tests prove what the turn carried. */
+  readonly inputs: TurnInput[] = [];
   private readonly scripts: FakeTurnScript[];
   private cursor = 0;
 
@@ -76,6 +78,7 @@ export class FakeProviderAdapter implements ProviderAdapter {
 
   async *streamTurn(input: TurnInput): AsyncIterable<ProviderEvent> {
     this.calls.push({ requestId: input.requestId, modelId: input.model.modelId, sessionId: input.sessionId });
+    this.inputs.push(input);
     const script = this.scripts[this.cursor] ?? { kind: 'text', text: '' };
     this.cursor += 1;
 

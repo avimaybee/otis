@@ -462,6 +462,8 @@ export interface CreateChatMessageRequest {
   client_message_id: string;
   text?: string;
   media_id?: string;
+  /** Validated still-image uploads attached to this message (at most IMAGE_BOUNDS.MAX_PER_MESSAGE). */
+  image_media_ids?: string[];
   clarification_id?: string;
 }
 

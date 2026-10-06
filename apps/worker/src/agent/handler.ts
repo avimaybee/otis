@@ -7,6 +7,7 @@
  */
 
 import type { CommandResult, ProviderName } from '@otis/contracts';
+import { IMAGE_BOUNDS } from '@otis/contracts';
 import type { TurnContext, TurnHandler, TurnOutcome } from '../actor/dispatch.js';
 import { completeStep, hashStepArguments, nextStepIndex, persistStep } from '../actor/steps.js';
 import { resolveModelForChat, resolveProviderRawKey, runProviderTurn, type PlatformKeys } from '../providers/service.js';
@@ -58,6 +59,17 @@ export interface ModelSnapshot {
 export interface AgentLimitsConfig {
   maxDailyActions?: number;
   maxRoundsPerRun?: number;
+}
+
+/** Reads an R2 object fully and returns base64 text for provider transport. */
+async function r2ObjectToBase64(obj: R2ObjectBody): Promise<string> {
+  const bytes = new Uint8Array(await obj.arrayBuffer());
+  let binary = '';
+  const len = bytes.byteLength;
+  for (let i = 0; i < len; i++) {
+    binary += String.fromCharCode(bytes[i]!);
+  }
+  return btoa(binary);
 }
 
 export interface AgentHandlerOptions {
@@ -617,6 +629,73 @@ export class AgentHandler implements TurnHandler {
           ...(userAudio ? { audio: userAudio } : {}),
         });
 
+        // Attached still images ride the opening user turn alongside text,
+        // mirroring the native-audio flow above. One row per upload keeps
+        // bytes bounded; the adapter still enforces the per-message count,
+        // so a LIMIT tripwire here fails closed instead of trimming silently.
+        // No transcription side effects: images are prompt input, and an
+        // unreadable object degrades to text-only with a logged failure.
+        let userImages: NonNullable<ProviderMessage['images']> = [];
+        if (progress.roundIndex === 0 && this.options?.storage) {
+          try {
+            const attached = await ctx.db
+              .prepare(
+                `SELECT m.id, m.object_key, m.format, m.content_type, m.state, m.expires_at
+                 FROM message_image_attachments a
+                 JOIN media_objects m ON m.id = a.media_id
+                 JOIN chat_messages cm ON cm.id = a.chat_message_id
+                 WHERE (cm.run_id = ? OR cm.inbound_message_id = ?) AND cm.workspace_id = ? AND a.workspace_id = ?
+                 ORDER BY a.position ASC
+                 LIMIT ?`,
+              )
+              .bind(ctx.runId, ctx.sourceMessageId ?? '', ctx.workspaceId, ctx.workspaceId, IMAGE_BOUNDS.MAX_PER_MESSAGE + 1)
+              .all<{ id: string; object_key: string; format: string | null; content_type: string | null; state: string; expires_at: string }>();
+            const nowIso = this.nowIso();
+            for (const row of attached.results ?? []) {
+              const consumable =
+                (row.format === 'image/jpeg' || row.format === 'image/png' || row.format === 'image/webp') &&
+                row.state === 'validated' &&
+                row.expires_at > nowIso;
+              if (!consumable) {
+                workerFailure('agent', 'skipping unconsumable image attachment', {
+                  workspaceId: ctx.workspaceId,
+                  runId: ctx.runId,
+                  mediaId: row.id,
+                  state: row.state,
+                });
+                continue;
+              }
+              const obj = await this.options.storage.get(row.object_key);
+              if (!obj) {
+                workerFailure('agent', 'image bytes missing from storage', {
+                  workspaceId: ctx.workspaceId,
+                  runId: ctx.runId,
+                  mediaId: row.id,
+                });
+                continue;
+              }
+              userImages.push({
+                data: await r2ObjectToBase64(obj),
+                mimeType: row.content_type || row.format || 'image/png',
+              });
+            }
+          } catch (err) {
+            workerFailure('agent', 'failed to load image attachments for native processing', {
+              workspaceId: ctx.workspaceId,
+              runId: ctx.runId,
+              error: String(err),
+            });
+            userImages = [];
+          }
+        }
+
+        if (userImages.length > 0) {
+          const userMessage = conversationMessages[conversationMessages.length - 1];
+          if (userMessage && userMessage.role === 'user') {
+            userMessage.images = userImages;
+          }
+        }
+
         if (attachedMediaId && userAudio) {
           const commitNow = this.nowIso();
           await ctx.db.batch([
@@ -744,6 +823,19 @@ export class AgentHandler implements TurnHandler {
           timeoutMs: 60000,
           thinking: thinkingRequest,
         };
+
+        // Fail before provider spend when the pinned model provably cannot
+        // take the attached images. Acceptance already refuses this for the
+        // chat's current model; the pin can change between acceptance and the
+        // run, so the pinned entry is rechecked here. Fake-adapter turns
+        // carry no pinned entry and skip this (scripts observe raw input).
+        if (userImages.length > 0 && effectiveEntry && effectiveEntry.capabilities.vision === 'unsupported') {
+          return {
+            kind: 'failed',
+            errorCode: 'model_unavailable',
+            errorMessage: `Model '${effectiveEntry.commandKey}' does not accept image input. Send text only or switch models.`,
+          };
+        }
 
         // Stream from provider
         let stream: AsyncIterable<ProviderEvent>;

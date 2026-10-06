@@ -20,6 +20,7 @@ import type {
 } from './index.js';
 import { DOMAIN_BOUNDS } from './index.js';
 import { isValidMediaId } from './voice.js';
+import { IMAGE_BOUNDS } from './media.js';
 
 export type DtoValidation<T> = { valid: true; value: T } | { valid: false; message: string };
 /** Runtime request boundary shared by ordinary messages and command shortcuts. */
@@ -31,13 +32,26 @@ export function validateChatMessageRequest(value: unknown): DtoValidation<Create
   const mediaId = body.media_id;
   if (mediaId !== undefined && mediaId !== null && !isValidMediaId(mediaId)) return { valid: false, message: 'Invalid media_id.' };
   const hasMedia = typeof mediaId === 'string';
+  const rawImageIds = body.image_media_ids;
+  let imageMediaIds: string[] = [];
+  if (rawImageIds !== undefined && rawImageIds !== null) {
+    if (!Array.isArray(rawImageIds)) return { valid: false, message: 'image_media_ids must be an array of media IDs.' };
+    if (rawImageIds.length > IMAGE_BOUNDS.MAX_PER_MESSAGE) {
+      return { valid: false, message: `At most ${IMAGE_BOUNDS.MAX_PER_MESSAGE} images may be attached to a message.` };
+    }
+    for (const id of rawImageIds) {
+      if (!isValidMediaId(id)) return { valid: false, message: 'Invalid image media ID.' };
+    }
+    imageMediaIds = [...new Set(rawImageIds as string[])];
+  }
+  const hasImages = imageMediaIds.length > 0;
   const text = body.text;
   if (text !== undefined) {
     if (typeof text !== 'string' || text.length > DOMAIN_BOUNDS.MAX_INPUT_CHARS) {
       return { valid: false, message: `Text must contain 1–${DOMAIN_BOUNDS.MAX_INPUT_CHARS} characters.` };
     }
-    if (!hasMedia && !text.trim()) return { valid: false, message: `Text must contain 1–${DOMAIN_BOUNDS.MAX_INPUT_CHARS} characters.` };
-  } else if (!hasMedia) {
+    if (!hasMedia && !hasImages && !text.trim()) return { valid: false, message: `Text must contain 1–${DOMAIN_BOUNDS.MAX_INPUT_CHARS} characters.` };
+  } else if (!hasMedia && !hasImages) {
     return { valid: false, message: `Text must contain 1–${DOMAIN_BOUNDS.MAX_INPUT_CHARS} characters.` };
   }
   if (body.clarification_id !== undefined && (typeof body.clarification_id !== 'string' || !/^[A-Za-z0-9_-]{1,128}$/.test(body.clarification_id))) return { valid: false, message: 'Invalid clarification_id.' };
@@ -47,6 +61,7 @@ export function validateChatMessageRequest(value: unknown): DtoValidation<Create
       client_message_id: id,
       ...(typeof text === 'string' ? { text } : {}),
       ...(hasMedia ? { media_id: mediaId as string } : {}),
+      ...(hasImages ? { image_media_ids: imageMediaIds } : {}),
       ...(body.clarification_id ? { clarification_id: body.clarification_id as string } : {}),
     },
   };

@@ -29,6 +29,8 @@ import migration0008Sql from '../../../migrations/0008_memory_and_agent_runs.sql
 import migration0009Sql from '../../../migrations/0009_thinking_controls.sql?raw';
 // @ts-expect-error vite raw import
 import migration0012Sql from '../../../migrations/0012_voice_media.sql?raw';
+// @ts-expect-error vite raw import
+import migration0015Sql from '../../../migrations/0015_message_image_attachments.sql?raw';
 
 import { AgentHandler } from '../src/agent/handler.js';
 import { dispatchOutboxItem } from '../src/actor/dispatch.js';
@@ -98,6 +100,7 @@ describe('Gate 006 Composed Pipeline Fixture Evaluations (D1 workerd runtime)', 
       migration0008Sql,
       migration0009Sql,
       migration0012Sql,
+      migration0015Sql,
     ]) {
       for (const stmt of splitSqlStatements(sql)) {
         await env.DB.prepare(stmt).run();

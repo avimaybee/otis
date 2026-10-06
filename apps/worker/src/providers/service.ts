@@ -209,6 +209,7 @@ export function toResolvedModel(entry: ModelEntry): ResolvedModel {
     modelId: entry.modelId,
     endpointFamily: entry.endpointFamily,
     endpointUrl: entry.endpointUrl,
+    vision: entry.capabilities.vision,
   };
 }
 
