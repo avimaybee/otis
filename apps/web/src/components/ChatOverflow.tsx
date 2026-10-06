@@ -13,13 +13,19 @@ export function ChatOverflow({ disabled, pending, running, onStop, onRename, onD
   onRename?: () => void; onDelete?: () => void;
 }) {
   const [stopping, setStopping] = useState(false);
+  const [error, setError] = useState('');
 
   const handleStop = async (event: Event) => {
     event.preventDefault();
     if (!onStop || stopping) return;
     setStopping(true);
+    setError('');
     try {
       await onStop();
+    } catch {
+      // A failed Stop stays visible and retryable in the menu instead of an
+      // unhandled rejection; the run keeps its own state below.
+      setError('Could not stop yet. Try again.');
     } finally {
       setStopping(false);
     }
@@ -35,6 +41,7 @@ export function ChatOverflow({ disabled, pending, running, onStop, onRename, onD
         <DropdownMenuLabel>Run</DropdownMenuLabel>
         {/* An action, not a choice: a menu item, never a radio option. */}
         <DropdownMenuItem disabled={stopping} onSelect={e => void handleStop(e)}>{stopping ? 'Stopping Otis…' : 'Stop Otis'}</DropdownMenuItem>
+        {error && <div className="px-2 py-1 text-xs text-destructive" role="alert">{error}</div>}
       </>}
       {(onRename || onDelete) && <>
         {running && onStop && <DropdownMenuSeparator />}
