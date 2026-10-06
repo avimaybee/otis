@@ -40,3 +40,36 @@ jobs:
 
       - name: Build
         run: pnpm build
+
+  migrate:
+    name: Apply D1 Migrations
+    # Production D1 migrations are NOT applied by the Worker auto-deploy, so
+    # a merged migration would otherwise 500 every route touching the new
+    # schema (seen 2026-10-06: message list down until a manual apply).
+    # Runs only on merged pushes after a green verify, never on PRs.
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
+    needs: [verify]
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.10.0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24.16.0
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Apply pending D1 migrations to production
+        run: pnpm exec wrangler d1 migrations apply otis-db --remote
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
