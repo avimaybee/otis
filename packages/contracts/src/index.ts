@@ -588,6 +588,7 @@ export type PublicActivityType =
   | 'queued'
   | 'run_started'
   | 'text_chunk'
+  | 'text_preview'
   | 'step_started'
   | 'step_finished'
   | 'action_applied'

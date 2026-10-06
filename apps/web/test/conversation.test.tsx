@@ -7,6 +7,13 @@ import { Composer } from '../src/components/Composer.js';
 import { Transcript, activityToSteps, stepsFromRun } from '../src/components/Transcript.js';
 import { HistoryNav } from '../src/components/HistoryNav.js';
 import { mergeActivity } from '../src/hooks/useActivityStream.js';
+import {
+  clearTransientPreview,
+  dropCoveredTransientPreview,
+  mergeTransientPreview,
+  transientTextForRun,
+} from '../src/hooks/useActivityStream.js';
+import { applyAnswerSaved, type ChatSnapshot } from '../src/api/snapshot.js';
 
 // @ts-expect-error React act flag
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
@@ -282,15 +289,61 @@ describe('Activity handling', () => {
     const run = { steps: [{ step_index: 0, tool_name: 'create_task', status: 'planned', action_id: null }], actions: [] } as unknown as RunDetailResponse;
     expect(stepsFromRun(run, [])[0]?.state).toBe('queued'); expect(stepsFromRun(run, [activity('start', 1, 'step_started', { step_index: 0 })])[0]?.state).toBe('running');
   });
+  it('folds transient preview frames by sequence and drops covered rounds', () => {
+    const first = activity('p1', 0, 'text_preview', { text: 'Hello', round_index: 0, seq: 1 });
+    const stale = activity('p0', 0, 'text_preview', { text: 'Hell', round_index: 0, seq: 1 });
+    const second = activity('p2', 0, 'text_preview', { text: 'Hello world', round_index: 0, seq: 2 });
+    const malformed = activity('px', 0, 'text_preview', { text: 42 });
+    let state = mergeTransientPreview({}, first);
+    expect(transientTextForRun(state, 'run_1')).toBe('Hello');
+    state = mergeTransientPreview(state, stale);
+    expect(transientTextForRun(state, 'run_1')).toBe('Hello');
+    state = mergeTransientPreview(state, second);
+    expect(transientTextForRun(state, 'run_1')).toBe('Hello world');
+    state = mergeTransientPreview(state, malformed);
+    expect(transientTextForRun(state, 'run_1')).toBe('Hello world');
+    state = dropCoveredTransientPreview(state, 'run_1', 0);
+    expect(transientTextForRun(state, 'run_1')).toBe('');
+    expect(clearTransientPreview({ run_1: { 0: { seq: 1, text: 'x' } } }, 'run_1')).toEqual({});
+  });
 });
 
-describe('History navigation', () => {
-  it('uses a drawer on mobile with functional history and settings actions', async () => {
+describe('History navigation', () => {  it('uses a drawer on mobile with functional history and settings actions', async () => {
     const onSelect = vi.fn(); const onSettings = vi.fn();
     const view = await mount(<HistoryNav variant="drawer" open workspaceId="ws_1" workspaceName="Kerning" workspaces={[{ id: 'ws_1', name: 'Kerning' }]} ownChats={[{ id: 'chat_1', title: 'Bistro', author_user_id: 'usr_1' } as never]} teamChats={[]} activeChatId="chat_1" onSelectChat={onSelect} onNewChat={vi.fn()} onSwitchWorkspace={vi.fn()} onOpenSettings={onSettings} onClose={vi.fn()}/>);
     // The Vaul drawer portals its dialog to the document body.
     expect(document.querySelector('div[role="dialog"][data-state="open"]')).toBeTruthy();
     await React.act(async () => Array.from(document.querySelectorAll('div[role="dialog"] button')).find(button => button.textContent === 'Bistro')!.click()); expect(onSelect).toHaveBeenCalledWith('chat_1');
     await React.act(async () => Array.from(document.querySelectorAll('div[role="dialog"] button')).find(button => button.textContent === 'Settings')!.click()); expect(onSettings).toHaveBeenCalledOnce(); await view.unmount();
+  });
+});
+
+describe('Completion reconcile', () => {
+  const snapshot = (): ChatSnapshot => ({
+    detail: {
+      chat: { id: 'chat_1', workspace_id: 'ws_1', author_user_id: 'usr_1', title: 'Bistro', model_override: null, is_archived: false, last_activity_at: '2026-10-02T10:00:00.000Z', created_at: '2026-10-02T10:00:00.000Z' },
+      is_author: true,
+    },
+    messages: [message({ id: 'msg_1', content_text: 'Hi', sequence: 1 })],
+    older: null,
+    runs: {},
+    activities: [],
+    questions: [],
+    cursor: 1,
+  });
+  it('files the committed reply locally from answer_saved without a refetch', () => {
+    const event = activity('act_run_1_answer', 2, 'answer_saved', { message_id: 'reply_run_1', sequence: 2, text: 'Saved reply.', channel: 'web' });
+    const next = applyAnswerSaved(snapshot(), event);
+    expect(next?.messages.map(item => item.content_text)).toEqual(['Hi', 'Saved reply.']);
+    expect(next?.messages[1]).toMatchObject({ id: 'reply_run_1', author_kind: 'system', run_id: 'run_1', sequence: 2 });
+  });
+  it('falls back to refetch for older shapes and truncated text', () => {
+    expect(applyAnswerSaved(snapshot(), activity('a', 2, 'answer_saved', { reply: 'Pick one.' }))).toBeNull();
+    expect(applyAnswerSaved(snapshot(), activity('a', 2, 'answer_saved', { message_id: 'm', sequence: 2, text: 'x', text_truncated: true }))).toBeNull();
+  });
+  it('replaces nothing when the reply is already present', () => {
+    const event = activity('act_run_1_answer', 2, 'answer_saved', { message_id: 'reply_run_1', sequence: 2, text: 'Saved reply.', channel: 'web' });
+    const once = applyAnswerSaved(snapshot(), event)!;
+    expect(applyAnswerSaved(once, event)?.messages).toHaveLength(2);
   });
 });

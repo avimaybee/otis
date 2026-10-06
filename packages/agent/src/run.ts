@@ -250,24 +250,25 @@ export async function collectAndValidateProviderStream(
       args = {};
     }
 
-    // 3. Pre-validate against registered schema
+    // 3. Pre-validate against registered schema. Correctable argument
+    // errors on known tools flow through the executor as rejected tool
+    // results, so the model sees typed feedback and can fix and retry them
+    // in the next round instead of failing the whole run. An unknown tool
+    // still aborts the round before any sibling mutates: a plan referencing
+    // a nonexistent capability is untrustworthy as a whole. The executor
+    // re-validates identically (authority and policy stay rejected there);
+    // collection still throws only for transport/protocol defects otherwise.
     const validation = validateToolCall(item.name, args);
     if (!validation.ok) {
       if (validation.error.code === 'unknown_tool') {
         throw new AgentStreamError('unknown_tool', `Model proposed unrecognized tool '${item.name}'.`);
       }
-      if (validation.error.code === 'missing_deadline' && item.name === 'create_task') {
-        completedCalls.push({
-          callId: item.callId,
-          name: item.name,
-          args,
-        });
-        continue;
-      }
-      throw new AgentStreamError(
-        'malformed_tool_args',
-        `Validation failed for tool '${item.name}': ${validation.error.message}`,
-      );
+      completedCalls.push({
+        callId: item.callId,
+        name: item.name,
+        args,
+      });
+      continue;
     }
 
     completedCalls.push({

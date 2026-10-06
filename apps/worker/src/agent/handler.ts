@@ -12,8 +12,10 @@ import { completeStep, hashStepArguments, listRunSteps, persistStep } from '../a
 import { resolveModelForChat, runProviderTurn, type PlatformKeys } from '../providers/service.js';
 import { workerDebug, workerFailure } from '../observability.js';
 import { executeAgentTool } from './repository.js';
-import { getTurnContext } from './context.js';
+import { resolveTelegramTarget, sendTelegramChatAction } from '../inbox/telegramDelivery.js';
+import { getTurnContext, type AssembledTurnContext } from './context.js';
 import { publishAgentActivity } from './activity.js';
+import { liveChatBus } from '../chat/liveBus.js';
 import { StreamPublisher, createThinkingBudget, type SharedThinkingBudget } from './streamPublish.js';
 import { getWorkspaceRevision } from '@otis/ledger';
 import {
@@ -59,6 +61,7 @@ export interface AgentHandlerOptions {
   registry?: ModelRegistry;
   providerAdapter?: ProviderAdapter;
   storage?: R2Bucket;
+  telegramBotToken?: string;
   fetchFn?: FetchFn;
   maxRoundsPerSlice?: number;
   limits?: AgentLimitsConfig;
@@ -109,7 +112,26 @@ export class AgentHandler implements TurnHandler {
 
     const nowIso = this.nowIso();
 
-    // 1. Load run metadata and verify active status
+    let typingInterval: ReturnType<typeof setInterval> | null = null;
+    if (ctx.channel === 'telegram' && ctx.sourceMessageId && this.options?.telegramBotToken) {
+      try {
+        const target = await resolveTelegramTarget(ctx.db, ctx.sourceMessageId);
+        if (target) {
+          const botToken = this.options.telegramBotToken;
+          const chatId = target.telegramChatId;
+          const safeFetch = this.options.fetchFn ?? fetch;
+          void sendTelegramChatAction(botToken, chatId, 'typing', safeFetch);
+          typingInterval = setInterval(() => {
+            void sendTelegramChatAction(botToken, chatId, 'typing', safeFetch);
+          }, 4000);
+        }
+      } catch {
+        // Chat action heartbeat is best-effort and never fails the turn
+      }
+    }
+
+    try {
+      // 1. Load run metadata and verify active status
     const runRow = await ctx.db
       .prepare(
         `SELECT id, status, model_key, model_snapshot_json, thinking_snapshot_json, agent_progress_json, source_message_id, chat_id
@@ -387,9 +409,9 @@ export class AgentHandler implements TurnHandler {
     };
     const consumeSteering = async () => {
       const inputs = (await ctx.db.prepare(`SELECT cm.id AS messageId, cm.inbound_message_id AS sourceMessageId, cm.content_text AS text, cm.sequence
-        FROM chat_messages cm WHERE cm.workspace_id = ? AND cm.run_id = ? AND cm.author_user_id = ? AND cm.sequence > ?
-        AND EXISTS (SELECT 1 FROM run_activity a WHERE a.workspace_id = cm.workspace_id AND a.run_id = cm.run_id AND a.type = 'message_accepted' AND json_extract(a.payload_json, '$.steering_message_id') = cm.id)
-        ORDER BY cm.sequence`).bind(ctx.workspaceId, ctx.runId, actorUserId, progress.lastSteeringSequence ?? 0).all<{ messageId: string; sourceMessageId: string; text: string; sequence: number }>()).results;
+        FROM chat_messages cm WHERE cm.workspace_id = ? AND cm.chat_id = ? AND cm.run_id = ? AND cm.author_user_id = ? AND cm.sequence > ?
+        AND EXISTS (SELECT 1 FROM run_activity a WHERE a.workspace_id = cm.workspace_id AND a.chat_id = cm.chat_id AND a.run_id = cm.run_id AND a.type = 'message_accepted' AND json_extract(a.payload_json, '$.steering_message_id') = cm.id)
+        ORDER BY cm.sequence`).bind(ctx.workspaceId, ctx.chatId, ctx.runId, actorUserId, progress.lastSteeringSequence ?? 0).all<{ messageId: string; sourceMessageId: string; text: string; sequence: number }>()).results;
       if (!inputs.length) { applySteeringContext(); return false; }
       progress.steeringInputs = [...(progress.steeringInputs ?? []), ...inputs];
       progress.lastSteeringSequence = inputs.at(-1)!.sequence;
@@ -409,6 +431,24 @@ export class AgentHandler implements TurnHandler {
     // 5. Bounded Slice Loop (Section 7.3)
     const maxRounds = this.options?.maxRoundsPerSlice ?? 2;
     let roundsExecutedThisTurn = 0;
+    // Reuse unchanged context across linked provider rounds within one turn:
+    // a new steering input rewrites ctx.sourceText and fresh tool results may
+    // change memory, so either invalidates the cache. The embedded clock
+    // string freezes on reuse, keeping one turn on one timestamp.
+    let cachedContext: { sourceText: string; toolResults: number; value: AssembledTurnContext } | null = null;
+    // Server-derived catalog inputs, fixed for the turn: platform key
+    // presence (never values) plus the pinned model/effort markers.
+    const platformKeyPresent = {
+      gemini: Boolean(this.options?.platformKeys?.gemini),
+      opencode_go: Boolean(this.options?.platformKeys?.opencode_go),
+    };
+    let currentEffortLabel: string | null = null;
+    try {
+      const snapshot = runRow.thinking_snapshot_json ? JSON.parse(runRow.thinking_snapshot_json) as { choice_label?: unknown } : null;
+      if (snapshot && typeof snapshot.choice_label === 'string') currentEffortLabel = snapshot.choice_label;
+    } catch {
+      currentEffortLabel = null;
+    }
     // Genuinely per-run thinking budget: round publishers share it so the
     // display cap is not reset by round boundaries.
     const thinkingBudget: SharedThinkingBudget = createThinkingBudget();
@@ -439,16 +479,28 @@ export class AgentHandler implements TurnHandler {
 
         const conversationMessages: ProviderMessage[] = [];
 
-        // Authoritative assembled context (memory, summaries, preferences)
-        const assembledContext = await getTurnContext(ctx.db, {
-          workspaceId: ctx.workspaceId,
-          actorUserId,
-          chatId: ctx.chatId,
-          sourceText: ctx.sourceText,
-          sourceMessageId: ctx.sourceMessageId,
-          runId: ctx.runId,
-          nowIso: this.nowIso(),
-        });
+        // Authoritative assembled context (memory, summaries, preferences).
+        // Reused across linked rounds until steering or tool writes change it.
+        const toolResultCount = progress.completedToolResults.length;
+        if (!cachedContext || cachedContext.sourceText !== ctx.sourceText || cachedContext.toolResults !== toolResultCount) {
+          cachedContext = {
+            sourceText: ctx.sourceText,
+            toolResults: toolResultCount,
+            value: await getTurnContext(ctx.db, {
+              workspaceId: ctx.workspaceId,
+              actorUserId,
+              chatId: ctx.chatId,
+              sourceText: ctx.sourceText,
+              sourceMessageId: ctx.sourceMessageId,
+              runId: ctx.runId,
+              nowIso: this.nowIso(),
+              platformKeyPresent,
+              currentModelKey: runRow.model_key,
+              currentEffortLabel,
+            }),
+          };
+        }
+        const assembledContext = cachedContext.value;
 
         conversationMessages.push({
           role: 'system',
@@ -480,7 +532,7 @@ export class AgentHandler implements TurnHandler {
 
         let userAudio: ProviderMessage['audio'] | undefined = undefined;
         let attachedMediaId: string | null = null;
-        if (this.options?.storage && (effectiveEntry?.capabilities.audio === 'supported' || Boolean(this.options?.providerAdapter))) {
+        if (progress.roundIndex === 0 && this.options?.storage && (effectiveEntry?.capabilities.audio === 'supported' || Boolean(this.options?.providerAdapter))) {
           const mediaRow = await ctx.db
             .prepare(
               `SELECT m.id, m.object_key, m.format, m.content_type
@@ -705,9 +757,10 @@ export class AgentHandler implements TurnHandler {
 
         // Collect and validate round (throws AgentStreamError on incomplete/malformed stream)
         let collectedRound;
+        const roundIndex = progress.roundIndex;
         const publisher = new StreamPublisher(
           (key, type, payload) => publishAgentActivity(ctx, key, type, payload),
-          progress.roundIndex,
+          roundIndex,
           modelSnapshot.provider,
           (err) => workerFailure('agent', 'stream flush failed; remainder retries on next tick', {
             workspaceId: ctx.workspaceId,
@@ -716,14 +769,37 @@ export class AgentHandler implements TurnHandler {
             error: err instanceof Error ? err.message : String(err),
           }),
           thinkingBudget,
+          // Transient preview: live frames bypass D1 entirely and stream
+          // straight to actor-local SSE subscribers; the durable remainder
+          // persists once on close.
+          (text, seq) => {
+            if (!ctx.chatId) return;
+            liveChatBus.broadcast(ctx.workspaceId, ctx.chatId, {
+              name: 'activity',
+              id: undefined,
+              data: {
+                schema_version: 1,
+                id: `preview_${ctx.runId}_r${roundIndex}_${seq}`,
+                cursor: 0,
+                workspace_id: ctx.workspaceId,
+                chat_id: ctx.chatId,
+                run_id: ctx.runId,
+                created_at: new Date().toISOString(),
+                type: 'text_preview',
+                payload: { text, round_index: roundIndex, seq },
+              },
+            });
+          },
         );
         // One serialized owner for size- and timer-triggered flushes; every
         // exit below clears it. The final flush is authorized remainder only:
         // fence/membership guards still reject stale writes after Stop or
         // lease loss, and the run terminal state resolves the rest.
+        // 100 ms drives preview cadence; thinking still gates on its own
+        // 400 ms budget inside tick().
         const publishTimer = setInterval(() => {
           void publisher.tick().catch(() => undefined);
-        }, 400);
+        }, 100);
         let streamOutcome: 'complete' | 'interrupted' = 'complete';
         try {
           const publicStream = async function* () {
@@ -1094,6 +1170,9 @@ export class AgentHandler implements TurnHandler {
       kind: 'continuation',
       progressJson: JSON.stringify(progress),
     };
+    } finally {
+      if (typingInterval) clearInterval(typingInterval);
+    }
   }
 
   private async saveProgress(ctx: TurnContext, progress: DurableAgentProgress): Promise<boolean> {

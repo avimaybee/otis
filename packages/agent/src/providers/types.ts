@@ -98,8 +98,8 @@ export interface ResolvedModel {
 export type ThinkingRequest =
   | { kind: 'provider_default' }
   | { kind: 'gemini_level'; level: 'minimal' | 'low' | 'medium' | 'high' }
-  | { kind: 'go_chat_effort'; effort: 'low' | 'medium' | 'high' | 'xhigh' }
-  | { kind: 'go_responses_effort'; effort: string };
+  | { kind: 'go_chat_effort'; effort: 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'none' }
+  | { kind: 'go_responses_effort'; effort: 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max' };
 
 export interface TurnInput {
   model: ResolvedModel;

@@ -5,6 +5,12 @@ import type { CommandDescriptor, ModelOption, RunDetailResponse, VoiceMediaSumma
 import { api, ApiError } from './api/client.js';
 import { debugLog } from './api/log.js';
 import { subscribeToActivity, type StreamStatus } from './hooks/useActivityStream.js';
+import {
+  clearTransientPreview,
+  dropCoveredTransientPreview,
+  mergeTransientPreview,
+  type TransientPreview,
+} from './hooks/useActivityStream.js';
 import { useMediaQuery } from './hooks/useMediaQuery.js';
 import { useViewportComposer } from './hooks/useViewportComposer.js';
 import { Composer } from './components/Composer.js';
@@ -50,6 +56,7 @@ import { deleteVoiceSessionsForUser } from './api/voiceSessions.js';
 import { deriveTranscript, reconciledClientIds } from './api/transcript.js';
 import {
   applyActivitySnapshot,
+  applyAnswerSaved,
   applyDetail,
   applyLatestMessages,
   applyOlderMessages,
@@ -89,6 +96,9 @@ export function ConversationScreen({ workspaceId, chat: routeChat, chatParamPres
   const activeChatId = routeChat;
   const [drawerOpen, setDrawerOpen] = useState(false); const [settingsOpen, setSettingsOpen] = useState(false); const [detailActionId, setDetailActionId] = useState<string | null>(null);
   const [streamStatus, setStreamStatus] = useState<StreamStatus>('idle'); const [error, setError] = useState<string | null>(null); const [accessLost, setAccessLost] = useState(false);
+  // Live transient preview text by run/round. Memory-only: never persisted,
+  // never in the snapshot; durable chunks and answers replace it on arrival.
+  const [transients, setTransients] = useState<TransientPreview>({});
   const [renameTarget, setRenameTarget] = useState<{ id: string; title: string } | null>(null);
   const [renameTitle, setRenameTitle] = useState('');
   const [renamingChat, setRenamingChat] = useState(false);
@@ -297,12 +307,26 @@ export function ConversationScreen({ workspaceId, chat: routeChat, chatParamPres
     const subscription = subscribeToActivity(api.activityStreamUrl(workspaceId, readyChatId, cursor), {
       onActivity: activity => {
         if (generation !== epoch.current || activity.workspace_id !== workspaceId || activity.chat_id !== readyChatId) return;
+        // Transient preview frames bypass the snapshot: fold into the
+        // memory-only buffer with no refetch and no cursor advance.
+        if (activity.type === 'text_preview') {
+          setTransients(previous => mergeTransientPreview(previous, activity));
+          return;
+        }
         const key = qk.chat(userId, workspaceId, readyChatId);
         queryClient.setQueryData<ChatSnapshot>(key, previous =>
           previous ? applyActivitySnapshot(previous, activity) : previous);
         const knownRun = queryClient.getQueryData<ChatSnapshot>(key)?.runs[activity.run_id];
         switch (activity.type) {
-          case 'text_chunk':
+          case 'text_chunk': {
+            // Durable coverage replaces preview rounds as they persist.
+            const round = (activity.payload as { round_index?: unknown })?.round_index;
+            if (typeof round === 'number') {
+              setTransients(previous => dropCoveredTransientPreview(previous, activity.run_id, round));
+            }
+            if (activity.run_id && !knownRun) refreshRun(workspaceId, readyChatId, activity.run_id);
+            break;
+          }
           case 'reasoning_summary':
             if (activity.run_id && !knownRun) refreshRun(workspaceId, readyChatId, activity.run_id);
             break;
@@ -314,18 +338,35 @@ export function ConversationScreen({ workspaceId, chat: routeChat, chatParamPres
             refreshRun(workspaceId, readyChatId, activity.run_id);
             break;
           case 'message_accepted':
-          case 'answer_saved':
             refreshMessages(workspaceId, readyChatId);
             break;
+          case 'answer_saved': {
+            // The committed reply files locally from the event: no transcript
+            // refetch. Older shapes or truncated text fall back to refetch.
+            const filed = queryClient.getQueryData<ChatSnapshot>(key);
+            const reconciled = filed ? applyAnswerSaved(filed, activity) : null;
+            if (reconciled) queryClient.setQueryData<ChatSnapshot>(key, reconciled);
+            else refreshMessages(workspaceId, readyChatId);
+            break;
+          }
           case 'clarification_required':
             refreshQuestions(readyChatId);
             refreshRun(workspaceId, readyChatId, activity.run_id);
             break;
           case 'partial_failure':
-          case 'run_finished':
+          case 'run_finished': {
             refreshRun(workspaceId, readyChatId, activity.run_id);
-            refreshMessages(workspaceId, readyChatId);
+            setTransients(previous => clearTransientPreview(previous, activity.run_id));
+            // The reply message is already filed locally from its answer_saved
+            // event; refetch messages only when it is still missing (e.g. an
+            // older client shape or a reconnect that skipped the event).
+            const view = queryClient.getQueryData<ChatSnapshot>(key);
+            const hasReply = view?.messages.some(
+              message => message.run_id === activity.run_id && message.author_kind !== 'member',
+            ) ?? false;
+            if (!hasReply) refreshMessages(workspaceId, readyChatId);
             break;
+          }
         }
       },
       onStatus: status => { if (generation === epoch.current) setStreamStatus(status); },
@@ -791,7 +832,7 @@ export function ConversationScreen({ workspaceId, chat: routeChat, chatParamPres
       <div className="otis-access"><h2 className="text-xl font-medium">Could not load conversation</h2><p className="text-sm text-muted-foreground">{error ?? 'A network or server error occurred.'}</p><div className="flex gap-2"><Button variant="outline" type="button" onClick={() => { setError(null); void snapshotQuery.refetch(); void resyncChat(activeChatId!); }}>Try again</Button><Button variant="ghost" type="button" onClick={() => navigate(workspaceId, null)}>Start new conversation</Button></div></div>
     ) : <div className="otis-chat">
       {streamStatus === 'resyncing' && <p className="otis-connection text-xs" role="status">Reconnecting to activity… Your conversation is retained.</p>}
-      <Transcript key={`${workspaceId}:${activeChatId ?? 'new'}`} messages={derived.messages} members={members} currentUserId={userId} runs={snapshot?.runs ?? {}} activities={snapshot?.activities ?? []} steps={[]} delivery={derived.delivery} onRetryMessage={(clientId) => void retryMessage(clientId)} onDiscardMessage={discardMessage} onInspectSource={setSourceId} onInspectAction={setDetailActionId} onReply={readOnly ? undefined : setReplyId} onEditMessage={readOnly ? undefined : setDraftValue} loading={loading} hasOlder={Boolean(snapshot?.older)} loadingOlder={loadingOlder} olderError={olderError} followSignal={followSignal} positionKey={`${userId}:${workspaceId}:${activeChatId ?? 'new'}`} onLoadOlder={() => void loadOlder()}/>
+      <Transcript key={`${workspaceId}:${activeChatId ?? 'new'}`} messages={derived.messages} members={members} currentUserId={userId} runs={snapshot?.runs ?? {}} activities={snapshot?.activities ?? []} steps={[]} transients={transients} delivery={derived.delivery} onRetryMessage={(clientId) => void retryMessage(clientId)} onDiscardMessage={discardMessage} onInspectSource={setSourceId} onInspectAction={setDetailActionId} onReply={readOnly ? undefined : setReplyId} onEditMessage={readOnly ? undefined : setDraftValue} loading={loading} hasOlder={Boolean(snapshot?.older)} loadingOlder={loadingOlder} olderError={olderError} followSignal={followSignal} positionKey={`${userId}:${workspaceId}:${activeChatId ?? 'new'}`} onLoadOlder={() => void loadOlder()}/>
       {error && <div className="otis-chat-error text-sm" role="alert"><p>{error}</p>{activeChatId && !loading && <Button variant="ghost" size="sm" type="button" onClick={() => { setError(null); void resyncChat(activeChatId); }}>Reload conversation</Button>}</div>}
       {readOnly ? <div className="otis-readonly text-sm"><p>This is {currentDetail!.chat.author_display_name ?? members[currentDetail!.chat.author_user_id] ?? 'a teammate'}’s conversation.</p><Button variant="ghost" size="sm" type="button" onClick={() => navigate(workspaceId, ownChats[0]?.id ?? null)}>Continue in your own chat</Button></div> : <div ref={composerRef} className="otis-composer-slot"><Composer key={`${workspaceId}:${userId}:${activeChatId ?? 'new'}`} draftKey={`otis:draft:${userId}:${workspaceId}:${activeChatId ?? 'new'}`} draftValue={draftValue} disabled={Boolean(activeChatId && !snapshot)} disabledReason={error ? 'Conversation unavailable' : 'Opening conversation…'} running={Boolean(running)} commands={commands} models={models} workspaces={workspaces} controlPending={controlPending} modelReady={models.some(model => model.is_current && model.available)} modelsLoading={modelsQuery.isLoading} modelsError={modelsQuery.isError ? (modelsQuery.error instanceof Error ? modelsQuery.error.message : 'Could not load models.') : undefined} onRetryModels={() => void modelsQuery.refetch()} voice={{ available: voiceAvailable, adapter: voiceAdapter, scope: { userId, workspaceId, chatId: activeChatId }, onSent: voiceSend }} onCommand={applyCommand} onStop={running ? async () => { await api.stopRun(workspaceId, running.run.id); if (activeChatId) refreshRun(workspaceId, activeChatId, running.run.id); } : undefined} replyTo={activeClarification ? { id: activeClarification.id, question: activeClarification.question, candidates: activeClarification.candidates, missing_fields: activeClarification.missing_fields, intended_operation: activeClarification.intended_operation, onCancel: () => { setDismissedClarificationId(activeClarification.id); setReplyId(null); } } : undefined} onSend={send}/></div>}
     </div>}</main>

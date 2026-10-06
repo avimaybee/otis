@@ -16,6 +16,7 @@ import { resolveDateAnswer } from './clarificationFields.js';
 
 import { claimWorkspaceLease, releaseWorkspaceLease, renewWorkspaceLease } from './leases.js';
 import { workerDebug } from '../observability.js';
+import { liveChatBus } from '../chat/liveBus.js';
 import {
   adoptStep,
   completeStep,
@@ -389,6 +390,8 @@ async function appendActivity(
     type: string;
     payload: unknown;
     nowIso: string;
+    /** Deterministic ids let the committer broadcast the exact rows. */
+    id?: string;
   },
 ): Promise<void> {
   batch.push(
@@ -398,7 +401,7 @@ async function appendActivity(
          VALUES (?, ?, ?, ?, ${params.cursorSelect}, ?, ?, ?)`,
       )
       .bind(
-        `act_${crypto.randomUUID()}`,
+        params.id ?? `act_${crypto.randomUUID()}`,
         params.workspaceId,
         params.chatId,
         params.runId,
@@ -509,9 +512,19 @@ export async function completeRun(
     chatId: run.chat_id,
     runId: run.id,
     cursorSelect: `(SELECT activity_cursor - 1 FROM chats WHERE id = ?)`,
-    type: 'text_chunk',
-    payload: { text: params.replyText },
+    type: 'answer_saved',
+    // Completion metadata referencing the persisted reply — not a repeat of
+    // the streamed preview text. The client files the message locally from
+    // this record instead of re-downloading the transcript.
+    payload: {
+      message_id: replyId,
+      sequence: nextSeq,
+      text: params.replyText,
+      text_truncated: params.replyText.length > 16_000,
+      channel: params.channel,
+    },
     nowIso: params.nowIso,
+    id: `act_${run.id}_answer`,
   });
   await appendActivity(batch, db, {
     workspaceId: run.workspace_id,
@@ -519,8 +532,9 @@ export async function completeRun(
     runId: run.id,
     cursorSelect: `(SELECT activity_cursor FROM chats WHERE id = ?)`,
     type: 'run_finished',
-    payload: { status: 'succeeded' },
+    payload: { status: 'succeeded', message_id: replyId },
     nowIso: params.nowIso,
+    id: `act_${run.id}_finished`,
   });
   if (run.source_message_id) {
     batch.push(
@@ -565,6 +579,40 @@ export async function completeRun(
       throw await classifyCommitFailure(db, run, params.attemptId);
     }
     throw err;
+  }
+
+  // The commit is durable: publish the terminal events to live subscribers in
+  // this actor isolate so completion does not wait for catch-up polling.
+  // Cursors come from the committed rows themselves, never recomputed.
+  const committed = await db
+    .prepare(`SELECT id, cursor, type, payload_json FROM run_activity WHERE id IN (?, ?) AND workspace_id = ?`)
+    .bind(`act_${run.id}_answer`, `act_${run.id}_finished`, run.workspace_id)
+    .all<Record<string, unknown>>();
+  for (const row of committed.results ?? []) {
+    const cursor = Number(row['cursor']);
+    if (!Number.isSafeInteger(cursor) || cursor <= 0) continue;
+    const type = String(row['type']);
+    let payload: unknown = null;
+    try {
+      payload = JSON.parse(String(row['payload_json'] ?? 'null'));
+    } catch {
+      continue;
+    }
+    liveChatBus.broadcast(run.workspace_id, run.chat_id, {
+      name: 'activity',
+      id: cursor,
+      data: {
+        schema_version: 1,
+        id: String(row['id']),
+        cursor,
+        workspace_id: run.workspace_id,
+        chat_id: run.chat_id,
+        run_id: run.id,
+        created_at: params.nowIso,
+        type,
+        payload,
+      },
+    });
   }
 }
 

@@ -10,6 +10,7 @@ import { ThinkingDisclosure } from './Thinking.js';
 import { VoiceMessagePlayer } from './VoiceMessagePlayer.js';
 import { reduceThinking } from '../api/thinking.js';
 import { dayKeyInZone, formatClockTime, formatDayLabel } from '../i18n/format.js';
+import { transientTextForRun, type TransientPreview } from '../hooks/useActivityStream.js';
 
 export interface WorkingStep { id: string; label: string; state: 'queued' | 'running' | 'succeeded' | 'failed' | 'skipped' | 'undone'; actionId?: string | null; summary?: string | null; }
 export const STATES: Record<WorkingStep['state'], string> = { queued: 'Queued', running: 'Working', succeeded: 'Done', failed: 'Failed', skipped: 'Skipped', undone: 'Undone' };
@@ -234,6 +235,8 @@ export interface TranscriptProps {
   messages: ChatMessage[]; members: Record<string, string>; currentUserId: string; run?: RunDetailResponse | null; runs?: Record<string, RunDetailResponse>;
   activities?: PublicActivity[]; steps: WorkingStep[]; pendingUnread?: number; onJumpToLatest?: () => void; onInspectAction: (id: string) => void;
   onReply?: (id: string) => void; onInspectSource?: (id: string) => void; onEditMessage?: (text: string) => void; loading?: boolean; hasOlder?: boolean; loadingOlder?: boolean; onLoadOlder?: () => void;
+  /** Live transient preview text by run/round. Rendered only while no durable answer exists. */
+  transients?: TransientPreview;
   /** Local delivery state by client UUID. Saved means durable acceptance, not a reply. */
   delivery?: Record<string, { state: 'sending' | 'saved' | 'failed'; error?: string; durable: boolean }>;
   onRetryMessage?: (clientId: string) => void;
@@ -246,7 +249,7 @@ export interface TranscriptProps {
   /** Scope key for saved reading position (user/workspace/chat). */
   positionKey?: string;
 }
-export function Transcript({ messages, members, currentUserId, steps, run, runs = {}, activities = [], pendingUnread = 0, onJumpToLatest, onInspectAction, onReply, onInspectSource, onEditMessage, loading, hasOlder, loadingOlder, onLoadOlder, delivery = {}, onRetryMessage, onDiscardMessage, olderError = null, followSignal = 0, positionKey = '' }: TranscriptProps) {
+export function Transcript({ messages, members, currentUserId, steps, run, runs = {}, activities = [], transients = {}, pendingUnread = 0, onJumpToLatest, onInspectAction, onReply, onInspectSource, onEditMessage, loading, hasOlder, loadingOlder, onLoadOlder, delivery = {}, onRetryMessage, onDiscardMessage, olderError = null, followSignal = 0, positionKey = '' }: TranscriptProps) {
   // Sole follow/release/Jump owner. Instant adjustments only: no animated
   // token-driven scrolling, so reduced motion is honored by construction.
   // Native overflow-anchor (default) owns prepend/in-place anchoring; no
@@ -414,18 +417,23 @@ export function Transcript({ messages, members, currentUserId, steps, run, runs 
                 ) : null}
               </div>
             </article>
-            {noAnswerYet && <><RunWork run={runData} steps={runSteps} activities={runActivities} onInspectAction={onInspectAction} onReply={onReply} hasAgentMessage={false}/>{chunks && (unfinishedRun ? (
+            {noAnswerYet && <><RunWork run={runData} steps={runSteps} activities={runActivities} onInspectAction={onInspectAction} onReply={onReply} hasAgentMessage={false}/>{(() => {
+              // Durable chunks plus live transient preview for rounds not yet
+              // persisted. Transient frames carry each round's full text, so
+              // joining is order-safe; durable coverage drops preview rounds.
+              const streamText = chunks + (runId ? transientTextForRun(transients, runId) : '');
+              return streamText && (unfinishedRun ? (
               <div className="otis-turn__body otis-streamed text-base text-foreground [&>p+p]:mt-3" aria-live="off">
                 <p className="otis-run__status text-xs text-subtle">
                   {runData?.status === 'cancelled'
                     ? 'Partial response — stopped.'
                     : 'Partial response — Otis could not finish.'}
                 </p>
-                <Markdown remarkPlugins={[remarkGfm]} skipHtml disallowedElements={['img']}>{chunks}</Markdown>
+                <Markdown remarkPlugins={[remarkGfm]} skipHtml disallowedElements={['img']}>{streamText}</Markdown>
               </div>
             ) : (
-              <div className="otis-turn__body otis-streamed text-base text-foreground [&>p+p]:mt-3" aria-live="off"><Markdown remarkPlugins={[remarkGfm]} skipHtml disallowedElements={['img']}>{chunks}</Markdown></div>
-            ))}</>}
+              <div className="otis-turn__body otis-streamed text-base text-foreground [&>p+p]:mt-3" aria-live="off"><Markdown remarkPlugins={[remarkGfm]} skipHtml disallowedElements={['img']}>{streamText}</Markdown></div>
+            ));})()}</>}
           </div>;
         })}
         {!messages.length && steps.length > 0 && <RunWork run={run ?? undefined} steps={steps} activities={activities} onInspectAction={onInspectAction} hasAgentMessage={false}/>}

@@ -92,11 +92,11 @@ function fetchReplies(replies: Array<{ status?: number; json?: unknown; throwErr
 }
 
 function postWebhook(body: unknown): Promise<Response> {
-  // Direct handler invocation with the queue binding removed: the suite's
-  // synthetic journey must not spawn asynchronous queue dispatches whose
+  // Direct handler invocation with wake-up bindings removed: the suite's
+  // synthetic journey must not spawn asynchronous actor dispatches whose
   // timing would make due-selection assertions nondeterministic. The route
   // still exercises the production acceptance path, token gate and hints
-  // (a dedicated test below injects a fake queue and observes them).
+  // (a dedicated test below injects a fake actor and observes them).
   const request = new Request('http://localhost/api/inbound/telegram', {
     method: 'POST',
     headers: {
@@ -105,7 +105,7 @@ function postWebhook(body: unknown): Promise<Response> {
     },
     body: JSON.stringify(body),
   });
-  const quietEnv = { ...env, DISPATCH_QUEUE: undefined } as typeof env;
+  const quietEnv = { ...env, DISPATCH_QUEUE: undefined, WORKSPACE_ACTOR: undefined } as typeof env;
   return handleTelegramWebhook(request, quietEnv, 'req-tg-009a');
 }
 
@@ -475,10 +475,22 @@ describe('009A Telegram text loop (workerd + D1)', () => {
       .bind(HUNOR, WS, now, now)
       .run();
 
-    // Route-level hint observation with a fake queue binding and fake ctx.
+    // Route-level hint observation with a fake actor binding and fake ctx.
+    // Interactive Telegram acceptance wakes the workspace actor directly;
+    // the Queue is not on the latency path (its sends stay empty here).
     const queueMessages: unknown[] = [];
+    const actorCalls: unknown[] = [];
     const fakeEnv = {
       ...env,
+      WORKSPACE_ACTOR: {
+        idFromName: (name: string) => ({ name }),
+        get: (_id: unknown) => ({
+          fetch: async (req: Request) => {
+            actorCalls.push(await req.json());
+            return new Response(JSON.stringify({ status: 'accepted' }), { status: 202 });
+          },
+        }),
+      },
       DISPATCH_QUEUE: { send: async (message: unknown) => void queueMessages.push(message) },
     } as typeof env;
     const waitUntils: Array<Promise<unknown>> = [];
@@ -501,8 +513,8 @@ describe('009A Telegram text loop (workerd + D1)', () => {
     expect(accepted.status).toBe('accepted');
     expect(accepted.workspace_id).toBe(WS);
     await Promise.all(waitUntils);
-    expect(queueMessages).toContainEqual({ workspace_id: WS });
-    expect(queueMessages).toContainEqual({ kind: 'telegram_delivery', workspace_id: WS });
+    expect(actorCalls).toContainEqual(expect.objectContaining({ action: 'dispatch', workspace_id: WS }));
+    expect(queueMessages).toEqual([]);
 
     // Duplicate delivery of the same update: stable run ID, no second run.
     const replayRes = await postWebhook(textUpdate(7101, 777002, 'Remind the team that Bistro Paprika prefers Tuesday deliveries.'));
@@ -920,11 +932,13 @@ describe('009A Telegram text loop (workerd + D1)', () => {
     expect(Number(unknownRuns?.n)).toBe(0);
 
     // /thinking high persists the scoped override with a deterministic reply.
+    // Uses a model with verified thinking controls (MiMo controls are
+    // unverified by design and stay rejected).
     const now = nowIso();
     await env.DB
       .prepare(
         `INSERT INTO workspace_settings (workspace_id, default_model, created_at, updated_at)
-         VALUES (?, 'mimo-25', ?, ?)
+         VALUES (?, 'gemini-3.1-flash-lite', ?, ?)
          ON CONFLICT(workspace_id) DO UPDATE SET default_model = excluded.default_model, updated_at = excluded.updated_at`,
       )
       .bind(WS, now, now)
@@ -935,7 +949,7 @@ describe('009A Telegram text loop (workerd + D1)', () => {
       .prepare(`SELECT thinking_override_json FROM chats WHERE id = (SELECT chat_id FROM messages_in WHERE external_id = 'test_bot:7503')`)
       .first<{ thinking_override_json: string | null }>();
     expect(thinkingChat?.thinking_override_json).toContain('"choice_id":"high"');
-    expect(thinkingChat?.thinking_override_json).toContain('"model_key":"mimo-25"');
+    expect(thinkingChat?.thinking_override_json).toContain('"model_key":"gemini-3.1-flash-lite"');
     expect(
       (await env.DB
         .prepare(`SELECT COUNT(*) AS n FROM agent_runs WHERE executor_kind = 'agent' AND source_message_id IN (SELECT id FROM messages_in WHERE external_id = 'test_bot:7503')`)
@@ -1452,24 +1466,36 @@ describe('009A Telegram text loop (workerd + D1)', () => {
   });
 
   it('queue dispatch continuation wakes checkpoint, budget and contention slices without cron', async () => {
+    // Queue forwards each workspace once to its actor; the actor owns
+    // execution, delivery and continuation hints. Per-call env copies cannot
+    // cross the isolate boundary, so this test installs scripted handlers and
+    // queue observers on the real env (saved/restored) and drives
+    // worker.queue with the real env.
+    const realEnv = env as unknown as Record<string, unknown>;
     const queueSends: Array<{ body: { kind?: string; workspace_id?: string }; options?: { delaySeconds?: number } }> = [];
-    const makeQueueEnv = (extra: Partial<typeof env> = {}) =>
-      ({
-        ...env,
-        DISPATCH_QUEUE: {
-          send: async (body: { kind?: string; workspace_id?: string }, options?: { delaySeconds?: number }) => {
-            queueSends.push({ body, options });
-          },
-        },
-        ...extra,
-      }) as unknown as typeof env;
-    const runQueue = async (queueEnv: typeof env, body: unknown) => {
+    const runQueueReal = async (body: unknown) => {
       await worker.queue(
         { messages: [{ body }] } as unknown as Parameters<typeof worker.queue>[0],
-        queueEnv,
+        env,
       );
     };
     const dispatchHints = () => queueSends.filter((send) => send.body.workspace_id === WS && send.body.kind === undefined);
+    const withRealEnv = async <T>(overrides: Record<string, unknown>, fn: () => Promise<T>): Promise<T> => {
+      const saved = new Map<string, unknown>();
+      for (const [key, value] of Object.entries(overrides)) {
+        saved.set(key, realEnv[key]);
+        realEnv[key] = value;
+      }
+      try {
+        return await fn();
+      } finally {
+        for (const [key] of Object.entries(overrides)) {
+          const prior = saved.get(key);
+          if (prior === undefined) delete realEnv[key];
+          else realEnv[key] = prior;
+        }
+      }
+    };
 
     // Settle queued runs left by earlier tests so the scripted handler only
     // sees this test's runs.
@@ -1479,12 +1505,14 @@ describe('009A Telegram text loop (workerd + D1)', () => {
         .bind(WS)
         .first<{ n: number }>();
       if (Number(queued?.n ?? 0) === 0) break;
-      await runQueue(makeQueueEnv({ USE_ECHO_HANDLER: 'true' }), { workspace_id: WS });
+      await withRealEnv({ USE_ECHO_HANDLER: 'true' }, () => runQueueReal({ workspace_id: WS }));
     }
 
     // Checkpoint second slice: the first queue invocation defers with a
     // checkpoint and schedules the next workspace wake; processing that wake
-    // finishes the run without any scheduled() cron invocation.
+    // finishes the run without any scheduled() cron invocation. worker.queue
+    // awaits the actor's sync execution, so hints are published before it
+    // resolves.
     const accepted = (await (await postWebhook(textUpdate(7701, 777002, 'Long turn needing a second slice.'))).json()) as {
       run_id: string;
     };
@@ -1498,42 +1526,23 @@ describe('009A Telegram text loop (workerd + D1)', () => {
           : { kind: 'completed', replyText: 'Second slice complete.' };
       },
     };
-    // The queue invocation must not end before the continuation hint is
-    // published: gate the send and observe the handler staying pending.
-    let releaseHint: (() => void) | null = null;
-    let hintSends = 0;
-    const gatedEnv = {
-      ...env,
-      DISPATCH_TEST_HANDLER: scripted,
-      DISPATCH_QUEUE: {
-        send: (body: { kind?: string; workspace_id?: string }, options?: { delaySeconds?: number }) => {
-          hintSends += 1;
-          queueSends.push({ body, options });
-          return new Promise<void>((resolve) => {
-            releaseHint = resolve;
-          });
+    const hintsBefore = dispatchHints().length;
+    await withRealEnv(
+      {
+        DISPATCH_TEST_HANDLER: scripted,
+        DISPATCH_QUEUE: {
+          send: async (body: { kind?: string; workspace_id?: string }, options?: { delaySeconds?: number }) => {
+            queueSends.push({ body, options });
+          },
         },
       },
-    } as unknown as typeof env;
-    const hintsBefore = dispatchHints().length;
-    let settled = false;
-    const pendingRun = runQueue(gatedEnv, { workspace_id: WS }).then(() => {
-      settled = true;
-    });
-    for (let i = 0; i < 40 && !releaseHint; i += 1) {
-      await new Promise((resolve) => setTimeout(resolve, 10));
-    }
+      () => runQueueReal({ workspace_id: WS }),
+    );
     expect(slices).toBe(1);
-    expect(settled).toBe(false); // still pending: hint send has not completed
-    expect(releaseHint).toBeTruthy();
-    releaseHint!();
-    await pendingRun;
-    expect(settled).toBe(true);
-    expect(hintSends).toBe(1);
     const checkpointHint = dispatchHints()[hintsBefore]!;
     expect(checkpointHint).toBeTruthy();
     expect(checkpointHint.options?.delaySeconds).toBe(1);
-    await runQueue(gatedEnv, checkpointHint.body);
+    await withRealEnv({ DISPATCH_TEST_HANDLER: scripted }, () => runQueueReal(checkpointHint.body));
     expect(slices).toBe(2);
     expect(
       (await env.DB.prepare(`SELECT status FROM agent_runs WHERE id = ?`).bind(accepted.run_id).first<{ status: string }>())?.status,
@@ -1551,7 +1560,17 @@ describe('009A Telegram text loop (workerd + D1)', () => {
       },
     };
     const hintsBeforeWaiting = dispatchHints().length;
-    await runQueue(makeQueueEnv({ DISPATCH_TEST_HANDLER: askHandler }), { workspace_id: WS });
+    await withRealEnv(
+      {
+        DISPATCH_TEST_HANDLER: askHandler,
+        DISPATCH_QUEUE: {
+          send: async (body: { kind?: string; workspace_id?: string }, options?: { delaySeconds?: number }) => {
+            queueSends.push({ body, options });
+          },
+        },
+      },
+      () => runQueueReal({ workspace_id: WS }),
+    );
     expect(dispatchHints().length).toBe(hintsBeforeWaiting);
     expect(
       (await env.DB.prepare(`SELECT status FROM agent_runs WHERE id = ?`).bind(waiting.run_id).first<{ status: string }>())?.status,
@@ -1564,7 +1583,16 @@ describe('009A Telegram text loop (workerd + D1)', () => {
     };
     await claimWorkspaceLease(env.DB, { workspaceId: WS, attemptId: 'other-attempt', ttlSeconds: 60, nowIso: nowIso() });
     const hintsBeforeContention = dispatchHints().length;
-    await runQueue(makeQueueEnv(), { workspace_id: WS });
+    await withRealEnv(
+      {
+        DISPATCH_QUEUE: {
+          send: async (body: { kind?: string; workspace_id?: string }, options?: { delaySeconds?: number }) => {
+            queueSends.push({ body, options });
+          },
+        },
+      },
+      () => runQueueReal({ workspace_id: WS }),
+    );
     const contentionHint = dispatchHints()[hintsBeforeContention]!;
     expect(contentionHint).toBeTruthy();
     expect(contentionHint.options?.delaySeconds).toBe(5);
@@ -1574,7 +1602,7 @@ describe('009A Telegram text loop (workerd + D1)', () => {
     await releaseWorkspaceLease(env.DB, { workspaceId: WS, attemptId: 'other-attempt' });
 
     // Cleanup: settle the contended run with the deterministic echo handler.
-    await runQueue(makeQueueEnv({ USE_ECHO_HANDLER: 'true' }), { workspace_id: WS });
+    await withRealEnv({ USE_ECHO_HANDLER: 'true' }, () => runQueueReal({ workspace_id: WS }));
     expect(
       (await env.DB.prepare(`SELECT status FROM agent_runs WHERE id = ?`).bind(contended.run_id).first<{ status: string }>())?.status,
     ).toBe('succeeded');
@@ -1595,23 +1623,24 @@ describe('009A Telegram text loop (workerd + D1)', () => {
       },
     };
     let failingSends = 0;
-    const failingEnv = {
-      ...env,
-      DISPATCH_TEST_HANDLER: failScripted,
-      DISPATCH_QUEUE: {
-        send: async () => {
-          failingSends += 1;
-          throw new Error('synthetic queue failure');
+    await withRealEnv(
+      {
+        DISPATCH_TEST_HANDLER: failScripted,
+        DISPATCH_QUEUE: {
+          send: async () => {
+            failingSends += 1;
+            throw new Error('synthetic queue failure');
+          },
         },
       },
-    } as unknown as typeof env;
-    await runQueue(failingEnv, { workspace_id: WS });
+      () => runQueueReal({ workspace_id: WS }),
+    );
     expect(failingSends).toBe(1);
     expect(
       (await env.DB.prepare(`SELECT status FROM agent_runs WHERE id = ?`).bind(failingRun.run_id).first<{ status: string }>())?.status,
     ).toBe('queued');
     // Settle the deferred run for later tests.
-    await runQueue(makeQueueEnv({ USE_ECHO_HANDLER: 'true' }), { workspace_id: WS });
+    await withRealEnv({ USE_ECHO_HANDLER: 'true' }, () => runQueueReal({ workspace_id: WS }));
   });
 
   it('cancels queued deliveries when membership or the source binding is revoked, with no send', async () => {

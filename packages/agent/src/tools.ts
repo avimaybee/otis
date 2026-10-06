@@ -347,26 +347,30 @@ export function validateLogEventArgs(raw: unknown): ValidationResult<LogEventToo
 
   // Kind-specific payload verification
   if (kind === 'note') {
-    const unkP = checkNoUnknownKeys(payload, new Set(['text']), 'log_event.note');
+    const unkP = checkNoUnknownKeys(payload, new Set(['text', 'description', 'notes', 'summary']), 'log_event.note');
     if (unkP) return unkP;
-    if (typeof payload['text'] !== 'string' || !payload['text'].trim()) {
+    const noteText = payload['text'] ?? payload['description'] ?? payload['notes'] ?? payload['summary'];
+    if (typeof noteText !== 'string' || !noteText.trim()) {
       return fail('invalid_payload', "Note payload requires non-empty string 'text'.");
     }
+    if (typeof payload['text'] !== 'string') {
+      payload['text'] = noteText;
+    }
   } else if (kind === 'visit') {
-    const unkP = checkNoUnknownKeys(payload, new Set(['summary', 'contact_made', 'location']), 'log_event.visit');
+    const unkP = checkNoUnknownKeys(payload, new Set(['summary', 'contact_made', 'location', 'description', 'notes']), 'log_event.visit');
     if (unkP) return unkP;
     if (typeof payload['summary'] !== 'string' || typeof payload['contact_made'] !== 'boolean') {
       return fail('invalid_payload', "Visit payload requires string 'summary' and boolean 'contact_made'.");
     }
   } else if (kind === 'contact') {
-    const unkP = checkNoUnknownKeys(payload, new Set(['summary', 'channel']), 'log_event.contact');
+    const unkP = checkNoUnknownKeys(payload, new Set(['summary', 'channel', 'notes', 'description']), 'log_event.contact');
     if (unkP) return unkP;
     const channels = new Set(['phone', 'email', 'in_person', 'telegram', 'whatsapp', 'other']);
     if (typeof payload['summary'] !== 'string' || typeof payload['channel'] !== 'string' || !channels.has(payload['channel'])) {
       return fail('invalid_payload', "Contact payload requires string 'summary' and valid 'channel'.");
     }
   } else if (kind === 'quote') {
-    const unkP = checkNoUnknownKeys(payload, new Set(['amount', 'currency', 'role']), 'log_event.quote');
+    const unkP = checkNoUnknownKeys(payload, new Set(['amount', 'currency', 'role', 'description', 'summary', 'notes']), 'log_event.quote');
     if (unkP) return unkP;
     if (
       typeof payload['amount'] !== 'number' ||
@@ -1222,7 +1226,10 @@ export const ALL_AGENT_TOOLS: ProviderToolDeclaration[] = [
       properties: {
         entity_id: { type: 'string', description: 'Optional target entity ID.' },
         kind: { type: 'string', enum: ['note', 'visit', 'contact', 'quote'] },
-        payload: { type: 'object', description: 'Typed payload matching the event kind.' },
+        payload: {
+          type: 'object',
+          description: 'Typed payload matching kind. Note: { text }. Visit: { summary, contact_made, location? }. Contact: { summary, channel: phone|email|in_person|telegram|whatsapp|other }. Quote: { amount (integer minor units >= 0), currency (3-letter ISO), role: offered|expected, description? }.',
+        },
         occurred_at: { type: 'string', description: 'ISO timestamp of occurrence.' },
         provenance: { type: 'string', enum: ['stated', 'inferred'] },
       },
@@ -1476,7 +1483,7 @@ export const ALL_AGENT_TOOLS: ProviderToolDeclaration[] = [
       properties: {
         level: {
           type: 'string',
-          description: "Thinking effort level ('minimal', 'low', 'medium', 'high', 'xhigh', or 'default')",
+          description: "Thinking effort level ('minimal', 'low', 'medium', 'high', 'xhigh', 'max', or 'default'; 'max' only applies to DeepSeek, 'minimal' only to Muse Spark)",
         },
       },
       required: ['level'],

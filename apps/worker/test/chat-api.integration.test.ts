@@ -1192,6 +1192,43 @@ describe('007 deterministic command behavior', () => {
     expect(replay.status).toBe(202);
     expect(await replay.json()).toMatchObject({ deduplicated: true });
   });
+
+  it('applies live-verified Muse reasoning effort end to end and qualifies MiMo controls', async () => {
+    const chatId = (await createChat(env.DB, { workspaceId: WS, authorUserId: AVI })).id;
+    await env.DB.prepare(`UPDATE chats SET model_override = 'muse-13' WHERE id = ?`).bind(chatId).run();
+
+    // /thinking minimal applies on Muse Spark 1.3 (live-verified effort).
+    const res = await send(chatId, '/thinking minimal', 'cmd-think-muse-1');
+    expect(res.status).toBe(202);
+    const body = await res.json() as { reply: string };
+    expect(body.reply).toContain('Minimal thinking set for Muse Spark 1.3 Contributor');
+    const chatRow = await env.DB.prepare(`SELECT thinking_override_json FROM chats WHERE id = ?`).bind(chatId).first<{ thinking_override_json: string }>();
+    expect(JSON.parse(chatRow!.thinking_override_json)).toEqual({ model_key: 'muse-13', choice_id: 'minimal' });
+
+    // Acceptance pins the nested Responses effort into the immutable snapshot.
+    const accepted = await acceptWebMessage(env.DB, { workspaceId: WS, chatId, userId: AVI, clientMessageId: 'think-muse-pinned', text: 'Hello' });
+    const runRow = await env.DB.prepare(`SELECT thinking_snapshot_json FROM agent_runs WHERE id = ?`).bind(accepted.run_id).first<{ thinking_snapshot_json: string }>();
+    expect(JSON.parse(runRow!.thinking_snapshot_json)).toMatchObject({
+      choice_id: 'minimal',
+      request: { kind: 'go_responses_effort', effort: 'minimal' },
+    });
+
+    // Models endpoint reports the bound choice as current and supported.
+    const modelsRes = await call(`/api/workspaces/${WS}/models?chat_id=${chatId}`, { method: 'GET', cookie: aviCookie });
+    expect(modelsRes.status).toBe(200);
+    const modelsBody = await modelsRes.json() as ModelListResponse;
+    const museOption = modelsBody.models.find(m => m.command_key === 'muse-13');
+    expect(museOption?.thinking?.current_choice_id).toBe('minimal');
+    expect(museOption?.thinking?.state).toBe('supported');
+
+    // MiMo controls are qualified: enum accepted by the gateway is not proof
+    // of an honored budget, so selection stays rejected as unverified.
+    await send(chatId, '/model mimo-25', 'cmd-model-mimo-verify');
+    const mimoRes = await send(chatId, '/thinking low', 'cmd-think-mimo-low');
+    expect(mimoRes.status).toBe(202);
+    const mimoBody = await mimoRes.json() as { reply: string };
+    expect(mimoBody.reply).toContain('not been verified');
+  });
 });
 
 describe('007 round 2 owning-suite pins: shortcut reply and command endpoint', () => {
@@ -1458,27 +1495,47 @@ describe('Dispatch wake-up hint on acceptance', () => {
     clientMessageId: string,
     text: string,
     ctx?: ExecutionContext,
-    queue?: { send: (body: unknown) => Promise<void> },
+    bindings?: {
+      actor?: { fetch: (req: Request) => Promise<Response> };
+      queue?: { send: (body: unknown) => Promise<void> };
+    },
   ) => {
     const request = new Request(`http://localhost/api/workspaces/${WS}/chats/${chatId}/messages`, {
       method: 'POST',
       headers: { Cookie: aviCookie, ...CSRF },
       body: JSON.stringify({ client_message_id: clientMessageId, text }),
     });
-    const routeEnv = queue ? { ...env, DISPATCH_QUEUE: queue } : env;
+    const routeEnv = bindings
+      ? {
+        ...env,
+        ...(bindings.actor
+          ? { WORKSPACE_ACTOR: { idFromName: (name: string) => ({ name }), get: (_id: unknown) => bindings.actor } }
+          : {}),
+        ...(bindings.queue ? { DISPATCH_QUEUE: bindings.queue } : {}),
+      }
+      : env;
     return handleCreateMessage(request, routeEnv as typeof env, WS, chatId, 'req-wake-up', ctx);
   };
 
-  it('publishes a workspace wake-up to the queue on accepted messages', async () => {
-    const sent: unknown[] = [];
+  it('wakes the workspace actor directly on accepted messages (no queue batching)', async () => {
+    const actorCalls: unknown[] = [];
+    const queueSends: unknown[] = [];
     const pending: Promise<unknown>[] = [];
     const ctx = { waitUntil: (promise: Promise<unknown>) => { pending.push(promise); } } as unknown as ExecutionContext;
-    const queue = { send: async (body: unknown) => { sent.push(body); } };
 
-    const res = await postMessage(aviChat, 'cm-wake-up-1', 'Wake the dispatcher, please.', ctx, queue);
+    const res = await postMessage(aviChat, 'cm-wake-up-1', 'Wake the dispatcher, please.', ctx, {
+      actor: {
+        fetch: async (req: Request) => {
+          actorCalls.push(await req.json());
+          return new Response(JSON.stringify({ status: 'accepted' }), { status: 202 });
+        },
+      },
+      queue: { send: async (body: unknown) => { queueSends.push(body); } },
+    });
     expect(res.status).toBe(202);
     await Promise.all(pending);
-    expect(sent).toEqual([{ workspace_id: WS }]);
+    expect(actorCalls).toContainEqual(expect.objectContaining({ action: 'dispatch', workspace_id: WS }));
+    expect(queueSends).toEqual([]);
   });
 
   it('still accepts when no queue binding or context exists (cron remains the backstop)', async () => {
@@ -1494,13 +1551,15 @@ describe('Dispatch wake-up hint on acceptance', () => {
     expect(resNoQueue.status).toBe(202);
   });
 
-  it('a failing queue publish never fails acceptance', async () => {
+  it('a failing actor wake never fails acceptance', async () => {
     const pending: Promise<unknown>[] = [];
     const ctx = { waitUntil: (promise: Promise<unknown>) => { pending.push(promise); } } as unknown as ExecutionContext;
-    const queue = {
-      send: async () => { throw new Error('queue exploded'); },
-    };
-    const res = await postMessage(aviChat, 'cm-wake-up-4', 'The hint may fail; the message must land.', ctx, queue);
+    const res = await postMessage(aviChat, 'cm-wake-up-4', 'The hint may fail; the message must land.', ctx, {
+      actor: {
+        fetch: async () => { throw new Error('actor exploded'); },
+      },
+      queue: { send: async () => { throw new Error('queue must not be used on the interactive path'); } },
+    });
     expect(res.status).toBe(202);
     await Promise.all(pending.map((promise) => promise.catch(() => undefined)));
 

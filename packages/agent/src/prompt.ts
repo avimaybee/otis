@@ -46,6 +46,12 @@ export interface DynamicPromptContext {
   disputedFacts?: Array<{ entityName: string; fieldName: string }>;
   latestBriefItems?: Array<{ position: number; title: string; taskId: string | null; entityId: string | null }>;
   pendingOperationPrompt?: string;
+  /**
+   * Server-derived model catalog. The only models the agent may name when
+   * asked about availability; per-model effort labels come from verified
+   * registry descriptors. Empty efforts means provider default.
+   */
+  availableModels?: Array<{ name: string; current: boolean; efforts: string[]; currentEffort?: string | null }>;
 }
 
 /**
@@ -84,6 +90,21 @@ export function renderSystemPrompt(context?: DynamicPromptContext): string {
 
     if (context.disputedFacts && context.disputedFacts.length > 0) {
       parts.push('\nDisputed Facts (Unresolved - do not present as settled fact):\n' + context.disputedFacts.map((d) => `- ${d.entityName}: field '${d.fieldName}' is disputed`).join('\n'));
+    }
+
+    if (context.availableModels && context.availableModels.length > 0) {
+      parts.push(
+        '\nAvailable Models (answer model questions from this list only; never invent others or search memory for them):\n' +
+          context.availableModels
+            .map((m) => {
+              const effort = m.efforts.length > 0 ? `effort: ${m.efforts.join('/')}` : 'effort: provider default';
+              const current = m.current
+                ? ` [current${m.currentEffort ? `, current effort: ${m.currentEffort}` : ''}]`
+                : '';
+              return `- ${m.name}${current} (${effort})`;
+            })
+            .join('\n'),
+      );
     }
 
     if (context.pendingOperationPrompt) {

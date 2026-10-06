@@ -617,7 +617,7 @@ describe('Durable Memory, Context Retrieval & Summaries Integration (006C worker
         workspaceId: ws1,
         authorUserId: aviId,
         title: 'Thinking policy chat',
-        modelOverride: 'mimo-25',
+        modelOverride: 'gemini-3.1-flash-lite',
       })
     ).id;
 
@@ -678,7 +678,35 @@ describe('Durable Memory, Context Retrieval & Summaries Integration (006C worker
     expect(memberResult.status).toBe('applied');
     const override = await readOverride();
     expect(override).not.toBeNull();
-    expect(JSON.parse(override!)).toEqual({ model_key: 'mimo-25', choice_id: 'high' });
+    expect(JSON.parse(override!)).toEqual({ model_key: 'gemini-3.1-flash-lite', choice_id: 'high' });
+  });
+
+  it('10c. unverified MiMo thinking controls stay rejected even for the chat author', async () => {
+    const mimoChat = (
+      await createChat(env.DB, {
+        workspaceId: ws1,
+        authorUserId: aviId,
+        title: 'MiMo thinking qualification chat',
+        modelOverride: 'mimo-25',
+      })
+    ).id;
+    const result = await executeAgentTool({
+      db: env.DB,
+      workspaceId: ws1,
+      actorUserId: aviId,
+      chatId: mimoChat,
+      sourceMessageId: 'msg_mem_avi',
+      actionId: 'review-thinking-mimo-unverified',
+      sourceText: 'use high thinking for this chat',
+      toolName: 'set_chat_thinking',
+      toolArgs: { level: 'high' },
+    });
+    expect(result.status).toBe('rejected');
+    expect(result.error?.code).toBe('unverified');
+    const row = await env.DB.prepare('SELECT thinking_override_json FROM chats WHERE id = ?')
+      .bind(mimoChat)
+      .first<{ thinking_override_json: string | null }>();
+    expect(row?.thinking_override_json).toBeNull();
   });
 
   it('11. expired running summary jobs are discovered, claimed, and completed (F11 regression)', async () => {

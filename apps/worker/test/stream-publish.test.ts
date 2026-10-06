@@ -146,6 +146,27 @@ describe('StreamPublisher (R6 stream reliability)', () => {
     expect(chunks[0]!.payload['text']).toBe('Hi.');
   });
 
+  it('flushes the first text delta as a live frame immediately, then coalesces', async () => {
+    const { calls, publish } = recorder();
+    const frames: Array<{ text: string; seq: number }> = [];
+    const publisher = new StreamPublisher(publish, 0, 'gemini', () => undefined, undefined, (text, seq) => {
+      frames.push({ text, seq });
+    });
+    publisher.pushText('H');
+    // No timer tick and no D1 write: the opener is already visible live.
+    expect(frames).toEqual([{ text: 'H', seq: 1 }]);
+    expect(calls.filter(call => call.type === 'text_chunk')).toHaveLength(0);
+    // Later deltas coalesce instead of emitting one frame each.
+    publisher.pushText('i');
+    publisher.pushText('!');
+    expect(frames).toHaveLength(1);
+    await publisher.tick(Date.now() + 10_000);
+    expect(frames).toEqual([{ text: 'H', seq: 1 }, { text: 'Hi!', seq: 2 }]);
+    await publisher.close('complete');
+    // The durable remainder persists exactly once.
+    expect(calls.filter(call => call.type === 'text_chunk').map(call => call.payload['text']).join('')).toBe('Hi!');
+  });
+
   it('shares one thinking budget across rounds of a turn', async () => {
     const { calls, publish } = recorder();
     const budget = createThinkingBudget();

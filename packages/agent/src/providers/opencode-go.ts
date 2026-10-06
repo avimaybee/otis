@@ -1403,7 +1403,9 @@ export class OpenCodeGoAdapter implements ProviderAdapter {
   private async *streamChat(input: TurnInput, signal: AbortSignal): AsyncGenerator<ProviderEvent> {
     if (input.thinking) {
       if (input.thinking.kind === 'go_chat_effort') {
-        const VALID_GO_EFFORTS = new Set(['low', 'medium', 'high', 'xhigh']);
+        // Gateway-advertised reasoning_effort enum (from live upstream
+        // rejection text): minimal|low|medium|high|xhigh|max|none.
+        const VALID_GO_EFFORTS = new Set(['minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'none']);
         if (!VALID_GO_EFFORTS.has(input.thinking.effort)) {
           throw new ProviderErrorException({
             code: 'invalid_request',
@@ -1461,13 +1463,27 @@ export class OpenCodeGoAdapter implements ProviderAdapter {
   }
 
   private async *streamResponses(input: TurnInput, signal: AbortSignal): AsyncGenerator<ProviderEvent> {
-    if (input.thinking && input.thinking.kind !== 'provider_default') {
-      throw new ProviderErrorException({
-        code: 'invalid_request',
-        message: `Thinking request kind '${(input.thinking as { kind: string }).kind}' is not supported by OpenCode Go responses adapter.`,
-        retryable: false,
-        retryAfterMs: null,
-      });
+    if (input.thinking) {
+      if (input.thinking.kind === 'go_responses_effort') {
+        // Gateway-advertised reasoning.effort enum (from live upstream
+        // rejection text): none|minimal|low|medium|high|xhigh|max.
+        const VALID_RESPONSES_EFFORTS = new Set(['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']);
+        if (!VALID_RESPONSES_EFFORTS.has(input.thinking.effort)) {
+          throw new ProviderErrorException({
+            code: 'invalid_request',
+            message: `Thinking effort '${input.thinking.effort}' is not supported by OpenCode Go responses adapter.`,
+            retryable: false,
+            retryAfterMs: null,
+          });
+        }
+      } else if (input.thinking.kind !== 'provider_default') {
+        throw new ProviderErrorException({
+          code: 'invalid_request',
+          message: `Thinking request kind '${(input.thinking as { kind: string }).kind}' is not supported by OpenCode Go responses adapter.`,
+          retryable: false,
+          retryAfterMs: null,
+        });
+      }
     }
 
     const body: Record<string, unknown> = {
@@ -1476,6 +1492,9 @@ export class OpenCodeGoAdapter implements ProviderAdapter {
       stream: true,
       max_output_tokens: input.maxOutputTokens,
     };
+    if (input.thinking?.kind === 'go_responses_effort') {
+      body['reasoning'] = { effort: input.thinking.effort };
+    }
     if (input.tools.length > 0) {
       body['tools'] = input.tools.map((tool) => ({
         type: 'function',

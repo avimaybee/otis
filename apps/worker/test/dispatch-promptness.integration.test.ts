@@ -19,10 +19,17 @@ import migration0008Sql from '../../../migrations/0008_memory_and_agent_runs.sql
 // @ts-expect-error vite raw import
 import migration0009Sql from '../../../migrations/0009_thinking_controls.sql?raw';
 // @ts-expect-error vite raw import
+import migration0010Sql from '../../../migrations/0010_outbox_retry_at.sql?raw';
+// @ts-expect-error vite raw import
+import migration0011Sql from '../../../migrations/0011_link_workspace_intent.sql?raw';
+// @ts-expect-error vite raw import
 import migration0012Sql from '../../../migrations/0012_voice_media.sql?raw';
 
 import { AgentHandler } from '../src/agent/handler.js';
-import { dispatchOutboxItem, dispatchWorkspace } from '../src/actor/dispatch.js';
+import { dispatchOutboxItem, dispatchWorkspace, type TurnContext, type TurnHandler } from '../src/actor/dispatch.js';
+import { publishAgentActivity } from '../src/agent/activity.js';
+import { liveChatBus } from '../src/chat/liveBus.js';
+import worker from '../src/index.js';
 import { acceptWebMessage, createChat } from '../src/inbox/repository.js';
 import { handleCreateMessage } from '../src/routes/chats.js';
 import { FakeProviderAdapter } from '@otis/agent';
@@ -93,6 +100,7 @@ describe('Dispatch promptness and stream publication (008B workerd)', () => {
       migration0001Sql, migration0002Sql, migration0003Sql, migration0004Sql,
       migration0005Sql, migration0006Sql, migration0007Sql, migration0008Sql,
       migration0009Sql,
+      migration0010Sql, migration0011Sql,
       migration0012Sql,
     ]) {
       for (const stmt of splitSqlStatements(sql)) {
@@ -146,7 +154,13 @@ describe('Dispatch promptness and stream publication (008B workerd)', () => {
     expect(finished.length).toBe(1);
     expect(String((finished[0]!.payload as Record<string, unknown>)['status'] ?? '')).toBe('succeeded');
     const chunks = await activityRows(accepted.run_id, 'text_chunk');
-    expect(chunks.map(row => String(row.payload['text'] ?? '')).join('')).toContain('Prompt answer complete.');
+    expect(chunks.map(row => String(row.payload['text'] ?? '')).join('')).toBe('Prompt answer complete.');
+    // Completion is a metadata record referencing the persisted reply, not a
+    // repeated full-text preview chunk.
+    const saved = await activityRows(accepted.run_id, 'answer_saved');
+    expect(saved).toHaveLength(1);
+    expect(String((saved[0]!.payload as Record<string, unknown>)['message_id'] ?? '')).toBe(`reply_${accepted.run_id}`);
+    expect(String((finished[0]!.payload as Record<string, unknown>)['message_id'] ?? '')).toBe(`reply_${accepted.run_id}`);
     const answer = await env.DB.prepare(`SELECT content_text FROM chat_messages WHERE run_id = ? AND author_kind = 'system'`).bind(accepted.run_id).first<{ content_text: string }>();
     expect(answer?.content_text).toContain('Prompt answer complete.');
 
@@ -218,10 +232,10 @@ describe('Dispatch promptness and stream publication (008B workerd)', () => {
     expect(String(failures[0]!.payload['error_code'] ?? '')).toContain('model_unavailable');
   });
 
-  it('wakes an idle accepted input through the HTTP acceptance hint and queue consumer path without cron', async () => {
-    // Owning route/queue proof: production POST acceptance publishes the
-    // dispatch hint, and the queue consumer's exact dispatchWorkspace call
-    // (budget 3, same as queue()) drives it to a terminal reply. No cron,
+  it('wakes an idle accepted input through the HTTP acceptance actor hint and queue forwarding without cron', async () => {
+    // Owning route/actor proof: production POST acceptance wakes the workspace
+    // actor directly (no Queue batching on the interactive path), and the
+    // queue consumer forwards each workspace once to that same actor. No cron,
     // no direct acceptWebMessage shortcut, fake provider transport only.
     const rawToken = 'promptness-route-token';
     const now = new Date().toISOString();
@@ -233,13 +247,23 @@ describe('Dispatch promptness and stream publication (008B workerd)', () => {
       .bind(await sha256(rawToken), aviId, now, new Date(Date.now() + 3600 * 1000).toISOString(), now)
       .run();
 
-    const sent: unknown[] = [];
+    const actorCalls: unknown[] = [];
+    const queueSends: unknown[] = [];
     const waited: Promise<unknown>[] = [];
     const routeEnv = {
       ...env,
+      WORKSPACE_ACTOR: {
+        idFromName: (name: string) => ({ name }),
+        get: (_id: unknown) => ({
+          fetch: async (req: Request) => {
+            actorCalls.push(await req.json());
+            return new Response(JSON.stringify({ status: 'accepted' }), { status: 202 });
+          },
+        }),
+      },
       DISPATCH_QUEUE: {
         send: async (body: unknown) => {
-          sent.push(body);
+          queueSends.push(body);
         },
       },
     } as unknown as typeof env;
@@ -266,25 +290,188 @@ describe('Dispatch promptness and stream publication (008B workerd)', () => {
     expect(accepted.run_id).toBeTruthy();
 
     await Promise.all(waited);
-    expect(sent).toContainEqual({ workspace_id: ws });
+    // Interactive acceptance must wake the actor directly and must not pay
+    // Queue batching.
+    expect(actorCalls).toContainEqual(expect.objectContaining({ action: 'dispatch', workspace_id: ws }));
+    expect(queueSends).toEqual([]);
 
     const pending = await env.DB.prepare(
       `SELECT id FROM outbox WHERE workspace_id = ? AND destination = 'workspace_actor' AND status = 'pending'`,
     ).bind(ws).all();
     expect((pending.results ?? []).length).toBeGreaterThan(0);
 
-    // Exactly what the queue consumer runs for a wake-up message.
+    // What the queue consumer now does for wake-up messages: coalesce
+    // duplicates and forward each workspace once to its actor. The actor runs
+    // the installed test handler to a terminal reply.
     const fakeAdapter = new FakeProviderAdapter({
       provider: 'gemini',
       scripts: [{ kind: 'text', text: 'Route wake-up answer.' }],
     });
     const handler = new AgentHandler({ providerAdapter: fakeAdapter, limits: defaultTestLimits });
-    const dispatched = await dispatchWorkspace(env.DB, ws, { budget: 3, handler });
-    expect(dispatched.processed).toBeGreaterThan(0);
+    (env as unknown as Record<string, unknown>).DISPATCH_TEST_HANDLER = handler;
+    try {
+      await worker.queue(
+        { messages: [{ body: { workspace_id: ws } }, { body: { workspace_id: ws } }, { body: {} }] } as unknown as MessageBatch<{
+          workspace_id?: unknown;
+        }>,
+        env,
+      );
+    } finally {
+      delete (env as unknown as Record<string, unknown>).DISPATCH_TEST_HANDLER;
+    }
 
     const run = await env.DB.prepare(`SELECT status FROM agent_runs WHERE id = ?`).bind(accepted.run_id).first<{ status: string }>();
     expect(run?.status).toBe('succeeded');
     const answer = await env.DB.prepare(`SELECT content_text FROM chat_messages WHERE run_id = ? AND author_kind = 'system'`).bind(accepted.run_id).first<{ content_text: string }>();
     expect(answer?.content_text).toContain('Route wake-up answer.');
+  });
+
+  it('acks async actor wakes fast, dedupes in-flight work, and completes in background', async () => {    // Production wake semantics: async dispatch returns 202 immediately and
+    // the actor owns continued execution via state.waitUntil, so the Worker
+    // waitUntil never holds a long model turn past its post-response window.
+    const accepted = await acceptWebMessage(env.DB, {
+      workspaceId: ws, chatId: chatAvi, userId: aviId, clientMessageId: `msg-prompt-async-${Date.now()}`, text: 'Async wake proof',
+    });
+    let releaseGate!: () => void;
+    const gate = new Promise<void>((resolve) => { releaseGate = resolve; });
+    let calls = 0;
+    const gated: TurnHandler = {
+      name: 'gated-async',
+      async runTurn() {
+        calls++;
+        if (calls === 1) await gate;
+        return { kind: 'completed', replyText: 'Async actor answer.' };
+      },
+    };
+    (env as unknown as Record<string, unknown>).DISPATCH_TEST_HANDLER = gated;
+    try {
+      const stub = env.WORKSPACE_ACTOR.get(env.WORKSPACE_ACTOR.idFromName(ws));
+      const wake = () => stub.fetch(new Request('https://actor/dispatch', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'dispatch', workspace_id: ws, budget: 5 }),
+      }));
+      const first = await wake();
+      expect(first.status).toBe(202);
+      expect(await first.json()).toMatchObject({ status: 'accepted', deduped: false });
+      const second = await wake();
+      expect(second.status).toBe(202);
+      expect(await second.json()).toMatchObject({ status: 'accepted', deduped: true });
+      releaseGate();
+      const started = Date.now();
+      let status: string | undefined;
+      while (Date.now() - started < 5000) {
+        const row = await env.DB.prepare(`SELECT status FROM agent_runs WHERE id = ?`).bind(accepted.run_id).first<{ status: string }>();
+        status = row?.status;
+        if (status === 'succeeded') break;
+        await new Promise((resolve) => setTimeout(resolve, 25));
+      }
+      expect(status).toBe('succeeded');
+    } finally {
+      delete (env as unknown as Record<string, unknown>).DISPATCH_TEST_HANDLER;
+    }
+  });
+
+  it('corrects a rejected tool call in-run without replaying the committed write', async () => {
+    // Round 1 applies one memory write and rejects a second call for a
+    // shape error; round 2 carries the corrected call; round 3 answers.
+    // The run completes and the first write exists exactly once.
+    const accepted = await acceptWebMessage(env.DB, {
+      workspaceId: ws, chatId: chatAvi, userId: aviId, clientMessageId: 'msg-correct-1', text: 'Remember two facts',
+    });
+    const fakeAdapter = new FakeProviderAdapter({
+      provider: 'gemini',
+      scripts: [
+        {
+          kind: 'tool_calls',
+          calls: [
+            { callId: 'fix_c1', name: 'remember_context', args: { scope: 'workspace', category: 'other_context', content: 'First durable fact.' } },
+            { callId: 'fix_c2', name: 'remember_context', args: { scope: 'workspace', subject_id: 'oops', category: 'other_context', content: 'Bad shape.' } },
+          ],
+        },
+        {
+          kind: 'tool_calls',
+          calls: [
+            { callId: 'fix_c3', name: 'remember_context', args: { scope: 'workspace', category: 'other_context', content: 'Corrected fact.' } },
+          ],
+        },
+        { kind: 'text', text: 'Both facts saved.' },
+      ],
+    });
+    const handler = new AgentHandler({ providerAdapter: fakeAdapter, limits: defaultTestLimits, maxRoundsPerSlice: 5 });
+    for (let i = 0; i < 4; i++) {
+      const result = await dispatchWorkspace(env.DB, ws, { budget: 3, handler });
+      if (result.processed === 0) break;
+    }
+    const status = (await env.DB.prepare(`SELECT status FROM agent_runs WHERE id = ?`).bind(accepted.run_id).first<{ status: string }>())?.status;
+    expect(status).toBe('succeeded');
+
+    const first = await env.DB.prepare(`SELECT COUNT(*) AS n FROM memory_entries WHERE workspace_id = ? AND content = 'First durable fact.'`).bind(ws).first<{ n: number }>();
+    expect(Number(first?.n)).toBe(1);
+    const corrected = await env.DB.prepare(`SELECT COUNT(*) AS n FROM memory_entries WHERE workspace_id = ? AND content = 'Corrected fact.'`).bind(ws).first<{ n: number }>();
+    expect(Number(corrected?.n)).toBe(1);
+
+    // The shape rejection is recorded as typed feedback, not a run failure.
+    const rejection = await env.DB.prepare(
+      `SELECT result_json FROM run_steps WHERE run_id = ? AND result_json LIKE '%invalid_subject%'`,
+    ).bind(accepted.run_id).first<{ result_json: string }>();
+    expect(rejection?.result_json).toContain('invalid_subject');
+  });
+
+  it('streams transient preview frames live with one durable chunk per round', async () => {
+    // Multi-delta round: live frames stream with no per-frame D1 write, and
+    // the durable remainder persists exactly once on close.
+    const accepted = await acceptWebMessage(env.DB, {
+      workspaceId: ws, chatId: chatAvi, userId: aviId, clientMessageId: `msg-prompt-preview-${Date.now()}`, text: 'Stream preview proof',
+    });
+    const frames: Array<{ text: string; seq: number; round: number }> = [];
+    const unsubscribe = liveChatBus.subscribe(ws, chatAvi, (event) => {
+      const data = event.data as { type?: string; payload?: { text?: unknown; round_index?: unknown; seq?: unknown } };
+      if (data.type === 'text_preview' && data.payload && typeof data.payload.text === 'string') {
+        frames.push({
+          text: data.payload.text,
+          seq: Number(data.payload.seq),
+          round: Number(data.payload.round_index),
+        });
+      }
+    });
+    try {
+      const fakeAdapter = new FakeProviderAdapter({
+        provider: 'gemini',
+        scripts: [{ kind: 'text_chunks', chunks: ['Hello ', 'world.'] }],
+      });
+      const handler = new AgentHandler({ providerAdapter: fakeAdapter, limits: defaultTestLimits });
+      await dispatchWorkspace(env.DB, ws, { budget: 3, handler });
+      expect(frames.length).toBeGreaterThanOrEqual(1);
+      expect(frames[frames.length - 1]!.text).toBe('Hello world.');
+      expect(frames.every((frame, index) => index === 0 || frame.seq > frames[index - 1]!.seq)).toBe(true);
+    } finally {
+      unsubscribe();
+    }
+    const chunks = await activityRows(accepted.run_id, 'text_chunk');
+    expect(chunks.map(row => String(row.payload['text'] ?? '')).join('')).toBe('Hello world.');
+  });
+
+  it('republishing the same preview key writes and broadcasts exactly once', async () => {
+    // The single-batch publication is idempotent: a retried flush inserts no
+    // second row, burns no cursor, and emits no second live event.
+    const accepted = await acceptWebMessage(env.DB, {
+      workspaceId: ws, chatId: chatAvi, userId: aviId, clientMessageId: `msg-prompt-idem-${Date.now()}`, text: 'Idempotency proof',
+    });
+    const ctx = { db: env.DB, workspaceId: ws, runId: accepted.run_id, chatId: chatAvi } as TurnContext;
+    const events: unknown[] = [];
+    const unsubscribe = liveChatBus.subscribe(ws, chatAvi, (event) => void events.push(event));
+    try {
+      await publishAgentActivity(ctx, 'r0_text0', 'text_chunk', { text: 'once', round_index: 0 });
+      const cursorAfterFirst = await env.DB.prepare(`SELECT activity_cursor FROM chats WHERE id = ?`).bind(chatAvi).first<{ activity_cursor: number }>();
+      await publishAgentActivity(ctx, 'r0_text0', 'text_chunk', { text: 'once', round_index: 0 });
+      const rows = await env.DB.prepare(`SELECT COUNT(*) AS n FROM run_activity WHERE id = ?`).bind(`act_${accepted.run_id}_r0_text0`).all();
+      expect((rows.results ?? [])).toHaveLength(1);
+      const cursorAfterSecond = await env.DB.prepare(`SELECT activity_cursor FROM chats WHERE id = ?`).bind(chatAvi).first<{ activity_cursor: number }>();
+      expect(cursorAfterSecond?.activity_cursor).toBe(cursorAfterFirst?.activity_cursor);
+      expect(events).toHaveLength(1);
+    } finally {
+      unsubscribe();
+    }
   });
 });

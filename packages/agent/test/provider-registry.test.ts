@@ -82,11 +82,14 @@ describe('operator model registry', () => {
     expect(deepseek.dataRetention).toContain('0 days');
     expect(deepseek.dataRetention).toContain('2026-10-31');
 
-    // No thinking descriptors: provider default applies until verified.
+    // DeepSeek thinking is evidenced low/high/max: provider default no longer applies.
     expect(deepseek.capabilities.audio).toBe('unsupported');
     expect(deepseek.capabilities.thoughtSummary).toBe('unverified');
-    expect(deepseek.capabilities.thinking?.state).toBe('unverified');
-    expect(deepseek.capabilities.thinking?.choices).toEqual([]);
+    expect(deepseek.capabilities.thinking?.state).toBe('supported');
+    expect(deepseek.capabilities.thinking?.choices.map((choice) => choice.id)).toEqual(['low', 'high', 'max']);
+    for (const choice of deepseek.capabilities.thinking?.choices ?? []) {
+      expect(choice.request.kind).toBe('go_chat_effort');
+    }
 
     // Both trialed removals stay unknown, not resolvable.
     expect(byKey.has('glm-5.3-flash')).toBe(false);
@@ -94,6 +97,38 @@ describe('operator model registry', () => {
     expect(() =>
       resolveCommandKey(PRODUCTION_REGISTRY, 'gpt-6-luna', { credentialStatus: 'available' }),
     ).toThrowError(/Unknown model/);
+  });
+
+  it('exposes live-verified Muse reasoning efforts and qualifies MiMo controls', () => {
+    const byKey = new Map(PRODUCTION_REGISTRY.entries.map((entry) => [entry.commandKey, entry]));
+    for (const key of ['muse-12', 'muse-13'] as const) {
+      const muse = byKey.get(key)!;
+      expect(muse.capabilities.thinking?.state).toBe('supported');
+      expect(muse.capabilities.thinking?.choices.map((choice) => choice.id)).toEqual([
+        'minimal',
+        'low',
+        'medium',
+        'high',
+        'xhigh',
+      ]);
+      for (const choice of muse.capabilities.thinking?.choices ?? []) {
+        expect(choice.request).toMatchObject({ kind: 'go_responses_effort' });
+      }
+      const minimal = (muse.capabilities.thinking?.choices ?? []).find((choice) => choice.id === 'minimal');
+      expect(minimal?.verifiedAt).toBe('2026-10-06');
+    }
+    // MiMo gateway validates the enum without proven budget effect: hidden until resolved.
+    // Only observed-accepted values are listed, and 2.6 has none at all.
+    const mimo25 = byKey.get('mimo-25')!;
+    expect(mimo25.capabilities.thinking?.state).toBe('unverified');
+    expect(mimo25.capabilities.thinking?.choices.map((choice) => choice.id)).toEqual(['low', 'xhigh']);
+    const mimo26 = byKey.get('mimo-26-pro')!;
+    expect(mimo26.capabilities.thinking?.state).toBe('unverified');
+    expect(mimo26.capabilities.thinking?.choices).toEqual([]);
+    for (const key of ['mimo-25', 'mimo-26-pro'] as const) {
+      const mimo = byKey.get(key)!;
+      expect(mimo.capabilities.thinking?.notes).toContain('unverified');
+    }
   });
 
   it('rejects endpoint families outside the fixed approved origins', () => {

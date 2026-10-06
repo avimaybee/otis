@@ -97,6 +97,35 @@ describe('Worker Conversations & Inbound Integration (workerd runtime)', () => {
   });
 
   let createdChatId: string;
+  // Deterministic acceptance helper: SELF.fetch runs the production route
+  // with the real env, whose actor wake would otherwise race these assertions
+  // by processing the run in background. Wake-path behavior is proven by the
+  // dedicated dispatch/actor suites; here the cron backstop covers the hint.
+  const postChatMessage = async (chatId: string, body: unknown, cookie: string) => {
+    const realEnv = env as unknown as Record<string, unknown>;
+    const savedActor = realEnv['WORKSPACE_ACTOR'];
+    const savedQueue = realEnv['DISPATCH_QUEUE'];
+    delete realEnv['WORKSPACE_ACTOR'];
+    delete realEnv['DISPATCH_QUEUE'];
+    try {
+      return await SELF.fetch(
+        `http://localhost/api/workspaces/${workspaceId}/chats/${chatId}/messages`,
+        {
+          method: 'POST',
+          headers: {
+            cookie,
+            origin: 'http://localhost',
+            [AUTH_BOUNDS.CSRF_HEADER]: '1',
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(body),
+        },
+      );
+    } finally {
+      realEnv['WORKSPACE_ACTOR'] = savedActor;
+      realEnv['DISPATCH_QUEUE'] = savedQueue;
+    }
+  };
 
   it('allows authenticated member Avi to create a chat', async () => {
     const res = await SELF.fetch(
@@ -170,22 +199,10 @@ describe('Worker Conversations & Inbound Integration (workerd runtime)', () => {
   let recordedRunId: string;
 
   it('durable message acceptance: Avi sends message, receives HTTP 202 and commits atomic records', async () => {
-    const res = await SELF.fetch(
-      `http://localhost/api/workspaces/${workspaceId}/chats/${createdChatId}/messages`,
-      {
-        method: 'POST',
-        headers: {
-          cookie: aviCookie,
-          origin: 'http://localhost',
-          [AUTH_BOUNDS.CSRF_HEADER]: '1',
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          client_message_id: clientMsgId1,
-          text: 'Send Bistro the offer by Friday',
-        }),
-      },
-    );
+    const res = await postChatMessage(createdChatId, {
+      client_message_id: clientMsgId1,
+      text: 'Send Bistro the offer by Friday',
+    }, aviCookie);
 
     expect(res.status).toBe(202);
     const data = (await res.json()) as AcceptMessageResponse;
@@ -247,22 +264,10 @@ describe('Worker Conversations & Inbound Integration (workerd runtime)', () => {
   });
 
   it('idempotent retry: resending exact same UUID and payload returns original 202 IDs without duplicate rows', async () => {
-    const res = await SELF.fetch(
-      `http://localhost/api/workspaces/${workspaceId}/chats/${createdChatId}/messages`,
-      {
-        method: 'POST',
-        headers: {
-          cookie: aviCookie,
-          origin: 'http://localhost',
-          [AUTH_BOUNDS.CSRF_HEADER]: '1',
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          client_message_id: clientMsgId1,
-          text: 'Send Bistro the offer by Friday',
-        }),
-      },
-    );
+    const res = await postChatMessage(createdChatId, {
+      client_message_id: clientMsgId1,
+      text: 'Send Bistro the offer by Friday',
+    }, aviCookie);
 
     expect(res.status).toBe(202);
     const data = (await res.json()) as AcceptMessageResponse;
@@ -286,22 +291,10 @@ describe('Worker Conversations & Inbound Integration (workerd runtime)', () => {
   });
 
   it('conflicting reuse: resending same UUID with different payload returns 409 Conflict', async () => {
-    const res = await SELF.fetch(
-      `http://localhost/api/workspaces/${workspaceId}/chats/${createdChatId}/messages`,
-      {
-        method: 'POST',
-        headers: {
-          cookie: aviCookie,
-          origin: 'http://localhost',
-          [AUTH_BOUNDS.CSRF_HEADER]: '1',
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          client_message_id: clientMsgId1,
-          text: 'Completely different text payload',
-        }),
-      },
-    );
+    const res = await postChatMessage(createdChatId, {
+      client_message_id: clientMsgId1,
+      text: 'Completely different text payload',
+    }, aviCookie);
 
     expect(res.status).toBe(409);
     const errorJson = (await res.json()) as HttpErrorResponse;
@@ -310,22 +303,10 @@ describe('Worker Conversations & Inbound Integration (workerd runtime)', () => {
 
   it('monotonic sequences: second message increments workspace acceptance sequence and chat activity cursor', async () => {
     const clientMsgId2 = 'client-msg-uuid-002';
-    const res = await SELF.fetch(
-      `http://localhost/api/workspaces/${workspaceId}/chats/${createdChatId}/messages`,
-      {
-        method: 'POST',
-        headers: {
-          cookie: aviCookie,
-          origin: 'http://localhost',
-          [AUTH_BOUNDS.CSRF_HEADER]: '1',
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          client_message_id: clientMsgId2,
-          text: 'Second follow-up message',
-        }),
-      },
-    );
+    const res = await postChatMessage(createdChatId, {
+      client_message_id: clientMsgId2,
+      text: 'Second follow-up message',
+    }, aviCookie);
 
     expect(res.status).toBe(202);
     const data = (await res.json()) as AcceptMessageResponse;

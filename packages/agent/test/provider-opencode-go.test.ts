@@ -992,7 +992,7 @@ describe('OpenCode Go thinking controls', () => {
     expect(body['reasoning']).toBeUndefined();
   });
 
-  it('responses adapter rejects non-default thinking requests before fetch with 0 requests', async () => {
+  it('responses adapter rejects a chat-family thinking kind before fetch with 0 requests', async () => {
     const fetchFn = mockFetch(() => chunkedResponse([RESPONSES_STREAM]));
     const input = baseInput(goResponsesModel(), {
       thinking: { kind: 'go_chat_effort', effort: 'high' },
@@ -1003,5 +1003,60 @@ describe('OpenCode Go thinking controls', () => {
       }
     }).rejects.toMatchObject({ detail: { code: 'invalid_request' } });
     expect(fetchFn.requests).toHaveLength(0);
+  });
+
+  it('responses adapter sends nested reasoning effort for go_responses_effort', async () => {
+    const fetchFn = mockFetch(() => chunkedResponse([RESPONSES_STREAM]));
+    const input = baseInput(goResponsesModel(), {
+      thinking: { kind: 'go_responses_effort', effort: 'minimal' },
+    });
+    for await (const event of responsesAdapter(fetchFn).streamTurn(input)) {
+      void event;
+    }
+    expect(fetchFn.requests).toHaveLength(1);
+    const body = fetchFn.requests[0]!.body as Record<string, unknown>;
+    expect(body['reasoning']).toEqual({ effort: 'minimal' });
+    expect(body['reasoning_effort']).toBeUndefined();
+  });
+
+  it('responses adapter rejects an unknown effort string before fetch with 0 requests', async () => {
+    const fetchFn = mockFetch(() => chunkedResponse([RESPONSES_STREAM]));
+    const input = baseInput(goResponsesModel(), {
+      thinking: { kind: 'go_responses_effort', effort: 'ultra' },
+    });
+    await expect(async () => {
+      for await (const event of responsesAdapter(fetchFn).streamTurn(input)) {
+        void event;
+      }
+    }).rejects.toMatchObject({ detail: { code: 'invalid_request' } });
+    expect(fetchFn.requests).toHaveLength(0);
+  });
+
+  it('chat adapter accepts the full gateway effort enum, including edge values', async () => {
+    for (const effort of ['minimal', 'max', 'none'] as const) {
+      const fetchFn = mockFetch(() => chunkedResponse([CHAT_STREAM]));
+      const input = baseInput(goChatModel(), {
+        thinking: { kind: 'go_chat_effort', effort },
+      });
+      for await (const event of chatAdapter(fetchFn).streamTurn(input)) {
+        void event;
+      }
+      expect(fetchFn.requests).toHaveLength(1);
+      expect((fetchFn.requests[0]!.body as Record<string, unknown>)['reasoning_effort']).toBe(effort);
+    }
+  });
+
+  it('responses adapter accepts gateway edge values max and none', async () => {
+    for (const effort of ['max', 'none'] as const) {
+      const fetchFn = mockFetch(() => chunkedResponse([RESPONSES_STREAM]));
+      const input = baseInput(goResponsesModel(), {
+        thinking: { kind: 'go_responses_effort', effort },
+      });
+      for await (const event of responsesAdapter(fetchFn).streamTurn(input)) {
+        void event;
+      }
+      expect(fetchFn.requests).toHaveLength(1);
+      expect((fetchFn.requests[0]!.body as Record<string, unknown>)['reasoning']).toEqual({ effort });
+    }
   });
 });

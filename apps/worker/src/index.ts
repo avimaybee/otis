@@ -304,7 +304,27 @@ export async function createWorkerAgentHandler(env: Env): Promise<TurnHandler> {
     registry: PRODUCTION_REGISTRY,
     limits,
     storage: env.STORAGE,
+    telegramBotToken: env.TELEGRAM_BOT_TOKEN,
   });
+}
+
+/**
+ * Runs async items with bounded concurrency. Workspaces are independent, so
+ * recovery/queue fans out across them; work inside one workspace stays
+ * serial via its D1 lease and the actor's single execution slot.
+ */
+async function mapWithConcurrency<T>(items: T[], limit: number, fn: (item: T) => Promise<void>): Promise<void> {
+  if (items.length === 0) return;
+  const workers = Math.min(Math.max(limit, 1), items.length);
+  let next = 0;
+  const runners = Array.from({ length: workers }, async () => {
+    while (true) {
+      const index = next++;
+      if (index >= items.length) return;
+      await fn(items[index]!);
+    }
+  });
+  await Promise.all(runners);
 }
 
 /**
@@ -312,14 +332,73 @@ export async function createWorkerAgentHandler(env: Env): Promise<TurnHandler> {
  * One instance per workspace (constructed with idFromName(workspaceId)).
  * Serializes dispatch/recovery turns for its workspace; D1 leases remain the
  * authority so a restarted or duplicated instance cannot double-commit.
+ *
+ * Execution and live SSE subscribers share this isolate, so provider preview
+ * streams directly to connected browsers. Async wakes ack fast and continue
+ * via state.waitUntil (actor-owned liveness, independent of the Worker's
+ * 30-second post-response window); sync wakes await full completion for
+ * tests and for Queue/cron forwarding that needs the result.
  */
 export class WorkspaceActor {
   public state: DurableObjectState;
   public env: Env;
+  private inflight: Promise<void> | null = null;
 
   constructor(state: DurableObjectState, env: Env) {
     this.state = state;
     this.env = env;
+  }
+
+  private async runDispatchAction(
+    workspaceId: string,
+    budget: number,
+  ): Promise<{ processed: number; results: DispatchResult[] }> {
+    const handler = await createWorkerAgentHandler(this.env);
+    let dispatchResult = await dispatchWorkspace(this.env.DB, workspaceId, { budget, handler });
+    // A voice run parked on its durable transcription receipt: advance due
+    // work once, re-dispatch the moment the receipt commits, and wake again
+    // only at the job's own durable retry instant, never a poll.
+    if (dispatchResult.results.some((result) => result.detail === 'transcript_pending')) {
+      const pass = await advanceVoiceTranscriptions(this.env, workspaceId);
+      if (pass && pass.processed > 0) {
+        if (pass.ready.length > 0) {
+          dispatchResult = await dispatchWorkspace(this.env.DB, workspaceId, { budget, handler });
+        }
+        await scheduleNextTranscriptionWake(this.env, workspaceId);
+      }
+    }
+    await deliverAndScheduleContinuation(this.env, workspaceId);
+    await scheduleDispatchContinuation(this.env, workspaceId, dispatchResult.results, budget);
+    return dispatchResult;
+  }
+
+  private async runRecoverAction(
+    workspaceId: string,
+    budget: number,
+  ): Promise<{ processed: number; results: DispatchResult[]; recovery: unknown }> {
+    const recovery = await recoverWorkspace(this.env.DB, workspaceId);
+    const dispatchResult = await this.runDispatchAction(workspaceId, budget);
+    return { ...dispatchResult, recovery };
+  }
+
+  private startBackground(work: () => Promise<void>): void {
+    const execution = (async () => {
+      try {
+        await work();
+      } catch (err) {
+        console.error('workspace actor background execution failed:', err);
+      }
+    })();
+    this.inflight = execution;
+    void execution.finally(() => {
+      if (this.inflight === execution) this.inflight = null;
+    });
+    try {
+      this.state.waitUntil(execution.catch(() => undefined));
+    } catch {
+      // waitUntil unavailable (e.g. unit harness): tracked still runs and
+      // clears inflight via its finally.
+    }
   }
 
   async fetch(request: Request): Promise<Response> {
@@ -354,9 +433,9 @@ export class WorkspaceActor {
         headers: { 'Content-Type': 'application/json' },
       });
     }
-    let body: { action?: string; workspace_id?: string; budget?: number };
+    let body: { action?: string; workspace_id?: string; budget?: number; sync?: boolean };
     try {
-      body = (await request.json()) as { action?: string; workspace_id?: string; budget?: number };
+      body = (await request.json()) as { action?: string; workspace_id?: string; budget?: number; sync?: boolean };
     } catch {
       return jsonError(400, 'invalid_json', 'Request body must be valid JSON.', 'actor');
     }
@@ -367,20 +446,29 @@ export class WorkspaceActor {
       return jsonError(422, 'invalid_payload', 'workspace_id is required.', 'actor');
     }
     const budget = Math.min(body.budget ?? 5, 25);
-    const handler = await createWorkerAgentHandler(this.env);
+    const sync = body.sync === true;
     try {
       if (body.action === 'dispatch') {
-        const result = await dispatchWorkspace(this.env.DB, workspaceId, { budget, handler });
-        await deliverAndScheduleContinuation(this.env, workspaceId);
-        await scheduleDispatchContinuation(this.env, workspaceId, result.results, budget);
-        return jsonSuccess({ status: 'ok', ...result }, 200);
+        if (sync) {
+          const result = await this.runDispatchAction(workspaceId, budget);
+          return jsonSuccess({ status: 'ok', ...result }, 200);
+        }
+        if (this.inflight) {
+          return jsonSuccess({ status: 'accepted', deduped: true }, 202);
+        }
+        this.startBackground(() => this.runDispatchAction(workspaceId, budget).then(() => undefined));
+        return jsonSuccess({ status: 'accepted', deduped: false }, 202);
       }
       if (body.action === 'recover') {
-        const recovery = await recoverWorkspace(this.env.DB, workspaceId);
-        const result = await dispatchWorkspace(this.env.DB, workspaceId, { budget, handler });
-        await deliverAndScheduleContinuation(this.env, workspaceId);
-        await scheduleDispatchContinuation(this.env, workspaceId, result.results, budget);
-        return jsonSuccess({ status: 'ok', recovery, ...result }, 200);
+        if (sync) {
+          const result = await this.runRecoverAction(workspaceId, budget);
+          return jsonSuccess({ status: 'ok', ...result }, 200);
+        }
+        if (this.inflight) {
+          return jsonSuccess({ status: 'accepted', deduped: true }, 202);
+        }
+        this.startBackground(() => this.runRecoverAction(workspaceId, budget).then(() => undefined));
+        return jsonSuccess({ status: 'accepted', deduped: false }, 202);
       }
     } catch (err) {
       return jsonError(500, 'actor_error', err instanceof Error ? err.message : String(err), 'actor');
@@ -854,16 +942,37 @@ export default {
       }
     }
 
-    const handler = await createWorkerAgentHandler(env);
     const workspaces = await listWorkspacesNeedingRecovery(env.DB);
     workerDebug('cron', 'recovery scan complete', { workspaces: workspaces.length });
-    for (const workspaceId of workspaces) {
-      try {
-        await recoverWorkspace(env.DB, workspaceId);
-        await dispatchWorkspace(env.DB, workspaceId, { budget: 5, handler });
-        await deliverAndScheduleContinuation(env, workspaceId);
-      } catch (err) {
-        console.error(`scheduled recovery failed for workspace '${workspaceId}':`, err);
+    if (env.WORKSPACE_ACTOR) {
+      // Recovery executes inside each workspace's actor, alongside its live
+      // SSE subscribers — never as a full model turn in this cron isolate.
+      await mapWithConcurrency(workspaces, 3, async (workspaceId) => {
+        try {
+          const stub = env.WORKSPACE_ACTOR!.get(env.WORKSPACE_ACTOR!.idFromName(workspaceId));
+          const res = await stub.fetch(new Request('http://actor/recover', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'recover', workspace_id: workspaceId, budget: 5, sync: true }),
+          }));
+          try { await res.text(); } catch { /* consume body; status logged below */ }
+          if (!res.ok) {
+            console.error(`scheduled recovery failed for workspace '${workspaceId}': actor HTTP ${res.status}`);
+          }
+        } catch (err) {
+          console.error(`scheduled recovery failed for workspace '${workspaceId}':`, err);
+        }
+      });
+    } else {
+      const handler = await createWorkerAgentHandler(env);
+      for (const workspaceId of workspaces) {
+        try {
+          await recoverWorkspace(env.DB, workspaceId);
+          await dispatchWorkspace(env.DB, workspaceId, { budget: 5, handler });
+          await deliverAndScheduleContinuation(env, workspaceId);
+        } catch (err) {
+          console.error(`scheduled recovery failed for workspace '${workspaceId}':`, err);
+        }
       }
     }
 
@@ -923,23 +1032,34 @@ export default {
   },
 
   /**
-   * Queue wake-ups are hints, not business order: each message names one
-   * workspace to dispatch. A wake-up for a workspace with a voice run parked
-   * on its transcription receipt advances due work once, re-dispatches when
-   * the receipt commits, and schedules a single follow-up wake at the job's
-   * durable retry instant; an attempt already in flight stays with the cron
-   * backstop. Malformed messages are acknowledged with a log, never retried
+   * Queue wake-ups are hints, not business order. Model work always executes
+   * inside the workspace actor (same isolate as live SSE); this consumer only
+   * coalesces duplicate hints and forwards each workspace once with bounded
+   * concurrency. Lightweight Telegram/memory jobs run here directly. The no-
+   * actor fallback preserves the old direct path for harnesses without a DO
+   * binding. Malformed messages are acknowledged with a log, never retried
    * blindly.
    */
   async queue(batch: MessageBatch<{ workspace_id?: unknown; kind?: unknown; job_id?: unknown }>, env: Env): Promise<void> {
     workerDebug('queue', 'batch received', { messages: batch.messages.length });
-    const handler = await createWorkerAgentHandler(env);
+    const telegramScopes: Array<string | undefined> = [];
+    const telegramSeen = new Set<string>();
+    const memoryJobs: Array<{ workspaceId: string; jobId?: string }> = [];
+    const memorySeen = new Set<string>();
+    const workspaceQueue: string[] = [];
+    const workspaceSeen = new Set<string>();
+
     for (const message of batch.messages) {
+      const kind = message.body?.kind;
       const workspaceId = message.body?.workspace_id;
 
-      if (message.body?.kind === 'telegram_delivery') {
+      if (kind === 'telegram_delivery') {
         const scopeId = typeof workspaceId === 'string' && workspaceId ? workspaceId : undefined;
-        await deliverAndScheduleContinuation(env, scopeId);
+        const key = scopeId ?? '';
+        if (!telegramSeen.has(key)) {
+          telegramSeen.add(key);
+          telegramScopes.push(scopeId);
+        }
         continue;
       }
 
@@ -948,26 +1068,67 @@ export default {
         continue;
       }
 
-      if (message.body?.kind === 'memory_refresh') {
-        try {
-          await processMemoryRefreshJobs(env.DB, {
-            workspaceId,
-            jobId: typeof message.body.job_id === 'string' ? message.body.job_id : undefined,
-          });
-        } catch (err) {
-          console.error(`queue memory refresh failed for workspace '${workspaceId}':`, err);
+      if (kind === 'memory_refresh') {
+        const jobId = typeof message.body?.job_id === 'string' ? message.body.job_id : undefined;
+        const key = `${workspaceId}|${jobId ?? ''}`;
+        if (!memorySeen.has(key)) {
+          memorySeen.add(key);
+          memoryJobs.push(jobId ? { workspaceId, jobId } : { workspaceId });
         }
         continue;
       }
 
+      if (!workspaceSeen.has(workspaceId)) {
+        workspaceSeen.add(workspaceId);
+        workspaceQueue.push(workspaceId);
+      }
+    }
+
+    for (const scopeId of telegramScopes) {
+      await deliverAndScheduleContinuation(env, scopeId);
+    }
+
+    for (const job of memoryJobs) {
+      try {
+        await processMemoryRefreshJobs(env.DB, job.jobId
+          ? { workspaceId: job.workspaceId, jobId: job.jobId }
+          : { workspaceId: job.workspaceId });
+      } catch (err) {
+        console.error(`queue memory refresh failed for workspace '${job.workspaceId}':`, err);
+      }
+    }
+
+    if (workspaceQueue.length === 0) return;
+
+    if (env.WORKSPACE_ACTOR) {
+      await mapWithConcurrency(workspaceQueue, 3, async (workspaceId) => {
+        try {
+          const stub = env.WORKSPACE_ACTOR!.get(env.WORKSPACE_ACTOR!.idFromName(workspaceId));
+          const res = await stub.fetch(new Request('http://actor/dispatch', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'dispatch', workspace_id: workspaceId, budget: 3, sync: true }),
+          }));
+          try { await res.text(); } catch { /* consume body; status logged below */ }
+          if (!res.ok) {
+            console.error(`queue dispatch failed for workspace '${workspaceId}': actor HTTP ${res.status}`);
+          }
+        } catch (err) {
+          console.error(`queue dispatch failed for workspace '${workspaceId}':`, err);
+        }
+      });
+      return;
+    }
+
+    const handler = await createWorkerAgentHandler(env);
+    for (const workspaceId of workspaceQueue) {
       try {
         let dispatchResult = await dispatchWorkspace(env.DB, workspaceId, { budget: 3, handler });
         // A voice run parked on its durable transcription receipt: advance due
         // work once, re-dispatch the moment the receipt commits, and wake
         // again only at the job's own durable retry instant, never a poll.
         if (dispatchResult.results.some((result) => result.detail === 'transcript_pending')) {
-          const jobId = typeof message.body?.job_id === 'string' ? message.body.job_id : undefined;
-          const pass = await advanceVoiceTranscriptions(env, workspaceId, jobId);
+          const pass = await advanceVoiceTranscriptions(env, workspaceId);
           if (pass && pass.processed > 0) {
             if (pass.ready.length > 0) {
               dispatchResult = await dispatchWorkspace(env.DB, workspaceId, { budget: 3, handler });

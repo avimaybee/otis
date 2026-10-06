@@ -86,6 +86,47 @@ export function applyLatestMessages(snapshot: ChatSnapshot, messages: ChatMessag
   return { ...snapshot, messages: mergeMessages(snapshot.messages, messages) };
 }
 
+/**
+ * Files a committed reply locally from its answer_saved event, without a
+ * messages refetch. Returns null when the payload lacks committed message
+ * data (older shapes, truncated text) so the caller falls back to refetch.
+ */
+export function applyAnswerSaved(snapshot: ChatSnapshot, activity: PublicActivity): ChatSnapshot | null {
+  const payload = activity.payload as {
+    message_id?: unknown; sequence?: unknown; text?: unknown; text_truncated?: unknown; channel?: unknown;
+  } | null;
+  if (
+    !payload
+    || typeof payload.message_id !== 'string'
+    || typeof payload.sequence !== 'number'
+    || !Number.isInteger(payload.sequence)
+    || typeof payload.text !== 'string'
+    || payload.text_truncated === true
+  ) {
+    return null;
+  }
+  const channel = payload.channel === 'web' || payload.channel === 'telegram' || payload.channel === 'system'
+    ? payload.channel
+    : 'web';
+  const message: ChatMessage = {
+    id: payload.message_id,
+    workspace_id: activity.workspace_id,
+    chat_id: activity.chat_id,
+    author_user_id: null,
+    author_kind: 'system',
+    channel,
+    inbound_message_id: null,
+    client_message_id: null,
+    content_text: payload.text,
+    media_id: null,
+    run_id: activity.run_id,
+    sequence: payload.sequence,
+    created_at: activity.created_at,
+    updated_at: activity.created_at,
+  };
+  return { ...snapshot, messages: mergeMessages(snapshot.messages, [message]) };
+}
+
 export function applyOlderMessages(
   snapshot: ChatSnapshot,
   messages: ChatMessage[],

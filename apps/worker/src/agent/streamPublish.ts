@@ -2,21 +2,26 @@
  * Bounded stream publication for one provider round (008B), with a per-run
  * thinking budget shared across rounds.
  *
- * Text and thinking deltas buffer here and flush as persisted activity rows:
- * size-triggered for throughput, timer-triggered for bounded latency so a
- * short answer never waits on a large chunk threshold and thinking stays
- * visible while the provider pauses.
+ * Text deltas take the transient path: the first delta broadcasts immediately
+ * and later buffers flush as live preview frames on a short cadence, with no
+ * database write per frame. Each frame carries the round's full text so far,
+ * so a dropped frame never corrupts the view. The durable remainder persists
+ * exactly once on close as ordinary text_chunk rows (reconnect and terminal
+ * partial replies read those, never the transient frames).
  *
- * One serial chain owns every flush: size triggers, timer ticks and the final
- * drain enqueue ordered work, so a terminal record can never overtake a delta
- * and a rejected publish cannot escape as an unhandled rejection. Buffers are
- * consumed only after a successful publish, so a failed flush retries its
- * remainder on the next tick or close. close() drains all authorized remainder
- * before any terminal metadata record.
+ * Thinking deltas still persist per batch: they are semantic activity, not
+ * preview. One serial chain owns every persisted flush: timer ticks and the
+ * final drain enqueue ordered work, so a terminal record can never overtake a
+ * delta and a rejected publish cannot escape as an unhandled rejection.
+ * Persisted buffers are consumed only after a successful publish, so a failed
+ * flush retries its remainder on the next tick or close. close() drains all
+ * authorized remainder before any terminal metadata record.
  *
  * Budgets (named, under existing activity/storage limits):
  * - text records stay 2048 chars, at most 32 per round (unchanged shape/ids);
- * - a timer flush publishes a partial text buffer from 64 chars every 300 ms;
+ * - live preview frames emit immediately for the first delta, then from any
+ *   nonzero buffer every 100 ms (provisional cadence pending device/frame-gap
+ *   measurement; thinking still coalesces on its own 400 ms cadence);
  * - thinking batches flush from 1000 chars (32-char floor) every 400 ms;
  * - at most 24,000 thinking chars per RUN (shared budget object across the
  *   round publishers of one turn); overflow input is dropped and the cap emits
@@ -27,8 +32,7 @@
 import type { PublicActivityType } from '@otis/contracts';
 
 export const TEXT_CHUNK_CHARS = 2048;
-export const TEXT_MIN_FLUSH_CHARS = 64;
-export const TEXT_FLUSH_MS = 400;
+export const TEXT_PREVIEW_MS = 100;
 export const TEXT_MAX_CHUNKS = 32;
 export const THINKING_BATCH_CHARS = 1000;
 export const THINKING_MIN_FLUSH_CHARS = 32;
@@ -67,10 +71,17 @@ interface ThinkingBlockState {
   lastState: 'streaming' | 'complete' | 'interrupted' | 'truncated';
 }
 
+/** Live preview frame: the round's full text so far, never persisted. */
+export type TextPreviewFn = (text: string, seq: number) => void;
+
 export class StreamPublisher {
   private textBuffer = '';
   private textBufferedAt: number | null = null;
   private textChunks = 0;
+  /** Live preview sequence within this round; frames overwrite by sequence. */
+  private textPreviewSeq = 0;
+  /** Buffer length already covered by a preview frame. */
+  private textPreviewCovered = 0;
   private readonly blocks = new Map<string, ThinkingBlockState>();
   private readonly budget: SharedThinkingBudget;
   private chain: Promise<void> = Promise.resolve();
@@ -82,15 +93,28 @@ export class StreamPublisher {
     private readonly provider: string,
     private readonly onFlushError: (err: unknown) => void = () => undefined,
     sharedBudget?: SharedThinkingBudget,
+    private readonly publishPreview?: TextPreviewFn,
   ) {
     this.budget = sharedBudget ?? createThinkingBudget();
   }
 
-  /** Serializes every flush; a rejection is logged and the chain continues. */
+  /** Serializes every persisted flush; a rejection is logged and the chain continues. */
   private enqueue(work: () => Promise<void>): void {
     this.chain = this.chain.then(work).catch((err: unknown) => {
       this.onFlushError(err);
     });
+  }
+
+  /** Broadcasts the round's full text so far as a live preview frame (no D1). */
+  private emitPreview(): void {
+    if (!this.publishPreview || !this.textBuffer) return;
+    this.textPreviewSeq += 1;
+    this.textPreviewCovered = this.textBuffer.length;
+    try {
+      this.publishPreview(this.textBuffer, this.textPreviewSeq);
+    } catch {
+      // Preview is best-effort; the durable drain on close is authoritative.
+    }
   }
 
   pushText(text: string): void {
@@ -98,7 +122,14 @@ export class StreamPublisher {
     if (this.textChunks >= TEXT_MAX_CHUNKS && !this.textBuffer) return;
     this.textBuffer += text.slice(0, TEXT_MAX_CHUNKS * TEXT_CHUNK_CHARS - this.textBuffer.length);
     if (this.textBufferedAt === null) this.textBufferedAt = Date.now();
-    if (this.textBuffer.length >= TEXT_CHUNK_CHARS) this.enqueue(() => this.flushTextWork());
+    if (this.publishPreview) {
+      // Transient mode (production): immediate first frame, cadence after;
+      // the durable remainder persists once on close.
+      if (this.textPreviewSeq === 0) this.emitPreview();
+    } else if (this.textBuffer.length >= TEXT_CHUNK_CHARS) {
+      // Legacy persisted mode (tests/harness without a live bus).
+      this.enqueue(() => this.flushTextWork());
+    }
   }
 
   pushThinking(input: ThinkingInput): void {
@@ -147,11 +178,16 @@ export class StreamPublisher {
 
   /**
    * Flushes whatever is due. The handler drives this on one interval; every
-   * flush joins the serial chain, so overlapping ticks cannot interleave.
+   * persisted flush joins the serial chain, so overlapping ticks cannot
+   * interleave. Preview frames emit directly (no D1, no chain).
    */
   tick(now = Date.now()): Promise<void> {
     if (this.closed) return this.chain;
-    if (this.textBuffer && this.textBufferedAt !== null && now - this.textBufferedAt >= TEXT_FLUSH_MS) {
+    if (this.publishPreview) {
+      if (this.textBuffer.length > this.textPreviewCovered && this.textBufferedAt !== null && now - this.textBufferedAt >= TEXT_PREVIEW_MS) {
+        this.emitPreview();
+      }
+    } else if (this.textBuffer && this.textBufferedAt !== null && now - this.textBufferedAt >= TEXT_PREVIEW_MS) {
       this.enqueue(() => this.flushTextWork());
     }
     for (const [blockId, block] of this.blocks) {
@@ -176,6 +212,9 @@ export class StreamPublisher {
   async close(outcome: 'complete' | 'interrupted'): Promise<boolean> {
     if (this.closed) return this.chain.then(() => this.drainOk);
     this.closed = true;
+    // Final live frame first, so the preview is complete even when the
+    // cadence timer had not fired; the durable drain below follows it.
+    if (this.textBuffer.length > this.textPreviewCovered) this.emitPreview();
     await this.chain;
     try {
       await this.drainWork(outcome);

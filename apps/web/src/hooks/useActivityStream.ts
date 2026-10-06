@@ -112,6 +112,66 @@ export function mergeActivity(
   return next.sort((left, right) => left.cursor - right.cursor);
 }
 
+/**
+ * Live transient preview text by run and round. Preview frames are never
+ * persisted and never enter the snapshot: each frame carries its round's full
+ * text so far, later sequences overwrite earlier ones, and durable coverage
+ * drops preview rounds as their persisted chunks arrive. Reconnects start
+ * empty and render durable state honestly.
+ */
+export type TransientPreview = Record<string, Record<number, { seq: number; text: string }>>;
+
+export function mergeTransientPreview(current: TransientPreview, activity: PublicActivity): TransientPreview {
+  const payload = activity.payload as { text?: unknown; round_index?: unknown; seq?: unknown } | null;
+  if (
+    !payload
+    || typeof payload.text !== 'string'
+    || typeof payload.round_index !== 'number'
+    || typeof payload.seq !== 'number'
+  ) {
+    return current;
+  }
+  const rounds = current[activity.run_id] ?? {};
+  const prev = rounds[payload.round_index];
+  if (prev && prev.seq >= payload.seq) return current;
+  return { ...current, [activity.run_id]: { ...rounds, [payload.round_index]: { seq: payload.seq, text: payload.text } } };
+}
+
+export function dropCoveredTransientPreview(
+  current: TransientPreview,
+  runId: string,
+  roundIndex: number,
+): TransientPreview {
+  const rounds = current[runId];
+  if (!rounds) return current;
+  const kept: Record<number, { seq: number; text: string }> = {};
+  for (const [round, frame] of Object.entries(rounds)) {
+    if (Number(round) > roundIndex) kept[Number(round)] = frame;
+  }
+  if (Object.keys(kept).length === Object.keys(rounds).length) return current;
+  const next = { ...current };
+  if (Object.keys(kept).length === 0) delete next[runId];
+  else next[runId] = kept;
+  return next;
+}
+
+export function clearTransientPreview(current: TransientPreview, runId: string): TransientPreview {
+  if (!current[runId]) return current;
+  const next = { ...current };
+  delete next[runId];
+  return next;
+}
+
+export function transientTextForRun(current: TransientPreview, runId: string): string {
+  const rounds = current[runId];
+  if (!rounds) return '';
+  return Object.keys(rounds)
+    .map(Number)
+    .sort((left, right) => left - right)
+    .map((round) => rounds[round]!.text)
+    .join('');
+}
+
 export function isAuthoritativeGap(page: ActivityPageResponse, appliedCursor: number): boolean {
   return page.next_cursor < appliedCursor;
 }

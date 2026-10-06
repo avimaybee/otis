@@ -628,7 +628,7 @@ describe('Worker Actor Dispatch & Recovery Integration (workerd)', () => {
       new Request('https://actor/dispatch', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'dispatch', workspace_id: ws, budget: 5 }),
+        body: JSON.stringify({ action: 'dispatch', workspace_id: ws, budget: 5, sync: true }),
       }),
     );
     expect(doRes.status).toBe(200);
