@@ -29,6 +29,8 @@ import migration0015Sql from '../../../migrations/0015_message_image_attachments
 import { AUTH_BOUNDS } from '@otis/contracts';
 import type { HttpErrorResponse } from '@otis/contracts';
 import { acceptWebMessage, createChat } from '../src/inbox/repository.js';
+import { AgentHandler } from '../src/agent/handler.js';
+import { FakeProviderAdapter } from '@otis/agent';
 import {
   ActorError,
   completeRun,
@@ -1580,6 +1582,39 @@ describe('Worker Actor Dispatch & Recovery Integration (workerd)', () => {
       .bind((await loadRunById(msg.run_id)).source_message_id)
       .first<{ status: string }>();
     expect(inbox?.status).toBe('cancelled');
+  });
+
+  it('F08: stop aborts the in-flight provider stream and the run stays cancelled', async () => {
+    const msg = await accept(chatAvi, aviId, 'act-msg-f08-stop', 'take your time');
+    const outboxId = await outboxIdForRun(msg.run_id);
+    const fake = new FakeProviderAdapter({
+      provider: 'gemini',
+      scripts: [{ kind: 'hang_until_abort' }],
+    });
+    const handler = new AgentHandler({
+      providerAdapter: fake,
+      limits: { maxDailyActions: 50, maxRoundsPerRun: 10 },
+    });
+    const dispatching = dispatchOutboxItem(env.DB, outboxId, ws, { handler });
+    // Wait until the provider turn is hanging inside the stream.
+    for (let i = 0; i < 200 && fake.calls.length === 0; i++) {
+      await new Promise((r) => setTimeout(r, 10));
+    }
+    expect(fake.calls.length).toBeGreaterThan(0);
+    // Stop aborts the in-isolate controller and marks the run cancelled.
+    const stopped = await stopRun(env.DB, { workspaceId: ws, runId: msg.run_id, actorUserId: aviId });
+    expect(stopped.stopped).toBe(true);
+    expect(await runStatus(msg.run_id)).toBe('cancelled');
+    // The aborted turn settles promptly instead of hanging to the timeout,
+    // and the failed outcome cannot overwrite the user's cancellation.
+    const result = await dispatching;
+    expect(result.status).toBe('deferred');
+    expect(await runStatus(msg.run_id)).toBe('cancelled');
+    expect(await replyCount(msg.run_id)).toBe(0);
+    const runRow = await env.DB.prepare(`SELECT error_code FROM agent_runs WHERE id = ?`)
+      .bind(msg.run_id)
+      .first<{ error_code: string | null }>();
+    expect(runRow?.error_code).toBe('stopped');
   });
 
   it('hardened-06: a real ledger clarification inside runTurn releases the slot for a teammate', async () => {

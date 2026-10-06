@@ -244,4 +244,32 @@ describe('StreamPublisher (R6 stream reliability)', () => {
     await publisher.close('complete');
     expect(calls.some(call => call.type === 'reasoning_summary')).toBe(false);
   });
+
+  it('refuses pushes, ticks and preview frames once the run is aborted (F08)', async () => {
+    const { calls, publish } = recorder();
+    const previews: Array<{ text: string; seq: number }> = [];
+    let aborted = false;
+    const publisher = new StreamPublisher(
+      publish,
+      0,
+      'gemini',
+      () => undefined,
+      undefined,
+      (text, seq) => {
+        previews.push({ text, seq });
+      },
+      () => aborted,
+    );
+    publisher.pushText('before stop');
+    expect(previews).toHaveLength(1);
+    aborted = true;
+    publisher.pushText('after stop');
+    publisher.pushThinking(thinking('stale thought'));
+    await publisher.tick(Date.now() + 10_000);
+    expect(previews).toHaveLength(1);
+    await publisher.close('interrupted');
+    expect(calls.filter(call => call.type === 'text_chunk').map(call => call.payload['text']).join('')).toBe(
+      'before stop',
+    );
+  });
 });

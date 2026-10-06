@@ -94,6 +94,12 @@ export class StreamPublisher {
     private readonly onFlushError: (err: unknown) => void = () => undefined,
     sharedBudget?: SharedThinkingBudget,
     private readonly publishPreview?: TextPreviewFn,
+    /**
+     * F08 stale-frame refusal: once a run is stopped, buffered deltas are
+     * dropped instead of published and no preview frame goes out. The
+     * durable close path is untouched (the turn outcome decides it).
+     */
+    private readonly isAborted?: () => boolean,
   ) {
     this.budget = sharedBudget ?? createThinkingBudget();
   }
@@ -108,6 +114,7 @@ export class StreamPublisher {
   /** Broadcasts the round's full text so far as a live preview frame (no D1). */
   private emitPreview(): void {
     if (!this.publishPreview || !this.textBuffer) return;
+    if (this.isAborted?.()) return;
     this.textPreviewSeq += 1;
     this.textPreviewCovered = this.textBuffer.length;
     try {
@@ -119,6 +126,7 @@ export class StreamPublisher {
 
   pushText(text: string): void {
     if (this.closed || !text) return;
+    if (this.isAborted?.()) return;
     if (this.textChunks >= TEXT_MAX_CHUNKS && !this.textBuffer) return;
     this.textBuffer += text.slice(0, TEXT_MAX_CHUNKS * TEXT_CHUNK_CHARS - this.textBuffer.length);
     if (this.textBufferedAt === null) this.textBufferedAt = Date.now();
@@ -134,6 +142,7 @@ export class StreamPublisher {
 
   pushThinking(input: ThinkingInput): void {
     if (this.closed || !input.text) return;
+    if (this.isAborted?.()) return;
     // The aggregate cap drops overflow input; close() emits the single
     // truncation record for the first block that overflowed.
     const remaining =
@@ -183,6 +192,7 @@ export class StreamPublisher {
    */
   tick(now = Date.now()): Promise<void> {
     if (this.closed) return this.chain;
+    if (this.isAborted?.()) return this.chain;
     if (this.publishPreview) {
       if (this.textBuffer.length > this.textPreviewCovered && this.textBufferedAt !== null && now - this.textBufferedAt >= TEXT_PREVIEW_MS) {
         this.emitPreview();

@@ -840,6 +840,9 @@ export class AgentHandler implements TurnHandler {
           maxOutputTokens: 4096,
           timeoutMs: 60000,
           thinking: thinkingRequest,
+          // Stop aborts the provider fetch mid-stream: adapters combine this
+          // with their timeout, so a stopped run stops spending immediately.
+          ...(ctx.signal ? { signal: ctx.signal } : {}),
         };
 
         // Fail before provider spend when the pinned model provably cannot
@@ -954,6 +957,7 @@ export class AgentHandler implements TurnHandler {
             });
             telegramDraft?.update(roundIndex, text);
           },
+          () => ctx.signal?.aborted ?? false,
         );
         // One serialized owner for size- and timer-triggered flushes; every
         // exit below clears it. The final flush is authorized remainder only:

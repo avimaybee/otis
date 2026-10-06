@@ -69,6 +69,11 @@ export interface TurnContext {
   /** The attempt executing this turn; receipts are stamped with it. */
   attemptId: string;
   /**
+   * Aborted when the run is stopped. Providers stop spending on abort;
+   * publishers refuse stale frames. Absent for handlers that predate it.
+   */
+  signal?: AbortSignal;
+  /**
    * Fence claimed by this dispatch. Ledger mutations scoped to this run must
    * present it; the ledger guard validates it in the committing transaction.
    */
@@ -87,6 +92,23 @@ export interface TurnContext {
 export interface TurnHandler {
   readonly name: string;
   runTurn(ctx: TurnContext): Promise<TurnOutcome>;
+}
+
+/**
+ * In-isolate abort registry (F08): one AbortController per executing turn,
+ * keyed by run id. Stop aborts the local controller so a mid-stream provider
+ * fetch stops spending immediately; the D1 cancelled marking in stopRun
+ * stays the cross-isolate authority (a stale completion still loses its
+ * guarded writes). Entries are removed when the turn settles; aborting an
+ * unknown or already-settled run is a no-op returning false.
+ */
+const inflightTurnControllers = new Map<string, AbortController>();
+
+export function abortInflightTurn(runId: string): boolean {
+  const controller = inflightTurnControllers.get(runId);
+  if (!controller) return false;
+  if (!controller.signal.aborted) controller.abort();
+  return true;
 }
 
 /** Deterministic turn executor used until the agent gate lands. No model, no business writes. */
@@ -1168,21 +1190,30 @@ export async function dispatchOutboxItem(
       await markStepRunning(db, persisted.step.id, attemptId, { fence: lease.fence, nowIso: now() });
       const source = await loadSourceText(db, run);
       const answer = await loadClarificationAnswer(db, run.id);
-      outcome = await handler.runTurn({
-        db,
-        workspaceId,
-        runId: run.id,
-        attemptId,
-        fence: lease.fence,
-        chatId: run.chat_id,
-        sourceMessageId: run.source_message_id,
-        sourceJobId: run.source_job_id,
-        sourceText: source.text,
-        channel: source.channel,
-        sourceTrust: source.sourceTrust,
-        answerText: answer?.text ?? null,
-        answerMessageId: answer?.messageId ?? null,
-      });
+      const turnAbort = new AbortController();
+      inflightTurnControllers.set(run.id, turnAbort);
+      try {
+        outcome = await handler.runTurn({
+          db,
+          workspaceId,
+          runId: run.id,
+          attemptId,
+          fence: lease.fence,
+          chatId: run.chat_id,
+          sourceMessageId: run.source_message_id,
+          sourceJobId: run.source_job_id,
+          sourceText: source.text,
+          channel: source.channel,
+          sourceTrust: source.sourceTrust,
+          answerText: answer?.text ?? null,
+          answerMessageId: answer?.messageId ?? null,
+          signal: turnAbort.signal,
+        });
+      } finally {
+        if (inflightTurnControllers.get(run.id) === turnAbort) {
+          inflightTurnControllers.delete(run.id);
+        }
+      }
       await completeStep(db, persisted.step.id, attemptId, {
         resultJson: JSON.stringify(outcome),
         fence: lease.fence,
@@ -1794,6 +1825,12 @@ export async function stopRun(
   if (isTerminal(run.status)) {
     return { stopped: false, status: run.status };
   }
+
+  // Stop in-flight spend first: aborting a settled or foreign-isolate run is
+  // a harmless no-op, and a concurrent completion still wins cleanly through
+  // the guarded batch below (P1-5). The D1 cancelled marking stays the
+  // authority every isolate honors.
+  abortInflightTurn(run.id);
 
   // One atomic batch: the guard pins the observed active status, so a
   // concurrent completion wins cleanly instead of leaving the run succeeded

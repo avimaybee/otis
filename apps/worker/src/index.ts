@@ -41,6 +41,7 @@ import {
 } from './routes/telegram.js';
 import { deliverTelegramOutbox, scanTelegramDue, type TelegramSendFetch } from './inbox/telegramDelivery.js';
 import {
+  abortInflightTurn,
   dispatchWorkspace,
   EchoHandler,
   listWorkspacesNeedingRecovery,
@@ -439,6 +440,14 @@ export class WorkspaceActor {
         }
         this.startBackground(() => this.runRecoverAction(workspaceId, budget).then(() => undefined));
         return jsonSuccess({ status: 'accepted', deduped: false }, 202);
+      }
+      if (body.action === 'stop') {
+        // Best-effort in-isolate abort (F08): stops provider spend for turns
+        // executing in THIS isolate. The D1 cancelled marking in stopRun
+        // stays the cross-isolate authority; an unknown run aborts nothing.
+        const runId = (body as { run_id?: unknown }).run_id;
+        const aborted = typeof runId === 'string' && runId.length > 0 ? abortInflightTurn(runId) : false;
+        return jsonSuccess({ status: 'ok', aborted }, 200);
       }
     } catch (err) {
       return jsonError(500, 'actor_error', err instanceof Error ? err.message : String(err), 'actor');

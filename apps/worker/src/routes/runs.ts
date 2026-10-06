@@ -226,6 +226,25 @@ export async function handleStopRun(
   if (scope instanceof Response) return scope;
 
   try {
+    // Best-effort live abort in the workspace actor's isolate (F08): stops
+    // provider spend for turns executing there. Any failure falls through —
+    // the D1 cancelled marking in stopRun is the authority every isolate
+    // honors, and an already-settled run aborts nothing.
+    if (env.WORKSPACE_ACTOR) {
+      try {
+        const stub = env.WORKSPACE_ACTOR.get(env.WORKSPACE_ACTOR.idFromName(workspaceId));
+        const abortRes = await stub.fetch(
+          new Request('http://actor/stop', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'stop', workspace_id: workspaceId, run_id: runId }),
+          }),
+        );
+        await abortRes.text().catch(() => undefined);
+      } catch {
+        // Fall through to the durable stop below.
+      }
+    }
     const result = await stopRun(env.DB, {
       workspaceId,
       runId,
