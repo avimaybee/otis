@@ -404,6 +404,117 @@ export async function sendTelegramChatAction(
   }
 }
 
+/** Telegram message-length ceiling, applied defensively to draft previews. */
+export const TELEGRAM_DRAFT_TEXT_LIMIT = 4096;
+
+/**
+ * Derives a stable int32 draft ID from a run ID so every preview update for
+ * one run revises the same private-chat draft. FNV-1a, forced positive.
+ */
+export function draftIdForRun(runId: string): number {
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < runId.length; i++) {
+    hash ^= runId.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return (hash >>> 1) % 0x7fffffff;
+}
+
+/**
+ * Best-effort private-chat draft preview via sendMessageDraft. Never throws
+ * and never affects durable delivery: a failed draft is simply absent, which
+ * is today's behavior. Plain text only; formatting decisions stay out.
+ */
+export async function sendTelegramMessageDraft(
+  botToken: string,
+  telegramChatId: string | number,
+  draftId: number,
+  text: string,
+  fetchFn: TelegramSendFetch = fetch,
+  timeoutMs = 5000,
+): Promise<boolean> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetchFn(`${TELEGRAM_API_BASE}/bot${botToken}/sendMessageDraft`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      signal: controller.signal,
+      body: JSON.stringify({
+        chat_id: telegramChatId,
+        draft_id: draftId,
+        text: text.slice(0, TELEGRAM_DRAFT_TEXT_LIMIT),
+      }),
+    });
+    return response.ok;
+  } catch {
+    return false;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+export interface TelegramDraftPreview {
+  /** Feeds full round text; internally coalesced to at most one send per window. */
+  update: (roundIndex: number, roundText: string) => void;
+  /** Stops previewing; best-effort clears the draft so nothing stale lingers. */
+  stop: () => Promise<void>;
+}
+
+function isPrivateTelegramChatId(telegramChatId: string): boolean {
+  const numeric = Number(telegramChatId);
+  return Number.isSafeInteger(numeric) && numeric > 0;
+}
+
+/**
+ * Turn-scoped coalesced draft preview for one Telegram run. Collects
+ * per-round full texts (cumulative across rounds like the client preview),
+ * sends at most one draft per window and only when the joined text changed.
+ * All network use is best-effort; stop() never throws. Private chats only:
+ * group/supergroup chat IDs are negative and never receive drafts.
+ */
+export function createTelegramDraftPreview(params: {
+  botToken: string;
+  telegramChatId: string;
+  runId: string;
+  fetchFn?: TelegramSendFetch;
+  now?: () => number;
+  windowMs?: number;
+}): TelegramDraftPreview | null {
+  if (!isPrivateTelegramChatId(params.telegramChatId)) return null;
+  const fetchFn = params.fetchFn ?? fetch;
+  const now = params.now ?? (() => Date.now());
+  const windowMs = params.windowMs ?? 2500;
+  const draftId = draftIdForRun(params.runId);
+  const rounds = new Map<number, string>();
+  let lastSentAt = 0;
+  let lastSentText: string | null = null;
+  let stopped = false;
+
+  const joined = (): string =>
+    [...rounds.keys()].sort((left, right) => left - right).map((round) => rounds.get(round) ?? '').join('');
+
+  return {
+    update: (roundIndex, roundText) => {
+      if (stopped) return;
+      rounds.set(roundIndex, roundText);
+      const full = joined();
+      if (full === lastSentText) return;
+      if (now() - lastSentAt < windowMs) return;
+      lastSentAt = now();
+      lastSentText = full;
+      void sendTelegramMessageDraft(params.botToken, params.telegramChatId, draftId, full, fetchFn);
+    },
+    stop: async () => {
+      stopped = true;
+      rounds.clear();
+      // Best-effort clear so a stale preview never outlives the turn. An
+      // endpoint that rejects empty drafts just keeps today's behavior.
+      await sendTelegramMessageDraft(params.botToken, params.telegramChatId, draftId, '', fetchFn).catch(() => false);
+    },
+  };
+}
+
 /**
  * Reasons are persisted and may surface in logs/diagnostics: strip anything
  * shaped like a bot token so a token can never leak through an error string.

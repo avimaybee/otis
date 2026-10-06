@@ -1713,6 +1713,49 @@ describe('009A Telegram text loop (workerd + D1)', () => {
       .run();
   });
 
+  it('streams private-chat drafts and typing from a live telegram turn', async () => {
+    // Full turn through the real handler: typing pings immediately, preview
+    // frames fold into one stable coalesced draft, and the draft clears when
+    // the turn ends. Durable final delivery still flows through the outbox.
+    const res = await postWebhook(textUpdate(7851, 777002, 'Draft my reply live'));
+    const accepted = (await res.json()) as { status: string; run_id: string };
+    expect(accepted.status).toBe('accepted');
+
+    const calls: Array<{ url: string; body: Record<string, unknown> }> = [];
+    const fakeFetch = (async (url: string, init: RequestInit): Promise<Response> => {
+      calls.push({ url, body: JSON.parse(String(init.body)) as Record<string, unknown> });
+      return new Response(JSON.stringify({ ok: true, result: true }), { status: 200 });
+    }) as typeof fetch;
+    const adapter = new FakeProviderAdapter({
+      provider: 'gemini',
+      scripts: [{ kind: 'text_chunks', chunks: ['Draft ', 'preview live.'] }],
+    });
+    const handler = new AgentHandler({
+      providerAdapter: adapter,
+      limits: { maxDailyActions: 50, maxRoundsPerRun: 10 },
+      telegramBotToken: 'test_bot_token',
+      fetchFn: fakeFetch,
+    });
+    const dispatched = await dispatchOutboxItem(env.DB, await outboxIdForRun(accepted.run_id), WS, { handler });
+    expect(dispatched.status).toBe('completed');
+
+    const typing = calls.filter((call) => call.url.includes('/sendChatAction'));
+    expect(typing.length).toBeGreaterThanOrEqual(1);
+    const drafts = calls.filter((call) => call.url.includes('/sendMessageDraft'));
+    expect(drafts.length).toBeGreaterThanOrEqual(2);
+    const draftIds = new Set(drafts.map((call) => call.body['draft_id']));
+    expect(draftIds.size).toBe(1);
+    expect(typeof [...draftIds][0]).toBe('number');
+    expect(drafts.every((call) => String(call.body['chat_id']) === '777002')).toBe(true);
+    expect(String(drafts[0]!.body['text'])).toContain('Draft');
+    // Terminal clear so no stale preview outlives the turn.
+    expect(drafts[drafts.length - 1]!.body['text']).toBe('');
+
+    // The durable reply still commits through the existing final path.
+    const answer = await env.DB.prepare(`SELECT content_text FROM chat_messages WHERE run_id = ? AND author_kind = 'system'`).bind(accepted.run_id).first<{ content_text: string }>();
+    expect(answer?.content_text).toContain('Draft preview live.');
+  });
+
   it('disconnect invalidates unused codes, cancels pending deliveries, and revokes the binding', async () => {
     // A deep link issued now must not work after a disconnect; plus a pending
     // delivery for Avi (777001).

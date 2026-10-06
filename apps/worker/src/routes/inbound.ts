@@ -84,6 +84,28 @@ export async function handleTelegramWebhook(
       }).catch(() => undefined);
       if (ctx) ctx.waitUntil(pass);
       else void pass;
+      // Transcription precedes dispatch and can outlast one typing lifetime:
+      // refresh while the bounded pass runs (capped), then let the dispatch
+      // heartbeat take over. Best-effort; never fails acceptance.
+      if (ctx && env.TELEGRAM_BOT_TOKEN) {
+        const voiceChatId = (body as { message?: { chat?: { id?: number | string } } })?.message?.chat?.id;
+        if (voiceChatId) {
+          const voiceToken = env.TELEGRAM_BOT_TOKEN;
+          let voicePings = 0;
+          const voiceTimer = setInterval(() => {
+            voicePings += 1;
+            if (voicePings > 7) {
+              clearInterval(voiceTimer);
+              return;
+            }
+            void sendTelegramChatAction(voiceToken, voiceChatId, 'typing', fetch).catch(() => undefined);
+          }, 4000);
+          void pass.then(
+            () => clearInterval(voiceTimer),
+            () => clearInterval(voiceTimer),
+          );
+        }
+      }
     }
     // Show Telegram native typing indicator so user sees the bot working immediately
     if (result.status === 'accepted' && env.TELEGRAM_BOT_TOKEN) {

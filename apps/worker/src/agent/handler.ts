@@ -12,7 +12,12 @@ import { completeStep, hashStepArguments, listRunSteps, persistStep } from '../a
 import { resolveModelForChat, runProviderTurn, type PlatformKeys } from '../providers/service.js';
 import { workerDebug, workerFailure } from '../observability.js';
 import { executeAgentTool } from './repository.js';
-import { resolveTelegramTarget, sendTelegramChatAction } from '../inbox/telegramDelivery.js';
+import {
+  createTelegramDraftPreview,
+  resolveTelegramTarget,
+  sendTelegramChatAction,
+  type TelegramDraftPreview,
+} from '../inbox/telegramDelivery.js';
 import { getTurnContext, type AssembledTurnContext } from './context.js';
 import { publishAgentActivity } from './activity.js';
 import { liveChatBus } from '../chat/liveBus.js';
@@ -113,6 +118,7 @@ export class AgentHandler implements TurnHandler {
     const nowIso = this.nowIso();
 
     let typingInterval: ReturnType<typeof setInterval> | null = null;
+    let telegramDraft: TelegramDraftPreview | null = null;
     if (ctx.channel === 'telegram' && ctx.sourceMessageId && this.options?.telegramBotToken) {
       try {
         const target = await resolveTelegramTarget(ctx.db, ctx.sourceMessageId);
@@ -124,6 +130,14 @@ export class AgentHandler implements TurnHandler {
           typingInterval = setInterval(() => {
             void sendTelegramChatAction(botToken, chatId, 'typing', safeFetch);
           }, 4000);
+          // Coalesced private-chat draft preview; null for groups or when
+          // the target cannot take drafts. Fed from live preview frames.
+          telegramDraft = createTelegramDraftPreview({
+            botToken,
+            telegramChatId: chatId,
+            runId: ctx.runId,
+            fetchFn: safeFetch,
+          });
         }
       } catch {
         // Chat action heartbeat is best-effort and never fails the turn
@@ -771,7 +785,8 @@ export class AgentHandler implements TurnHandler {
           thinkingBudget,
           // Transient preview: live frames bypass D1 entirely and stream
           // straight to actor-local SSE subscribers; the durable remainder
-          // persists once on close.
+          // persists once on close. Telegram runs additionally fold the
+          // round text into a coalesced private-chat draft.
           (text, seq) => {
             if (!ctx.chatId) return;
             liveChatBus.broadcast(ctx.workspaceId, ctx.chatId, {
@@ -789,6 +804,7 @@ export class AgentHandler implements TurnHandler {
                 payload: { text, round_index: roundIndex, seq },
               },
             });
+            telegramDraft?.update(roundIndex, text);
           },
         );
         // One serialized owner for size- and timer-triggered flushes; every
@@ -1172,6 +1188,9 @@ export class AgentHandler implements TurnHandler {
     };
     } finally {
       if (typingInterval) clearInterval(typingInterval);
+      // Draft clear is cosmetic best-effort: never block turn teardown on it.
+      // stop() itself never rejects; floating it is safe.
+      void telegramDraft?.stop();
     }
   }
 
