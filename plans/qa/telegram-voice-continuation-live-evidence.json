@@ -1,0 +1,68 @@
+{
+  "capturedAt": "2026-10-06T09:39:09.350Z",
+  "source": "Synthetic 1-second WAV tone, not Telegram OGG/speech/device evidence; no business writes.",
+  "rows": [
+    {
+      "scenario": "native WAV audio transport",
+      "model": "gemini-3.5-flash-lite",
+      "elapsedMs": 4737,
+      "textChars": 14,
+      "finish": "success",
+      "toolCalls": 0,
+      "error": null,
+      "expectedMarker": true
+    },
+    {
+      "scenario": "native WAV audio transport",
+      "model": "gemini-3.1-flash-lite",
+      "elapsedMs": 8187,
+      "textChars": 14,
+      "finish": "success",
+      "toolCalls": 0,
+      "error": null,
+      "expectedMarker": true
+    },
+    {
+      "scenario": "Groq WAV transport (tone, not speech accuracy)",
+      "model": "whisper-large-v3-turbo",
+      "elapsedMs": 310,
+      "ok": true,
+      "code": null,
+      "status": 200,
+      "textChars": 2
+    },
+    {
+      "scenario": "MiMo production-shaped continuation, no new follow-up",
+      "model": "mimo-25",
+      "initial": {
+        "elapsedMs": 5422,
+        "textChars": 0,
+        "finish": "tool_handoff",
+        "toolCalls": 1,
+        "error": null
+      },
+      "validInitialCall": true,
+      "roles": [
+        [
+          "system",
+          "user"
+        ],
+        [
+          "system",
+          "user",
+          "assistant",
+          "tool"
+        ]
+      ],
+      "continuation": {
+        "elapsedMs": 9976,
+        "textChars": 60,
+        "finish": "success",
+        "toolCalls": 0,
+        "error": null
+      },
+      "finalUsesResult": true,
+      "repeatedSameArguments": false
+    }
+  ]
+}

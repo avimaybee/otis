@@ -10,7 +10,7 @@
  * Official reference: https://console.groq.com/docs/speech-to-text
  */
 
-import { parseRetryAfterMs, type FetchFn } from './types.js';
+import { parseRetryAfterMs, receiverSafeFetch, type FetchFn } from './types.js';
 
 /** Fixed Groq origin; the only STT destination Otis dials. */
 export const GROQ_STT_ORIGIN = 'https://api.groq.com';
@@ -142,6 +142,7 @@ export async function transcribeWithGroq(
   params: GroqTranscriptionParams,
 ): Promise<GroqTranscriptionResult> {
   const timeoutMs = params.timeoutMs ?? GROQ_STT_TIMEOUT_MS;
+  const safeFetch = receiverSafeFetch(params.fetchFn);
   const form = new FormData();
   const filePayload = typeof File !== 'undefined'
     ? new File([copyBytes(params.bytes)], params.filename, { type: params.mimeType })
@@ -166,7 +167,7 @@ export async function transcribeWithGroq(
   try {
     let response: Response;
     try {
-      response = await params.fetchFn(GROQ_STT_ENDPOINT, {
+      response = await safeFetch(GROQ_STT_ENDPOINT, {
         method: 'POST',
         headers: { Authorization: `Bearer ${params.apiKey}` },
         body: form,

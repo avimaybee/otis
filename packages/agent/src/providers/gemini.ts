@@ -423,6 +423,7 @@ export class GeminiInteractionsAdapter implements ProviderAdapter {
             yield* this.readStream(retryRes.body, signal);
             return;
           }
+          console.warn('[otis:gemini] stateless retry also failed:', retryRes.status);
         } catch {
           // Fall through to reporting original error if retry also threw
         }

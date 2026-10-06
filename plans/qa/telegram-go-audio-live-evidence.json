@@ -1,0 +1,15 @@
+{
+  "capturedAt": "2026-10-06T09:46:28.329Z",
+  "model": "mimo-25",
+  "source": "Synthetic WAV tone only, not Telegram Opus/device or speech evidence.",
+  "elapsedMs": 8058,
+  "requests": [
+    {
+      "status": 200
+    }
+  ],
+  "finish": "success",
+  "expectedMarker": true,
+  "textChars": 14,
+  "error": null
+}

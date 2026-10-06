@@ -16,6 +16,7 @@
 
 import {
   GROQ_STT_MODELS,
+  receiverSafeFetch,
   transcribeWithGroq,
   type FetchFn,
   type GroqSttModel,
@@ -521,7 +522,7 @@ export async function processTranscriptionJobs(
       filename: `voice-${media.id}.${media.format === 'audio/ogg' ? 'ogg' : media.format === 'audio/mp4' ? 'm4a' : 'webm'}`,
       mimeType: media.format ?? 'application/octet-stream',
       ...(job.language_hint ? { language: job.language_hint } : {}),
-      fetchFn: options.fetchFn ?? fetch,
+      fetchFn: receiverSafeFetch(options.fetchFn ?? fetch),
       ...(options.timeoutMs ? { timeoutMs: options.timeoutMs } : {}),
     });
 

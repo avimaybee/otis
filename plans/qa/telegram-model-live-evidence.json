@@ -1,0 +1,322 @@
+{
+  "capturedAt": "2026-10-06T09:24:48.759Z",
+  "source": "local current adapters; synthetic prompts; no business tools executed",
+  "metadata": {
+    "go": {
+      "status": 200,
+      "selectedModels": [
+        {
+          "id": "deepseek-v4.1-flash",
+          "fields": [
+            "id",
+            "object",
+            "created",
+            "owned_by"
+          ]
+        },
+        {
+          "id": "muse-spark-1.2-contributor",
+          "fields": [
+            "id",
+            "object",
+            "created",
+            "owned_by"
+          ]
+        },
+        {
+          "id": "muse-spark-1.3-contributor",
+          "fields": [
+            "id",
+            "object",
+            "created",
+            "owned_by"
+          ]
+        },
+        {
+          "id": "mimo-v2.5",
+          "fields": [
+            "id",
+            "object",
+            "created",
+            "owned_by"
+          ]
+        },
+        {
+          "id": "mimo-v2.6-pro",
+          "fields": [
+            "id",
+            "object",
+            "created",
+            "owned_by"
+          ]
+        }
+      ]
+    }
+  },
+  "probes": [
+    {
+      "model": "gemini-3.5-flash-lite",
+      "family": "gemini-interactions",
+      "scenario": "fresh with current application tool declarations",
+      "elapsedMs": 4605,
+      "firstTextMs": 4603,
+      "textChars": 5,
+      "toolCalls": 0,
+      "terminal": {
+        "type": "finish",
+        "reason": "success"
+      },
+      "requests": [
+        {
+          "inputTypes": [
+            "user_input"
+          ],
+          "toolCount": 22,
+          "thinking": {
+            "max_output_tokens": 1024,
+            "thinking_summaries": "auto"
+          },
+          "status": 200
+        }
+      ]
+    },
+    {
+      "model": "gemini-3.1-flash-lite",
+      "family": "gemini-interactions",
+      "scenario": "fresh with current application tool declarations",
+      "elapsedMs": 7876,
+      "firstTextMs": 7872,
+      "textChars": 5,
+      "toolCalls": 0,
+      "terminal": {
+        "type": "finish",
+        "reason": "success"
+      },
+      "requests": [
+        {
+          "inputTypes": [
+            "user_input"
+          ],
+          "toolCount": 22,
+          "thinking": {
+            "max_output_tokens": 1024,
+            "thinking_summaries": "auto"
+          },
+          "status": 200
+        }
+      ]
+    },
+    {
+      "model": "mimo-25",
+      "family": "go-chat-completions",
+      "scenario": "fresh with current application tool declarations",
+      "elapsedMs": 2736,
+      "firstTextMs": 2734,
+      "textChars": 5,
+      "toolCalls": 0,
+      "terminal": {
+        "type": "finish",
+        "reason": "success"
+      },
+      "requests": [
+        {
+          "toolCount": 22,
+          "status": 200
+        }
+      ]
+    },
+    {
+      "model": "mimo-26-pro",
+      "family": "go-chat-completions",
+      "scenario": "fresh with current application tool declarations",
+      "elapsedMs": 30003,
+      "firstTextMs": null,
+      "textChars": 0,
+      "toolCalls": 0,
+      "terminal": {
+        "type": "error",
+        "code": "timeout",
+        "message": "Provider request timed out."
+      },
+      "requests": [
+        {
+          "toolCount": 22,
+          "status": 200
+        }
+      ]
+    },
+    {
+      "model": "muse-12",
+      "family": "go-responses",
+      "scenario": "fresh with current application tool declarations",
+      "elapsedMs": 2821,
+      "firstTextMs": 2815,
+      "textChars": 5,
+      "toolCalls": 0,
+      "terminal": {
+        "type": "finish",
+        "reason": "success"
+      },
+      "requests": [
+        {
+          "inputTypes": [
+            "message",
+            "message"
+          ],
+          "toolCount": 22,
+          "status": 200
+        }
+      ]
+    },
+    {
+      "model": "muse-13",
+      "family": "go-responses",
+      "scenario": "fresh with current application tool declarations",
+      "elapsedMs": 4851,
+      "firstTextMs": 4822,
+      "textChars": 5,
+      "toolCalls": 0,
+      "terminal": {
+        "type": "finish",
+        "reason": "success"
+      },
+      "requests": [
+        {
+          "inputTypes": [
+            "message",
+            "message"
+          ],
+          "toolCount": 22,
+          "status": 200
+        }
+      ]
+    },
+    {
+      "model": "deepseek-v4.1-flash",
+      "family": "go-chat-completions",
+      "scenario": "fresh with current application tool declarations",
+      "elapsedMs": 2639,
+      "firstTextMs": 2507,
+      "textChars": 5,
+      "toolCalls": 0,
+      "terminal": {
+        "type": "finish",
+        "reason": "success"
+      },
+      "requests": [
+        {
+          "toolCount": 22,
+          "status": 200
+        }
+      ]
+    },
+    {
+      "model": "gemini-3.5-flash-lite",
+      "family": "gemini-interactions",
+      "scenario": "assistant history with current application tool declarations",
+      "elapsedMs": 5337,
+      "firstTextMs": 5329,
+      "textChars": 5,
+      "toolCalls": 0,
+      "terminal": {
+        "type": "finish",
+        "reason": "success"
+      },
+      "requests": [
+        {
+          "inputTypes": [
+            "user_input",
+            "model_output",
+            "user_input"
+          ],
+          "toolCount": 22,
+          "thinking": {
+            "max_output_tokens": 1024,
+            "thinking_summaries": "auto"
+          },
+          "status": 200
+        }
+      ]
+    },
+    {
+      "model": "gemini-3.5-flash-lite",
+      "family": "gemini-interactions",
+      "scenario": "fresh without tools",
+      "elapsedMs": 4438,
+      "firstTextMs": 4437,
+      "textChars": 5,
+      "toolCalls": 0,
+      "terminal": {
+        "type": "finish",
+        "reason": "success"
+      },
+      "requests": [
+        {
+          "inputTypes": [
+            "user_input"
+          ],
+          "toolCount": 0,
+          "thinking": {
+            "max_output_tokens": 1024,
+            "thinking_summaries": "auto"
+          },
+          "status": 200
+        }
+      ]
+    },
+    {
+      "model": "gemini-3.1-flash-lite",
+      "family": "gemini-interactions",
+      "scenario": "assistant history with current application tool declarations",
+      "elapsedMs": 9128,
+      "firstTextMs": 9126,
+      "textChars": 5,
+      "toolCalls": 0,
+      "terminal": {
+        "type": "finish",
+        "reason": "success"
+      },
+      "requests": [
+        {
+          "inputTypes": [
+            "user_input",
+            "model_output",
+            "user_input"
+          ],
+          "toolCount": 22,
+          "thinking": {
+            "max_output_tokens": 1024,
+            "thinking_summaries": "auto"
+          },
+          "status": 200
+        }
+      ]
+    },
+    {
+      "model": "gemini-3.1-flash-lite",
+      "family": "gemini-interactions",
+      "scenario": "fresh without tools",
+      "elapsedMs": 5786,
+      "firstTextMs": 5783,
+      "textChars": 5,
+      "toolCalls": 0,
+      "terminal": {
+        "type": "finish",
+        "reason": "success"
+      },
+      "requests": [
+        {
+          "inputTypes": [
+            "user_input"
+          ],
+          "toolCount": 0,
+          "thinking": {
+            "max_output_tokens": 1024,
+            "thinking_summaries": "auto"
+          },
+          "status": 200
+        }
+      ]
+    }
+  ]
+}

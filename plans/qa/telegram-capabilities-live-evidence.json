@@ -1,0 +1,717 @@
+{
+  "capturedAt": "2026-10-06T09:34:45.303Z",
+  "source": "Current adapters for synthetic echo tools; direct Go HTTP requests for effort capability, not production UX.",
+  "toolLoops": [
+    {
+      "model": "gemini-3.5-flash-lite",
+      "family": "gemini-interactions",
+      "requests": [
+        {
+          "linked": false,
+          "inputTypes": [
+            "user_input"
+          ],
+          "status": 200
+        },
+        {
+          "linked": true,
+          "inputTypes": [
+            "user_input",
+            "function_result"
+          ],
+          "status": 200
+        },
+        {
+          "linked": true,
+          "inputTypes": [
+            "user_input",
+            "function_result"
+          ],
+          "status": 200
+        }
+      ],
+      "rounds": [
+        {
+          "elapsedMs": 4476,
+          "firstTextMs": null,
+          "finish": "tool_handoff",
+          "continuationKind": "gemini-interactions",
+          "toolCalls": 1,
+          "textChars": 0,
+          "error": null,
+          "usage": {
+            "inputTokens": 151,
+            "outputTokens": 20,
+            "cacheReadTokens": 0,
+            "cacheWriteTokens": null,
+            "reasoningTokens": 0,
+            "totalTokens": 171,
+            "cumulative": true
+          }
+        },
+        {
+          "elapsedMs": 5411,
+          "firstTextMs": null,
+          "finish": "tool_handoff",
+          "continuationKind": "gemini-interactions",
+          "toolCalls": 1,
+          "textChars": 0,
+          "error": null,
+          "usage": {
+            "inputTokens": 156,
+            "outputTokens": 20,
+            "cacheReadTokens": 0,
+            "cacheWriteTokens": null,
+            "reasoningTokens": 0,
+            "totalTokens": 176,
+            "cumulative": true
+          }
+        },
+        {
+          "elapsedMs": 5142,
+          "firstTextMs": 5066,
+          "finish": "success",
+          "continuationKind": "gemini-interactions",
+          "toolCalls": 0,
+          "textChars": 101,
+          "error": null,
+          "usage": {
+            "inputTokens": 156,
+            "outputTokens": 18,
+            "cacheReadTokens": 0,
+            "cacheWriteTokens": null,
+            "reasoningTokens": 0,
+            "totalTokens": 174,
+            "cumulative": true
+          }
+        }
+      ],
+      "outcome": "tool call and continuation succeeded",
+      "validatedCalls": 2,
+      "continuationSteps": 2,
+      "elapsedMs": 15031
+    },
+    {
+      "model": "gemini-3.1-flash-lite",
+      "family": "gemini-interactions",
+      "requests": [
+        {
+          "linked": false,
+          "inputTypes": [
+            "user_input"
+          ],
+          "status": 200
+        },
+        {
+          "linked": true,
+          "inputTypes": [
+            "user_input",
+            "function_result"
+          ],
+          "status": 200
+        }
+      ],
+      "rounds": [
+        {
+          "elapsedMs": 5049,
+          "firstTextMs": null,
+          "finish": "tool_handoff",
+          "continuationKind": "gemini-interactions",
+          "toolCalls": 1,
+          "textChars": 0,
+          "error": null,
+          "usage": {
+            "inputTokens": 151,
+            "outputTokens": 20,
+            "cacheReadTokens": 0,
+            "cacheWriteTokens": null,
+            "reasoningTokens": 0,
+            "totalTokens": 171,
+            "cumulative": true
+          }
+        },
+        {
+          "elapsedMs": 8807,
+          "firstTextMs": 8736,
+          "finish": "success",
+          "continuationKind": "gemini-interactions",
+          "toolCalls": 0,
+          "textChars": 83,
+          "error": null,
+          "usage": {
+            "inputTokens": 156,
+            "outputTokens": 17,
+            "cacheReadTokens": 0,
+            "cacheWriteTokens": null,
+            "reasoningTokens": 0,
+            "totalTokens": 173,
+            "cumulative": true
+          }
+        }
+      ],
+      "outcome": "tool call and continuation succeeded",
+      "validatedCalls": 1,
+      "continuationSteps": 1,
+      "elapsedMs": 13857
+    },
+    {
+      "model": "mimo-25",
+      "family": "go-chat-completions",
+      "requests": [
+        {
+          "linked": false,
+          "status": 200
+        },
+        {
+          "linked": false,
+          "status": 200
+        },
+        {
+          "linked": false,
+          "status": 200
+        }
+      ],
+      "rounds": [
+        {
+          "elapsedMs": 7306,
+          "firstTextMs": null,
+          "finish": "tool_handoff",
+          "continuationKind": "go-chat-completions",
+          "toolCalls": 1,
+          "textChars": 0,
+          "error": null,
+          "usage": {
+            "inputTokens": 190,
+            "outputTokens": 42,
+            "cacheReadTokens": 0,
+            "cacheWriteTokens": null,
+            "reasoningTokens": 18,
+            "totalTokens": 232,
+            "cumulative": true
+          }
+        },
+        {
+          "elapsedMs": 3567,
+          "firstTextMs": null,
+          "finish": "tool_handoff",
+          "continuationKind": "go-chat-completions",
+          "toolCalls": 1,
+          "textChars": 0,
+          "error": null,
+          "usage": {
+            "inputTokens": 348,
+            "outputTokens": 42,
+            "cacheReadTokens": 128,
+            "cacheWriteTokens": null,
+            "reasoningTokens": 18,
+            "totalTokens": 390,
+            "cumulative": true
+          }
+        },
+        {
+          "elapsedMs": 5637,
+          "firstTextMs": null,
+          "finish": "tool_handoff",
+          "continuationKind": "go-chat-completions",
+          "toolCalls": 1,
+          "textChars": 0,
+          "error": null,
+          "usage": {
+            "inputTokens": 406,
+            "outputTokens": 42,
+            "cacheReadTokens": 320,
+            "cacheWriteTokens": null,
+            "reasoningTokens": 18,
+            "totalTokens": 448,
+            "cumulative": true
+          }
+        }
+      ],
+      "outcome": "failed",
+      "error": "Smoke tool loop exhausted 2 continuation steps without reaching final success.",
+      "elapsedMs": 16510
+    },
+    {
+      "model": "mimo-26-pro",
+      "family": "go-chat-completions",
+      "requests": [
+        {
+          "linked": false,
+          "status": 200
+        }
+      ],
+      "rounds": [
+        {
+          "elapsedMs": 45013,
+          "firstTextMs": null,
+          "finish": null,
+          "continuationKind": null,
+          "toolCalls": 0,
+          "textChars": 0,
+          "error": {
+            "code": "timeout",
+            "message": "Provider request timed out."
+          },
+          "usage": null
+        }
+      ],
+      "outcome": "failed",
+      "error": "Tool turn emitted zero tool calls.",
+      "elapsedMs": 45014
+    },
+    {
+      "model": "muse-12",
+      "family": "go-responses",
+      "requests": [
+        {
+          "linked": false,
+          "inputTypes": [
+            "message"
+          ],
+          "status": 200
+        },
+        {
+          "linked": false,
+          "inputTypes": [
+            "message",
+            "message",
+            "function_call",
+            "function_call_output"
+          ],
+          "status": 200
+        }
+      ],
+      "rounds": [
+        {
+          "elapsedMs": 8973,
+          "firstTextMs": 8285,
+          "finish": "tool_handoff",
+          "continuationKind": "go-responses",
+          "toolCalls": 1,
+          "textChars": 56,
+          "error": null,
+          "usage": {
+            "inputTokens": 638,
+            "outputTokens": 379,
+            "cacheReadTokens": 113,
+            "cacheWriteTokens": null,
+            "reasoningTokens": 301,
+            "totalTokens": 1017,
+            "cumulative": true
+          }
+        },
+        {
+          "elapsedMs": 10369,
+          "firstTextMs": 9620,
+          "finish": "success",
+          "continuationKind": "go-responses",
+          "toolCalls": 0,
+          "textChars": 110,
+          "error": null,
+          "usage": {
+            "inputTokens": 823,
+            "outputTokens": 419,
+            "cacheReadTokens": 625,
+            "cacheWriteTokens": null,
+            "reasoningTokens": 376,
+            "totalTokens": 1242,
+            "cumulative": true
+          }
+        }
+      ],
+      "outcome": "tool call and continuation succeeded",
+      "validatedCalls": 1,
+      "continuationSteps": 1,
+      "elapsedMs": 19343
+    },
+    {
+      "model": "muse-13",
+      "family": "go-responses",
+      "requests": [
+        {
+          "linked": false,
+          "inputTypes": [
+            "message"
+          ],
+          "status": 200
+        },
+        {
+          "linked": false,
+          "inputTypes": [
+            "message",
+            "message",
+            "function_call",
+            "function_call_output"
+          ],
+          "status": 200
+        }
+      ],
+      "rounds": [
+        {
+          "elapsedMs": 3915,
+          "firstTextMs": 3411,
+          "finish": "tool_handoff",
+          "continuationKind": "go-responses",
+          "toolCalls": 1,
+          "textChars": 47,
+          "error": null,
+          "usage": {
+            "inputTokens": 638,
+            "outputTokens": 285,
+            "cacheReadTokens": 113,
+            "cacheWriteTokens": null,
+            "reasoningTokens": 209,
+            "totalTokens": 923,
+            "cumulative": true
+          }
+        },
+        {
+          "elapsedMs": 7969,
+          "firstTextMs": 7723,
+          "finish": "success",
+          "continuationKind": "go-responses",
+          "toolCalls": 0,
+          "textChars": 68,
+          "error": null,
+          "usage": {
+            "inputTokens": 823,
+            "outputTokens": 579,
+            "cacheReadTokens": 625,
+            "cacheWriteTokens": null,
+            "reasoningTokens": 553,
+            "totalTokens": 1402,
+            "cumulative": true
+          }
+        }
+      ],
+      "outcome": "tool call and continuation succeeded",
+      "validatedCalls": 1,
+      "continuationSteps": 1,
+      "elapsedMs": 11884
+    },
+    {
+      "model": "deepseek-v4.1-flash",
+      "family": "go-chat-completions",
+      "requests": [
+        {
+          "linked": false,
+          "status": 200
+        },
+        {
+          "linked": false,
+          "status": 200
+        }
+      ],
+      "rounds": [
+        {
+          "elapsedMs": 2495,
+          "firstTextMs": null,
+          "finish": "tool_handoff",
+          "continuationKind": "go-chat-completions",
+          "toolCalls": 1,
+          "textChars": 0,
+          "error": null,
+          "usage": {
+            "inputTokens": 397,
+            "outputTokens": 60,
+            "cacheReadTokens": 0,
+            "cacheWriteTokens": null,
+            "reasoningTokens": 15,
+            "totalTokens": 457,
+            "cumulative": true
+          }
+        },
+        {
+          "elapsedMs": 3261,
+          "firstTextMs": 2437,
+          "finish": "success",
+          "continuationKind": "go-chat-completions",
+          "toolCalls": 0,
+          "textChars": 493,
+          "error": null,
+          "usage": {
+            "inputTokens": 559,
+            "outputTokens": 150,
+            "cacheReadTokens": 384,
+            "cacheWriteTokens": null,
+            "reasoningTokens": 31,
+            "totalTokens": 709,
+            "cumulative": true
+          }
+        }
+      ],
+      "outcome": "tool call and continuation succeeded",
+      "validatedCalls": 1,
+      "continuationSteps": 1,
+      "elapsedMs": 5756
+    }
+  ],
+  "effortProbes": [
+    {
+      "model": "mimo-25",
+      "family": "go-chat-completions",
+      "effort": "low",
+      "status": 200,
+      "usage": {
+        "prompt_tokens": 23,
+        "completion_tokens": 9,
+        "total_tokens": 32,
+        "prompt_tokens_details": {
+          "audio_tokens": 0,
+          "cached_tokens": 0,
+          "cache_write_tokens": 0
+        },
+        "completion_tokens_details": {
+          "audio_tokens": 0,
+          "reasoning_tokens": 4
+        }
+      },
+      "finishReason": "stop",
+      "textChars": 3,
+      "elapsedMs": 3541
+    },
+    {
+      "model": "mimo-25",
+      "family": "go-chat-completions",
+      "effort": "xhigh",
+      "status": 200,
+      "usage": {
+        "prompt_tokens": 23,
+        "completion_tokens": 17,
+        "total_tokens": 40,
+        "prompt_tokens_details": {
+          "audio_tokens": 0,
+          "cached_tokens": 0,
+          "cache_write_tokens": 0
+        },
+        "completion_tokens_details": {
+          "audio_tokens": 0,
+          "reasoning_tokens": 12
+        }
+      },
+      "finishReason": "stop",
+      "textChars": 3,
+      "elapsedMs": 4209
+    },
+    {
+      "model": "mimo-25",
+      "family": "go-chat-completions",
+      "effort": "audit_invalid",
+      "status": 400,
+      "errorDetail": "Upstream request failed: [400] reasoning_effort: Invalid option: expected one of \"max\"|\"xhigh\"|\"high\"|\"medium\"|\"low\"|\"minimal\"|\"none\"",
+      "elapsedMs": 470
+    },
+    {
+      "model": "mimo-26-pro",
+      "family": "go-chat-completions",
+      "effort": "low",
+      "exception": "The operation was aborted due to timeout",
+      "elapsedMs": 40016
+    },
+    {
+      "model": "mimo-26-pro",
+      "family": "go-chat-completions",
+      "effort": "high",
+      "exception": "The operation was aborted due to timeout",
+      "elapsedMs": 40004
+    },
+    {
+      "model": "mimo-26-pro",
+      "family": "go-chat-completions",
+      "effort": "audit_invalid",
+      "status": 429,
+      "errorDetail": "Upstream request failed: Endpoint is unavailable.",
+      "elapsedMs": 1444
+    },
+    {
+      "model": "muse-12",
+      "family": "go-responses",
+      "effort": "minimal",
+      "status": 200,
+      "returnedReasoning": {
+        "effort": "minimal"
+      },
+      "responseStatus": "completed",
+      "usage": {
+        "input_tokens": 21,
+        "output_tokens": 109,
+        "total_tokens": 130,
+        "input_tokens_details": {
+          "cached_tokens": 0
+        },
+        "output_tokens_details": {
+          "reasoning_tokens": 98
+        }
+      },
+      "outputTypes": [
+        "reasoning",
+        "message"
+      ],
+      "elapsedMs": 1694
+    },
+    {
+      "model": "muse-12",
+      "family": "go-responses",
+      "effort": "high",
+      "status": 200,
+      "returnedReasoning": {
+        "effort": "high"
+      },
+      "responseStatus": "completed",
+      "usage": {
+        "input_tokens": 21,
+        "output_tokens": 212,
+        "total_tokens": 233,
+        "input_tokens_details": {
+          "cached_tokens": 0
+        },
+        "output_tokens_details": {
+          "reasoning_tokens": 201
+        }
+      },
+      "outputTypes": [
+        "reasoning",
+        "message"
+      ],
+      "elapsedMs": 2294
+    },
+    {
+      "model": "muse-12",
+      "family": "go-responses",
+      "effort": "audit_invalid",
+      "status": 400,
+      "errorDetail": "`reasoning.effort`: unknown variant `audit_invalid`, expected one of `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`",
+      "errorCode": null,
+      "elapsedMs": 477
+    },
+    {
+      "model": "muse-13",
+      "family": "go-responses",
+      "effort": "minimal",
+      "status": 200,
+      "returnedReasoning": {
+        "effort": "minimal"
+      },
+      "responseStatus": "completed",
+      "usage": {
+        "input_tokens": 21,
+        "output_tokens": 50,
+        "total_tokens": 71,
+        "input_tokens_details": {
+          "cached_tokens": 0
+        },
+        "output_tokens_details": {
+          "reasoning_tokens": 39
+        }
+      },
+      "outputTypes": [
+        "reasoning",
+        "message"
+      ],
+      "elapsedMs": 999
+    },
+    {
+      "model": "muse-13",
+      "family": "go-responses",
+      "effort": "high",
+      "status": 200,
+      "returnedReasoning": {
+        "effort": "high"
+      },
+      "responseStatus": "completed",
+      "usage": {
+        "input_tokens": 21,
+        "output_tokens": 202,
+        "total_tokens": 223,
+        "input_tokens_details": {
+          "cached_tokens": 0
+        },
+        "output_tokens_details": {
+          "reasoning_tokens": 191
+        }
+      },
+      "outputTypes": [
+        "reasoning",
+        "message"
+      ],
+      "elapsedMs": 1783
+    },
+    {
+      "model": "muse-13",
+      "family": "go-responses",
+      "effort": "audit_invalid",
+      "status": 400,
+      "errorDetail": "`reasoning.effort`: unknown variant `audit_invalid`, expected one of `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`",
+      "errorCode": null,
+      "elapsedMs": 451
+    },
+    {
+      "model": "deepseek-v4.1-flash",
+      "family": "go-chat-completions",
+      "effort": "low",
+      "status": 200,
+      "usage": {
+        "prompt_tokens": 44,
+        "completion_tokens": 22,
+        "total_tokens": 66,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 20
+        }
+      },
+      "finishReason": "stop",
+      "textChars": 3,
+      "elapsedMs": 1862
+    },
+    {
+      "model": "deepseek-v4.1-flash",
+      "family": "go-chat-completions",
+      "effort": "high",
+      "status": 200,
+      "usage": {
+        "prompt_tokens": 44,
+        "completion_tokens": 23,
+        "total_tokens": 67,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 21
+        }
+      },
+      "finishReason": "stop",
+      "textChars": 3,
+      "elapsedMs": 1830
+    },
+    {
+      "model": "deepseek-v4.1-flash",
+      "family": "go-chat-completions",
+      "effort": "max",
+      "status": 200,
+      "usage": {
+        "prompt_tokens": 44,
+        "completion_tokens": 24,
+        "total_tokens": 68,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 22
+        }
+      },
+      "finishReason": "stop",
+      "textChars": 3,
+      "elapsedMs": 1921
+    },
+    {
+      "model": "deepseek-v4.1-flash",
+      "family": "go-chat-completions",
+      "effort": "audit_invalid",
+      "status": 422,
+      "errorDetail": "Upstream request failed: Endpoint is unavailable.",
+      "elapsedMs": 2446
+    }
+  ]
+}
