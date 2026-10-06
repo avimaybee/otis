@@ -9,9 +9,11 @@ import type { ServerContinuation, TurnInput } from '../../packages/agent/src/pro
 const storage = vi.hoisted(() => ({ values: new Map<string, unknown>(), reads: [] as string[], deletes: [] as string[] }));
 vi.mock('idb-keyval', () => ({
   get: async (key: string) => { storage.reads.push(key); return storage.values.get(key); },
+  getMany: async (keys: string[]) => { storage.reads.push(`many:${keys.length}`); return keys.map(key => storage.values.get(key)); },
   set: async (key: string, value: unknown) => { storage.values.set(key, value); },
   update: async (key: string, update: (old: unknown) => unknown) => { storage.values.set(key, update(storage.values.get(key))); },
   del: async (key: string) => { storage.deletes.push(key); storage.values.delete(key); },
+  delMany: async (keys: string[]) => { storage.deletes.push(`many:${keys.length}`); for (const key of keys) storage.values.delete(key); },
 }));
 afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
@@ -67,7 +69,7 @@ describe('Expanded audit: fixed behavior (reproductions now prove the cures)', (
   it.each([
     ['chat', () => api.me(), 31_000],
     ['voice', () => createWorkerVoiceTransport().mediaStatus('audit-ws', 'med_audit'), 46_000],
-  ] as const)('%s request no longer has a deadline while its body is stalled', async (_name, read, elapsed) => {
+  ] as const)('%s request deadline stays armed while its body is stalled', async (_name, read, elapsed) => {
     vi.useFakeTimers();
     let releaseBody!: (text: string) => void;
     let signal!: AbortSignal;
@@ -79,7 +81,10 @@ describe('Expanded audit: fixed behavior (reproductions now prove the cures)', (
     }));
     const pending = read().then(value => { completed = true; return value; });
     await vi.advanceTimersByTimeAsync(elapsed);
-    expect(signal.aborted).toBe(false);
+    // The deadline fires while the body is still stalled (a signal-ignoring
+    // stub cannot simulate the resulting transport rejection, so completion
+    // afterwards is a stub artifact, not production behavior).
+    expect(signal.aborted).toBe(true);
     expect(completed).toBe(false);
     expect(vi.getTimerCount()).toBe(0);
     releaseBody('{}');
@@ -108,7 +113,7 @@ describe('Expanded audit: fixed behavior (reproductions now prove the cures)', (
     expect(transport.mediaStatus).not.toHaveBeenCalled();
   });
 
-  it('a 180-chunk recording performs 181 separate finalization reads and 180 deletes', async () => {
+  it('a 180-chunk recording finalizes in bounded batch reads and one batch delete', async () => {
     const sessionId = 'audit-voice-chunks';
     await createVoiceSession({ sessionId, userId: 'audit-voice-owner', workspaceId: 'audit-ws', chatId: null, mimeType: 'audio/webm' });
     for (let sequence = 1; sequence <= 180; sequence++) {
@@ -118,10 +123,12 @@ describe('Expanded audit: fixed behavior (reproductions now prove the cures)', (
     const result = await finalizeVoiceSession(sessionId);
     expect(result?.blob.size).toBe(180);
     expect(result?.missing).toBe(0);
-    expect(storage.reads).toHaveLength(181);
+    // One owner-record read plus six 32-key batch reads instead of 181 serial gets.
+    expect(storage.reads).toHaveLength(7);
+    expect(storage.reads.filter(key => key.startsWith('many:'))).toHaveLength(6);
     storage.deletes.length = 0;
     await deleteVoiceSession(sessionId);
-    expect(storage.deletes).toHaveLength(180);
+    expect(storage.deletes).toEqual(['many:180']);
   });
 
   it('Go continuation history amplifies serialized completed-round checkpoint bytes', async () => {

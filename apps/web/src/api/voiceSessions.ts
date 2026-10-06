@@ -23,7 +23,7 @@
  * handoff, explicit discard, or owner purge.
  */
 
-import { del as idbDel, get as idbGet, set as idbSet, update as idbUpdate } from 'idb-keyval';
+import { delMany as idbDelMany, get as idbGet, getMany as idbGetMany, set as idbSet, update as idbUpdate } from 'idb-keyval';
 import { VOICE_BOUNDS } from '@otis/contracts';
 
 export const VOICE_SESSION_SCHEMA_VERSION = 1;
@@ -325,18 +325,42 @@ export async function finalizeVoiceSession(sessionId: string): Promise<{ meta: V
   if (!meta) return null;
   const parts: Blob[] = [];
   let missing = 0;
-  for (let sequence = 1; sequence <= meta.finalSequence; sequence += 1) {
-    let chunk: Blob | undefined;
-    try {
-      chunk = await idbGet<Blob>(chunkKey(sessionId, sequence));
-    } catch {
-      chunk = undefined;
-    }
+  for (const chunk of await readChunksBatched(sessionId, meta.finalSequence)) {
     if (chunk && chunk.size > 0) parts.push(chunk);
     else missing += 1;
   }
   if (parts.length === 0) return null;
   return { meta, blob: new Blob(parts, { type: meta.mimeType }), missing };
+}
+
+/**
+ * Ordered chunk reads in bounded groups sharing one IndexedDB transaction
+ * each (F19): 180 serial gets become a handful of roundtrips. Order,
+ * zero-size handling and missing-slot counting match the old loop exactly;
+ * an unreadable group degrades to missing slots, never a failed finalize.
+ */
+const CHUNK_READ_GROUP_SIZE = 32;
+
+async function readChunksBatched(sessionId: string, finalSequence: number): Promise<Array<Blob | undefined>> {
+  const out: Array<Blob | undefined> = [];
+  for (let start = 1; start <= finalSequence; start += CHUNK_READ_GROUP_SIZE) {
+    const end = Math.min(finalSequence, start + CHUNK_READ_GROUP_SIZE - 1);
+    const keys: string[] = [];
+    for (let sequence = start; sequence <= end; sequence += 1) {
+      keys.push(chunkKey(sessionId, sequence));
+    }
+    try {
+      const values = await idbGetMany<Blob>(keys);
+      for (let index = 0; index < keys.length; index += 1) {
+        out.push(values[index]);
+      }
+    } catch {
+      for (let index = 0; index < keys.length; index += 1) {
+        out.push(undefined);
+      }
+    }
+  }
+  return out;
 }
 
 /** Sessions for one exact scope, newest first; used for reload recovery. */
@@ -378,12 +402,17 @@ export async function deleteVoiceSession(sessionId: string): Promise<void> {
 }
 
 async function deleteChunks(sessionId: string, finalSequence: number): Promise<void> {
+  const keys: string[] = [];
   for (let sequence = 1; sequence <= finalSequence; sequence += 1) {
-    try {
-      await idbDel(chunkKey(sessionId, sequence));
-    } catch {
-      /* Orphan chunks are bounded and unreferenced. */
-    }
+    keys.push(chunkKey(sessionId, sequence));
+  }
+  // Chunk keys are bounded by the recorder cap: one transaction deletes them
+  // together instead of one roundtrip per chunk. Best-effort like before;
+  // orphans stay bounded and unreferenced.
+  try {
+    await idbDelMany(keys);
+  } catch {
+    /* Orphan chunks are bounded and unreferenced. */
   }
 }
 
