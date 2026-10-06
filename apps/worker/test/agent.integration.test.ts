@@ -1636,5 +1636,52 @@ describe('Worker Agent Loop, Recovery & Clarification Integration (006B workerd)
     await env.DB.prepare(`UPDATE workspace_settings SET default_model = NULL WHERE workspace_id = ?`).bind(ws).run();
   });
 
+  it('keeps checkpoints linear: only the latest round retains its continuation', async () => {
+    const accepted = await acceptWebMessage(env.DB, {
+      workspaceId: ws,
+      chatId: chatAvi,
+      userId: aviId,
+      clientMessageId: 'msg-client-linear-1',
+      text: 'Check entities, then tasks, then report',
+    });
+    const bigCursor = 'x'.repeat(2000);
+    const fakeAdapter = new FakeProviderAdapter({
+      provider: 'gemini',
+      scripts: [
+        { kind: 'tool_calls', calls: [{ callId: 'call_lin_1', name: 'query', args: { resource: 'entities', cursor: bigCursor } }] },
+        {
+          kind: 'tool_result_continuation',
+          intermediateText: '',
+          calls: [{ callId: 'call_lin_2', name: 'query', args: { resource: 'tasks', cursor: bigCursor } }],
+          finalText: '',
+        },
+        { kind: 'text', text: 'Checked both lists.' },
+      ],
+    });
+    const handler = new AgentHandler({ providerAdapter: fakeAdapter, maxRoundsPerSlice: 5, limits: defaultTestLimits });
+    const result = await dispatchOutboxItem(env.DB, await outboxIdForRun(accepted.run_id), ws, { handler });
+    expect(result.status).toBe('completed');
+    expect(fakeAdapter.calls.length).toBe(3);
+
+    const row = await env.DB.prepare(`SELECT agent_progress_json FROM agent_runs WHERE id = ?`)
+      .bind(accepted.run_id)
+      .first<{ agent_progress_json: string | null }>();
+    const progressJson = String(row?.agent_progress_json ?? '');
+    const progress = JSON.parse(progressJson) as {
+      completedRounds?: Array<{ roundIndex: number; continuation: unknown }>;
+    };
+    const rounds = progress.completedRounds ?? [];
+    // Two tool rounds completed (the closing text round carries no calls and
+    // stores no round entry); three provider turns ran in total.
+    expect(rounds.length).toBeGreaterThanOrEqual(2);
+    // Replay continues from the latest continuation only; older cumulative
+    // copies are dropped, so stored bytes grow with rounds, not rounds².
+    for (const round of rounds.slice(0, -1)) {
+      expect(round.continuation).toBeNull();
+    }
+    expect(rounds[rounds.length - 1]!.continuation).not.toBeNull();
+    expect(progressJson.length).toBeLessThan(30000);
+  });
+
 });
 

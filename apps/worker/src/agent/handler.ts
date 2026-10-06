@@ -72,6 +72,22 @@ async function r2ObjectToBase64(obj: R2ObjectBody): Promise<string> {
   return btoa(binary);
 }
 
+/**
+ * F22 checkpoint compaction: replay always continues from the latest
+ * completed round's provider continuation (or the current round's own), so
+ * older rounds' cumulative copies are dead weight. Dropping them keeps
+ * checkpoint bytes linear in rounds instead of quadratic. The ordered
+ * calls/results history is untouched, and exact wire arguments live and die
+ * in the adapter-emitted continuation, never re-serialized here.
+ */
+function dropSupersededContinuations(progress: DurableAgentProgress): void {
+  const rounds = progress.completedRounds;
+  if (!rounds) return;
+  for (let i = 0; i < rounds.length - 1; i++) {
+    rounds[i]!.continuation = null;
+  }
+}
+
 export interface AgentHandlerOptions {
   wrappingKey?: CryptoKey;
   platformKeys?: PlatformKeys;
@@ -430,6 +446,7 @@ export class AgentHandler implements TurnHandler {
               continuation: progress.currentRound.continuation,
               usage: progress.currentRound.usage,
             });
+            dropSupersededContinuations(progress);
             progress.phase = 'provider_pending';
             progress.roundIndex += 1;
             progress.currentRound = undefined;
@@ -465,6 +482,7 @@ export class AgentHandler implements TurnHandler {
         const round = progress.currentRound;
         const results = round.assistantCalls.map((call, index) => progress.completedToolResults.find(result => result.callId === call.callId) ?? { callId: call.callId, actionId: `${ctx.runId}_r${progress.roundIndex}_t${index}`, name: call.name, args: call.args, result: { status: 'rejected' as const, error: { code: 'superseded_by_steering', message: 'This proposal was not executed because the member added new context.' } } });
         progress.completedRounds = [...(progress.completedRounds ?? []), { roundIndex: progress.roundIndex, assistantCalls: round.assistantCalls, toolResults: results, continuation: round.continuation, usage: round.usage }];
+        dropSupersededContinuations(progress);
         progress.currentRound = undefined; progress.nextToolIndex = 0; progress.roundIndex++;
       }
       progress.phase = 'provider_pending'; progress.finalAnswer = undefined;
@@ -1291,6 +1309,7 @@ export class AgentHandler implements TurnHandler {
           continuation: progress.currentRound.continuation,
           usage: progress.currentRound.usage,
         });
+        dropSupersededContinuations(progress);
 
         progress.phase = 'provider_pending';
         progress.roundIndex += 1;
