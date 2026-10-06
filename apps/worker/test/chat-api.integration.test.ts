@@ -399,6 +399,61 @@ describe('Chat API: transcript, activity and run status', () => {
     }
   });
 
+  it('drains every catch-up page before live cursors advance (F09)', async () => {
+    const drainChat = (await createChat(env.DB, { workspaceId: WS, authorUserId: AVI, title: 'Drain chat' })).id;
+    const accepted = await acceptWebMessage(env.DB, {
+      workspaceId: WS,
+      chatId: drainChat,
+      userId: AVI,
+      clientMessageId: 'cm-drain-1',
+      text: 'drain probe',
+    });
+    const base = await env.DB.prepare(`SELECT COALESCE(MAX(cursor), 0) AS n FROM run_activity WHERE workspace_id = ? AND chat_id = ?`)
+      .bind(WS, drainChat)
+      .first<{ n: number }>();
+    const start = Number(base?.n ?? 0);
+    const total = 250;
+    const now = new Date().toISOString();
+    const inserts = [];
+    for (let i = 1; i <= total; i++) {
+      inserts.push(
+        env.DB.prepare(
+          `INSERT INTO run_activity (id, workspace_id, chat_id, run_id, cursor, type, payload_json, created_at)
+           VALUES (?, ?, ?, ?, ?, 'text_chunk', ?, ?)`,
+        ).bind(`act_drain_${i}`, WS, drainChat, accepted.run_id, start + i, JSON.stringify({ text: `row ${i}` }), now),
+      );
+    }
+    for (let i = 0; i < inserts.length; i += 50) {
+      await env.DB.batch(inserts.slice(i, i + 50));
+    }
+    await env.DB.prepare(`UPDATE chats SET activity_cursor = ?, last_activity_at = ?, updated_at = ? WHERE id = ?`)
+      .bind(start + total, now, now, drainChat)
+      .run();
+    const response = createActivityStream(env.DB, {
+      workspaceId: WS,
+      chatId: drainChat,
+      afterCursor: start,
+      sessionToken: 'api_token_avi',
+      userId: AVI,
+      // No heartbeat beat fits in this window: rows must arrive from the
+      // initial drain alone, never from a later catch-up tick.
+      maxStreamMs: 300,
+      heartbeatMs: 10_000,
+    });
+    const body = await readAll(response, 15000);
+    const seen: number[] = [];
+    for (const match of body.matchAll(/^id: (\d+)$/gm)) {
+      seen.push(Number(match[1]));
+    }
+    const catchup = seen.filter(id => id > start);
+    // Every catch-up row arrives exactly once, in cursor order, before any
+    // newer live cursor could leapfrog it.
+    expect(catchup).toHaveLength(total);
+    expect(catchup).toEqual([...catchup].sort((a, b) => a - b));
+    expect(catchup[0]).toBe(start + 1);
+    expect(catchup[catchup.length - 1]).toBe(start + total);
+  });
+
   it('closes the stream for a member whose access was revoked while it was open', async () => {
     const revokedUser = 'usr_api_revoked';
     const now = new Date().toISOString();

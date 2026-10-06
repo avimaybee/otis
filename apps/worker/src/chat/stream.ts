@@ -44,6 +44,17 @@ function formatEvent(name: StreamEventName, data: unknown, id?: number): Uint8Ar
 
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
+/** Live event held while catch-up pages drain, in arrival order. */
+interface BufferedLiveEvent {
+  name: StreamEventName;
+  data: unknown;
+  id?: number;
+}
+
+/** Bounded race buffer: catch-up is a fast D1 read, so real floods cannot
+ * fill this; overflow fails closed to a client resync, never a silent gap. */
+const MAX_BUFFERED_LIVE = 200;
+
 /**
  * Creates an SSE Response that streams activity until the bound is
  * reached, membership is lost, or the client disconnects.
@@ -198,20 +209,49 @@ export function createActivityStream(db: D1Database, options: StreamOptions): Re
         return;
       }
 
-      // 2. Initial catch-up read: single read from D1 for existing activities after cursor
+      // 2. Subscribe BEFORE the catch-up read, buffering live arrivals: an
+      // event published between the read and a later subscribe would
+      // otherwise race the cursor forward past undrained catch-up rows.
+      // 3. Drain every catch-up page fully before touching live cursors.
+      let draining = true;
+      let bufferOverflow = false;
+      const buffered: BufferedLiveEvent[] = [];
+      unsubscribeLiveBus = liveChatBus.subscribe(options.workspaceId, options.chatId, (event) => {
+        if (closed) return;
+        if (draining) {
+          if (buffered.length >= MAX_BUFFERED_LIVE) {
+            bufferOverflow = true;
+            return;
+          }
+          buffered.push({ name: event.name, data: event.data, ...(event.id !== undefined ? { id: event.id } : {}) });
+          return;
+        }
+        try {
+          controller.enqueue(formatEvent(event.name, event.data, event.id));
+          if (event.id !== undefined && event.id > cursor) {
+            cursor = event.id;
+          }
+        } catch {
+          // Closed stream
+        }
+      });
       try {
-        const read = await readChatActivity(
-          db,
-          {
-            workspaceId: options.workspaceId,
-            chatId: options.chatId,
-            afterCursor: cursor,
-          },
-          queryCount,
-        );
-        for (const activity of read.activities) {
-          controller.enqueue(formatEvent('activity', activity, activity.cursor));
-          cursor = Math.max(cursor, activity.cursor);
+        for (;;) {
+          const read = await readChatActivity(
+            db,
+            {
+              workspaceId: options.workspaceId,
+              chatId: options.chatId,
+              afterCursor: cursor,
+            },
+            queryCount,
+          );
+          if (read.activities.length === 0) break;
+          for (const activity of read.activities) {
+            controller.enqueue(formatEvent('activity', activity, activity.cursor));
+            cursor = Math.max(cursor, activity.cursor);
+          }
+          if (read.activities.length < ACTIVITY_BOUNDS.MAX_CATCHUP_PAGE || cursor >= read.latestCursor) break;
         }
       } catch (err) {
         if (err instanceof ActivityCursorSupersededError) {
@@ -229,19 +269,28 @@ export function createActivityStream(db: D1Database, options: StreamOptions): Re
         controller.close();
         return;
       }
-
-      // 3. Subscribe to in-memory liveChatBus (events pushed in RAM directly as tokens arrive)
-      unsubscribeLiveBus = liveChatBus.subscribe(options.workspaceId, options.chatId, (event) => {
-        if (closed) return;
+      draining = false;
+      if (bufferOverflow) {
+        controller.enqueue(formatEvent('resync_required', { latest_cursor: cursor }));
+        closed = true;
+        controller.close();
+        return;
+      }
+      // 4. Replay buffered live events newer than the drained mark in arrival
+      // order; older ones already went out via catch-up above.
+      for (const event of buffered) {
+        if (event.id !== undefined && event.id <= cursor) continue;
         try {
           controller.enqueue(formatEvent(event.name, event.data, event.id));
-          if (event.id !== undefined && event.id > cursor) {
-            cursor = event.id;
-          }
         } catch {
-          // Closed stream
+          closed = true;
+          break;
         }
-      });
+        if (closed) break;
+        if (event.id !== undefined && event.id > cursor) {
+          cursor = event.id;
+        }
+      }
 
       // 4. In-memory heartbeat timer with periodic membership re-check and D1 catch-up
       heartbeatTimer = setInterval(async () => {
