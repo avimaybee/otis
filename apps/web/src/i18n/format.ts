@@ -25,12 +25,57 @@ export function parseAppLanguage(tag: string | null | undefined): AppLanguage | 
 }
 
 /** The viewer's locale for Intl display; falls back to en when unavailable. */
+const resolvedLocales = new Map<string, string>();
 export function viewerLocale(): string {
   try {
     const tag = navigator.language;
-    if (typeof tag === 'string' && tag && Intl.DateTimeFormat.supportedLocalesOf([tag]).length > 0) return tag;
+    if (typeof tag === 'string' && tag) {
+      const hit = resolvedLocales.get(tag);
+      if (hit) return hit;
+      // Locale negotiation runs once per distinct tag; the fallback stays
+      // uncached so a newly available Intl still resolves next call.
+      if (Intl.DateTimeFormat.supportedLocalesOf([tag]).length > 0) {
+        if (resolvedLocales.size < 8) resolvedLocales.set(tag, tag);
+        return tag;
+      }
+    }
   } catch { /* Happy-dom and privacy-hardened browsers may lack Intl data. */ }
   return 'en';
+}
+
+/**
+ * Bounded formatter cache (F12): one immutable Intl instance per
+ * locale/options/timezone key. Only instances are shared — never formatted
+ * labels — so midnight rollover and display semantics cannot change. Cache
+ * misses construct (throwing for bad zones, which callers already map to
+ * '') and failures are never stored.
+ */
+const MAX_CACHED_FORMATTERS = 16;
+const dateTimeCache = new Map<string, Intl.DateTimeFormat>();
+const numberCache = new Map<string, Intl.NumberFormat>();
+
+function cachedDateTime(key: string, make: () => Intl.DateTimeFormat): Intl.DateTimeFormat {
+  const hit = dateTimeCache.get(key);
+  if (hit) return hit;
+  const created = make();
+  if (dateTimeCache.size >= MAX_CACHED_FORMATTERS) {
+    const oldest = dateTimeCache.keys().next();
+    if (!oldest.done) dateTimeCache.delete(oldest.value);
+  }
+  dateTimeCache.set(key, created);
+  return created;
+}
+
+function cachedNumber(key: string, make: () => Intl.NumberFormat): Intl.NumberFormat {
+  const hit = numberCache.get(key);
+  if (hit) return hit;
+  const created = make();
+  if (numberCache.size >= MAX_CACHED_FORMATTERS) {
+    const oldest = numberCache.keys().next();
+    if (!oldest.done) numberCache.delete(oldest.value);
+  }
+  numberCache.set(key, created);
+  return created;
 }
 
 function toDate(iso: string | null | undefined): Date | null {
@@ -44,11 +89,12 @@ export function formatClockTime(iso: string, locale?: string, timeZone?: string)
   const date = toDate(iso);
   if (!date) return '';
   try {
-    return new Intl.DateTimeFormat(locale ?? viewerLocale(), {
+    const activeLocale = locale ?? viewerLocale();
+    return cachedDateTime(`clock|${activeLocale}|${timeZone ?? ''}`, () => new Intl.DateTimeFormat(activeLocale, {
       hour: '2-digit',
       minute: '2-digit',
       ...(timeZone ? { timeZone } : {}),
-    }).format(date);
+    })).format(date);
   } catch { return ''; }
 }
 
@@ -57,12 +103,13 @@ export function formatDayLabel(iso: string, locale?: string, timeZone?: string):
   const date = toDate(iso);
   if (!date) return '';
   try {
-    return new Intl.DateTimeFormat(locale ?? viewerLocale(), {
+    const activeLocale = locale ?? viewerLocale();
+    return cachedDateTime(`day|${activeLocale}|${timeZone ?? ''}`, () => new Intl.DateTimeFormat(activeLocale, {
       weekday: 'short',
       day: 'numeric',
       month: 'short',
       ...(timeZone ? { timeZone } : {}),
-    }).format(date);
+    })).format(date);
   } catch { return ''; }
 }
 
@@ -74,12 +121,12 @@ export function dayKeyInZone(iso: string, timeZone?: string): string {
   const date = toDate(iso);
   if (!date) return '';
   try {
-    return new Intl.DateTimeFormat('en-CA', {
+    return cachedDateTime(`daykey|${timeZone ?? ''}`, () => new Intl.DateTimeFormat('en-CA', {
       year: 'numeric',
       month: '2-digit',
       day: '2-digit',
       ...(timeZone ? { timeZone } : {}),
-    }).format(date);
+    })).format(date);
   } catch { return ''; }
 }
 
@@ -89,10 +136,10 @@ export function formatMoney(amount: number, currency?: string | null, locale?: s
   const activeLocale = locale ?? viewerLocale();
   if (!currency) {
     try {
-      return new Intl.NumberFormat(activeLocale).format(amount);
+      return cachedNumber(`plain|${activeLocale}`, () => new Intl.NumberFormat(activeLocale)).format(amount);
     } catch { return String(amount); }
   }
   try {
-    return new Intl.NumberFormat(activeLocale, { style: 'currency', currency }).format(amount);
+    return cachedNumber(`money|${activeLocale}|${currency}`, () => new Intl.NumberFormat(activeLocale, { style: 'currency', currency })).format(amount);
   } catch { return `${amount} ${currency}`; }
 }
