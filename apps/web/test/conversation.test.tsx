@@ -13,7 +13,7 @@ import {
   mergeTransientPreview,
   transientTextForRun,
 } from '../src/hooks/useActivityStream.js';
-import { applyAnswerSaved, type ChatSnapshot } from '../src/api/snapshot.js';
+import { applyAcceptedMessage, applyAnswerSaved, type ChatSnapshot } from '../src/api/snapshot.js';
 
 // @ts-expect-error React act flag
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
@@ -345,5 +345,24 @@ describe('Completion reconcile', () => {
     const event = activity('act_run_1_answer', 2, 'answer_saved', { message_id: 'reply_run_1', sequence: 2, text: 'Saved reply.', channel: 'web' });
     const once = applyAnswerSaved(snapshot(), event)!;
     expect(applyAnswerSaved(once, event)?.messages).toHaveLength(2);
+  });
+  it('files an accepted outgoing message locally with the same client UUID', () => {
+    const base = snapshot();
+    const next = applyAcceptedMessage(base, {
+      id: 'msg_server_9',
+      workspace_id: 'ws_1',
+      chat_id: 'chat_1',
+      author_user_id: 'usr_1',
+      client_message_id: 'client_9',
+      content_text: 'Hello Otis',
+      media_id: null,
+      run_id: 'run_9',
+      sequence: 2,
+      created_at: '2026-10-02T10:01:00.000Z',
+    });
+    expect(next.messages.map(item => item.content_text)).toEqual(['Hi', 'Hello Otis']);
+    const filed = next.messages[1]!;
+    expect(filed).toMatchObject({ id: 'msg_server_9', author_kind: 'member', run_id: 'run_9', sequence: 2 });
+    expect(filed.client_message_id).toBe('client_9');
   });
 });

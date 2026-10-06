@@ -55,6 +55,7 @@ import { voiceUploadAdapter } from './api/voice.js';
 import { deleteVoiceSessionsForUser } from './api/voiceSessions.js';
 import { deriveTranscript, reconciledClientIds } from './api/transcript.js';
 import {
+  applyAcceptedMessage,
   applyActivitySnapshot,
   applyAnswerSaved,
   applyDetail,
@@ -307,6 +308,7 @@ export function ConversationScreen({ workspaceId, chat: routeChat, chatParamPres
     const subscription = subscribeToActivity(api.activityStreamUrl(workspaceId, readyChatId, cursor), {
       onActivity: activity => {
         if (generation !== epoch.current || activity.workspace_id !== workspaceId || activity.chat_id !== readyChatId) return;
+        lastLiveEventAt.current[readyChatId] = Date.now();
         // Transient preview frames bypass the snapshot: fold into the
         // memory-only buffer with no refetch and no cursor advance.
         if (activity.type === 'text_preview') {
@@ -386,10 +388,18 @@ export function ConversationScreen({ workspaceId, chat: routeChat, chatParamPres
     ? snapshot?.questions.find(question => question.id === replyId && question.answerable_by_caller)
     : pendingQuestion;
 
+  // Last live data event per chat: the fallback poll below only fires when
+  // the stream has gone quiet, never while events are flowing.
+  const lastLiveEventAt = useRef<Record<string, number>>({});
+
   useEffect(() => {
     if (!running || accessLost || !workspaceId || !activeChatId) return;
     const runId = running.run.id;
+    const chatKey = activeChatId;
     const timer = setTimeout(() => {
+      // Backstop only: live events already converge an active stream, so a
+      // recent event means polling would just re-download the same state.
+      if (Date.now() - (lastLiveEventAt.current[chatKey] ?? 0) < 2500) return;
       refreshRun(workspaceId, activeChatId, runId);
       refreshMessages(workspaceId, activeChatId);
     }, 2500);
@@ -491,10 +501,27 @@ export function ConversationScreen({ workspaceId, chat: routeChat, chatParamPres
       setError(null); setReplyId(null); setDismissedClarificationId(null); setDraftValue(null);
       // Late acceptance only reconciles: follow was already taken at the
       // local send moment, and a released reader must never be yanked back.
+      // The accepted message files locally from the receipt (same client
+      // UUID replaces the echo, no duplicate) instead of a full transcript
+      // refetch; only the single run detail refreshes for Working state.
+      const acceptedAt = new Date().toISOString();
+      queryClient.setQueryData<ChatSnapshot>(qk.chat(entryUserId, entryWorkspaceId, chatId), previous =>
+        previous
+          ? applyAcceptedMessage(previous, {
+            id: accepted.message_id,
+            workspace_id: entryWorkspaceId,
+            chat_id: chatId,
+            author_user_id: entryUserId,
+            client_message_id: entry.clientId,
+            content_text: entry.text || (entry.mediaId ? 'Voice note' : ''),
+            media_id: entry.mediaId ?? null,
+            run_id: accepted.run_id,
+            sequence: accepted.acceptance_sequence,
+            created_at: acceptedAt,
+          })
+          : previous);
       refreshRun(entryWorkspaceId, chatId, accepted.run_id);
-      refreshMessages(entryWorkspaceId, chatId);
       void queryClient.invalidateQueries({ queryKey: qk.chats(entryUserId, entryWorkspaceId, 'mine') });
-      void queryClient.invalidateQueries({ queryKey: qk.chat(entryUserId, entryWorkspaceId, chatId) });
       if (accepted.selected_workspace_id && workspaces.some(workspace => workspace.id === accepted.selected_workspace_id)) { switchWorkspace(accepted.selected_workspace_id); return true; }
       return true;
     } catch (err) {

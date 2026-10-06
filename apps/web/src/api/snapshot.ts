@@ -127,6 +127,37 @@ export function applyAnswerSaved(snapshot: ChatSnapshot, activity: PublicActivit
   return { ...snapshot, messages: mergeMessages(snapshot.messages, [message]) };
 }
 
+/**
+ * Files an accepted outgoing message locally from the acceptance receipt,
+ * without a transcript refetch. The server row carries the same client UUID,
+ * so reconciliation replaces the local echo instead of duplicating it.
+ */
+export function applyAcceptedMessage(
+  snapshot: ChatSnapshot,
+  message: {
+    id: string;
+    workspace_id: string;
+    chat_id: string;
+    author_user_id: string;
+    client_message_id: string;
+    content_text: string;
+    media_id: string | null;
+    run_id: string;
+    sequence: number;
+    created_at: string;
+  },
+): ChatSnapshot {
+  const row: ChatMessage = {
+    ...message,
+    author_display_name: null,
+    author_kind: 'member',
+    channel: 'web',
+    inbound_message_id: null,
+    updated_at: message.created_at,
+  };
+  return { ...snapshot, messages: mergeMessages(snapshot.messages, [row]) };
+}
+
 export function applyOlderMessages(
   snapshot: ChatSnapshot,
   messages: ChatMessage[],

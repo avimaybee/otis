@@ -215,6 +215,55 @@ describe('End-to-End UI to Backend Flow Verification', () => {
     await view.unmount();
   });
 
+  // FLOW 1e: acceptance patches the transcript locally without a refetch
+  it('Flow 1e: accepted send files locally with one run refresh and no transcript reload', async () => {
+    history.replaceState({}, '', `/?workspace=${WS}&chat=chat_1e`);
+    const existingChat = makeChat('chat_1e', 'Existing');
+    vi.spyOn(api, 'listChats').mockResolvedValue({ chats: [existingChat] });
+    vi.spyOn(api, 'commands').mockResolvedValue({ surface: 'web', commands: [] });
+    vi.spyOn(api, 'models').mockResolvedValue({ models: DEFAULT_MODELS, current_command_key: 'mimo-25', default_command_key: 'mimo-25' });
+    vi.spyOn(api, 'clarifications').mockResolvedValue({ clarifications: [] });
+    vi.spyOn(api, 'activity').mockResolvedValue({ activities: [], latest_cursor: 0 } as never);
+    vi.spyOn(api, 'sendMessage').mockResolvedValue({
+      status: 'accepted',
+      message_id: 'msg_accepted_1e',
+      run_id: 'run_1e',
+      acceptance_sequence: 2,
+    });
+    vi.spyOn(api, 'getChat').mockResolvedValue({ chat: existingChat, is_author: true });
+    const listMessagesSpy = vi.spyOn(api, 'listMessages').mockResolvedValue({
+      chat_id: 'chat_1e',
+      messages: [{ ...makeMessage('msg_old_1e', 'Earlier message', 'member'), chat_id: 'chat_1e', sequence: 1 }],
+      next_before_sequence: null,
+    });
+    const runSpy = vi.spyOn(api, 'run').mockResolvedValue({
+      run: { id: 'run_1e', status: 'queued' } as never,
+      status: 'queued',
+      steps: [],
+      actions: [],
+      activities: [],
+      pending_clarification: null,
+    });
+
+    const view = await mount(<RouteShell />);
+    const textarea = view.host.querySelector('textarea') as HTMLTextAreaElement;
+    await fill(textarea, 'File me locally');
+    await React.act(async () => (view.host.querySelector('[aria-label="Send"]') as HTMLButtonElement).click());
+    // Settle the 120ms refresh debounce, the acceptance patch and run fetch.
+    await React.act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 350));
+    });
+
+    // The accepted text renders from the local patch…
+    expect(view.host.textContent).toContain('File me locally');
+    // …with no transcript reload beyond the initial snapshot load…
+    expect(listMessagesSpy.mock.calls.length).toBeLessThanOrEqual(1);
+    // …and exactly one run-detail refresh for Working state.
+    expect(runSpy).toHaveBeenCalledWith(WS, 'run_1e');
+
+    await view.unmount();
+  });
+
   // FLOW 1b: Fresh chat loading state (disabled snapshot query)
   it('Flow 1b: fresh chat shows the approved empty state immediately with no snapshot request', async () => {
     history.replaceState({}, '', `/?workspace=${WS}&chat=new`);
