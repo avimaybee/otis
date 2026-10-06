@@ -21,6 +21,7 @@ import {
   type BriefKernel,
 } from '../src/brief/service.js';
 import { setMemberSettings } from '@otis/identity';
+import { readBriefCandidates } from '../src/brief/read.js';
 import { processScheduledDailyBriefs } from '../src/brief/cron.js';
 import { deliverTelegramOutbox } from '../src/inbox/telegramDelivery.js';
 import {
@@ -866,5 +867,58 @@ describe('B4 due-aware brief sweep (workerd)', () => {
       input: { brief_local_time: '09:30' },
     });
     expect(await readStamp('u_sweep_edit')).toBeNull();
+  });
+
+  it('F21: due-dated tasks and hot leads survive a UUID-sorted crowd', async () => {
+    const WS_CROWD = 'ws-brf-crowd';
+    await seedUser('u_crowd', 'fb_crowd', 'crowd@sweep.test', 'Crowd');
+    await seedWorkspace(WS_CROWD, 'Crowd WS', 'u_crowd');
+    await seedMembership(WS_CROWD, 'u_crowd', 'member');
+    await seedJob('job-crowd', WS_CROWD);
+    await seedEvent('evt-crowd', WS_CROWD, null, 'note', {}, NOW, 'job-crowd');
+    const taskStatements = [];
+    for (let i = 0; i < 501; i++) {
+      const id = `aaa-undated-${String(i).padStart(3, '0')}`;
+      taskStatements.push(
+        env.DB.prepare(
+          `INSERT INTO tasks (id, workspace_id, entity_id, title, assignee_user_id, status, due_kind, due_local_date, due_instant, due_timezone, snooze_until, source_event_id, revision, created_at, updated_at)
+           VALUES (?, ?, NULL, ?, NULL, 'open', NULL, NULL, NULL, NULL, NULL, ?, 1, ?, ?)`,
+        ).bind(id, WS_CROWD, `Undated ${i}`, 'evt-crowd', NOW, NOW),
+      );
+    }
+    taskStatements.push(
+      env.DB.prepare(
+        `INSERT INTO tasks (id, workspace_id, entity_id, title, assignee_user_id, status, due_kind, due_local_date, due_instant, due_timezone, snooze_until, source_event_id, revision, created_at, updated_at)
+         VALUES ('zzz-dated-task', ?, NULL, 'Due yesterday', NULL, 'open', 'date', '2026-10-05', NULL, 'Europe/Bucharest', NULL, ?, 1, ?, ?)`,
+      ).bind(WS_CROWD, 'evt-crowd', NOW, NOW),
+    );
+    for (let i = 0; i < taskStatements.length; i += 50) {
+      await env.DB.batch(taskStatements.slice(i, i + 50));
+    }
+    const entityStatements = [];
+    for (let i = 0; i < 501; i++) {
+      const id = `aaa-warm-${String(i).padStart(3, '0')}`;
+      entityStatements.push(
+        env.DB.prepare(
+          `INSERT INTO entities (id, workspace_id, name, kind, status, created_at, updated_at)
+           VALUES (?, ?, ?, 'business', 'warm', ?, ?)`,
+        ).bind(id, WS_CROWD, `Warm ${i}`, NOW, NOW),
+      );
+    }
+    entityStatements.push(
+      env.DB.prepare(
+        `INSERT INTO entities (id, workspace_id, name, kind, status, created_at, updated_at)
+         VALUES ('zzz-hot-ent', ?, 'Hot One', 'business', 'hot', ?, ?)`,
+      ).bind(WS_CROWD, NOW, NOW),
+    );
+    for (let i = 0; i < entityStatements.length; i += 50) {
+      await env.DB.batch(entityStatements.slice(i, i + 50));
+    }
+
+    const candidates = await readBriefCandidates(env.DB, WS_CROWD, 'u_crowd');
+    expect(candidates.tasks.some(task => task.id === 'zzz-dated-task')).toBe(true);
+    expect(candidates.tasks[0]!.id).toBe('zzz-dated-task');
+    expect(candidates.leads.some(lead => lead.entityId === 'zzz-hot-ent')).toBe(true);
+    expect(candidates.leads[0]!.entityId).toBe('zzz-hot-ent');
   });
 });

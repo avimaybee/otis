@@ -239,7 +239,13 @@ export async function readBriefCandidates(
          FROM tasks
          WHERE workspace_id = ? AND status = 'open'
            AND (assignee_user_id = ? OR assignee_user_id IS NULL)
-         ORDER BY id ASC LIMIT ${READ_LIMIT}`,
+         -- Due-dated first so a UUID-sorted prefix can never crowd dated
+         -- work out of the bounded candidate set; the kernel still applies
+         -- snooze, dispute and final ranking. Undated rows keep id order.
+         ORDER BY
+           CASE WHEN due_instant IS NOT NULL OR due_local_date IS NOT NULL THEN 0 ELSE 1 END ASC,
+           COALESCE(due_instant, due_local_date, '9999-12-31') ASC,
+           id ASC LIMIT ${READ_LIMIT}`,
       )
       .bind(workspaceId, userId)
       .all<TaskRow>()
@@ -272,7 +278,10 @@ export async function readBriefCandidates(
       .prepare(
         `SELECT id, name, status FROM entities
          WHERE workspace_id = ? AND status IN ('warm', 'hot')
-         ORDER BY id ASC LIMIT ${READ_LIMIT}`,
+         -- Hot before warm ('hot' < 'warm' in binary collation) for the same
+         -- anti-crowding reason as tasks above; staleness ranking stays in
+         -- the kernel, which sees contact dates this query cannot order by.
+         ORDER BY status ASC, id ASC LIMIT ${READ_LIMIT}`,
       )
       .bind(workspaceId)
       .all<EntityRow>()
