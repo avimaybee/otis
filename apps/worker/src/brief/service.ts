@@ -29,6 +29,7 @@
 
 import type {
   BriefKernel,
+  LocalBriefSchedule,
   LocalSavedBriefItem,
   LocalScheduleDecision,
 } from './types.js';
@@ -141,6 +142,44 @@ async function alreadyIfPresent(
   return existing ? { status: 'already', briefId: existing.id, localDate } : null;
 }
 
+/**
+ * Sweep pacing (B4): after every committed outcome, persist when this member
+ * becomes due again so the cron selects due members only. Runnable outcomes
+ * stamp the next slot past the committed date; broken enabled schedules
+ * (incomplete/invalid) recheck daily instead of every sweep; anything else
+ * clears the stamp. Disabled members are never selected by the enabled-only
+ * sweep, and members without a settings row stamp zero rows.
+ */
+const BROKEN_SCHEDULE_RECHECK_MS = 24 * 60 * 60 * 1000;
+
+async function advanceSweepStamp(
+  db: D1Database,
+  kernel: BriefKernel,
+  params: {
+    workspaceId: string;
+    userId: string;
+    stored: LocalBriefSchedule | null;
+    fromUtcIso: string;
+    /** Local date committed by this outcome, or the pre-existing last-generated date. */
+    committedLocalDate: string | null;
+    lastGenerated: string | null;
+  },
+): Promise<void> {
+  let stamp: string | null = null;
+  if (params.stored?.enabled) {
+    stamp =
+      kernel.nextDueUtc({
+        schedule: params.stored,
+        fromUtcIso: params.fromUtcIso,
+        lastGeneratedLocalDate: params.committedLocalDate ?? params.lastGenerated,
+      }) ?? new Date(Date.parse(params.fromUtcIso) + BROKEN_SCHEDULE_RECHECK_MS).toISOString();
+  }
+  await db
+    .prepare(`UPDATE member_settings SET brief_next_due_utc = ?, updated_at = ? WHERE workspace_id = ? AND user_id = ?`)
+    .bind(stamp, params.fromUtcIso, params.workspaceId, params.userId)
+    .run();
+}
+
 export async function generateDailyBrief(
   db: D1Database,
   kernel: BriefKernel,
@@ -154,6 +193,7 @@ export async function generateDailyBrief(
   }
   const stored = await readMemberBriefSchedule(db, workspaceId, userId);
   if (!stored || !stored.enabled) {
+    await advanceSweepStamp(db, kernel, { workspaceId, userId, stored, fromUtcIso: nowIso, committedLocalDate: null, lastGenerated: null });
     return { status: 'skipped', reason: 'schedule_disabled' };
   }
 
@@ -177,8 +217,27 @@ export async function generateDailyBrief(
   if (!evaluation.runnable || !evaluation.localDate) {
     if (evaluation.decision === 'already_generated' && evaluation.localDate) {
       const present = await alreadyIfPresent(db, workspaceId, userId, evaluation.localDate);
-      if (present) return present;
+      if (present) {
+        await advanceSweepStamp(db, kernel, {
+          workspaceId,
+          userId,
+          stored,
+          fromUtcIso: nowIso,
+          committedLocalDate: evaluation.localDate,
+          lastGenerated,
+        });
+        return present;
+      }
     }
+    await advanceSweepStamp(db, kernel, {
+      workspaceId,
+      userId,
+      stored,
+      fromUtcIso: nowIso,
+      committedLocalDate:
+        evaluation.decision === 'already_generated' ? evaluation.localDate : lastGenerated,
+      lastGenerated,
+    });
     return { status: 'skipped', reason: mapDecision(evaluation.decision) };
   }
   const localDate = evaluation.localDate;
@@ -223,6 +282,14 @@ export async function generateDailyBrief(
            VALUES (?, ?, ?, ?, 'scheduled_daily', 'empty', NULL, NULL, ?, '', 0, ?, ?)`,
         ).bind(briefId, workspaceId, userId, localDate, runId, nowIso, nowIso),
       ]);
+      await advanceSweepStamp(db, kernel, {
+        workspaceId,
+        userId,
+        stored,
+        fromUtcIso: nowIso,
+        committedLocalDate: localDate,
+        lastGenerated,
+      });
       return { status: 'empty', briefId, localDate };
     }
 
@@ -335,6 +402,14 @@ export async function generateDailyBrief(
     }
 
     await db.batch(statements);
+    await advanceSweepStamp(db, kernel, {
+      workspaceId,
+      userId,
+      stored,
+      fromUtcIso: nowIso,
+      committedLocalDate: localDate,
+      lastGenerated,
+    });
     return {
       status: 'ready',
       briefId,
@@ -348,7 +423,17 @@ export async function generateDailyBrief(
   } catch (err) {
     // Concurrent tick or retried request: the canonical row decides.
     const present = await alreadyIfPresent(db, workspaceId, userId, localDate);
-    if (present) return present;
+    if (present) {
+      await advanceSweepStamp(db, kernel, {
+        workspaceId,
+        userId,
+        stored,
+        fromUtcIso: nowIso,
+        committedLocalDate: localDate,
+        lastGenerated,
+      });
+      return present;
+    }
     throw err;
   }
 }

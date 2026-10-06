@@ -1,9 +1,9 @@
 -- Migration: 0015_message_image_attachments.sql
 -- Image attachments on chat messages: a message may carry up to
 -- IMAGE_BOUNDS.MAX_PER_MESSAGE validated still images. The link rows are the
--- durable receipt attaching consumed media to the turn; bytes stay in R2 and
+-- durable receipt attaching consumed media to the turn. Bytes stay in R2 and
 -- no transcription intent is created (images are prompt input, never STT).
--- Additive only; voice media_id flows and retention semantics are untouched.
+-- Additive only. Voice media_id flows and retention semantics are untouched.
 
 CREATE TABLE IF NOT EXISTS message_image_attachments (
   chat_message_id TEXT NOT NULL REFERENCES chat_messages(id) ON DELETE CASCADE,

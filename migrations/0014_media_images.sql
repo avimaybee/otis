@@ -9,7 +9,7 @@
 -- enforcement for the transaction. Deferral does not suppress ON DELETE
 -- CASCADE, and dropping media_objects would cascade-delete every
 -- media_transcriptions receipt, so receipts are backed up first and restored
--- after the rename; row ids are stable, so each receipt stays attached to
+-- after the rename. Row ids are stable, so each receipt stays attached to
 -- the same media. A regular (non-TEMP) backup table is used so the copy
 -- survives executors that run each statement on its own connection.
 

@@ -20,12 +20,15 @@ import {
   generateDailyBrief,
   type BriefKernel,
 } from '../src/brief/service.js';
+import { setMemberSettings } from '@otis/identity';
+import { processScheduledDailyBriefs } from '../src/brief/cron.js';
 import { deliverTelegramOutbox } from '../src/inbox/telegramDelivery.js';
 import {
   buildBriefDedupeKey,
   evaluateBriefSchedule,
   getLocalDate,
   isValidTimezone,
+  nextDueUtc,
   orderSelectionsForSave,
   renderBriefText,
   selectBriefItems,
@@ -40,6 +43,7 @@ const STALE_DAYS = 14;
 const kernel: BriefKernel = {
   evaluateSchedule: (schedule, nowIso, lastGenerated) =>
     evaluateBriefSchedule(schedule as BriefScheduleInput, nowIso, lastGenerated),
+  nextDueUtc: (input) => nextDueUtc({ ...input, schedule: input.schedule as BriefScheduleInput }),
   selectItems: (input) => selectBriefItems(input as SelectBriefInput),
   dedupeKey: (workspaceId, userId, localDate) => buildBriefDedupeKey(workspaceId, userId, localDate),
   orderForSave: (items) => orderSelectionsForSave(items),
@@ -776,5 +780,91 @@ describe('011B daily brief', () => {
       `SELECT status FROM outbox WHERE workspace_id = ? AND topic = 'send_message'`,
     ).bind('ws-brf-tg4').first<Record<string, unknown>>();
     expect(row?.['status']).toBe('cancelled');
+  });
+});
+
+describe('B4 due-aware brief sweep (workerd)', () => {
+  // NOW is Tuesday 2026-10-06 15:00 Bucharest; the default seeded slot
+  // 08:30 (05:30Z) weekdays Mon–Fri has passed with nothing generated.
+  const WS_SWEEP = 'ws-brf-sweep';
+
+  // The sweep is global across workspaces: park every other workspace's
+  // schedules first so these counts prove selection, not leftover state.
+  // This describe runs last in the file, so nothing after it can observe this.
+  beforeAll(async () => {
+    await seedUser('usr_brf_owner', 'fb_owner', 'owner@sweep.test', 'Owner');
+    await seedWorkspace(WS_SWEEP, 'Sweep WS', 'usr_brf_owner');
+    await seedMembership(WS_SWEEP, 'usr_brf_owner', 'owner');
+    await env.DB.prepare(`UPDATE member_settings SET brief_enabled = 0 WHERE workspace_id <> ?`)
+      .bind(WS_SWEEP)
+      .run();
+  });
+
+  async function readStamp(userId: string, workspaceId: string = WS_SWEEP): Promise<string | null> {
+    const row = await env.DB.prepare(
+      `SELECT brief_next_due_utc AS stamp FROM member_settings WHERE workspace_id = ? AND user_id = ?`,
+    )
+      .bind(workspaceId, userId)
+      .first<{ stamp: string | null }>();
+    return row?.stamp ?? null;
+  }
+
+  async function seedSweepMember(
+    userId: string,
+    schedule: { enabled?: number; time?: string | null },
+    stamp: string | null | undefined,
+  ): Promise<void> {
+    await seedUser(userId, `fb_${userId}`, `${userId}@sweep.test`, userId);
+    await seedMembership(WS_SWEEP, userId, 'member');
+    await seedSchedule(WS_SWEEP, userId, schedule);
+    if (stamp !== undefined) {
+      await env.DB.prepare(`UPDATE member_settings SET brief_next_due_utc = ? WHERE workspace_id = ? AND user_id = ?`)
+        .bind(stamp, WS_SWEEP, userId)
+        .run();
+    }
+  }
+
+  it('evaluates only due members, advances their stamps, then idles', async () => {
+    await seedSweepMember('u_sweep_due', {}, '2026-10-06T05:30:00.000Z');
+    await seedSweepMember('u_sweep_future', {}, '2026-10-07T05:30:00.000Z');
+    await seedSweepMember('u_sweep_legacy', {}, undefined);
+    await seedSweepMember('u_sweep_off', { enabled: 0 }, undefined);
+
+    const first = await processScheduledDailyBriefs(env.DB, NOW);
+    expect(first).toEqual({ evaluated: 2, generated: 2, skipped: 0, errors: 0 });
+    expect(await readStamp('u_sweep_due')).toBe('2026-10-07T05:30:00.000Z');
+    expect(await readStamp('u_sweep_legacy')).toBe('2026-10-07T05:30:00.000Z');
+    expect(await readStamp('u_sweep_future')).toBe('2026-10-07T05:30:00.000Z');
+
+    // Every stamp now lies past the sweep instant: the next sweep evaluates
+    // nobody instead of re-reading four schedules to relearn not-due.
+    const second = await processScheduledDailyBriefs(env.DB, NOW);
+    expect(second).toEqual({ evaluated: 0, generated: 0, skipped: 0, errors: 0 });
+  });
+
+  it('stamps the coming slot when a member is evaluated before it is due', async () => {
+    await seedSweepMember('u_sweep_early', { time: '23:00' }, undefined);
+    const result = await processScheduledDailyBriefs(env.DB, NOW);
+    expect(result).toEqual({ evaluated: 1, generated: 0, skipped: 1, errors: 0 });
+    // 23:00 Bucharest is 20:00Z: still ahead, so the sweep parks there.
+    expect(await readStamp('u_sweep_early')).toBe('2026-10-06T20:00:00.000Z');
+  });
+
+  it('resets the stamp on schedule edits but preserves it otherwise', async () => {
+    await seedSweepMember('u_sweep_edit', {}, '2026-10-07T05:30:00.000Z');
+    await setMemberSettings(env.DB, {
+      workspaceId: WS_SWEEP,
+      userId: 'u_sweep_edit',
+      actorUserId: 'u_sweep_edit',
+      input: { preferred_language: 'ro' },
+    });
+    expect(await readStamp('u_sweep_edit')).toBe('2026-10-07T05:30:00.000Z');
+    await setMemberSettings(env.DB, {
+      workspaceId: WS_SWEEP,
+      userId: 'u_sweep_edit',
+      actorUserId: 'u_sweep_edit',
+      input: { brief_local_time: '09:30' },
+    });
+    expect(await readStamp('u_sweep_edit')).toBeNull();
   });
 });

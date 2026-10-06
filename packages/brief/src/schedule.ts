@@ -342,6 +342,61 @@ function normalizeWeekdays(weekdays: number[] | null): number[] | null {
 }
 
 /**
+ * Next UTC instant at which the schedule becomes runnable, strictly after
+ * `fromUtcIso`. Only selected weekdays past `lastGeneratedLocalDate` count,
+ * so a run (or a schedule edit after one) never recreates that day's brief.
+ * Null when the schedule cannot run. Bounded to an 8-day walk: any weekly
+ * cadence hits a selected weekday within 7 days of any start.
+ */
+export function nextDueUtc(input: {
+  schedule: BriefScheduleInput;
+  fromUtcIso: string;
+  lastGeneratedLocalDate: string | null;
+}): string | null {
+  const { schedule, fromUtcIso, lastGeneratedLocalDate } = input;
+  if (!schedule.enabled) return null;
+  if (
+    schedule.localTime === null ||
+    schedule.timezone === null ||
+    schedule.weekdays === null ||
+    schedule.weekdays.length === 0
+  ) {
+    return null;
+  }
+  const days = normalizeWeekdays(schedule.weekdays);
+  if (
+    !isValidLocalTime(schedule.localTime) ||
+    !isValidTimezone(schedule.timezone) ||
+    days === null
+  ) {
+    return null;
+  }
+  const fromMs = Date.parse(fromUtcIso);
+  if (Number.isNaN(fromMs)) throw new Error(`Invalid from instant: ${fromUtcIso}.`);
+  if (lastGeneratedLocalDate !== null && !isValidLocalDate(lastGeneratedLocalDate)) {
+    throw new Error(`Invalid last-generated date: ${lastGeneratedLocalDate}.`);
+  }
+  const startWall = utcToWall(fromMs, schedule.timezone);
+  const startDate = new Date(
+    Date.UTC(startWall.year, startWall.month - 1, startWall.day),
+  );
+  for (let offset = 0; offset < 8; offset += 1) {
+    const candidate = new Date(startDate.getTime() + offset * 24 * 60 * 60 * 1000);
+    const localDate =
+      `${candidate.getUTCFullYear()}-${pad2(candidate.getUTCMonth() + 1)}-${pad2(candidate.getUTCDate())}`;
+    if (!days.includes(candidate.getUTCDay())) continue;
+    if (lastGeneratedLocalDate !== null && localDate <= lastGeneratedLocalDate) continue;
+    const instant = resolveScheduledInstantForDate(
+      localDate,
+      schedule.localTime,
+      schedule.timezone,
+    );
+    if (Date.parse(instant) > fromMs) return instant;
+  }
+  return null;
+}
+
+/**
  * Decide whether a member schedule should generate a brief now.
  *
  * `lastGeneratedLocalDate` is the local date already persisted for

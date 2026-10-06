@@ -3,6 +3,7 @@ import {
   evaluateBriefSchedule,
   getLocalDate,
   getWeekdayForLocalDate,
+  nextDueUtc,
   resetScheduleDiagnostics,
   resolveScheduledInstantForDate,
   scheduleDiagnostics,
@@ -223,5 +224,71 @@ describe('brief schedule operation budget (no wall-time assertions)', () => {
       evaluateBriefSchedule(schedule(), '2026-10-06T17:50:00.000Z', null);
     }
     expect(scheduleDiagnostics.formatterConstructions).toBeLessThanOrEqual(1);
+  });
+});
+
+describe('brief next-due instant (B4 sweep selection)', () => {
+  // 2026-10-06 is a Tuesday; 20:45 Bucharest (EEST) is 17:45Z.
+  it('returns today’s slot when it is still ahead', () => {
+    expect(
+      nextDueUtc({
+        schedule: schedule({ weekdays: [2] }),
+        fromUtcIso: '2026-10-06T10:00:00.000Z',
+        lastGeneratedLocalDate: null,
+      }),
+    ).toBe('2026-10-06T17:45:00.000Z');
+  });
+
+  it('rolls to the next selected weekday once today’s slot has passed', () => {
+    expect(
+      nextDueUtc({
+        schedule: schedule({ weekdays: [2] }),
+        fromUtcIso: '2026-10-06T18:00:00.000Z',
+        lastGeneratedLocalDate: null,
+      }),
+    ).toBe('2026-10-13T17:45:00.000Z');
+    expect(
+      nextDueUtc({
+        schedule: schedule({ weekdays: [1] }),
+        fromUtcIso: '2026-10-06T10:00:00.000Z',
+        lastGeneratedLocalDate: null,
+      }),
+    ).toBe('2026-10-12T17:45:00.000Z');
+  });
+
+  it('is strictly after the lower bound and past the generated date', () => {
+    expect(
+      nextDueUtc({
+        schedule: schedule({ weekdays: [2] }),
+        fromUtcIso: '2026-10-06T17:45:00.000Z',
+        lastGeneratedLocalDate: null,
+      }),
+    ).toBe('2026-10-13T17:45:00.000Z');
+    expect(
+      nextDueUtc({
+        schedule: schedule({ weekdays: [2] }),
+        fromUtcIso: '2026-10-06T10:00:00.000Z',
+        lastGeneratedLocalDate: '2026-10-06',
+      }),
+    ).toBe('2026-10-13T17:45:00.000Z');
+  });
+
+  it('never runs disabled, incomplete or invalid schedules', () => {
+    const from = { fromUtcIso: '2026-10-06T10:00:00.000Z', lastGeneratedLocalDate: null } as const;
+    expect(nextDueUtc({ ...from, schedule: schedule({ enabled: false }) })).toBeNull();
+    expect(nextDueUtc({ ...from, schedule: schedule({ localTime: null }) })).toBeNull();
+    expect(nextDueUtc({ ...from, schedule: schedule({ timezone: null }) })).toBeNull();
+    expect(nextDueUtc({ ...from, schedule: schedule({ weekdays: [] }) })).toBeNull();
+    expect(nextDueUtc({ ...from, schedule: schedule({ localTime: '25:00' }) })).toBeNull();
+    expect(nextDueUtc({ ...from, schedule: schedule({ timezone: 'Mars/Olympus' }) })).toBeNull();
+  });
+
+  it('rejects unparsable bounds instead of guessing', () => {
+    expect(() =>
+      nextDueUtc({ schedule: schedule(), fromUtcIso: 'not-an-instant', lastGeneratedLocalDate: null }),
+    ).toThrow(/Invalid from instant/);
+    expect(() =>
+      nextDueUtc({ schedule: schedule(), fromUtcIso: '2026-10-06T10:00:00.000Z', lastGeneratedLocalDate: 'tomorrow' }),
+    ).toThrow(/Invalid last-generated date/);
   });
 });

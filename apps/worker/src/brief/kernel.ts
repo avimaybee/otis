@@ -8,6 +8,7 @@ import {
   evaluateBriefSchedule,
   getLocalDate,
   isValidTimezone,
+  nextDueUtc,
   orderSelectionsForSave,
   renderBriefText,
   selectBriefItems,
@@ -19,6 +20,7 @@ import type { BriefKernel } from './types.js';
 export const productionBriefKernel: BriefKernel = {
   evaluateSchedule: (schedule, nowIso, lastGenerated) =>
     evaluateBriefSchedule(schedule as BriefScheduleInput, nowIso, lastGenerated),
+  nextDueUtc: (input) => nextDueUtc({ ...input, schedule: input.schedule as BriefScheduleInput }),
   selectItems: (input) => selectBriefItems(input as SelectBriefInput),
   dedupeKey: (workspaceId, userId, localDate) => buildBriefDedupeKey(workspaceId, userId, localDate),
   orderForSave: (items) => orderSelectionsForSave(items),

@@ -241,6 +241,16 @@ export async function setMemberSettings(
   return { ...next, created_at: current.created_at };
 }
 
+/** True when the brief schedule itself changed (not just channel/language). */
+function scheduleFieldsChanged(changed: Record<string, unknown>): boolean {
+  return (
+    'brief_enabled' in changed ||
+    'brief_local_time' in changed ||
+    'brief_timezone' in changed ||
+    'brief_weekdays' in changed
+  );
+}
+
 async function writeMemberSettings(
   db: D1Database,
   params: {
@@ -306,33 +316,70 @@ async function writeMemberSettings(
   }
 
   statements.push(
-    db
-      .prepare(
-        `INSERT INTO member_settings
-           (workspace_id, user_id, brief_enabled, brief_local_time, brief_timezone,
-            brief_weekdays, brief_channel, preferred_language, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-         ON CONFLICT (workspace_id, user_id) DO UPDATE SET
-           brief_enabled = excluded.brief_enabled,
-           brief_local_time = excluded.brief_local_time,
-           brief_timezone = excluded.brief_timezone,
-           brief_weekdays = excluded.brief_weekdays,
-           brief_channel = excluded.brief_channel,
-           preferred_language = excluded.preferred_language,
-           updated_at = excluded.updated_at`
-      )
-      .bind(
-        params.workspaceId,
-        params.userId,
-        params.next.brief_enabled ? 1 : 0,
-        params.next.brief_local_time,
-        params.next.brief_timezone,
-        params.next.brief_weekdays ? JSON.stringify(params.next.brief_weekdays) : null,
-        params.next.brief_channel,
-        params.next.preferred_language,
-        params.createdAt,
-        params.nowIso,
-      ),
+    ...(scheduleFieldsChanged(params.changed)
+      ? [
+          // A schedule edit invalidates the sweep's cached next-due instant:
+          // reset to NULL so the next sweep re-evaluates instead of trusting
+          // a stamp computed from the old time, zone or weekdays. Unrelated
+          // preference changes preserve the stamp.
+          db
+            .prepare(
+              `INSERT INTO member_settings
+                 (workspace_id, user_id, brief_enabled, brief_local_time, brief_timezone,
+                  brief_weekdays, brief_channel, preferred_language, brief_next_due_utc, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)
+               ON CONFLICT (workspace_id, user_id) DO UPDATE SET
+                 brief_enabled = excluded.brief_enabled,
+                 brief_local_time = excluded.brief_local_time,
+                 brief_timezone = excluded.brief_timezone,
+                 brief_weekdays = excluded.brief_weekdays,
+                 brief_channel = excluded.brief_channel,
+                 preferred_language = excluded.preferred_language,
+                 brief_next_due_utc = NULL,
+                 updated_at = excluded.updated_at`,
+            )
+            .bind(
+              params.workspaceId,
+              params.userId,
+              params.next.brief_enabled ? 1 : 0,
+              params.next.brief_local_time,
+              params.next.brief_timezone,
+              params.next.brief_weekdays ? JSON.stringify(params.next.brief_weekdays) : null,
+              params.next.brief_channel,
+              params.next.preferred_language,
+              params.createdAt,
+              params.nowIso,
+            ),
+        ]
+      : [
+          db
+            .prepare(
+              `INSERT INTO member_settings
+                 (workspace_id, user_id, brief_enabled, brief_local_time, brief_timezone,
+                  brief_weekdays, brief_channel, preferred_language, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+               ON CONFLICT (workspace_id, user_id) DO UPDATE SET
+                 brief_enabled = excluded.brief_enabled,
+                 brief_local_time = excluded.brief_local_time,
+                 brief_timezone = excluded.brief_timezone,
+                 brief_weekdays = excluded.brief_weekdays,
+                 brief_channel = excluded.brief_channel,
+                 preferred_language = excluded.preferred_language,
+                 updated_at = excluded.updated_at`,
+            )
+            .bind(
+              params.workspaceId,
+              params.userId,
+              params.next.brief_enabled ? 1 : 0,
+              params.next.brief_local_time,
+              params.next.brief_timezone,
+              params.next.brief_weekdays ? JSON.stringify(params.next.brief_weekdays) : null,
+              params.next.brief_channel,
+              params.next.preferred_language,
+              params.createdAt,
+              params.nowIso,
+            ),
+        ]),
   );
 
   statements.push(

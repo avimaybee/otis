@@ -117,6 +117,12 @@ export interface BriefKernel {
     nowIso: string,
     lastGenerated: string | null,
   ): LocalScheduleEvaluation;
+  /** Next runnable instant strictly after fromUtcIso, past the generated date; null when unrunnable. */
+  nextDueUtc(input: {
+    schedule: LocalBriefSchedule;
+    fromUtcIso: string;
+    lastGeneratedLocalDate: string | null;
+  }): string | null;
   selectItems(input: KernelSelectInput): LocalBriefItem[];
   dedupeKey(workspaceId: string, userId: string, localDate: string): string;
   orderForSave(items: LocalBriefItem[]): LocalSavedBriefItem[];

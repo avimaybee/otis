@@ -6,6 +6,8 @@ import migration0001Sql from '../../../migrations/0001_identity.sql?raw';
 import migration0002Sql from '../../../migrations/0002_conversations_sources.sql?raw';
 // @ts-expect-error vite raw import
 import migration0004Sql from '../../../migrations/0004_lifecycle_settings.sql?raw';
+// @ts-expect-error vite raw import
+import migration0016Sql from '../../../migrations/0016_brief_next_due.sql?raw';
 import { AUTH_BOUNDS } from '@otis/contracts';
 import type { HttpErrorResponse } from '@otis/contracts';
 import {
@@ -58,7 +60,7 @@ describe('Worker Lifecycle, Settings & Credentials Integration (workerd)', () =>
   }
 
   beforeAll(async () => {
-    for (const sql of [migration0001Sql, migration0002Sql, migration0004Sql]) {
+    for (const sql of [migration0001Sql, migration0002Sql, migration0004Sql, migration0016Sql]) {
       const statements = sql
         .split(';')
         .map((s: string) => s.trim())
