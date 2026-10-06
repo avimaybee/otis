@@ -18,6 +18,8 @@ import migration0007Sql from '../../../migrations/0007_outbox_claim_owner.sql?ra
 import migration0008Sql from '../../../migrations/0008_memory_and_agent_runs.sql?raw';
 // @ts-expect-error vite raw import
 import migration0009Sql from '../../../migrations/0009_thinking_controls.sql?raw';
+// @ts-expect-error vite raw import
+import migration0016Sql from '../../../migrations/0016_brief_next_due.sql?raw';
 
 import { executeAgentTool } from '../src/agent/repository.js';
 import {
@@ -77,7 +79,7 @@ describe('Worker Agent Tools & Guarded Repositories D1 Integration (006A workerd
   }
 
   beforeAll(async () => {
-    // 1. Apply migrations 0001 through 0008
+    // 1. Apply migrations 0001 through 0009 plus 0016 (member-settings sweep stamp)
     for (const sql of [
       migration0001Sql,
       migration0002Sql,
@@ -88,6 +90,7 @@ describe('Worker Agent Tools & Guarded Repositories D1 Integration (006A workerd
       migration0007Sql,
       migration0008Sql,
       migration0009Sql,
+      migration0016Sql,
     ]) {
       for (const stmt of splitSqlStatements(sql)) {
         await env.DB.prepare(stmt).run();

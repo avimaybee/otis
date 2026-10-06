@@ -1245,6 +1245,17 @@ export class AgentHandler implements TurnHandler {
                 errorMessage: result.error.message,
               };
             }
+            // Forged authority keys are never correctable: abort the run
+            // before siblings mutate or a later round retries the forgery.
+            // Validation already rejected before any write, so aborting here
+            // preserves zero business effects.
+            if (result.status === 'rejected' && result.error?.code === 'forbidden_key') {
+              return {
+                kind: 'failed',
+                errorCode: 'forbidden_key',
+                errorMessage: result.error.message,
+              };
+            }
           }
 
           if (this.options?.testHooks?.afterToolExecution) {

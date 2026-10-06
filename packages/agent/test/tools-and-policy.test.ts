@@ -90,6 +90,17 @@ describe('006A: Tool Schemas and Argument Validation', () => {
         expect(res.error.code).toBe('forbidden_key');
       }
     }
+    // The exact A11 forgery shape: fence and privilege keys are authority,
+    // never tool arguments, on every tool.
+    const a11 = validateToolCall('upsert_entity', {
+      name: 'Forged Authority Co',
+      internal_admin: true,
+      lease_fence: 999,
+    });
+    expect(a11.ok).toBe(false);
+    if (!a11.ok) {
+      expect(a11.error.code).toBe('forbidden_key');
+    }
   });
 
   it('permits explicit action_id target in undo tool arguments', () => {
