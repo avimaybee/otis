@@ -90,10 +90,8 @@ export async function handleGetAction(
     return jsonError(404, 'not_found', 'Action not found in this workspace.', requestId);
   }
 
-  const events = (await getWorkspaceEvents(env.DB, workspaceId)).filter(
-    (event) => event.action_id === actionId,
-  );
   const allEvents = await getWorkspaceEvents(env.DB, workspaceId);
+  const events = allEvents.filter((event) => event.action_id === actionId);
   const revertedIds = new Set<string>();
   const reverters = new Map<string, string[]>();
   for (const event of allEvents) {
