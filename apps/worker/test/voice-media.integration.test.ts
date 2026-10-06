@@ -2,7 +2,14 @@ import { beforeAll, describe, expect, it } from 'vitest';
 import { env } from 'cloudflare:test';
 import { applyMigrations } from './migrations.js';
 import { AUTH_BOUNDS, VOICE_BOUNDS } from '@otis/contracts';
-import { NATIVE_AUDIO_TRANSCRIPTION_IMPLEMENTED, type FetchFn, type ModelEntry } from '@otis/agent';
+import {
+  NATIVE_AUDIO_TRANSCRIPTION_IMPLEMENTED,
+  type FetchFn,
+  type ModelEntry,
+  type ProviderAdapter,
+  type ProviderEvent,
+  type TurnInput,
+} from '@otis/agent';
 import {
   base64UrlEncode,
   importWrappingKey,
@@ -13,6 +20,7 @@ import {
 } from '@otis/identity';
 import type { Env } from '../src/index.js';
 import { EchoHandler, dispatchOutboxItem, stopRun } from '../src/actor/dispatch.js';
+import { AgentHandler } from '../src/agent/handler.js';
 import { acceptWebMessage } from '../src/inbox/repository.js';
 import { acceptTelegramInbound } from '../src/inbox/telegram.js';
 import { cleanupExpiredMedia } from '../src/media/cleanup.js';
@@ -1385,10 +1393,10 @@ describe('voice media integration (workerd)', () => {
     const modelsBody = (await modelsResponse.json()) as { models: Array<{ command_key: string; voice_available: boolean; native_audio_supported: boolean }> };
     expect(modelsBody.models.length).toBeGreaterThan(0);
     for (const model of modelsBody.models) {
-      if (model.command_key === 'deepseek-v4.1-flash' || model.command_key === 'gemini-preview-unverified') {
-        expect(model.native_audio_supported).toBe(false);
-      } else {
+      if (model.command_key === 'gemini-3.5-flash-lite' || model.command_key === 'gemini-3.1-flash-lite') {
         expect(model.native_audio_supported).toBe(true);
+      } else {
+        expect(model.native_audio_supported).toBe(false);
       }
       expect(model.voice_available).toBe(true);
     }
@@ -1562,5 +1570,75 @@ describe('voice media integration (workerd)', () => {
       .bind(WS)
       .first<{ changed_fields_json: string }>();
     expect(audit?.changed_fields_json).toContain('server_transcription');
+  });
+
+  it('natively executes a turn with attached voice audio and marks media ready', async () => {
+    const nowIso = new Date().toISOString();
+    await E.DB.prepare(
+      `INSERT OR REPLACE INTO provider_credentials (workspace_id, provider, encrypted_key, key_nonce, key_version, status, last_verified_at, created_at, updated_at)
+       VALUES (?, 'gemini', 'synthetic-test-only', 'synthetic', 1, 'available', ?, ?, ?)`,
+    )
+      .bind(WS, nowIso, nowIso, nowIso)
+      .run();
+
+    // Set chat to gemini-3.5-flash-lite (native audio supported with available gemini credential)
+    await E.DB.prepare(`UPDATE chats SET model_override = 'gemini-3.5-flash-lite' WHERE id = ?`)
+      .bind(CHAT)
+      .run();
+
+    const prepared = await prepareVoiceMessage({
+      clientMessageId: 'cm_native_turn_test',
+      chatId: CHAT,
+    });
+
+    let capturedInput: TurnInput | null = null;
+    const testAdapter: ProviderAdapter = {
+      provider: 'gemini',
+      async *streamTurn(input: TurnInput): AsyncGenerator<ProviderEvent> {
+        capturedInput = input;
+        yield { type: 'text_delta', text: 'I heard your voice note.' };
+        yield { type: 'usage', usage: { inputTokens: 50, outputTokens: 10, cacheReadTokens: null, cacheWriteTokens: null, reasoningTokens: null, totalTokens: 60, cumulative: true } };
+        yield { type: 'finish', reason: 'success', continuation: null };
+      },
+      audioSupport() {
+        return { support: 'supported', detail: 'Native audio supported by Gemini.' };
+      },
+    };
+
+    const handler = new AgentHandler({
+      providerAdapter: testAdapter,
+      limits: { maxDailyActions: 10, maxRoundsPerRun: 5 },
+      storage: E.STORAGE!,
+    });
+
+    const runRow = await E.DB.prepare(`SELECT id FROM agent_runs WHERE id = ?`).bind(prepared.runId).first<{ id: string }>();
+    expect(runRow).toBeDefined();
+
+    const transcriptionBefore = await E.DB.prepare(`SELECT route, model, provider FROM media_transcriptions WHERE media_id = ?`).bind(prepared.mediaId).first<{ route: string }>();
+    expect(transcriptionBefore?.route).toBe('native');
+
+    const outboxRow = await E.DB
+      .prepare(`SELECT id FROM outbox WHERE json_extract(payload_json, '$.run_id') = ?`)
+      .bind(prepared.runId)
+      .first<{ id: string }>();
+    expect(outboxRow).toBeDefined();
+
+    await E.DB.prepare('UPDATE workspaces SET lease_owner = NULL, lease_attempt_id = NULL, lease_expires_at = NULL WHERE id = ?').bind(WS).run();
+    const dispatchResult = await dispatchOutboxItem(E.DB, outboxRow!.id, WS, { handler });
+    expect(dispatchResult).toMatchObject({ status: 'completed' });
+    expect(capturedInput).not.toBeNull();
+    const userMsg = capturedInput!.messages.find((m) => m.role === 'user');
+    expect(userMsg).toBeDefined();
+    expect(userMsg?.audio).toBeDefined();
+    expect(userMsg?.audio?.mimeType).toContain('audio/');
+    expect(typeof userMsg?.audio?.data).toBe('string');
+
+    // Assert media records are marked ready
+    const mediaRow = await E.DB.prepare(`SELECT state FROM media_objects WHERE id = ?`).bind(prepared.mediaId).first<{ state: string }>();
+    expect(mediaRow?.state).toBe('ready');
+
+    const transcriptionRow = await E.DB.prepare(`SELECT state, transcript_text FROM media_transcriptions WHERE media_id = ?`).bind(prepared.mediaId).first<{ state: string; transcript_text: string }>();
+    expect(transcriptionRow?.state).toBe('ready');
+    expect(transcriptionRow?.transcript_text).toContain('natively');
   });
 });

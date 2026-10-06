@@ -35,13 +35,13 @@ describe('operator model registry', () => {
       expect(entry.approved).toBe(true);
       expect(entry.lifecycle).toBe('active');
       expect(entry.endpointUrl.startsWith('https://')).toBe(true);
-      // Audio capability reflects native support; thought-summary remains unverified until accepted
-      if (entry.commandKey === 'gemini-preview-unverified') {
-        expect(entry.capabilities.audio).toBe('unverified');
-      } else if (entry.commandKey === 'deepseek-v4.1-flash') {
-        expect(entry.capabilities.audio).toBe('unsupported');
-      } else {
+      // Audio capability reflects native support on Gemini models; OpenCode Go models are unsupported; unverified preview is unverified
+      if (entry.commandKey === 'gemini-3.5-flash-lite' || entry.commandKey === 'gemini-3.1-flash-lite') {
         expect(entry.capabilities.audio).toBe('supported');
+      } else if (entry.commandKey === 'gemini-preview-unverified') {
+        expect(entry.capabilities.audio).toBe('unverified');
+      } else {
+        expect(entry.capabilities.audio).toBe('unsupported');
       }
       expect(entry.capabilities.thoughtSummary).toBe('unverified');
 

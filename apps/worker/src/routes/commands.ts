@@ -33,7 +33,7 @@ import {
 import { getCredentialMetadata, getWorkspaceVoiceSettings } from '@otis/identity';
 import { acceptWebMessage, getChat } from '../inbox/repository.js';
 import { handleCommitUndo, handleUndoPreview } from './actions.js';
-import { listAvailableModels, PRODUCTION_REGISTRY, resolveVoiceRoute } from '@otis/agent';
+import { listAvailableModels, NATIVE_AUDIO_TRANSCRIPTION_IMPLEMENTED, PRODUCTION_REGISTRY, resolveVoiceRoute } from '@otis/agent';
 import type { ModelEntry, ThinkingChoice } from '@otis/agent';
 import { buildTodayBrief, productionBriefKernel } from '../brief/index.js';
 import type { Env } from '../index.js';
@@ -110,10 +110,19 @@ export async function handleListModels(
     // Native audio is capability evidence only; effective voice availability
     // resolves through the exact route policy (verified native format or a
     // configured/verified Groq STT route for the actual container).
+    const isModelAvailable = usableKeys.has(entry.commandKey);
     const nativeAudio = entry.capabilities.audio === 'supported';
-    const voiceAvailable = VOICE_FORMATS.some(
-      (format) => resolveVoiceRoute({ model: entry, audioMimeOrExt: format, sttConfig }).route !== 'unavailable',
-    );
+    const canUseNative = nativeAudio && isModelAvailable;
+    const canUseStt = sttConfig !== null && sttConfig.credentialStatus === 'available';
+    const voiceAvailable = VOICE_FORMATS.some((format) => {
+      if (canUseNative && NATIVE_AUDIO_TRANSCRIPTION_IMPLEMENTED) {
+        if (entry.capabilities.nativeAudioFormats?.[format] === 'supported') return true;
+      }
+      if (canUseStt) {
+        return resolveVoiceRoute({ model: entry, audioMimeOrExt: format, sttConfig }).route !== 'unavailable';
+      }
+      return false;
+    });
 
     let thinking: ThinkingOptionDTO | undefined = undefined;
     if (entry.thinking) {

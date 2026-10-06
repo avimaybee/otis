@@ -10,7 +10,15 @@ import type { ModelEntry } from '../src/providers/registry.js';
 import { PRODUCTION_REGISTRY } from '../src/providers/registry.js';
 
 function baseModel(): ModelEntry {
-  return { ...PRODUCTION_REGISTRY.entries[0]! };
+  const m = PRODUCTION_REGISTRY.entries[0]!;
+  return {
+    ...m,
+    capabilities: {
+      ...m.capabilities,
+      audio: 'unverified',
+      nativeAudioFormats: undefined,
+    },
+  };
 }
 
 describe('voice capability and route resolution (D23 / D24)', () => {

@@ -1,0 +1,18 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`Expanded audit: reproductions of current inefficiencies > Go continuation history amplifies serialized completed-round checkpoint bytes > checkpoint byte comparison 1`] = `
+[
+  {
+    "compactBytes": 17541,
+    "expandedBytes": 43431,
+    "rounds": 4,
+    "toolResultChars": 4096,
+  },
+  {
+    "compactBytes": 35081,
+    "expandedBytes": 155789,
+    "rounds": 8,
+    "toolResultChars": 4096,
+  },
+]
+`;

@@ -1,0 +1,59 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`Real local D1 audit profiles; no live providers > compares current chat-history and activity query plans with narrow candidate indexes > legacy cleanup 1`] = `
+{
+  "after": [
+    "SCAN lifecycle_guards USING COVERING INDEX sqlite_autoindex_lifecycle_guards_1",
+  ],
+  "auditPlan": "legacy cleanup",
+  "before": [
+    "SCAN lifecycle_guards USING COVERING INDEX sqlite_autoindex_lifecycle_guards_1",
+  ],
+}
+`;
+
+exports[`Real local D1 audit profiles; no live providers > compares current chat-history and activity query plans with narrow candidate indexes > own chat history 1`] = `
+{
+  "after": [
+    "SEARCH chats USING COVERING INDEX audit_chat_author_recent (workspace_id=? AND author_user_id=?)",
+  ],
+  "auditPlan": "own chat history",
+  "before": [
+    "SEARCH chats USING INDEX idx_chats_pagination (workspace_id=?)",
+  ],
+}
+`;
+
+exports[`Real local D1 audit profiles; no live providers > compares current chat-history and activity query plans with narrow candidate indexes > run activity 1`] = `
+{
+  "after": [
+    "SEARCH run_activity USING INDEX audit_run_cursor (run_id=?)",
+  ],
+  "auditPlan": "run activity",
+  "before": [
+    "SEARCH run_activity USING INDEX idx_run_activity_chat_cursor (chat_id=?)",
+  ],
+}
+`;
+
+exports[`Real local D1 audit profiles; no live providers > profiles acceptance and dispatch for greeting > greeting 1`] = `
+{
+  "acceptanceBindingCalls": 7,
+  "acceptanceStatements": 14,
+  "audit": "greeting",
+  "dispatchBindingCalls": 45,
+  "dispatchStatements": 57,
+  "providerRounds": 1,
+}
+`;
+
+exports[`Real local D1 audit profiles; no live providers > profiles acceptance and dispatch for one entity capture > one entity capture 1`] = `
+{
+  "acceptanceBindingCalls": 7,
+  "acceptanceStatements": 14,
+  "audit": "one entity capture",
+  "dispatchBindingCalls": 90,
+  "dispatchStatements": 112,
+  "providerRounds": 2,
+}
+`;

@@ -123,6 +123,7 @@ function entry(
       stream: overrides?.capabilities?.stream ?? 'unverified',
       thoughtSummary: overrides?.capabilities?.thoughtSummary ?? 'unverified',
       audio: overrides?.capabilities?.audio ?? 'unverified',
+      nativeAudioFormats: overrides?.capabilities?.nativeAudioFormats,
       thinking,
     },
     thinking,
@@ -251,12 +252,7 @@ export const PRODUCTION_REGISTRY: ModelRegistry = {
           text: 'supported',
           tools: 'supported',
           stream: 'supported',
-          audio: 'supported',
-          nativeAudioFormats: {
-            'audio/webm': 'supported',
-            'audio/mp4': 'supported',
-            'audio/ogg': 'supported',
-          },
+          audio: 'unsupported',
           thinking: {
             state: 'supported',
             defaultChoiceId: 'default',
@@ -286,12 +282,7 @@ export const PRODUCTION_REGISTRY: ModelRegistry = {
           text: 'supported',
           tools: 'supported',
           stream: 'supported',
-          audio: 'supported',
-          nativeAudioFormats: {
-            'audio/webm': 'supported',
-            'audio/mp4': 'supported',
-            'audio/ogg': 'supported',
-          },
+          audio: 'unsupported',
           thinking: {
             state: 'supported',
             defaultChoiceId: 'default',
@@ -320,12 +311,7 @@ export const PRODUCTION_REGISTRY: ModelRegistry = {
           text: 'supported',
           tools: 'supported',
           stream: 'supported',
-          audio: 'supported',
-          nativeAudioFormats: {
-            'audio/webm': 'supported',
-            'audio/mp4': 'supported',
-            'audio/ogg': 'supported',
-          },
+          audio: 'unsupported',
           thinking: {
             state: 'unsupported',
             choices: [],
@@ -350,12 +336,7 @@ export const PRODUCTION_REGISTRY: ModelRegistry = {
           text: 'supported',
           tools: 'supported',
           stream: 'supported',
-          audio: 'supported',
-          nativeAudioFormats: {
-            'audio/webm': 'supported',
-            'audio/mp4': 'supported',
-            'audio/ogg': 'supported',
-          },
+          audio: 'unsupported',
           thinking: {
             state: 'unsupported',
             choices: [],
