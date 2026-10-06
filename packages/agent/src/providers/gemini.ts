@@ -21,8 +21,11 @@ import { parseSseStream } from './sse.js';
 import {
   GEMINI_ORIGIN,
   MAX_TOOL_ARGUMENT_BYTES,
+  assertVisionForImages,
   numOrNull,
   parseRetryAfterMs,
+  turnHasImages,
+  validateTurnImages,
   type FetchFn,
   type ProviderAdapter,
   type ProviderError,
@@ -111,6 +114,17 @@ function toInteractionsInput(input: TurnInput): { systemInstruction?: string; bl
           data: message.audio.data,
         });
       }
+      if (message.images) {
+        // Documented inline image input (ai.google.dev image-understanding):
+        // one {type:'image', mime_type, data} part per attached image.
+        for (const image of message.images) {
+          contentParts.push({
+            type: 'image',
+            mime_type: image.mimeType,
+            data: image.data,
+          });
+        }
+      }
       if (message.text || contentParts.length === 0) {
         contentParts.push({ type: 'text', text: message.text ?? '' });
       }
@@ -176,8 +190,21 @@ function toInteractionsInput(input: TurnInput): { systemInstruction?: string; bl
 
   if (statefulContinuation) {
     for (const message of input.continuationInput ?? []) {
-      if (message.role === 'user' && message.text) {
-        blocks.push({ type: 'user_input', content: [{ type: 'text', text: message.text }] });
+      if (message.role === 'user' && (message.text || (message.images && message.images.length > 0))) {
+        const contentParts: unknown[] = [];
+        if (message.images) {
+          for (const image of message.images) {
+            contentParts.push({
+              type: 'image',
+              mime_type: image.mimeType,
+              data: image.data,
+            });
+          }
+        }
+        if (message.text || contentParts.length === 0) {
+          contentParts.push({ type: 'text', text: message.text ?? '' });
+        }
+        blocks.push({ type: 'user_input', content: contentParts });
       }
     }
   }
@@ -311,6 +338,13 @@ export class GeminiInteractionsAdapter implements ProviderAdapter {
         retryable: false,
         retryAfterMs: null,
       });
+    }
+    // Image bounds and capability before any spend: over-limit or
+    // unverified-container payloads never reach the metered request, and a
+    // model the registry marks unable never gets the turn.
+    validateTurnImages([...input.messages, ...(input.continuationInput ?? [])]);
+    if (turnHasImages(input.messages) || turnHasImages(input.continuationInput ?? [])) {
+      assertVisionForImages(input.model);
     }
 
     const timeout = AbortSignal.timeout(input.timeoutMs);

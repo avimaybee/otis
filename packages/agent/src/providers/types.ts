@@ -23,6 +23,27 @@ export const DEFAULT_PROVIDER_TIMEOUT_MS = 60_000;
 export const MAX_SSE_BUFFER_BYTES = 256 * 1024;
 export const MAX_TOOL_ARGUMENT_BYTES = 64 * 1024;
 export const MAX_TEXT_BUFFER_CHARS = 256 * 1024;
+/**
+ * Attached still images per user message. Mirrors contracts IMAGE_BOUNDS.
+ * MAX_PER_MESSAGE; the contracts module owns the product bound and a test
+ * below pins equality so the two cannot drift.
+ */
+export const MAX_IMAGES_PER_MESSAGE = 4;
+/**
+ * Image containers an adapter may forward. Mirrors contracts IMAGE_FORMATS
+ * (magic-byte verified at upload); adapters never accept anything else.
+ */
+export const SUPPORTED_IMAGE_MIMES = ['image/jpeg', 'image/png', 'image/webp'] as const;
+/** Base64 ceiling per image: 5 MiB of bytes decodes from ~6.8M chars; 8M caps abuse. */
+export const MAX_IMAGE_DATA_CHARS = 8 * 1024 * 1024;
+
+/**
+ * Whether the pinned model may receive attached still images. Owned by
+ * registry ModelCapabilities['vision']; resolvers copy it here so adapters
+ * can refuse before spend. Absent means the caller did not resolve it:
+ * adapters map images and let the attempt itself produce evidence.
+ */
+export type VisionSupport = 'supported' | 'unsupported' | 'unverified';
 
 export type EndpointFamily = 'gemini-interactions' | 'go-chat-completions' | 'go-responses';
 
@@ -98,6 +119,8 @@ export interface ResolvedModel {
   modelId: string;
   endpointFamily: EndpointFamily;
   endpointUrl: string;
+  /** Copied from the registry entry by the resolver; absent when unresolved. */
+  vision?: VisionSupport;
 }
 
 export type ThinkingRequest =
@@ -266,4 +289,64 @@ export function parseRetryAfterMs(value: string | null): number | null {
   const at = Date.parse(trimmed);
   if (!Number.isNaN(at)) return Math.max(0, at - Date.now());
   return null;
+}
+
+/**
+ * Validates attached still images on every user message before any spend.
+ * Throws invalid_request when a message carries too many images, an
+ * unverified container, or an empty/oversized payload. Adapters call this
+ * at stream entry over messages plus continuation input.
+ */
+export function validateTurnImages(messages: ProviderMessage[]): void {
+  for (const message of messages) {
+    if (message.role !== 'user' || !message.images || message.images.length === 0) continue;
+    if (message.images.length > MAX_IMAGES_PER_MESSAGE) {
+      throw new ProviderErrorException({
+        code: 'invalid_request',
+        message: `A message carries ${message.images.length} images; at most ${MAX_IMAGES_PER_MESSAGE} are supported.`,
+        retryable: false,
+        retryAfterMs: null,
+      });
+    }
+    for (const image of message.images) {
+      if (!(SUPPORTED_IMAGE_MIMES as readonly string[]).includes(image.mimeType)) {
+        throw new ProviderErrorException({
+          code: 'invalid_request',
+          message: `Image container '${image.mimeType}' is not supported. Supported containers: ${SUPPORTED_IMAGE_MIMES.join(', ')}.`,
+          retryable: false,
+          retryAfterMs: null,
+        });
+      }
+      if (!image.data || image.data.length > MAX_IMAGE_DATA_CHARS) {
+        throw new ProviderErrorException({
+          code: 'invalid_request',
+          message: 'An attached image is empty or exceeds the per-image size bound.',
+          retryable: false,
+          retryAfterMs: null,
+        });
+      }
+    }
+  }
+}
+
+/**
+ * Refuses image-carrying turns for models the registry marks as unable
+ * before any spend. Unverified models pass through: the documented wire
+ * shape is attempted and the outcome itself becomes probe evidence.
+ * Call only when the turn actually carries images.
+ */
+export function assertVisionForImages(model: ResolvedModel): void {
+  if (model.vision === 'unsupported') {
+    throw new ProviderErrorException({
+      code: 'unsupported_capability',
+      message: `Model '${model.commandKey}' does not accept image input; send text only or switch models.`,
+      retryable: false,
+      retryAfterMs: null,
+    });
+  }
+}
+
+/** True when any message in the turn carries at least one attached image. */
+export function turnHasImages(messages: ProviderMessage[]): boolean {
+  return messages.some((m) => m.role === 'user' && !!m.images && m.images.length > 0);
 }

@@ -11,7 +11,7 @@
  */
 
 import type { ProviderName, ProviderStatus } from '@otis/contracts';
-import { GEMINI_ORIGIN, OPENCODE_GO_ORIGIN, type EndpointFamily, type ThinkingRequest } from './types.js';
+import { GEMINI_ORIGIN, OPENCODE_GO_ORIGIN, type EndpointFamily, type ThinkingRequest, type VisionSupport } from './types.js';
 
 export type CapabilityState = 'unverified' | 'supported' | 'unsupported';
 export type ModelLifecycle = 'active' | 'retired';
@@ -38,6 +38,13 @@ export interface ModelCapabilities {
   stream: CapabilityState;
   thoughtSummary: CapabilityState;
   audio: CapabilityState;
+  /**
+   * Attached still-image input. Every production entry starts unverified:
+   * the wire shapes are provider-documented, but no per-model live image
+   * probe has run. Flip to supported only with recorded probe evidence,
+   * to unsupported only with a proven rejection.
+   */
+  vision: VisionSupport;
   thinking?: ModelThinkingControl;
   nativeAudioFormats?: Partial<Record<string, CapabilityState>>;
 }
@@ -123,6 +130,7 @@ function entry(
       stream: overrides?.capabilities?.stream ?? 'unverified',
       thoughtSummary: overrides?.capabilities?.thoughtSummary ?? 'unverified',
       audio: overrides?.capabilities?.audio ?? 'unverified',
+      vision: overrides?.capabilities?.vision ?? 'unverified',
       nativeAudioFormats: overrides?.capabilities?.nativeAudioFormats,
       thinking,
     },

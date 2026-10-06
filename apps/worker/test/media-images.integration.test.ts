@@ -4,9 +4,11 @@ import { applyMigrations } from './migrations.js';
 import {
   AUTH_BOUNDS,
   IMAGE_BOUNDS,
+  IMAGE_FORMATS,
   normalizeImageFormat,
   validateCreateImageUploadRequest,
 } from '@otis/contracts';
+import { MAX_IMAGES_PER_MESSAGE, SUPPORTED_IMAGE_MIMES } from '@otis/agent';
 import { sha256 } from '@otis/identity';
 import type { Env } from '../src/index.js';
 import { inspectImageBytes } from '../src/media/container.js';
@@ -230,5 +232,10 @@ describe('image attachments upload spine (workerd)', () => {
     expect(oversize.response.status).toBe(422);
     const unknown = await claimImage('cm_img_unknown', 'text/plain', 1024);
     expect(unknown.response.status).toBe(422);
+  });
+
+  it('pins provider image bounds to the contracts source of truth', () => {
+    expect(MAX_IMAGES_PER_MESSAGE).toBe(IMAGE_BOUNDS.MAX_PER_MESSAGE);
+    expect([...SUPPORTED_IMAGE_MIMES]).toEqual([...IMAGE_FORMATS]);
   });
 });

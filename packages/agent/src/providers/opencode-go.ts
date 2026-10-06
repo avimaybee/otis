@@ -21,9 +21,12 @@ import {
   MAX_TOOL_ARGUMENT_BYTES,
   OPENCODE_GO_ORIGIN,
   OTIS_USER_AGENT,
+  assertVisionForImages,
   emptyUsage,
   numOrNull,
   parseRetryAfterMs,
+  turnHasImages,
+  validateTurnImages,
   type AdapterEnv,
   type AssistantToolCall,
   type FetchFn,
@@ -655,17 +658,26 @@ function toChatMessages(input: TurnInput): unknown[] {
         messages.push({ role: 'assistant', content: message.text ?? '' });
       }
     } else {
-      if (message.role === 'user' && message.audio) {
+      const imageParts = (message.role === 'user' ? (message.images ?? []) : []).map((image) => ({
+        type: 'image_url',
+        image_url: { url: `data:${image.mimeType};base64,${image.data}` },
+      }));
+      if (message.role === 'user' && (message.audio || imageParts.length > 0)) {
         messages.push({
           role: 'user',
           content: [
-            {
-              type: 'input_audio',
-              input_audio: {
-                data: message.audio.data,
-                format: message.audio.format ?? 'wav',
-              },
-            },
+            ...(message.audio
+              ? [
+                  {
+                    type: 'input_audio',
+                    input_audio: {
+                      data: message.audio.data,
+                      format: message.audio.format ?? 'wav',
+                    },
+                  },
+                ]
+              : []),
+            ...imageParts,
             ...(message.text ? [{ type: 'text', text: message.text }] : []),
           ],
         });
@@ -1009,18 +1021,27 @@ function toResponsesInput(input: TurnInput): unknown[] {
         items.push({ type: 'message', role: 'assistant', content: [{ type: 'output_text', text: message.text }] });
       }
     } else {
-      if (message.role === 'user' && message.audio) {
+      const imageItems = (message.role === 'user' ? (message.images ?? []) : []).map((image) => ({
+        type: 'input_image',
+        image_url: `data:${image.mimeType};base64,${image.data}`,
+      }));
+      if (message.role === 'user' && (message.audio || imageItems.length > 0)) {
         items.push({
           type: 'message',
           role: 'user',
           content: [
-            {
-              type: 'input_audio',
-              input_audio: {
-                data: message.audio.data,
-                format: message.audio.format ?? 'wav',
-              },
-            },
+            ...(message.audio
+              ? [
+                  {
+                    type: 'input_audio',
+                    input_audio: {
+                      data: message.audio.data,
+                      format: message.audio.format ?? 'wav',
+                    },
+                  },
+                ]
+              : []),
+            ...imageItems,
             ...(message.text ? [{ type: 'input_text', text: message.text }] : []),
           ],
         });
@@ -1382,6 +1403,13 @@ export class OpenCodeGoAdapter implements ProviderAdapter {
         retryable: false,
         retryAfterMs: null,
       });
+    }
+    // Image bounds and capability before any spend: over-limit or
+    // unverified-container payloads never reach the metered request, and a
+    // model the registry marks unable never gets the turn.
+    validateTurnImages([...input.messages, ...(input.continuationInput ?? [])]);
+    if (turnHasImages(input.messages) || turnHasImages(input.continuationInput ?? [])) {
+      assertVisionForImages(input.model);
     }
 
     const { signal, cancel } = linkSignal(input);
