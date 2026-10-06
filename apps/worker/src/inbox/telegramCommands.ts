@@ -28,6 +28,7 @@ import {
 } from '@otis/ledger';
 import { parseCommandText } from '@otis/commands';
 import { executeCommand } from '../routes/commands.js';
+import type { PlatformKeys } from '../providers/service.js';
 import { getChat } from './repository.js';
 import { buildTelegramDeliveryStatements } from './telegramDelivery.js';
 
@@ -41,6 +42,7 @@ export interface TelegramCommandInput {
   chatId: string | null;
   sourceMessageId: string;
   externalId: string;
+  platformKeys?: PlatformKeys;
   /** Update fingerprint from the inbox (same scheme as ordinary acceptance). */
   fingerprint: string;
   /** Redacted raw update, wrapped with command metadata for replay/target resolution. */
@@ -226,7 +228,7 @@ export async function executeTelegramCommand(
   if (!chat) return { handled: false };
 
   const outcome = await executeCommand(
-    { db, workspaceId, userId: input.userId, surface: 'telegram', botUsername: input.botUsername },
+    { db, workspaceId, userId: input.userId, surface: 'telegram', botUsername: input.botUsername, platformKeys: input.platformKeys },
     chat,
     input.text,
   );

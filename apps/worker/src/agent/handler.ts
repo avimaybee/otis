@@ -58,6 +58,7 @@ export interface AgentHandlerOptions {
   platformKeys?: PlatformKeys;
   registry?: ModelRegistry;
   providerAdapter?: ProviderAdapter;
+  storage?: R2Bucket;
   fetchFn?: FetchFn;
   maxRoundsPerSlice?: number;
   limits?: AgentLimitsConfig;
@@ -476,10 +477,79 @@ export class AgentHandler implements TurnHandler {
         if (ctx.answerText) {
           userContent += `\n[User Clarification Answer]: ${ctx.answerText}`;
         }
+
+        let userAudio: ProviderMessage['audio'] | undefined = undefined;
+        let attachedMediaId: string | null = null;
+        if (this.options?.storage && (effectiveEntry?.capabilities.audio === 'supported' || Boolean(this.options?.providerAdapter))) {
+          const mediaRow = await ctx.db
+            .prepare(
+              `SELECT m.id, m.object_key, m.format, m.content_type
+               FROM media_objects m
+               JOIN chat_messages cm ON cm.media_id = m.id
+               WHERE (cm.run_id = ? OR cm.inbound_message_id = ?) AND m.workspace_id = ?
+               LIMIT 1`,
+            )
+            .bind(ctx.runId, ctx.sourceMessageId ?? '', ctx.workspaceId)
+            .first<{ id: string; object_key: string; format: string | null; content_type: string | null }>();
+
+          if (mediaRow) {
+            attachedMediaId = mediaRow.id;
+            try {
+              const obj = await this.options.storage.get(mediaRow.object_key);
+              if (obj) {
+                const arrayBuf = await obj.arrayBuffer();
+                const bytes = new Uint8Array(arrayBuf);
+                let binary = '';
+                const len = bytes.byteLength;
+                for (let i = 0; i < len; i++) {
+                  binary += String.fromCharCode(bytes[i]!);
+                }
+                const data = btoa(binary);
+                const mimeType = mediaRow.content_type || mediaRow.format || 'audio/webm';
+                let format: 'wav' | 'mp4' | 'ogg' | 'webm' | undefined = undefined;
+                if (mimeType.includes('webm')) format = 'webm';
+                else if (mimeType.includes('mp4')) format = 'mp4';
+                else if (mimeType.includes('ogg')) format = 'ogg';
+                else if (mimeType.includes('wav')) format = 'wav';
+
+                userAudio = { data, mimeType, format };
+              }
+            } catch (err) {
+              workerFailure('agent', 'failed to read audio from storage for native processing', {
+                workspaceId: ctx.workspaceId,
+                runId: ctx.runId,
+                mediaId: mediaRow.id,
+                error: String(err),
+              });
+            }
+          }
+        }
+
         conversationMessages.push({
           role: 'user',
           text: userContent,
+          ...(userAudio ? { audio: userAudio } : {}),
         });
+
+        if (attachedMediaId && userAudio) {
+          const commitNow = this.nowIso();
+          await ctx.db.batch([
+            ctx.db
+              .prepare(
+                `UPDATE media_transcriptions
+                 SET state = 'ready', transcript_text = '[Voice note processed natively]', updated_at = ?
+                 WHERE media_id = ? AND route = 'native'`,
+              )
+              .bind(commitNow, attachedMediaId),
+            ctx.db
+              .prepare(
+                `UPDATE media_objects
+                 SET state = 'ready', updated_at = ?
+                 WHERE id = ? AND state IN ('validated', 'transcribing')`,
+              )
+              .bind(commitNow, attachedMediaId),
+          ]);
+        }
 
         // Add completed historical tool rounds with original names, arguments, and results (F04)
         if (progress.completedRounds && progress.completedRounds.length > 0) {

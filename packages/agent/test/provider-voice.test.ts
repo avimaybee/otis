@@ -38,20 +38,18 @@ describe('voice capability and route resolution (D23 / D24)', () => {
       },
     };
 
-    // Capability evidence alone must not accept audio into a job the pipeline
-    // cannot execute: without Groq the honest reason is native_not_implemented.
+    // With native audio implemented, verified native capability resolves to the native route
     const withoutStt = resolveVoiceRoute({
       model: verifiedNative,
       audioMimeOrExt: 'audio/webm',
       sttConfig: null,
     });
     expect(withoutStt).toMatchObject({
-      route: 'unavailable',
-      reason: 'native_not_implemented',
+      route: 'native',
+      format: 'audio/webm',
     });
 
-    // With verified Groq the implemented path carries supported voice; the
-    // conversation model stays selected and native capability is preserved.
+    // For supported format, native is preferred even when Groq STT is configured
     const withStt = resolveVoiceRoute({
       model: verifiedNative,
       audioMimeOrExt: 'audio/webm',
@@ -64,8 +62,25 @@ describe('voice capability and route resolution (D23 / D24)', () => {
       },
     });
     expect(withStt).toMatchObject({
-      route: 'groq_stt',
+      route: 'native',
       format: 'audio/webm',
+    });
+
+    // For unsupported format on native (audio/mp4), falls back to verified Groq STT
+    const mp4WithStt = resolveVoiceRoute({
+      model: verifiedNative,
+      audioMimeOrExt: 'audio/mp4',
+      sttConfig: {
+        enabled: true,
+        provider: 'groq',
+        model: 'whisper-large-v3-turbo',
+        credentialStatus: 'available',
+        transcriptionVerified: true,
+      },
+    });
+    expect(mp4WithStt).toMatchObject({
+      route: 'groq_stt',
+      format: 'audio/mp4',
     });
   });
 
@@ -263,8 +278,8 @@ describe('voice capability and route resolution (D23 / D24)', () => {
     });
   });
 
-  it('routes verified native-capable models through the implemented Groq path for this baseline', () => {
-    expect(NATIVE_AUDIO_TRANSCRIPTION_IMPLEMENTED).toBe(false);
+  it('routes verified native-capable models to native route when implemented', () => {
+    expect(NATIVE_AUDIO_TRANSCRIPTION_IMPLEMENTED).toBe(true);
     const nativeWebmModel: ModelEntry = {
       ...baseModel(),
       capabilities: {
@@ -288,10 +303,8 @@ describe('voice capability and route resolution (D23 / D24)', () => {
       audioMimeOrExt: 'audio/webm',
       sttConfig,
     });
-    // When the native handoff lands (flag flips), this becomes 'native'
-    // without touching the capability model or the registry entry.
     expect(route).toMatchObject({
-      route: 'groq_stt',
+      route: 'native',
       format: 'audio/webm',
     });
   });

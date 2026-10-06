@@ -29,6 +29,12 @@ export type EndpointFamily = 'gemini-interactions' | 'go-chat-completions' | 'go
 export interface ProviderMessage {
   role: 'system' | 'user' | 'assistant' | 'tool';
   text?: string;
+  /** Present when a user message carries native audio bytes (base64). */
+  audio?: {
+    data: string;
+    mimeType: string;
+    format?: 'wav' | 'mp4' | 'ogg' | 'webm';
+  };
   /** Present when an assistant message made tool calls. */
   toolCalls?: AssistantToolCall[];
   /** Present when role === 'tool', matching a prior tool call id. */

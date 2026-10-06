@@ -13,8 +13,8 @@ import type { VoiceController } from '../hooks/useVoiceRecorder.js';
 import { PauseIcon, PlayIcon, SendIcon, StopIcon } from './icons.js';
 import { Button } from './ui/button.js';
 
-/** Approved neutral meter geometry: 2 px bars, hairline gap, 24 px lane. */
-const LEVEL_BARS = 28;
+/** Approved neutral meter geometry: 2 px bars, balanced gap, 24 px lane. */
+const LEVEL_BARS = 44;
 
 export function formatVoiceDuration(ms: number): string {
   const totalSeconds = Math.max(0, Math.floor(ms / 1000));
@@ -34,14 +34,14 @@ function VoiceMeter({ levels }: { levels: number[] }) {
     }
   }, [levels]);
   return (
-    <span className="flex h-6 flex-1 items-center justify-end gap-px overflow-hidden" aria-hidden="true">
+    <span className="flex h-6 flex-1 items-center justify-center gap-1 overflow-hidden px-2" aria-hidden="true">
       {Array.from({ length: LEVEL_BARS }, (_, index) => (
         <span
           key={index}
           ref={element => {
             bars.current[index] = element;
           }}
-          className="h-6 w-0.5 origin-center rounded-full bg-muted-foreground"
+          className="h-6 w-0.5 origin-center rounded-full bg-muted-foreground transition-transform duration-75"
         />
       ))}
     </span>
@@ -77,9 +77,12 @@ export function VoiceCapturePanel({ controller, canSend, onCancel, onSend }: Voi
   if (controller.phase === 'recording') {
     return (
       <div className="flex w-full items-center gap-2">
-        <span className="w-10 text-sm tabular-nums text-muted-foreground">
-          {formatVoiceDuration(controller.elapsedMs)}
-        </span>
+        <div className="flex items-center gap-2 shrink-0">
+          <span className="size-2 rounded-full bg-destructive" />
+          <span className="w-10 text-sm tabular-nums text-muted-foreground">
+            {formatVoiceDuration(controller.elapsedMs)}
+          </span>
+        </div>
         <VoiceMeter levels={controller.levels} />
         <Button variant="ghost" size="sm" type="button" onClick={onCancel}>Cancel</Button>
         <button

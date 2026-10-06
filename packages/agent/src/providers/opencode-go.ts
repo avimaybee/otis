@@ -655,7 +655,23 @@ function toChatMessages(input: TurnInput): unknown[] {
         messages.push({ role: 'assistant', content: message.text ?? '' });
       }
     } else {
-      messages.push({ role: message.role, content: message.text ?? '' });
+      if (message.role === 'user' && message.audio) {
+        messages.push({
+          role: 'user',
+          content: [
+            {
+              type: 'input_audio',
+              input_audio: {
+                data: message.audio.data,
+                format: message.audio.format ?? 'wav',
+              },
+            },
+            ...(message.text ? [{ type: 'text', text: message.text }] : []),
+          ],
+        });
+      } else {
+        messages.push({ role: message.role, content: message.text ?? '' });
+      }
     }
   }
 
@@ -993,7 +1009,24 @@ function toResponsesInput(input: TurnInput): unknown[] {
         items.push({ type: 'message', role: 'assistant', content: [{ type: 'output_text', text: message.text }] });
       }
     } else {
-      items.push({ type: 'message', role: message.role, content: [{ type: 'input_text', text: message.text ?? '' }] });
+      if (message.role === 'user' && message.audio) {
+        items.push({
+          type: 'message',
+          role: 'user',
+          content: [
+            {
+              type: 'input_audio',
+              input_audio: {
+                data: message.audio.data,
+                format: message.audio.format ?? 'wav',
+              },
+            },
+            ...(message.text ? [{ type: 'input_text', text: message.text }] : []),
+          ],
+        });
+      } else {
+        items.push({ type: 'message', role: message.role, content: [{ type: 'input_text', text: message.text ?? '' }] });
+      }
     }
   }
 

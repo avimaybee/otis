@@ -103,7 +103,18 @@ function toInteractionsInput(input: TurnInput): { systemInstruction?: string; bl
     }
     if (statefulContinuation) continue;
     if (message.role === 'user') {
-      blocks.push({ type: 'user_input', content: [{ type: 'text', text: message.text ?? '' }] });
+      const contentParts: unknown[] = [];
+      if (message.audio) {
+        contentParts.push({
+          type: 'audio',
+          mime_type: message.audio.mimeType,
+          data: message.audio.data,
+        });
+      }
+      if (message.text || contentParts.length === 0) {
+        contentParts.push({ type: 'text', text: message.text ?? '' });
+      }
+      blocks.push({ type: 'user_input', content: contentParts });
     } else if (message.role === 'tool') {
       const callId = message.toolCallId ?? '';
       if (!callId || !seenFunctionResultCallIds.has(callId)) {

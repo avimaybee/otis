@@ -24,6 +24,7 @@ import {
   type RequestClarificationToolArgs,
   type ResolveConflictToolArgs,
   type SearchMemoryToolArgs,
+  type SetChatModelToolArgs,
   type SetChatThinkingToolArgs,
   type SetFieldsToolArgs,
   type UndoToolArgs,
@@ -31,6 +32,7 @@ import {
   type UpdatePreferenceToolArgs,
   type UpdateTaskToolArgs,
   type UpsertEntityToolArgs,
+  type ExecuteCommandToolArgs,
   PRODUCTION_REGISTRY,
 } from '@otis/agent';
 import {
@@ -43,6 +45,8 @@ import {
   type LedgerCommandContext,
 } from '@otis/ledger';
 import { setMemberSettings, SettingsError } from '@otis/identity';
+import { executeCommand, resolveModelAlias } from '../routes/commands.js';
+import { getChat } from '../inbox/repository.js';
 import { sanitizeFtsQuery } from './context.js';
 
 export interface ExecuteAgentToolParams {
@@ -633,6 +637,116 @@ export async function executeAgentTool(
         status: 'applied',
         action_id: actionId,
         summary: `Thinking set to ${choice.label} for ${entry.displayName} in this chat. It applies to your next message.`,
+      };
+    }
+
+    case 'set_chat_model': {
+      const smArgs = args as SetChatModelToolArgs;
+      if (!chatId) {
+        return {
+          status: 'rejected',
+          action_id: actionId,
+          error: { code: 'missing_chat', message: 'Chat ID required to set model.' },
+        };
+      }
+      const chatRow = await db
+        .prepare(`SELECT author_user_id FROM chats WHERE id = ? AND workspace_id = ?`)
+        .bind(chatId, workspaceId)
+        .first<{ author_user_id: string }>();
+
+      if (!chatRow || chatRow.author_user_id !== actorUserId) {
+        return {
+          status: 'rejected',
+          action_id: actionId,
+          error: { code: 'unauthorized', message: 'Only the chat author can configure the model for this conversation.' },
+        };
+      }
+
+      const rawInput = smArgs.model.trim();
+      if (rawInput.toLowerCase() === 'default') {
+        await db
+          .prepare(`UPDATE chats SET model_override = NULL, updated_at = ? WHERE id = ? AND workspace_id = ?`)
+          .bind(new Date().toISOString(), chatId, workspaceId)
+          .run();
+        return {
+          status: 'applied',
+          action_id: actionId,
+          summary: 'This chat now follows the workspace default model.',
+        };
+      }
+
+      const resolvedKey = resolveModelAlias(rawInput);
+      const entry = PRODUCTION_REGISTRY.entries.find((e) => e.commandKey === resolvedKey);
+      if (!entry) {
+        return {
+          status: 'rejected',
+          action_id: actionId,
+          error: { code: 'unknown_model', message: `Model '${rawInput}' is not recognized.` },
+        };
+      }
+
+      await db
+        .prepare(`UPDATE chats SET model_override = ?, updated_at = ? WHERE id = ? AND workspace_id = ?`)
+        .bind(entry.commandKey, new Date().toISOString(), chatId, workspaceId)
+        .run();
+
+      return {
+        status: 'applied',
+        action_id: actionId,
+        summary: `Switched conversation model to ${entry.displayName}.`,
+      };
+    }
+
+    case 'execute_command': {
+      const ecArgs = args as ExecuteCommandToolArgs;
+      if (!chatId) {
+        return {
+          status: 'rejected',
+          action_id: actionId,
+          error: { code: 'missing_chat', message: 'Chat ID required to execute command.' },
+        };
+      }
+      const chatRow = await getChat(db, workspaceId, chatId);
+      if (!chatRow || chatRow.author_user_id !== actorUserId) {
+        return {
+          status: 'rejected',
+          action_id: actionId,
+          error: { code: 'unauthorized', message: 'Only the chat author can execute commands in this conversation.' },
+        };
+      }
+
+      const cmdText = ecArgs.command_text.startsWith('/') ? ecArgs.command_text : `/${ecArgs.command_text}`;
+      const outcome = await executeCommand(
+        { db, workspaceId, userId: actorUserId, surface: 'web' },
+        chatRow,
+        cmdText,
+      );
+
+      if (outcome.kind === 'reply') {
+        for (const effect of outcome.effects) {
+          if (effect.type === 'set_chat_model') {
+            await db
+              .prepare(`UPDATE chats SET model_override = ?, updated_at = ? WHERE id = ? AND workspace_id = ?`)
+              .bind(effect.commandKey, new Date().toISOString(), effect.chatId, workspaceId)
+              .run();
+          } else if (effect.type === 'set_chat_thinking') {
+            await db
+              .prepare(`UPDATE chats SET thinking_override_json = ?, updated_at = ? WHERE id = ? AND workspace_id = ?`)
+              .bind(effect.thinkingOverride ? JSON.stringify(effect.thinkingOverride) : null, new Date().toISOString(), effect.chatId, workspaceId)
+              .run();
+          }
+        }
+        return {
+          status: 'applied',
+          action_id: actionId,
+          summary: outcome.text,
+        };
+      }
+
+      return {
+        status: 'rejected',
+        action_id: actionId,
+        error: { code: 'command_failed', message: 'Command could not be executed.' },
       };
     }
 

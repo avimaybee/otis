@@ -143,7 +143,10 @@ export async function transcribeWithGroq(
 ): Promise<GroqTranscriptionResult> {
   const timeoutMs = params.timeoutMs ?? GROQ_STT_TIMEOUT_MS;
   const form = new FormData();
-  form.append('file', new Blob([copyBytes(params.bytes)], { type: params.mimeType }), params.filename);
+  const filePayload = typeof File !== 'undefined'
+    ? new File([copyBytes(params.bytes)], params.filename, { type: params.mimeType })
+    : new Blob([copyBytes(params.bytes)], { type: params.mimeType });
+  form.append('file', filePayload, params.filename);
   form.append('model', params.model);
   form.append('temperature', '0');
   form.append('response_format', 'verbose_json');
@@ -175,7 +178,9 @@ export async function transcribeWithGroq(
           ? failure('aborted', null, 'Transcription was cancelled.', { retryable: false })
           : failure('timeout', null, 'Groq transcription timed out.', { retryable: true });
       }
-      return failure('transient', null, 'Groq transcription transport failed.', { retryable: true });
+      const errMsg = err instanceof Error ? err.message : String(err);
+      console.warn('[otis:groqStt] transport error:', errMsg);
+      return failure('transient', null, `Groq transcription transport failed: ${errMsg}`, { retryable: true });
     }
 
     if (response.status === 401 || response.status === 403) {

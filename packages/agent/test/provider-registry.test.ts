@@ -35,8 +35,14 @@ describe('operator model registry', () => {
       expect(entry.approved).toBe(true);
       expect(entry.lifecycle).toBe('active');
       expect(entry.endpointUrl.startsWith('https://')).toBe(true);
-      // Audio and thought-summary remain unverified on all models until accepted
-      expect(entry.capabilities.audio).toBe('unverified');
+      // Audio capability reflects native support; thought-summary remains unverified until accepted
+      if (entry.commandKey === 'gemini-preview-unverified') {
+        expect(entry.capabilities.audio).toBe('unverified');
+      } else if (entry.commandKey === 'deepseek-v4.1-flash') {
+        expect(entry.capabilities.audio).toBe('unsupported');
+      } else {
+        expect(entry.capabilities.audio).toBe('supported');
+      }
       expect(entry.capabilities.thoughtSummary).toBe('unverified');
 
       const verifiedAt = provenVerifiedAt[entry.commandKey];
@@ -77,7 +83,7 @@ describe('operator model registry', () => {
     expect(deepseek.dataRetention).toContain('2026-10-31');
 
     // No thinking descriptors: provider default applies until verified.
-    expect(deepseek.capabilities.audio).toBe('unverified');
+    expect(deepseek.capabilities.audio).toBe('unsupported');
     expect(deepseek.capabilities.thoughtSummary).toBe('unverified');
     expect(deepseek.capabilities.thinking?.state).toBe('unverified');
     expect(deepseek.capabilities.thinking?.choices).toEqual([]);

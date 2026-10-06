@@ -935,7 +935,7 @@ export async function dispatchOutboxItem(
     .prepare(
       `SELECT 1 FROM media_transcriptions t
        JOIN chat_messages m ON m.media_id = t.media_id
-       WHERE m.run_id = ? AND t.state IN ('pending', 'running') LIMIT 1`,
+       WHERE m.run_id = ? AND t.route = 'groq_stt' AND t.state IN ('pending', 'running') LIMIT 1`,
     )
     .bind(run.id)
     .first();

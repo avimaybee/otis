@@ -23,7 +23,7 @@
 .otis-composer__input { display: block; width: 100%; min-width: 0; border: 0; resize: none; background: transparent; color: var(--foreground); overflow-y: auto; scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
 .otis-composer__input::placeholder { font: inherit; color: var(--muted-foreground); }
 .otis-composer__input:focus { outline: none; }
-.otis-composer__field:focus-within { outline: 2px solid var(--ring); outline-offset: 2px; }
+.otis-composer__field:focus-within { outline: none; }
 .otis-composer__status { min-height: 20px; margin-top: 4px; color: var(--subtle); text-align: center; }
 .otis-composer__status--error { color: var(--destructive); }
 .otis-spinner { display: block; width: 16px; height: 16px; border: 2px solid currentColor; border-right-color: transparent; border-radius: 9999px; animation: otis-spin 0.8s linear infinite; }

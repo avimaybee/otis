@@ -15,7 +15,7 @@ import { validateTelegramWebhookSecret } from '@otis/channels';
 import type { Env } from '../index.js';
 import { jsonError, jsonSuccess } from '../middleware/errors.js';
 import { acceptTelegramInbound } from '../inbox/telegram.js';
-import { sendTelegramChatAction } from '../inbox/telegramDelivery.js';
+import { deliverTelegramOutbox, sendTelegramChatAction } from '../inbox/telegramDelivery.js';
 import { publishDispatchHint, publishTelegramDeliveryHint } from '../dispatchHint.js';
 import { processTranscriptionJobs } from '../media/transcription.js';
 import { extractPlatformKeys } from '../providers/service.js';
@@ -105,6 +105,14 @@ export async function handleTelegramWebhook(
       publishDispatchHint(ctx, env, result.workspace_id);
     }
     publishTelegramDeliveryHint(ctx, env, result.workspace_id);
+    if (result.status === 'accepted' && result.workspace_id && env.TELEGRAM_BOT_TOKEN && ctx && env.ENVIRONMENT !== 'test') {
+      ctx.waitUntil(
+        deliverTelegramOutbox(env.DB, env, {
+          workspaceId: result.workspace_id,
+          limit: 5,
+        }).catch(() => undefined),
+      );
+    }
     return jsonSuccess(result, 200, { 'x-request-id': requestId });
   } catch (err) {
     return jsonError(

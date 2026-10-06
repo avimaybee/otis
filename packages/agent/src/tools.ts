@@ -1020,6 +1020,44 @@ export function validateSetChatThinkingArgs(raw: unknown): ValidationResult<SetC
   return { ok: true, data: { level: obj['level'].trim().toLowerCase() } };
 }
 
+export interface SetChatModelToolArgs {
+  model: string;
+}
+
+export function validateSetChatModelArgs(raw: unknown): ValidationResult<SetChatModelToolArgs> {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return fail('invalid_type', 'Expected object.');
+  const obj = raw as Record<string, unknown>;
+  const sec = checkNoForbiddenKeys(obj);
+  if (sec) return sec;
+  const unk = checkNoUnknownKeys(obj, new Set(['model']), 'set_chat_model');
+  if (unk) return unk;
+
+  if (typeof obj['model'] !== 'string' || !obj['model'].trim()) {
+    return fail('invalid_argument', "Field 'model' must be a non-empty string.");
+  }
+
+  return { ok: true, data: { model: obj['model'].trim() } };
+}
+
+export interface ExecuteCommandToolArgs {
+  command_text: string;
+}
+
+export function validateExecuteCommandArgs(raw: unknown): ValidationResult<ExecuteCommandToolArgs> {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return fail('invalid_type', 'Expected object.');
+  const obj = raw as Record<string, unknown>;
+  const sec = checkNoForbiddenKeys(obj);
+  if (sec) return sec;
+  const unk = checkNoUnknownKeys(obj, new Set(['command_text']), 'execute_command');
+  if (unk) return unk;
+
+  if (typeof obj['command_text'] !== 'string' || !obj['command_text'].trim()) {
+    return fail('invalid_argument', "Field 'command_text' must be a non-empty string.");
+  }
+
+  return { ok: true, data: { command_text: obj['command_text'].trim() } };
+}
+
 export function validateUndoArgs(raw: unknown): ValidationResult<UndoToolArgs> {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return fail('invalid_type', 'Expected object.');
   const obj = raw as Record<string, unknown>;
@@ -1110,6 +1148,10 @@ export function validateToolCall(
       return validateUpdatePreferenceArgs(rawArgs);
     case 'set_chat_thinking':
       return validateSetChatThinkingArgs(rawArgs);
+    case 'set_chat_model':
+      return validateSetChatModelArgs(rawArgs);
+    case 'execute_command':
+      return validateExecuteCommandArgs(rawArgs);
     case 'undo':
       return validateUndoArgs(rawArgs);
     case 'request_clarification':
@@ -1438,6 +1480,36 @@ export const ALL_AGENT_TOOLS: ProviderToolDeclaration[] = [
         },
       },
       required: ['level'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'set_chat_model',
+    description: 'Switch the active conversation model for this chat (e.g. "gemini-3.5-flash-lite", "deepseek-v4.1-flash", "mimo-v2.5", "default"). Use when the user asks to switch or change the model.',
+    parameters: {
+      type: 'object',
+      properties: {
+        model: {
+          type: 'string',
+          description: 'The model key, name, or alias to switch to (e.g. "gemini 3.5", "deepseek", "mimo 2.5", "default").',
+        },
+      },
+      required: ['model'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'execute_command',
+    description: 'Execute a slash command on behalf of the user (e.g. "/model gemini 3.5", "/thinking minimal", "/undo", "/today").',
+    parameters: {
+      type: 'object',
+      properties: {
+        command_text: {
+          type: 'string',
+          description: 'The full slash command text including slash and arguments.',
+        },
+      },
+      required: ['command_text'],
       additionalProperties: false,
     },
   },

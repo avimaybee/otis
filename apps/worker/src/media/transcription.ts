@@ -338,6 +338,8 @@ async function discoverDueJobIds(
   if (params.jobId) {
     filters.push(`id = ?`);
     binds.push(params.jobId);
+  } else {
+    filters.push(`route = 'groq_stt'`);
   }
   if (params.workspaceId) {
     filters.push(`workspace_id = ?`);

@@ -186,6 +186,45 @@ export type CommandEffect =
   | { type: 'set_active_workspace'; workspaceId: string }
   | { type: 'request_undo'; actionId: string | null; mode: 'from_here' | 'single' };
 
+export function resolveModelAlias(input: string): string {
+  const query = input.trim().toLowerCase();
+  if (query === 'default') return 'default';
+
+  // 1. Exact match on commandKey
+  const exactCommandKey = PRODUCTION_REGISTRY.entries.find((e) => e.commandKey.toLowerCase() === query);
+  if (exactCommandKey) return exactCommandKey.commandKey;
+
+  // 2. Exact match on modelId
+  const exactModelId = PRODUCTION_REGISTRY.entries.find((e) => e.modelId.toLowerCase() === query);
+  if (exactModelId) return exactModelId.commandKey;
+
+  // 3. Exact match on displayName
+  const exactDisplayName = PRODUCTION_REGISTRY.entries.find((e) => e.displayName.toLowerCase() === query);
+  if (exactDisplayName) return exactDisplayName.commandKey;
+
+  // 4. Clean alphanumeric match (e.g. "gemini35", "mimo25", "muse12", "deepseek41")
+  const cleaned = query.replace(/[^a-z0-9]/g, '');
+  for (const entry of PRODUCTION_REGISTRY.entries) {
+    const cleanCmd = entry.commandKey.replace(/[^a-z0-9]/g, '');
+    const cleanModel = entry.modelId.replace(/[^a-z0-9]/g, '');
+    const cleanDisplay = entry.displayName.replace(/[^a-z0-9]/g, '');
+    if (cleanCmd === cleaned || cleanModel === cleaned || cleanDisplay === cleaned) {
+      return entry.commandKey;
+    }
+  }
+
+  // 5. Substring / partial match on commandKey, modelId, or displayName
+  const matched = PRODUCTION_REGISTRY.entries.find((e) => {
+    const cmd = e.commandKey.toLowerCase();
+    const model = e.modelId.toLowerCase();
+    const name = e.displayName.toLowerCase();
+    return cmd.includes(query) || model.includes(query) || name.includes(query) || query.includes(cmd);
+  });
+  if (matched) return matched.commandKey;
+
+  return input.trim();
+}
+
 /**
  * Executes a deterministic command turn and returns the reply text plus the
  * durable effects to apply. Command execution never calls a provider.
@@ -221,8 +260,9 @@ export async function executeCommand(
 
     case 'model': {
       if (parsed.args.length === 0) return { kind: 'reply', text: await renderModelList(context, chat), effects: [] };
-      if (!chat || parsed.args.length !== 1) return { kind: 'reply', text: 'Use /model <key> or /model default in your own chat.', effects: [] };
-      const key = parsed.args[0]!;
+      if (!chat) return { kind: 'reply', text: 'Use /model <key> or /model default in your own chat.', effects: [] };
+      const rawArg = parsed.args.join(' ').trim();
+      const key = rawArg.toLowerCase() === 'default' ? 'default' : resolveModelAlias(rawArg);
       const settings = await context.db
         .prepare(`SELECT default_model FROM workspace_settings WHERE workspace_id = ?`)
         .bind(context.workspaceId)

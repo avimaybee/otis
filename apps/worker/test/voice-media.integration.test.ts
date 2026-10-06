@@ -831,8 +831,8 @@ describe('voice media integration (workerd)', () => {
     expect(clientEvidence!.status).toBe(422);
   });
 
-  it('never exposes a native route the worker would immediately reject', async () => {
-    expect(NATIVE_AUDIO_TRANSCRIPTION_IMPLEMENTED).toBe(false);
+  it('routes native-capable models to native route and rejects invalid routes defensively in transcription processor', async () => {
+    expect(NATIVE_AUDIO_TRANSCRIPTION_IMPLEMENTED).toBe(true);
     const nativeCapable: ModelEntry = {
       commandKey: 'native-capable-fixture',
       displayName: 'Native Capable Fixture',
@@ -856,28 +856,25 @@ describe('voice media integration (workerd)', () => {
       verifiedAt: null,
     };
 
-    // The resolver used by claim/finalize/acceptance never returns native
-    // while the handoff is unimplemented: verified Groq where configured,
-    // and an honest native_not_implemented reason where it is not.
+    // The resolver used by claim/finalize/acceptance returns native when implemented
     for (const format of ['audio/webm', 'audio/mp4', 'audio/ogg'] as const) {
       const withStt = await resolveVoiceRouteForWorkspace(E.DB, {
         workspaceId: WS,
         model: nativeCapable,
         audioMimeOrExt: format,
       });
-      expect(withStt.route).toBe('groq_stt');
+      expect(withStt.route).toBe('native');
 
       const withoutStt = await resolveVoiceRouteForWorkspace(E.DB, {
         workspaceId: WS_OTHER,
         model: nativeCapable,
         audioMimeOrExt: format,
       });
-      expect(withoutStt).toMatchObject({ route: 'unavailable', reason: 'native_not_implemented' });
+      expect(withoutStt.route).toBe('native');
     }
 
-    // Defensive worker behavior: if a native snapshot ever existed, the
-    // processor rejects it before any provider call. Routes must never
-    // create this state, and the resolver test above proves they cannot.
+    // Defensive worker behavior: if an unsupported route snapshot ever reached the
+    // Groq transcription processor, the processor rejects it before any provider call.
     const prepared = await prepareVoiceMessage({ clientMessageId: 'cm_native_reject', chatId: 'chat_voice_native_reject' });
     await E.DB.prepare(`UPDATE media_transcriptions SET route = 'native', provider = NULL, model = NULL WHERE id = ?`)
       .bind(prepared.jobId)
@@ -1385,10 +1382,14 @@ describe('voice media integration (workerd)', () => {
       WS,
       'req-test',
     );
-    const modelsBody = (await modelsResponse.json()) as { models: Array<{ voice_available: boolean; native_audio_supported: boolean }> };
+    const modelsBody = (await modelsResponse.json()) as { models: Array<{ command_key: string; voice_available: boolean; native_audio_supported: boolean }> };
     expect(modelsBody.models.length).toBeGreaterThan(0);
     for (const model of modelsBody.models) {
-      expect(model.native_audio_supported).toBe(false);
+      if (model.command_key === 'deepseek-v4.1-flash' || model.command_key === 'gemini-preview-unverified') {
+        expect(model.native_audio_supported).toBe(false);
+      } else {
+        expect(model.native_audio_supported).toBe(true);
+      }
       expect(model.voice_available).toBe(true);
     }
 

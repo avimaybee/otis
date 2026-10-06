@@ -1354,6 +1354,7 @@ export async function acceptTelegramInbound(
         clientOperationId: `tg:${normalized.externalId}`,
         text: normalized.text,
         botUsername: options?.botUsername,
+        platformKeys: options?.platformKeys,
         nowIso: now,
         requestId: 'telegram-command',
       });

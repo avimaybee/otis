@@ -24,8 +24,8 @@ import {
 } from '../src/index.js';
 
 describe('006A: Tool Schemas and Argument Validation', () => {
-  it('defines all 19 agent tools and 1 control tool with additionalProperties: false', () => {
-    expect(ALL_AGENT_TOOLS.length).toBe(20);
+  it('defines all 21 agent tools and 1 control tool with additionalProperties: false', () => {
+    expect(ALL_AGENT_TOOLS.length).toBe(22);
     for (const tool of ALL_AGENT_TOOLS) {
       expect(tool.parameters.type).toBe('object');
       expect(tool.parameters.additionalProperties).toBe(false);
@@ -49,7 +49,9 @@ describe('006A: Tool Schemas and Argument Validation', () => {
     expect(toolNames).toContain('remember_context');
     expect(toolNames).toContain('forget_memory');
     expect(toolNames).toContain('update_preference');
+    expect(toolNames).toContain('set_chat_model');
     expect(toolNames).toContain('set_chat_thinking');
+    expect(toolNames).toContain('execute_command');
     expect(toolNames).toContain('undo');
     expect(toolNames).toContain('request_clarification');
   });

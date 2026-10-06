@@ -162,6 +162,12 @@ export const PRODUCTION_REGISTRY: ModelRegistry = {
           text: 'supported',
           tools: 'supported',
           stream: 'supported',
+          audio: 'supported',
+          nativeAudioFormats: {
+            'audio/webm': 'supported',
+            'audio/mp4': 'supported',
+            'audio/ogg': 'supported',
+          },
           thinking: {
             state: 'supported',
             defaultChoiceId: 'medium',
@@ -209,6 +215,12 @@ export const PRODUCTION_REGISTRY: ModelRegistry = {
           text: 'supported',
           tools: 'supported',
           stream: 'supported',
+          audio: 'supported',
+          nativeAudioFormats: {
+            'audio/webm': 'supported',
+            'audio/mp4': 'supported',
+            'audio/ogg': 'supported',
+          },
           thinking: {
             state: 'supported',
             defaultChoiceId: 'minimal',
@@ -239,6 +251,12 @@ export const PRODUCTION_REGISTRY: ModelRegistry = {
           text: 'supported',
           tools: 'supported',
           stream: 'supported',
+          audio: 'supported',
+          nativeAudioFormats: {
+            'audio/webm': 'supported',
+            'audio/mp4': 'supported',
+            'audio/ogg': 'supported',
+          },
           thinking: {
             state: 'supported',
             defaultChoiceId: 'default',
@@ -268,6 +286,12 @@ export const PRODUCTION_REGISTRY: ModelRegistry = {
           text: 'supported',
           tools: 'supported',
           stream: 'supported',
+          audio: 'supported',
+          nativeAudioFormats: {
+            'audio/webm': 'supported',
+            'audio/mp4': 'supported',
+            'audio/ogg': 'supported',
+          },
           thinking: {
             state: 'supported',
             defaultChoiceId: 'default',
@@ -296,6 +320,12 @@ export const PRODUCTION_REGISTRY: ModelRegistry = {
           text: 'supported',
           tools: 'supported',
           stream: 'supported',
+          audio: 'supported',
+          nativeAudioFormats: {
+            'audio/webm': 'supported',
+            'audio/mp4': 'supported',
+            'audio/ogg': 'supported',
+          },
           thinking: {
             state: 'unsupported',
             choices: [],
@@ -320,6 +350,12 @@ export const PRODUCTION_REGISTRY: ModelRegistry = {
           text: 'supported',
           tools: 'supported',
           stream: 'supported',
+          audio: 'supported',
+          nativeAudioFormats: {
+            'audio/webm': 'supported',
+            'audio/mp4': 'supported',
+            'audio/ogg': 'supported',
+          },
           thinking: {
             state: 'unsupported',
             choices: [],
@@ -344,6 +380,12 @@ export const PRODUCTION_REGISTRY: ModelRegistry = {
           text: 'supported',
           tools: 'supported',
           stream: 'supported',
+          audio: 'unsupported',
+          nativeAudioFormats: {
+            'audio/webm': 'unsupported',
+            'audio/mp4': 'unsupported',
+            'audio/ogg': 'unsupported',
+          },
         },
         evidenceRef: 'docs/005-live-provider-evidence.md',
         verifiedAt: '2026-10-03',

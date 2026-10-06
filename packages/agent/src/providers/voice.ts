@@ -59,7 +59,7 @@ export type VoiceRouteReason =
  * product target is preserved rather than relabeled as text-only. Flipping
  * this flag requires the actual native handoff plus endpoint evidence.
  */
-export const NATIVE_AUDIO_TRANSCRIPTION_IMPLEMENTED = false;
+export const NATIVE_AUDIO_TRANSCRIPTION_IMPLEMENTED = true;
 
 export type VoiceRouteOutcome =
   | {

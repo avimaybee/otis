@@ -245,7 +245,7 @@ async function scheduleNextTranscriptionWake(env: Env, workspaceId: string): Pro
     const row = await env.DB
       .prepare(
         `SELECT MIN(COALESCE(next_attempt_at, ?)) AS due_at FROM media_transcriptions
-         WHERE workspace_id = ? AND state = 'pending'`,
+         WHERE workspace_id = ? AND route = 'groq_stt' AND state = 'pending'`,
       )
       .bind(new Date().toISOString(), workspaceId)
       .first<{ due_at: string | null }>();
@@ -303,6 +303,7 @@ export async function createWorkerAgentHandler(env: Env): Promise<TurnHandler> {
     platformKeys: extractPlatformKeys(env),
     registry: PRODUCTION_REGISTRY,
     limits,
+    storage: env.STORAGE,
   });
 }
 
