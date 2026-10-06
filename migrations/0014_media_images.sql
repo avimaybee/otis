@@ -3,8 +3,19 @@
 -- image containers. SQLite cannot alter a CHECK in place, so rebuild the
 -- table preserving existing rows, keys and identity scope. Voice flows,
 -- transcription receipts and retention semantics are untouched.
+--
+-- D1 enforces foreign keys and forbids toggling PRAGMA foreign_keys inside
+-- a migration, so this uses the documented D1 rebuild pattern: defer FK
+-- enforcement for the transaction. Deferral does not suppress ON DELETE
+-- CASCADE, and dropping media_objects would cascade-delete every
+-- media_transcriptions receipt, so receipts are backed up first and restored
+-- after the rename; row ids are stable, so each receipt stays attached to
+-- the same media. A regular (non-TEMP) backup table is used so the copy
+-- survives executors that run each statement on its own connection.
 
-PRAGMA foreign_keys=OFF;
+PRAGMA defer_foreign_keys=on;
+DROP TABLE IF EXISTS media_transcriptions_backup_0014;
+CREATE TABLE media_transcriptions_backup_0014 AS SELECT * FROM media_transcriptions;
 CREATE TABLE IF NOT EXISTS media_objects_v2 (
   id TEXT PRIMARY KEY,
   workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
@@ -37,6 +48,8 @@ INSERT OR IGNORE INTO media_objects_v2
   FROM media_objects;
 DROP TABLE media_objects;
 ALTER TABLE media_objects_v2 RENAME TO media_objects;
+INSERT INTO media_transcriptions SELECT * FROM media_transcriptions_backup_0014;
+DROP TABLE media_transcriptions_backup_0014;
 
 CREATE INDEX IF NOT EXISTS idx_media_objects_ws_state ON media_objects(workspace_id, state);
 CREATE INDEX IF NOT EXISTS idx_media_objects_expiry ON media_objects(state, expires_at);
@@ -44,4 +57,4 @@ CREATE INDEX IF NOT EXISTS idx_media_objects_token ON media_objects(upload_token
 CREATE UNIQUE INDEX IF NOT EXISTS idx_media_objects_client_identity
   ON media_objects(workspace_id, chat_id, uploader_user_id, client_message_id)
   WHERE client_message_id IS NOT NULL;
-PRAGMA foreign_keys=ON;
+PRAGMA defer_foreign_keys=off;
