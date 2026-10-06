@@ -362,6 +362,60 @@ describe('Gemini Interactions adapter', () => {
     expect(body['generation_config']).toEqual({ max_output_tokens: 17, thinking_summaries: 'auto' });
   });
 
+  describe('stale-continuation fallback (F11)', () => {
+    const linkedInput = () =>
+      baseInput(geminiModel(), {
+        messages: [{ role: 'user', text: 'Continue' }],
+        previousContinuation: { kind: 'gemini-interactions', interactionId: 'v1_stale' },
+      });
+
+    it('replays statelessly only for a proven stale interaction', async () => {
+      let calls = 0;
+      const fetchFn = mockFetch(() => {
+        calls += 1;
+        return calls === 1
+          ? errorResponse(400, { error: { code: 'not_found', message: 'Interaction v1_stale not found.' } })
+          : chunkedResponse([TEXT_STREAM]);
+      });
+      const events = await collect(linkedInput(), fetchFn);
+      expect(fetchFn.requests).toHaveLength(2);
+      const retryBody = fetchFn.requests[1]!.body as Record<string, unknown>;
+      expect(retryBody['previous_interaction_id']).toBeUndefined();
+      expect(events[events.length - 1]).toMatchObject({ type: 'finish', reason: 'success' });
+    });
+
+    it('never retries unrelated 400s and reports them without a duplicate spend', async () => {
+      for (const body of [
+        { error: { code: 'invalid_argument', message: 'Tool schema is invalid.' } },
+        { error: { code: 'failed_precondition', message: 'Model is overloaded.' } },
+        'plain text body',
+      ]) {
+        const fetchFn = mockFetch(() => errorResponse(400, body));
+        const events = await collect(linkedInput(), fetchFn);
+        expect(fetchFn.requests).toHaveLength(1);
+        expect(events).toHaveLength(1);
+        expect(events[0]).toMatchObject({ type: 'error', error: { code: 'invalid_request', retryable: false } });
+      }
+    });
+
+    it('reports the retry outcome with its retry metadata, not the superseded original', async () => {
+      let calls = 0;
+      const fetchFn = mockFetch(() => {
+        calls += 1;
+        return calls === 1
+          ? errorResponse(400, { error: { code: 'expired', message: 'Interaction v1_stale expired.' } })
+          : errorResponse(429, { error: { message: 'Slow down.' } }, { 'retry-after': '30' });
+      });
+      const events = await collect(linkedInput(), fetchFn);
+      expect(fetchFn.requests).toHaveLength(2);
+      expect(events).toHaveLength(1);
+      expect(events[0]).toMatchObject({
+        type: 'error',
+        error: { code: 'rate_limited', retryable: true, retryAfterMs: 30000 },
+      });
+    });
+  });
+
   it('rejects non-positive integer maxOutputTokens before transport', async () => {
     const fetchFn = mockFetch(() => chunkedResponse([TEXT_STREAM]));
     await expect(

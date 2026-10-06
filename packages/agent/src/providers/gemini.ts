@@ -424,9 +424,11 @@ export class GeminiInteractionsAdapter implements ProviderAdapter {
       return;
     }
     if (!response.ok || !response.body) {
-      if (response.status === 400 && prevId) {
-        // If stateful continuation failed (e.g. interaction expired or not found on Google servers),
-        // fallback to full stateless turn without previous_interaction_id.
+      // A stale linked interaction (expired or evicted server-side) replays
+      // as one full stateless turn; any other failure reports as-is without
+      // a duplicate spend. The retry's own outcome (including its Retry-After
+      // metadata) is what the caller sees, never the superseded original.
+      if (response.status === 400 && prevId && (await isStaleContinuation(response))) {
         const statelessInput: TurnInput = {
           ...input,
           previousContinuation: undefined,
@@ -457,9 +459,11 @@ export class GeminiInteractionsAdapter implements ProviderAdapter {
             yield* this.readStream(retryRes.body, signal);
             return;
           }
-          console.warn('[otis:gemini] stateless retry also failed:', retryRes.status);
-        } catch {
-          // Fall through to reporting original error if retry also threw
+          yield { type: 'error', error: httpError(retryRes.status, retryRes.headers) };
+          return;
+        } catch (err) {
+          yield { type: 'error', error: transportError(err) };
+          return;
         }
       }
       yield { type: 'error', error: httpError(response.status, response.headers) };
@@ -732,6 +736,26 @@ function transportError(err: unknown): ProviderError {
     }
   }
   return { code: 'transient', message: 'Provider transport failed.', retryable: true, retryAfterMs: null };
+}
+
+/**
+ * True only when the error body proves the linked interaction itself is
+ * stale (not found, expired, invalid): both an interaction reference and a
+ * staleness indicator are required, so unrelated 400s (bad tool schema,
+ * invalid arguments) never trigger a duplicate stateless spend.
+ */
+async function isStaleContinuation(response: Response): Promise<boolean> {
+  try {
+    const text = await response.clone().text();
+    if (!text) return false;
+    const payload = JSON.parse(text) as { error?: { code?: unknown; message?: unknown } };
+    const code = typeof payload?.error?.code === 'string' ? payload.error.code : '';
+    const message = typeof payload?.error?.message === 'string' ? payload.error.message : '';
+    const haystack = `${code} ${message}`.toLowerCase();
+    return /interaction/.test(haystack) && /(not.?found|expired|invalid|unknown|gone)/.test(haystack);
+  } catch {
+    return false;
+  }
 }
 
 /** Bounded credential probe: fetches one selected model resource (no inference). */
