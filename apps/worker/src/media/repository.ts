@@ -5,6 +5,7 @@
  */
 
 import type {
+  MediaFormat,
   VoiceFormat,
   VoiceMediaState,
   VoiceMediaSummary,
@@ -21,7 +22,7 @@ export interface MediaRow {
   state: VoiceMediaState;
   object_key: string;
   content_type: string | null;
-  format: VoiceFormat | null;
+  format: MediaFormat | null;
   byte_size: number | null;
   duration_ms: number | null;
   upload_token_hash: string | null;
@@ -89,7 +90,7 @@ export function toMediaSummary(
     chat_id: row['chat_id'] ? String(row['chat_id']) : null,
     uploader_user_id: String(row['uploader_user_id']),
     state: String(row['state']) as VoiceMediaState,
-    format: row['format'] ? (String(row['format']) as VoiceFormat) : null,
+    format: row['format'] ? (String(row['format']) as MediaFormat) : null,
     content_type: row['content_type'] ? String(row['content_type']) : null,
     byte_size: row['byte_size'] !== null && row['byte_size'] !== undefined ? Number(row['byte_size']) : null,
     duration_ms: row['duration_ms'] !== null && row['duration_ms'] !== undefined ? Number(row['duration_ms']) : null,
@@ -119,7 +120,7 @@ export async function loadMediaRow(
     state: String(row['state']) as VoiceMediaState,
     object_key: String(row['object_key']),
     content_type: row['content_type'] ? String(row['content_type']) : null,
-    format: row['format'] ? (String(row['format']) as VoiceFormat) : null,
+    format: row['format'] ? (String(row['format']) as MediaFormat) : null,
     byte_size: row['byte_size'] !== null && row['byte_size'] !== undefined ? Number(row['byte_size']) : null,
     duration_ms: row['duration_ms'] !== null && row['duration_ms'] !== undefined ? Number(row['duration_ms']) : null,
     upload_token_hash: row['upload_token_hash'] ? String(row['upload_token_hash']) : null,
@@ -163,7 +164,7 @@ export async function rotateMediaUploadTicket(
     uploaderUserId: string;
     tokenHash: string;
     tokenExpiresAt: string;
-    format: VoiceFormat;
+    format: MediaFormat;
     contentType: string;
     durationMs: number;
     nowIso: string;
@@ -203,7 +204,7 @@ export async function resetMediaUploadForRetry(
     uploaderUserId: string;
     tokenHash: string;
     tokenExpiresAt: string;
-    format: VoiceFormat;
+    format: MediaFormat;
     contentType: string;
     durationMs: number;
     nowIso: string;
@@ -294,7 +295,7 @@ export interface CreateMediaUploadParams {
   chatId: string;
   uploaderUserId: string;
   clientMessageId: string;
-  format: VoiceFormat;
+  format: MediaFormat;
   contentType: string;
   byteSize: number;
   durationMs: number;
@@ -354,7 +355,7 @@ export async function createValidatedMedia(
     workspaceId: string;
     chatId: string;
     uploaderUserId: string;
-    format: VoiceFormat;
+    format: MediaFormat;
     contentType: string;
     byteSize: number;
     durationMs: number;

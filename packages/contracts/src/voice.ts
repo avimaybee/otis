@@ -12,6 +12,7 @@
 
 import type { ProviderStatus } from './index.js';
 import type { DtoValidation } from './chat.js';
+import type { MediaFormat } from './media.js';
 
 /** The three required capture containers (Android WebM, iPhone MP4/AAC, Telegram OGG/Opus). */
 export const VOICE_FORMATS = ['audio/webm', 'audio/mp4', 'audio/ogg'] as const;
@@ -69,7 +70,7 @@ export interface VoiceMediaSummary {
   chat_id: string | null;
   uploader_user_id: string;
   state: VoiceMediaState;
-  format: VoiceFormat | null;
+  format: MediaFormat | null;
   content_type: string | null;
   byte_size: number | null;
   duration_ms: number | null;

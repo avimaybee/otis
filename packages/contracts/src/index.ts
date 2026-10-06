@@ -8,6 +8,7 @@
 // Re-exported so clients can import everything from the package root.
 export * from './chat.js';
 export * from './voice.js';
+export * from './media.js';
 
 // --- Base Result & Error Types ---
 

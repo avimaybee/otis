@@ -14,14 +14,19 @@
  */
 
 import {
+  IMAGE_BOUNDS,
+  normalizeImageFormat,
+  validateCreateImageUploadRequest,
   VOICE_BOUNDS,
   validateCreateVoiceUploadRequest,
+  type CreateImageUploadResponse,
   type CreateVoiceUploadRequest,
   type CreateVoiceUploadResponse,
   type FinalizeVoiceUploadResponse,
   type VerifyVoiceFormatResponse,
   type VoiceMediaStatusResponse,
   type VoiceMediaSummary,
+  type MediaFormat,
   type VoiceFormat,
 } from '@otis/contracts';
 import type { Env } from '../index.js';
@@ -36,7 +41,7 @@ import {
   recordVoiceFormatEvidence,
 } from '@otis/identity';
 import { extractPlatformKeys, resolveModelForChat, resolveVoiceRouteForWorkspace } from '../providers/service.js';
-import { inspectAudioBytes } from './container.js';
+import { inspectAudioBytes, inspectImageBytes } from './container.js';
 import { handleGetVoiceSettings, handleUpdateVoiceSettings } from '../routes/voiceSettings.js';
 import {
   createMediaUpload,
@@ -132,7 +137,7 @@ async function reuseExistingClaim(
     uploaderUserId: string;
     tokenHash: string;
     tokenExpiresAt: string;
-    format: VoiceFormat;
+    format: MediaFormat;
     contentType: string;
     durationMs: number;
     nowIso: string;
@@ -154,6 +159,120 @@ function isUniqueViolation(err: unknown): boolean {
 }
 
 /**
+ * Image claim on the same upload collection. Images skip the STT route
+ * check entirely: they are prompt attachments, never transcription jobs.
+ * One media lifecycle per stable client message UUID, mirroring voice.
+ */
+export async function handleCreateImageUpload(
+  _request: Request,
+  env: Env,
+  workspaceId: string,
+  requestId: string,
+  scope: { user: { id: string } },
+  rawBody: unknown,
+): Promise<Response> {
+  if (!env.STORAGE) {
+    return jsonError(500, 'server_misconfigured', 'Private media storage is not configured.', requestId);
+  }
+  const validated = validateCreateImageUploadRequest(rawBody);
+  if (!validated.valid) return jsonError(422, 'validation_error', validated.message, requestId);
+  const body = validated.value;
+
+  if (!(await requireChatAuthor(env, workspaceId, body.chat_id, scope.user.id))) {
+    return jsonError(403, 'forbidden', 'Only the chat author can attach an image to this conversation.', requestId);
+  }
+
+  const token = base64Url(crypto.getRandomValues(new Uint8Array(32)));
+  const tokenHash = await hashUploadToken(token);
+  const nowIso = new Date().toISOString();
+  const tokenExpiresAt = new Date(
+    new Date(nowIso).getTime() + 15 * 60 * 1000,
+  ).toISOString();
+
+  const identity = {
+    workspaceId,
+    chatId: body.chat_id,
+    uploaderUserId: scope.user.id,
+    clientMessageId: body.client_message_id,
+  };
+  const reuseParams = {
+    workspaceId,
+    uploaderUserId: scope.user.id,
+    tokenHash,
+    tokenExpiresAt,
+    format: body.content_type,
+    contentType: body.content_type,
+    durationMs: 0,
+    nowIso,
+  };
+  let mediaId: string;
+  const existing = await findMediaByClientIdentity(env.DB, identity);
+  if (existing) {
+    const outcome = await reuseExistingClaim(env, existing, reuseParams);
+    if (outcome === 'finalized') {
+      return jsonError(409, 'upload_already_finalized', 'This image was already uploaded.', requestId, false, {
+        media_id: existing.id,
+        state: existing.state,
+      });
+    }
+    if (outcome === 'conflict') {
+      return jsonError(409, 'upload_conflict', 'The upload state changed while claiming. Retry with the same message ID.', requestId);
+    }
+    mediaId = existing.id;
+  } else {
+    mediaId = `med_${crypto.randomUUID()}`;
+    const objectKey = `workspace/${workspaceId}/media/${mediaId}`;
+    try {
+      await createMediaUpload(env.DB, {
+        mediaId,
+        workspaceId,
+        chatId: body.chat_id,
+        uploaderUserId: scope.user.id,
+        clientMessageId: body.client_message_id,
+        format: body.content_type,
+        contentType: body.content_type,
+        byteSize: body.byte_size,
+        durationMs: 0,
+        objectKey,
+        tokenHash,
+        tokenExpiresAt,
+        nowIso,
+      });
+    } catch (err) {
+      if (!isUniqueViolation(err)) throw err;
+      const raced = await findMediaByClientIdentity(env.DB, identity);
+      if (!raced) throw err;
+      const outcome = await reuseExistingClaim(env, raced, reuseParams);
+      if (outcome === 'finalized') {
+        return jsonError(409, 'upload_already_finalized', 'This image was already uploaded.', requestId, false, {
+          media_id: raced.id,
+          state: raced.state,
+        });
+      }
+      if (outcome === 'conflict') {
+        return jsonError(409, 'upload_conflict', 'The upload state changed while claiming. Retry with the same message ID.', requestId);
+      }
+      mediaId = raced.id;
+    }
+  }
+
+  const responseBody: CreateImageUploadResponse = {
+    status: 'ok',
+    media_id: mediaId,
+    upload: {
+      url: `/api/workspaces/${workspaceId}/media/uploads/${mediaId}/content`,
+      token,
+      expires_at: tokenExpiresAt,
+    },
+    limits: {
+      max_bytes: IMAGE_BOUNDS.MAX_BYTES,
+      formats: ['image/jpeg', 'image/png', 'image/webp'],
+    },
+  };
+  return jsonSuccess(responseBody, 201, { 'x-request-id': requestId });
+}
+
+/**
  * POST /api/workspaces/:workspaceId/media/uploads
  */
 export async function handleCreateVoiceUpload(
@@ -170,6 +289,13 @@ export async function handleCreateVoiceUpload(
 
   const parsed = await readJsonBody(request);
   if (!parsed.ok) return jsonError(422, 'invalid_payload', 'Request body must be valid JSON.', requestId);
+  const rawContentType =
+    parsed.body && typeof parsed.body === 'object' && !Array.isArray(parsed.body)
+      ? (parsed.body as Record<string, unknown>)['content_type']
+      : null;
+  if (typeof rawContentType === 'string' && normalizeImageFormat(rawContentType)) {
+    return handleCreateImageUpload(request, env, workspaceId, requestId, scope, parsed.body);
+  }
   const validated = validateCreateVoiceUploadRequest(parsed.body);
   if (!validated.valid) return jsonError(422, 'validation_error', validated.message, requestId);
   const body: CreateVoiceUploadRequest = validated.value;
@@ -338,18 +464,76 @@ export async function handlePutVoiceUploadContent(
     return jsonError(404, 'media_not_found', 'Upload claim not found.', requestId);
   }
   if (row.state === 'validated' || row.state === 'transcribing' || row.state === 'ready') {
-    return jsonError(409, 'upload_already_finalized', 'This recording was already uploaded.', requestId);
+    const alreadyUploaded =
+      row.format === 'image/jpeg' || row.format === 'image/png' || row.format === 'image/webp'
+        ? 'This image was already uploaded.'
+        : 'This recording was already uploaded.';
+    return jsonError(409, 'upload_already_finalized', alreadyUploaded, requestId);
   }
   if (row.state !== 'quarantine') {
     return jsonError(410, 'upload_closed', 'This upload claim is no longer usable.', requestId);
   }
   const nowIso = new Date().toISOString();
   if (!row.upload_token_expires_at || row.upload_token_expires_at <= nowIso) {
-    return jsonError(409, 'upload_token_expired', 'The upload ticket expired. Start a new recording.', requestId);
+    const expiredMessage =
+      row.format === 'image/jpeg' || row.format === 'image/png' || row.format === 'image/webp'
+        ? 'The upload ticket expired. Start a new upload.'
+        : 'The upload ticket expired. Start a new recording.';
+    return jsonError(409, 'upload_token_expired', expiredMessage, requestId);
   }
   const tokenHash = await hashUploadToken(token);
   if (tokenHash !== row.upload_token_hash) {
-    return jsonError(403, 'upload_token_invalid', 'The upload ticket is not valid for this recording.', requestId);
+    const invalidMessage =
+      row.format === 'image/jpeg' || row.format === 'image/png' || row.format === 'image/webp'
+        ? 'The upload ticket is not valid for this image.'
+        : 'The upload ticket is not valid for this recording.';
+    return jsonError(403, 'upload_token_invalid', invalidMessage, requestId);
+  }
+
+  const isImageClaim = row.format === 'image/jpeg' || row.format === 'image/png' || row.format === 'image/webp';
+  if (isImageClaim) {
+    const bounded = await readBoundedBody(request, IMAGE_BOUNDS.MAX_BYTES);
+    if (!bounded.ok) {
+      if (bounded.code === 'too_large') {
+        return jsonError(413, 'payload_too_large', `Images must be at most ${IMAGE_BOUNDS.MAX_BYTES} bytes.`, requestId);
+      }
+      return jsonError(400, 'upload_read_failed', 'The image body could not be read.', requestId);
+    }
+    const bytes = bounded.bytes;
+    if (bytes.byteLength < IMAGE_BOUNDS.MIN_BYTES) {
+      return jsonError(422, 'invalid_image', 'The image is too small to be usable.', requestId);
+    }
+    const inspection = inspectImageBytes(bytes);
+    if (!inspection.format || inspection.format !== row.format) {
+      await env.STORAGE.delete(row.object_key).catch(() => undefined);
+      await rejectMedia(env.DB, {
+        workspaceId,
+        mediaId,
+        code: 'container_mismatch',
+        message: `The image bytes are not a valid ${row.format ?? 'supported'} container.`,
+        nowIso,
+      });
+      return jsonError(422, 'invalid_image', 'The image bytes do not match a supported image container.', requestId);
+    }
+    await env.STORAGE.put(row.object_key, bytes, {
+      httpMetadata: { contentType: row.content_type ?? 'application/octet-stream' },
+    });
+    const recorded = await markUploadBytesReceived(env.DB, {
+      workspaceId,
+      mediaId,
+      uploaderUserId: scope.user.id,
+      tokenHash,
+      byteSize: bytes.byteLength,
+      durationMs: 0,
+      nowIso,
+    });
+    if (!recorded) {
+      await env.STORAGE.delete(row.object_key).catch(() => undefined);
+      return jsonError(409, 'upload_conflict', 'The upload claim changed while bytes were received.', requestId);
+    }
+    const media = await loadSummary(env, workspaceId, mediaId);
+    const imageResponseBody: VoiceMediaStatusResponse = { status: 'ok', media: media! };
+    return jsonSuccess(imageResponseBody, 200, { 'x-request-id': requestId });
   }
 
   const bounded = await readBoundedBody(request, VOICE_BOUNDS.MAX_BYTES);
@@ -456,6 +640,27 @@ export async function handleFinalizeVoiceUpload(
   if (row.expires_at <= nowIso) {
     await markMediaExpired(env.DB, { workspaceId, mediaId, nowIso });
     return jsonError(410, 'audio_expired', 'This recording expired before it was sent.', requestId);
+  }
+  const isImageRow = row.format === 'image/jpeg' || row.format === 'image/png' || row.format === 'image/webp';
+  if (isImageRow) {
+    if ((row.byte_size ?? 0) < IMAGE_BOUNDS.MIN_BYTES || (row.byte_size ?? 0) > IMAGE_BOUNDS.MAX_BYTES) {
+      await env.STORAGE.delete(row.object_key).catch(() => undefined);
+      await rejectMedia(env.DB, { workspaceId, mediaId, code: 'byte_limit', message: 'Image size is outside the allowed bounds.', nowIso });
+      return jsonError(422, 'byte_limit', 'Image size is outside the allowed bounds.', requestId);
+    }
+    const finalized = await finalizeMediaValidation(env.DB, {
+      workspaceId,
+      mediaId,
+      uploaderUserId: scope.user.id,
+      durationMs: 0,
+      nowIso,
+    });
+    if (!finalized) {
+      return jsonError(409, 'finalize_conflict', 'The upload state changed before finalization.', requestId);
+    }
+    const media = await loadSummary(env, workspaceId, mediaId);
+    const imageResponseBody: FinalizeVoiceUploadResponse = { status: 'ok', media: media! };
+    return jsonSuccess(imageResponseBody, 200, { 'x-request-id': requestId });
   }
   if ((row.byte_size ?? 0) < VOICE_BOUNDS.MIN_BYTES || (row.byte_size ?? 0) > VOICE_BOUNDS.MAX_BYTES) {
     await env.STORAGE.delete(row.object_key).catch(() => undefined);
@@ -602,6 +807,9 @@ export async function handleVerifyVoiceFormat(
   }
 
   const format = row.format;
+  if (format !== 'audio/webm' && format !== 'audio/mp4' && format !== 'audio/ogg') {
+    return jsonError(409, 'media_not_validated', 'The verification sample is not ready.', requestId);
+  }
   const next = await recordVoiceFormatEvidence(env.DB, {
     workspaceId,
     actorUserId: scope.user.id,

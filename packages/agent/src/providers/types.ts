@@ -35,6 +35,11 @@ export interface ProviderMessage {
     mimeType: string;
     format?: 'wav' | 'mp4' | 'ogg' | 'webm';
   };
+  /** Present when a user message carries attached still images (base64). */
+  images?: Array<{
+    data: string;
+    mimeType: string;
+  }>;
   /** Present when an assistant message made tool calls. */
   toolCalls?: AssistantToolCall[];
   /** Present when role === 'tool', matching a prior tool call id. */
