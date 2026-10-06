@@ -380,6 +380,10 @@ export async function getTurnContext(
       ...(entry.commandKey === params.currentModelKey && params.currentEffortLabel
         ? { currentEffort: params.currentEffortLabel }
         : {}),
+      modalities: {
+        images: entry.capabilities.vision,
+        voiceNotes: entry.capabilities.audio,
+      },
     };
   });
 

@@ -123,9 +123,9 @@ describe('Turn context batching (workerd)', () => {
       currentEffortLabel: 'Max',
     });
     expect(context.systemPrompt).toContain('Available Models');
-    expect(context.systemPrompt).toContain('DeepSeek V4.1 Flash [current, current effort: Max] (effort: Low/High/Max)');
-    expect(context.systemPrompt).toContain('Muse Spark 1.3 Contributor (effort: Minimal/Low/Medium/High/Extra high)');
-    expect(context.systemPrompt).toContain('Gemini 3.5 Flash-Lite (effort: Minimal/Low/Medium/High)');
+    expect(context.systemPrompt).toContain('DeepSeek V4.1 Flash [current, current effort: Max] (effort: Low/High/Max; images: untested; voice notes: no)');
+    expect(context.systemPrompt).toContain('Muse Spark 1.3 Contributor (effort: Minimal/Low/Medium/High/Extra high; images: untested; voice notes: no)');
+    expect(context.systemPrompt).toContain('Gemini 3.5 Flash-Lite (effort: Minimal/Low/Medium/High; images: untested; voice notes: yes)');
     expect(context.systemPrompt).not.toContain('Gemini Preview');
   });
 
@@ -163,7 +163,7 @@ describe('Turn context batching (workerd)', () => {
     expect(await promptFor()).not.toContain('Muse Spark 1.3 Contributor');
     await setCredential('opencode_go', 'available');
     const withGo = await promptFor();
-    expect(withGo).toContain('Muse Spark 1.3 Contributor [current] (effort: Minimal/Low/Medium/High/Extra high)');
+    expect(withGo).toContain('Muse Spark 1.3 Contributor [current] (effort: Minimal/Low/Medium/High/Extra high; images: untested; voice notes: no)');
     await setCredential('opencode_go', 'invalid_credential');
     expect(await promptFor()).not.toContain('Muse Spark 1.3 Contributor');
     // A non-available row shadows platform keys, exactly like model selection.

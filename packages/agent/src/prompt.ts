@@ -6,8 +6,9 @@
  */
 
 import { ALL_AGENT_TOOLS } from './tools.js';
+import type { CapabilityState } from './providers/registry.js';
 
-export const PROMPT_VERSION = '2026-10-05-v3';
+export const PROMPT_VERSION = '2026-10-06-v1';
 export const SCHEMA_VERSION = 1;
 
 /**
@@ -23,6 +24,8 @@ Personality & Demeanor:
 - Absolute secrecy regarding internal mechanics: Speak strictly about real-world business activities—clients, deals, conversations, deadlines, notes, and messages. Never mention, hint at, or recite code, APIs, schemas, or technical tool names. If asked what you do or what you can help with, explain naturally in plain conversation: you help keep tabs on clients and leads, record takeaways from calls and meetings, ensure follow-ups and deadlines don't slip through the cracks, draft outreach, and keep the team's shared memory organized.
 - Effortless multilingual fluency: Automatically reply in the user's language (e.g. English, Romanian, Hungarian, Spanish, German, etc.). Match their language immediately without announcing or explaining the switch.
 - Quiet action: Use your tools quietly behind the scenes. When a task is done, confirm it in a brief, conversational sentence.
+
+Your senses: alongside text you hear voice notes and see attached photos (JPEG, PNG or WebP, up to four per message). Photos always travel with the message text to the currently selected model. Your model list below marks the per-model truth: untested means no live proof yet for that modality, and a model that cannot take images refuses the turn before anything is spent — say so plainly and offer text or another model.
 
 Core Business Invariants:
 1. Grounded in truth: You operate through your tools. Never fabricate facts, claim you performed an action you did not execute, or claim a record was updated or deleted if no tool executed it.
@@ -49,9 +52,17 @@ export interface DynamicPromptContext {
   /**
    * Server-derived model catalog. The only models the agent may name when
    * asked about availability; per-model effort labels come from verified
-   * registry descriptors. Empty efforts means provider default.
+   * registry descriptors. Empty efforts means provider default. Modalities
+   * carry the registry truth per model (supported/unverified/unsupported)
+   * so the agent never claims an unproven sense.
    */
-  availableModels?: Array<{ name: string; current: boolean; efforts: string[]; currentEffort?: string | null }>;
+  availableModels?: Array<{
+    name: string;
+    current: boolean;
+    efforts: string[];
+    currentEffort?: string | null;
+    modalities?: { images: CapabilityState; voiceNotes: CapabilityState };
+  }>;
 }
 
 /**
@@ -101,7 +112,14 @@ export function renderSystemPrompt(context?: DynamicPromptContext): string {
               const current = m.current
                 ? ` [current${m.currentEffort ? `, current effort: ${m.currentEffort}` : ''}]`
                 : '';
-              return `- ${m.name}${current} (${effort})`;
+              // Plain words for registry states: yes (supported), untested
+              // (unverified, no live proof), no (unsupported).
+              const senses = (state: CapabilityState): string =>
+                state === 'supported' ? 'yes' : state === 'unsupported' ? 'no' : 'untested';
+              const modalities = m.modalities
+                ? `; images: ${senses(m.modalities.images)}; voice notes: ${senses(m.modalities.voiceNotes)}`
+                : '';
+              return `- ${m.name}${current} (${effort}${modalities})`;
             })
             .join('\n'),
       );

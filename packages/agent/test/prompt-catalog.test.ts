@@ -22,4 +22,41 @@ describe('model catalog prompt section', () => {
     expect(renderSystemPrompt({ workspaceName: 'Kerning' })).not.toContain('Available Models');
     expect(renderSystemPrompt({ workspaceName: 'Kerning', availableModels: [] })).not.toContain('Available Models');
   });
+
+  it('renders per-model modality truth in plain words when supplied', () => {
+    const prompt = renderSystemPrompt({
+      workspaceName: 'Kerning',
+      availableModels: [
+        {
+          name: 'Gemini 3.5 Flash-Lite',
+          current: true,
+          efforts: [],
+          modalities: { images: 'unverified', voiceNotes: 'supported' },
+        },
+        {
+          name: 'DeepSeek V4.1 Flash',
+          current: false,
+          efforts: [],
+          modalities: { images: 'unverified', voiceNotes: 'unsupported' },
+        },
+      ],
+    });
+    expect(prompt).toContain('- Gemini 3.5 Flash-Lite [current] (effort: provider default; images: untested; voice notes: yes)');
+    expect(prompt).toContain('- DeepSeek V4.1 Flash (effort: provider default; images: untested; voice notes: no)');
+  });
+
+  it('keeps the legacy line shape when modalities are absent', () => {
+    const prompt = renderSystemPrompt({
+      workspaceName: 'Kerning',
+      availableModels: [{ name: 'MiMo V2.5', current: false, efforts: [] }],
+    });
+    expect(prompt).toContain('- MiMo V2.5 (effort: provider default)');
+    expect(prompt).not.toContain('images:');
+  });
+
+  it('states its own senses in the stable instructions', () => {
+    const prompt = renderSystemPrompt({ workspaceName: 'Kerning' });
+    expect(prompt).toContain('Your senses:');
+    expect(prompt).toContain('up to four per message');
+  });
 });
