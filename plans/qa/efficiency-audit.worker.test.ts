@@ -78,6 +78,42 @@ describe('Real local D1 audit profiles; no live providers', () => {
     expect(profile).toMatchSnapshot(label);
   });
 
+  it('profiles acceptance and dispatch for a two-image turn', async () => {
+    const chat = await createChat(env.DB, { workspaceId, authorUserId: userId, title: 'image turn' });
+    // Validated image rows via SQL: acceptance reads D1 rows only, never R2.
+    // The handler runs without storage here, so this profiles the acceptance
+    // link cost plus a text turn, not byte transport.
+    for (const [mediaId, clientId, format] of [
+      ['med_audit_img1', 'audit-img-1', 'image/png'],
+      ['med_audit_img2', 'audit-img-2', 'image/jpeg'],
+    ] as const) {
+      await env.DB.prepare(
+        `INSERT INTO media_objects (id, workspace_id, chat_id, uploader_user_id, client_message_id, state, object_key, content_type, format, byte_size, duration_ms, expires_at, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, 'validated', ?, ?, ?, 2048, 0, ?, ?, ?)`,
+      ).bind(mediaId, workspaceId, chat.id, userId, clientId, `workspace/${workspaceId}/media/${mediaId}`, format, format, '2027-01-01', now, now).run();
+    }
+    const acceptance = countDb(env.DB);
+    const accepted = await acceptWebMessage(acceptance.db, {
+      workspaceId, chatId: chat.id, userId, clientMessageId: `audit-${crypto.randomUUID()}`, text: 'What is this?',
+      imageMediaIds: ['med_audit_img1', 'med_audit_img2'],
+    });
+    const outbox = await env.DB.prepare("SELECT id FROM outbox WHERE json_extract(payload_json, '$.run_id') = ? LIMIT 1")
+      .bind(accepted.run_id).first<{ id: string }>();
+    expect(outbox).not.toBeNull();
+    const provider = new FakeProviderAdapter({ provider: 'gemini', scripts: [{ kind: 'text', text: 'Two photos.' }] });
+    const handler = new AgentHandler({ providerAdapter: provider, limits: { maxDailyActions: 50, maxRoundsPerRun: 10 } });
+    const dispatch = countDb(env.DB);
+    const result = await dispatchOutboxItem(dispatch.db, outbox!.id, workspaceId, { handler });
+    expect(result.status).toBe('completed');
+    expect(provider.calls).toHaveLength(1);
+    const profile = { audit: 'two image turn',
+      acceptanceBindingCalls: acceptance.calls.length, acceptanceStatements: acceptance.statements.length,
+      dispatchBindingCalls: dispatch.calls.length, dispatchStatements: dispatch.statements.length,
+      providerRounds: provider.calls.length,
+    };
+    expect(profile).toMatchSnapshot('two image turn');
+  });
+
   it('compares current chat-history and activity query plans with narrow candidate indexes', async () => {
     const queries = [
       { name: 'own chat history', sql: 'SELECT id, last_activity_at FROM chats WHERE workspace_id = ? AND author_user_id = ? ORDER BY last_activity_at DESC, id DESC LIMIT 25', bindings: [workspaceId, userId],

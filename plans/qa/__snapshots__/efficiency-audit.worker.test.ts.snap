@@ -36,6 +36,17 @@ exports[`Real local D1 audit profiles; no live providers > compares current chat
 }
 `;
 
+exports[`Real local D1 audit profiles; no live providers > profiles acceptance and dispatch for a two-image turn > two image turn 1`] = `
+{
+  "acceptanceBindingCalls": 14,
+  "acceptanceStatements": 25,
+  "audit": "two image turn",
+  "dispatchBindingCalls": 33,
+  "dispatchStatements": 53,
+  "providerRounds": 1,
+}
+`;
+
 exports[`Real local D1 audit profiles; no live providers > profiles acceptance and dispatch for greeting > greeting 1`] = `
 {
   "acceptanceBindingCalls": 7,
