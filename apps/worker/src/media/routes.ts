@@ -913,10 +913,29 @@ export async function handleGetVoiceMediaContent(
   }
 
   const rangeHeader = request.headers.get('range');
+  if (!rangeHeader) {
+    // Ordinary full read: one GET carries bytes and size together, so the
+    // metadata head roundtrip is skipped. A missing object still 410s here.
+    const object = await env.STORAGE.get(row.object_key);
+    if (!object) {
+      return jsonError(410, 'audio_unavailable', 'The recording object is no longer available.', requestId);
+    }
+    const headers = new Headers({
+      'Content-Type': row.content_type ?? 'application/octet-stream',
+      'Content-Length': String(object.size),
+      'Accept-Ranges': 'bytes',
+      // Private audio is never cached by browsers or the service worker.
+      'Cache-Control': 'private, no-store',
+      'x-request-id': requestId,
+    });
+    return new Response(object.body, { status: 200, headers });
+  }
   const head = await env.STORAGE.head(row.object_key);
   if (!head) {
     return jsonError(410, 'audio_unavailable', 'The recording object is no longer available.', requestId);
   }
+  // Ranged reads keep the head: total size drives range parsing, the 416
+  // response, and Content-Range, and a ranged GET does not report it.
   const range = parseRange(rangeHeader, head.size);
   if (rangeHeader && !range) {
     return new Response(null, {
