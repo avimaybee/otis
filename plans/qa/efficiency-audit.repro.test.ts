@@ -91,25 +91,32 @@ describe('Expanded audit: fixed behavior (reproductions now prove the cures)', (
     await pending;
   });
 
-  it('a committed finalize with a lost response makes the same-identity upload retry fail', async () => {
-    let finalized = false;
+  it('a committed finalize with a lost response recovers on same-identity retry', async () => {
+    let finalizedCalls = 0;
     const createUpload = vi.fn(async () => {
-      if (finalized) throw new ApiError(409, 'upload_already_finalized', 'This recording was already uploaded.');
+      if (finalizedCalls > 0) {
+        throw new ApiError(409, 'upload_already_finalized', 'This recording was already uploaded.', undefined, undefined, { media_id: 'med_audit' });
+      }
       return { media: { media_id: 'med_audit' }, upload: { url: '/audit/upload', token: 'fixture' } };
     });
     const putBytes = vi.fn(async () => ({}));
-    const transport = {
-      createUpload, putBytes,
-      finalizeUpload: vi.fn(async () => { finalized = true; throw new Error('Finalize response lost'); }),
-      mediaStatus: vi.fn(),
-    } as unknown as VoiceTransport;
+    const finalizeUpload = vi.fn(async () => {
+      finalizedCalls += 1;
+      if (finalizedCalls === 1) throw new Error('Finalize response lost');
+      return { media: { media_id: 'med_audit' } };
+    });
+    const transport = { createUpload, putBytes, finalizeUpload, mediaStatus: vi.fn() } as unknown as VoiceTransport;
     const adapter = createWorkerVoiceAdapter(transport);
     const request = { userId: 'audit-user', workspaceId: 'audit-ws', chatId: 'audit-chat', clientMessageId: 'stable-voice-id',
       blob: new Blob(['fixture']), mimeType: 'audio/webm', durationMs: 1_000, filename: 'audit.webm' };
     await expect(adapter.upload(request)).rejects.toThrow('Finalize response lost');
-    await expect(adapter.upload(request)).rejects.toMatchObject({ code: 'upload_already_finalized' });
+    // Same identity meets the finalized claim: bytes are already stored, so
+    // recovery finalizes directly instead of retrying a permanent conflict.
+    const recovered = await adapter.upload(request);
+    expect(recovered.media.media_id).toBe('med_audit');
     expect(createUpload).toHaveBeenCalledTimes(2);
     expect(putBytes).toHaveBeenCalledTimes(1);
+    expect(finalizeUpload).toHaveBeenCalledTimes(2);
     expect(transport.mediaStatus).not.toHaveBeenCalled();
   });
 

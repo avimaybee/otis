@@ -101,13 +101,14 @@ async function imageRequest<T>(
     throw new ApiError(response.status, 'service_unavailable', 'Otis is unavailable. Try again shortly.');
   }
   if (!response.ok) {
-    const error = (payload as { error?: { code?: string; message?: string; request_id?: string } })?.error;
+    const error = (payload as { error?: { code?: string; message?: string; request_id?: string; details?: unknown } })?.error;
     throw new ApiError(
       response.status,
       error?.code ?? 'unknown_error',
       error?.message ?? `Request failed with HTTP ${response.status}`,
       error?.request_id,
       parseRetryAfterMs(response.headers.get('Retry-After')),
+      error?.details,
     );
   }
   return payload as T;
@@ -162,7 +163,9 @@ export function validateImageFile(file: File): { valid: true; format: ImageForma
 /**
  * Full handoff for one file: claim, byte PUT, finalize. Resolves only with
  * a valid server media identity; any rejection throws with the server's
- * precise reason so the composer can keep the file for retry.
+ * precise reason so the composer can keep the file for retry. Like voice, a
+ * retry after a lost finalize meets a finalized claim (409) carrying the
+ * media identity and finalizes directly instead of looping the conflict.
  */
 export async function uploadImageFile(
   transport: ImageTransport,
@@ -170,12 +173,23 @@ export async function uploadImageFile(
 ): Promise<ImageUploadResult> {
   const gate = validateImageFile(request.file);
   if (!gate.valid) throw new Error(gate.message);
-  const created = await transport.createUpload(request.workspaceId, {
-    chat_id: request.chatId,
-    client_message_id: request.clientMessageId,
-    content_type: gate.format,
-    byte_size: request.file.size,
-  });
+  let created: CreateImageUploadResponse;
+  try {
+    created = await transport.createUpload(request.workspaceId, {
+      chat_id: request.chatId,
+      client_message_id: request.clientMessageId,
+      content_type: gate.format,
+      byte_size: request.file.size,
+    });
+  } catch (err) {
+    const mediaId =
+      err instanceof ApiError && err.status === 409 && err.code === 'upload_already_finalized'
+        ? (err.details as { media_id?: unknown } | undefined)?.media_id
+        : undefined;
+    if (typeof mediaId !== 'string' || !isValidMediaId(mediaId)) throw err;
+    await transport.finalizeUpload(request.workspaceId, mediaId);
+    return { mediaId, format: gate.format };
+  }
   if (!isValidMediaId(created.media_id)) {
     throw new Error('Image upload claim returned no media identity.');
   }

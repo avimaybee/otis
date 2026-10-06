@@ -147,13 +147,14 @@ async function voiceRequest<T>(
     throw new ApiError(response.status, 'service_unavailable', 'Otis is unavailable. Try again shortly.');
   }
   if (!response.ok) {
-    const error = (payload as { error?: { code?: string; message?: string; request_id?: string } })?.error;
+    const error = (payload as { error?: { code?: string; message?: string; request_id?: string; details?: unknown } })?.error;
     throw new ApiError(
       response.status,
       error?.code ?? 'unknown_error',
       error?.message ?? `Request failed with HTTP ${response.status}`,
       error?.request_id,
       parseRetryAfterMs(response.headers.get('Retry-After')),
+      error?.details,
     );
   }
   return payload as T;
@@ -198,21 +199,35 @@ export function createWorkerVoiceTransport(fetchImpl: typeof fetch = fetch): Voi
 
 /**
  * Full adapter: claim, byte PUT, finalize. The recording is canonicalized to
- * its container format before the claim; bytes are never renamed.
+ * its container format before the claim; bytes are never renamed. A retry
+ * after a lost finalize response meets a finalized claim (409) carrying the
+ * media identity: bytes are already stored, so recovery finalizes directly
+ * instead of retrying a permanent conflict.
  */
 export function createWorkerVoiceAdapter(transport: VoiceTransport = createWorkerVoiceTransport()): VoiceUploadAdapter {
   return {
     upload: async request => {
       const format = normalizeVoiceFormat(request.mimeType);
       if (!format) throw new Error(`Unsupported recording format: ${request.mimeType}`);
-      const created = await transport.createUpload(request.workspaceId, {
-        chat_id: request.chatId,
-        client_message_id: request.clientMessageId,
-        content_type: format,
-        byte_size: request.blob.size,
-        duration_ms: request.durationMs,
-        filename: request.filename,
-      });
+      let created: CreateVoiceUploadResponse;
+      try {
+        created = await transport.createUpload(request.workspaceId, {
+          chat_id: request.chatId,
+          client_message_id: request.clientMessageId,
+          content_type: format,
+          byte_size: request.blob.size,
+          duration_ms: request.durationMs,
+          filename: request.filename,
+        });
+      } catch (err) {
+        const mediaId =
+          err instanceof ApiError && err.status === 409 && err.code === 'upload_already_finalized'
+            ? (err.details as { media_id?: unknown } | undefined)?.media_id
+            : undefined;
+        if (typeof mediaId !== 'string' || !isValidMediaId(mediaId)) throw err;
+        const finalized = await transport.finalizeUpload(request.workspaceId, mediaId);
+        return { media: finalized.media };
+      }
       if (!isValidMediaId(created.media.media_id)) {
         throw new Error('Voice upload claim returned no media identity.');
       }

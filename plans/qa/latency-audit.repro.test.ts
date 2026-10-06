@@ -81,7 +81,9 @@ describe('Latency audit: fixed behavior (reproductions now prove the cures)', ()
     expect(calls[0]!.startsWith('BATCH')).toBe(true);
     expect(calls.slice(1).every(sql => sql.includes('memory_entries_fts') || sql.includes('FROM briefs'))).toBe(true);
     expect(context.activeNotes).toHaveLength(12);
-    expect(context.activeNotes.some(note => note.id.startsWith('relevant-'))).toBe(false);
+    // Tiered ranking surfaces the matching member and search notes first
+    // instead of crowding them out behind general notes.
+    expect(context.activeNotes.some(note => note.id.startsWith('relevant-'))).toBe(true);
   });
 
   it('ordinary projection load batches the seven tables into two roundtrips', async () => {

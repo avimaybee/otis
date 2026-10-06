@@ -41,6 +41,8 @@ export class ApiError extends Error {
     readonly requestId?: string,
     /** Milliseconds from a `Retry-After` response header, when the server sent one. */
     readonly retryAfterMs?: number,
+    /** Server-supplied structured detail (e.g. the media identity on a finalized-upload conflict). */
+    readonly details?: unknown,
   ) {
     super(message);
     this.name = 'ApiError';
@@ -110,7 +112,7 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   }
 
   if (!response.ok) {
-    const error = (payload as { error?: { code?: string; message?: string; request_id?: string } })
+    const error = (payload as { error?: { code?: string; message?: string; request_id?: string; details?: unknown } })
       ?.error;
     failureLog('api', 'request rejected', {
       method, path, status: response.status, code: error?.code ?? 'unknown_error', request_id: error?.request_id ?? null, ms: Date.now() - started,
@@ -121,6 +123,7 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
       error?.message ?? `Request failed with HTTP ${response.status}`,
       error?.request_id,
       parseRetryAfterMs(response.headers.get('Retry-After')),
+      error?.details,
     );
   }
 
