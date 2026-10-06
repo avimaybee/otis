@@ -74,35 +74,42 @@ export async function claimWorkspaceLease(
   const ttl = params.ttlSeconds ?? DEFAULT_LEASE_TTL_SECONDS;
   const expiresAt = leaseExpiresAt(nowIso, ttl);
 
-  const current = await readLease(db, params.workspaceId);
-  if (!current) {
-    throw new LeaseError('workspace_not_found', `Workspace '${params.workspaceId}' not found.`);
-  }
-  if (current.owner && current.expiresAt && current.expiresAt > nowIso) {
-    return null;
-  }
+  // Single conditional claim returning the fence directly: no pre-read and
+  // no post-read. The returned row is the post-update state atomically, so
+  // no successor can slip between a claim and a verification read. Read
+  // through a one-statement batch: D1 surfaces RETURNING rows through batch
+  // result sets in this runtime.
+  const batched = await db.batch([
+    db
+      .prepare(
+        `UPDATE workspaces
+         SET lease_owner = ?, lease_attempt_id = ?, lease_fence = COALESCE(lease_fence, 0) + 1, lease_expires_at = ?
+         WHERE id = ? AND (lease_owner IS NULL OR lease_expires_at IS NULL OR lease_expires_at <= ?)
+         RETURNING lease_fence, lease_expires_at`,
+      )
+      .bind(params.attemptId, params.attemptId, expiresAt, params.workspaceId, nowIso),
+  ]);
+  const row = (((batched[0] as unknown as { results?: Record<string, unknown>[] }).results ?? [])[0]) as
+    | { lease_fence: number; lease_expires_at: string | null }
+    | undefined;
 
-  const result = await db
-    .prepare(
-      `UPDATE workspaces
-       SET lease_owner = ?, lease_attempt_id = ?, lease_fence = lease_fence + 1, lease_expires_at = ?
-       WHERE id = ? AND (lease_owner IS NULL OR lease_expires_at IS NULL OR lease_expires_at <= ?)`,
-    )
-    .bind(params.attemptId, params.attemptId, expiresAt, params.workspaceId, nowIso)
-    .run();
-
-  if ((result.meta.changes ?? 0) !== 1) {
-    return null;
-  }
-  const after = await readLease(db, params.workspaceId);
-  if (!after || after.attempt !== params.attemptId) {
+  if (!row) {
+    // Only the failure path reads: a missing workspace throws, a live
+    // holder simply defers.
+    const exists = await db
+      .prepare(`SELECT 1 FROM workspaces WHERE id = ?`)
+      .bind(params.workspaceId)
+      .first();
+    if (!exists) {
+      throw new LeaseError('workspace_not_found', `Workspace '${params.workspaceId}' not found.`);
+    }
     return null;
   }
   return {
     workspace_id: params.workspaceId,
     attempt_id: params.attemptId,
-    fence: after.fence,
-    expires_at: after.expiresAt ?? expiresAt,
+    fence: Number(row.lease_fence),
+    expires_at: row.lease_expires_at ? String(row.lease_expires_at) : expiresAt,
   };
 }
 
@@ -123,22 +130,26 @@ export async function renewWorkspaceLease(
   const ttl = params.ttlSeconds ?? DEFAULT_LEASE_TTL_SECONDS;
   const expiresAt = leaseExpiresAt(nowIso, ttl);
 
-  const result = await db
-    .prepare(
-      `UPDATE workspaces SET lease_expires_at = ?
-       WHERE id = ? AND lease_owner = ? AND lease_attempt_id = ? AND lease_expires_at > ?`,
-    )
-    .bind(expiresAt, params.workspaceId, params.attemptId, params.attemptId, nowIso)
-    .run();
+  const renewed = await db.batch([
+    db
+      .prepare(
+        `UPDATE workspaces SET lease_expires_at = ?
+         WHERE id = ? AND lease_owner = ? AND lease_attempt_id = ? AND lease_expires_at > ?
+         RETURNING lease_fence`,
+      )
+      .bind(expiresAt, params.workspaceId, params.attemptId, params.attemptId, nowIso),
+  ]);
+  const row = (((renewed[0] as unknown as { results?: Record<string, unknown>[] }).results ?? [])[0]) as
+    | { lease_fence: number }
+    | undefined;
 
-  if ((result.meta.changes ?? 0) !== 1) {
+  if (!row) {
     throw new LeaseError('lease_not_held', 'Lease was lost or expired; stop and let recovery requeue.');
   }
-  const after = await readLease(db, params.workspaceId);
   return {
     workspace_id: params.workspaceId,
     attempt_id: params.attemptId,
-    fence: after?.fence ?? 0,
+    fence: Number(row.lease_fence),
     expires_at: expiresAt,
   };
 }

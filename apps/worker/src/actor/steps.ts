@@ -370,3 +370,17 @@ export async function listRunSteps(db: D1Database, runId: string): Promise<Persi
     .all<Record<string, unknown>>();
   return results.map(toStep);
 }
+
+/**
+ * Allocates the next step index for a run without downloading prior steps:
+ * one indexed aggregate, gap-safe (MAX+1 never collides with an existing
+ * index, unlike a row count, and preserves gaps). Starts at 0 for runs
+ * without steps.
+ */
+export async function nextStepIndex(db: D1Database, runId: string): Promise<number> {
+  const row = await db
+    .prepare(`SELECT COALESCE(MAX(step_index), -1) AS max_index FROM run_steps WHERE run_id = ?`)
+    .bind(runId)
+    .first<{ max_index: number }>();
+  return Number(row?.max_index ?? -1) + 1;
+}

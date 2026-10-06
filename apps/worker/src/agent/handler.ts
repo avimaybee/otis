@@ -8,8 +8,8 @@
 
 import type { CommandResult, ProviderName } from '@otis/contracts';
 import type { TurnContext, TurnHandler, TurnOutcome } from '../actor/dispatch.js';
-import { completeStep, hashStepArguments, listRunSteps, persistStep } from '../actor/steps.js';
-import { resolveModelForChat, runProviderTurn, type PlatformKeys } from '../providers/service.js';
+import { completeStep, hashStepArguments, nextStepIndex, persistStep } from '../actor/steps.js';
+import { resolveModelForChat, resolveProviderRawKey, runProviderTurn, type PlatformKeys } from '../providers/service.js';
 import { workerDebug, workerFailure } from '../observability.js';
 import { executeAgentTool } from './repository.js';
 import {
@@ -303,6 +303,26 @@ export class AgentHandler implements TurnHandler {
         return { kind: 'failed', errorCode: 'lease_lost', errorMessage: 'Workspace lease lost or expired before model snapshot.' };
       }
     }
+
+    // Per-turn provider credential: membership plus key resolved once for
+    // this execution boundary and reused across linked provider rounds.
+    // Commit-time guards still enforce authority on every business write.
+    let cachedProviderKey: { provider: string; key: string | null } | null = null;
+    const providerKeyFor = async (entry: ModelEntry): Promise<string | null> => {
+      if (!cachedProviderKey || cachedProviderKey.provider !== entry.provider) {
+        cachedProviderKey = {
+          provider: entry.provider,
+          key: await resolveProviderRawKey(ctx.db, {
+            workspaceId: ctx.workspaceId,
+            actorUserId,
+            entry,
+            wrappingKey: this.options?.wrappingKey,
+            platformKeys: this.options?.platformKeys,
+          }),
+        };
+      }
+      return cachedProviderKey.key;
+    };
 
     // 4. Load or initialize durable progress (Section 7.2)
     let progress: DurableAgentProgress;
@@ -739,23 +759,40 @@ export class AgentHandler implements TurnHandler {
             },
           });
         } else {
+          // effectiveEntry is always pinned during setup above; this guard
+          // only documents the invariant (the old re-resolution read was dead).
           if (!effectiveEntry) {
-            const resolved = await resolveModelForChat(ctx.db, {
-              workspaceId: ctx.workspaceId,
-              actorUserId,
-              chatId: ctx.chatId,
-              registry: this.options?.registry,
-              platformKeys: this.options?.platformKeys,
-            });
-            if (!resolved.available) {
-              return { kind: 'failed', errorCode: 'model_unavailable', errorMessage: resolved.reason };
-            }
-            effectiveEntry = resolved.entry;
+            return { kind: 'failed', errorCode: 'model_unavailable', errorMessage: 'No model pinned for this turn.' };
           }
 
           const hasPlatformKey = Boolean(this.options?.platformKeys?.[effectiveEntry.provider]);
           if (!this.options?.wrappingKey && !hasPlatformKey) {
             return { kind: 'failed', errorCode: 'misconfigured', errorMessage: `No credentials configured for provider '${effectiveEntry.provider}'.` };
+          }
+
+          // Eagerly resolved (cached per turn above); a resolution failure
+          // maps to the same provider_stream_error outcome the lazy path
+          // produced, never a raw throw into the dispatch retry loop.
+          let preResolvedRawKey: string | null;
+          try {
+            preResolvedRawKey = await providerKeyFor(effectiveEntry);
+          } catch (keyErr) {
+            const appliedCount = progress.completedToolResults.filter((r) => r.result.status === 'applied').length;
+            workerFailure('agent', 'provider credential resolution failed', {
+              workspaceId: ctx.workspaceId,
+              runId: ctx.runId,
+              round: progress.roundIndex,
+              provider: modelSnapshot.provider,
+              model: modelSnapshot.commandKey,
+              error: keyErr instanceof Error ? keyErr.message : String(keyErr),
+            });
+            return {
+              kind: 'failed',
+              errorCode: 'provider_stream_error',
+              errorMessage: appliedCount > 0
+                ? `Partial success: ${appliedCount} actions committed before stream error: ${keyErr instanceof Error ? keyErr.message : String(keyErr)}`
+                : keyErr instanceof Error ? keyErr.message : String(keyErr),
+            };
           }
 
           stream = runProviderTurn(ctx.db, {
@@ -764,6 +801,7 @@ export class AgentHandler implements TurnHandler {
             entry: effectiveEntry,
             wrappingKey: this.options?.wrappingKey,
             platformKeys: this.options?.platformKeys,
+            preResolvedRawKey,
             input: turnInput,
             fetchFn: this.options?.fetchFn,
           });
@@ -1025,8 +1063,7 @@ export class AgentHandler implements TurnHandler {
             if (plannedStep) {
               stepIndex = Number(plannedStep['step_index']);
             } else {
-              const existingSteps = await listRunSteps(ctx.db, ctx.runId);
-              stepIndex = existingSteps.length;
+              stepIndex = await nextStepIndex(ctx.db, ctx.runId);
             }
 
             const persisted = await persistStep(ctx.db, {

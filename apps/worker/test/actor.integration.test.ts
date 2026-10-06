@@ -52,6 +52,7 @@ import {
   adoptStep,
   completeStep,
   listRunSteps,
+  nextStepIndex,
   persistStep,
   StepError,
 } from '../src/actor/steps.js';
@@ -619,6 +620,42 @@ describe('Worker Actor Dispatch & Recovery Integration (workerd)', () => {
       .bind(msg.run_id)
       .first<{ n: number }>();
     expect(Number(checkpoints?.n)).toBe(2);
+  });
+
+  it('allocates step indexes from MAX without downloading prior steps', async () => {
+    // Fully isolated workspace: no queued rows or pending outbox may leak
+    // into the shared workspace.
+    const iso = 'ws-actor-stepidx';
+    const nowIso = new Date().toISOString();
+    await env.DB.prepare(
+      `INSERT INTO workspaces (id, name, owner_user_id, business_revision, membership_revision, created_at, updated_at)
+       VALUES (?, 'StepIdx WS', ?, 0, 1, ?, ?)`,
+    ).bind(iso, aviId, nowIso, nowIso).run();
+    await env.DB.prepare(
+      `INSERT INTO workspace_users (workspace_id, user_id, role, joined_at, created_at, updated_at) VALUES (?, ?, 'owner', ?, ?, ?)`,
+    ).bind(iso, aviId, nowIso, nowIso, nowIso).run();
+    const isoChat = (
+      await createChat(env.DB, { workspaceId: iso, authorUserId: aviId, title: 'StepIdx chat' })
+    ).id;
+    const isoRunId = 'run_stepidx_1';
+    await env.DB.prepare(
+      `INSERT INTO messages_in (id, workspace_id, user_id, channel, external_id, payload_fingerprint, status, created_at, updated_at)
+       VALUES ('msg_stepidx_1', ?, ?, 'web', 'ext_stepidx_1', 'fp_stepidx_1', 'processing', ?, ?)`,
+    ).bind(iso, aviId, nowIso, nowIso).run();
+    await env.DB.prepare(
+      `INSERT INTO agent_runs (id, workspace_id, chat_id, source_message_id, source_job_id, status, created_at, updated_at)
+       VALUES (?, ?, ?, 'msg_stepidx_1', NULL, 'queued', ?, ?)`,
+    ).bind(isoRunId, iso, isoChat, nowIso, nowIso).run();
+    expect(await nextStepIndex(env.DB, isoRunId)).toBe(0);
+    for (const index of [0, 1, 3]) {
+      await env.DB.prepare(
+        `INSERT INTO run_steps (id, run_id, workspace_id, step_index, tool_name, arguments_hash, arguments_json, status, created_at, updated_at)
+         VALUES (?, ?, ?, ?, 'find_entities', 'h', '{}', 'succeeded', ?, ?)`,
+      ).bind(`stp_idx_${index}`, isoRunId, iso, index, nowIso, nowIso).run();
+    }
+    // The gap at 2 stays empty: MAX+1 skips it instead of colliding the way
+    // a row count would.
+    expect(await nextStepIndex(env.DB, isoRunId)).toBe(4);
   });
 
   it('drives dispatch through the Durable Object, cron, and queue entrypoints', async () => {

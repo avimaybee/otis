@@ -220,17 +220,31 @@ export interface RunTurnParams {
   platformKeys?: PlatformKeys;
   input: Omit<TurnInput, 'model'>;
   fetchFn?: FetchFn;
+  /**
+   * Pre-resolved credential for this turn. When present (even null), the
+   * membership and credential reads below are skipped: they were already
+   * performed for this execution boundary. Null means resolution already
+   * failed and the call throws missing_credential without re-reading.
+   */
+  preResolvedRawKey?: string | null;
 }
 
 /**
- * Executes one provider turn with the workspace's decrypted credential or
- * platform fallback key. The raw key is injected into the transport call and
- * never attached to yielded events. Callers stream or collect the AsyncIterable.
+ * Resolves the raw provider key for one execution boundary: membership
+ * check, then workspace credential with platform fallback. Callers reuse the
+ * result across linked provider rounds instead of re-reading per round;
+ * commit-time guards still enforce authority on every business write.
  */
-export async function* runProviderTurn(
+export async function resolveProviderRawKey(
   db: D1Database,
-  params: RunTurnParams,
-): AsyncGenerator<ProviderEvent> {
+  params: {
+    workspaceId: string;
+    actorUserId: string;
+    entry: ModelEntry;
+    wrappingKey?: CryptoKey | null;
+    platformKeys?: PlatformKeys;
+  },
+): Promise<string | null> {
   await requireMembership(db, params.workspaceId, params.actorUserId);
   let rawKey: string | null = null;
   if (params.wrappingKey) {
@@ -249,6 +263,30 @@ export async function* runProviderTurn(
   }
   if (!rawKey && params.platformKeys) {
     rawKey = params.platformKeys[params.entry.provider] ?? null;
+  }
+  return rawKey;
+}
+
+/**
+ * Executes one provider turn with the workspace's decrypted credential or
+ * platform fallback key. The raw key is injected into the transport call and
+ * never attached to yielded events. Callers stream or collect the AsyncIterable.
+ */
+export async function* runProviderTurn(
+  db: D1Database,
+  params: RunTurnParams,
+): AsyncGenerator<ProviderEvent> {
+  let rawKey: string | null;
+  if (params.preResolvedRawKey !== undefined) {
+    rawKey = params.preResolvedRawKey;
+  } else {
+    rawKey = await resolveProviderRawKey(db, {
+      workspaceId: params.workspaceId,
+      actorUserId: params.actorUserId,
+      entry: params.entry,
+      wrappingKey: params.wrappingKey,
+      platformKeys: params.platformKeys,
+    });
   }
   if (!rawKey) {
     throw new ProviderServiceError('missing_credential', `No credential available for provider '${params.entry.provider}'.`);

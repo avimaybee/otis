@@ -28,7 +28,8 @@ import {
   type LoadedRun,
 } from '../src/actor/dispatch.js';
 import { acceptWebMessage, createChat } from '../src/inbox/repository.js';
-import { type TurnInput, type ProviderAdapter, FakeProviderAdapter, GeminiInteractionsAdapter } from '@otis/agent';
+import { type TurnInput, type ProviderAdapter, FakeProviderAdapter, GeminiInteractionsAdapter, PRODUCTION_REGISTRY } from '@otis/agent';
+import { resolveProviderRawKey, runProviderTurn } from '../src/providers/service.js';
 
 describe('Worker Agent Loop, Recovery & Clarification Integration (006B workerd)', () => {
   const ws = 'ws-agent-loop-test';
@@ -1521,8 +1522,7 @@ describe('Worker Agent Loop, Recovery & Clarification Integration (006B workerd)
     const replay = await dispatchOutboxItem(env.DB, await outboxIdForRun(accepted.run_id), ws, { handler }); expect(replay.status).toBe('already_done');
   });
 
-  it('retains steering across bounded continuation and rejects teammate injection without creating an input', async () => {
-    const accepted = await acceptWebMessage(env.DB, { workspaceId: ws, chatId: chatAvi, userId: aviId, clientMessageId: 'steer-restart-original', text: 'Create a record' });
+  it('retains steering across bounded continuation and rejects teammate injection without creating an input', async () => {    const accepted = await acceptWebMessage(env.DB, { workspaceId: ws, chatId: chatAvi, userId: aviId, clientMessageId: 'steer-restart-original', text: 'Create a record' });
     await expect(acceptWebMessage(env.DB, { workspaceId: ws, chatId: chatAvi, userId: hunorId, clientMessageId: 'steer-forbidden', text: 'Change it', steerRunId: accepted.run_id })).rejects.toThrow('Only the chat author');
     expect(await env.DB.prepare(`SELECT id FROM messages_in WHERE external_id = 'steer-forbidden'`).first()).toBeNull();
     const fake = new FakeProviderAdapter({ provider: 'gemini', scripts: [{ kind: 'tool_calls', calls: [{ callId: 'abandoned', name: 'upsert_entity', args: { name: 'Steering restart abandoned' } }] }, { kind: 'text', text: 'No record is needed now.' }] });
@@ -1532,6 +1532,105 @@ describe('Worker Agent Loop, Recovery & Clarification Integration (006B workerd)
     const secondResult = await dispatchOutboxItem(env.DB, await outboxIdForRun(accepted.run_id), ws, { handler: new AgentHandler({ providerAdapter: fake, maxRoundsPerSlice: 3, limits: defaultTestLimits }) }); expect(secondResult.status).toBe('completed');
     const checkpoint = await env.DB.prepare('SELECT agent_progress_json FROM agent_runs WHERE id = ?').bind(accepted.run_id).first<{ agent_progress_json: string }>(); expect(checkpoint?.agent_progress_json).toContain('Do not create anything. Just acknowledge.');
     expect(await env.DB.prepare(`SELECT id FROM entities WHERE name = 'Steering restart abandoned'`).first()).toBeNull();
+  });
+
+  it('reuses one membership/credential resolution across linked provider rounds', async () => {    const entry = PRODUCTION_REGISTRY.entries.find((item) => item.commandKey === 'gemini-3.1-flash-lite')!;
+    const streamBody = [
+      'event: interaction.created\n',
+      'data: {"interaction":{"id":"v1_reuse","status":"in_progress","model":"gemini-3.1-flash-lite"},"event_type":"interaction.created"}\n\n',
+      'event: step.start\n',
+      'data: {"index":0,"step":{"type":"model_output"},"event_type":"step.start"}\n\n',
+      'event: step.delta\n',
+      'data: {"index":0,"delta":{"type":"text","text":"Noted."},"event_type":"step.delta"}\n\n',
+      'event: step.stop\n',
+      'data: {"index":0,"event_type":"step.stop"}\n\n',
+      'event: interaction.completed\n',
+      'data: {"interaction":{"id":"v1_reuse","status":"completed","usage":{"total_tokens":8,"total_input_tokens":5,"total_output_tokens":3}},"event_type":"interaction.completed"}\n\n',
+      'event: done\n',
+      'data: [DONE]\n\n',
+    ].join('');
+    const fetchFn = (async (): Promise<Response> =>
+      new Response(streamBody, { headers: { 'Content-Type': 'text/event-stream' } })) as typeof fetch;
+    const baseInput = {
+      sessionId: chatAvi,
+      workspaceId: ws,
+      chatId: chatAvi,
+      runId: 'run_reuse_key',
+      messages: [{ role: 'user', text: 'hi' }],
+      pendingToolResults: [],
+      tools: [],
+      maxOutputTokens: 64,
+      timeoutMs: 5000,
+    } as const;
+    const countingDb = (counter: { n: number }): D1Database =>
+      new Proxy(env.DB, {
+        get(target, prop, receiver) {
+          if (prop === 'prepare') {
+            return (sql: string) => {
+              if (/workspace_users|provider_credentials/.test(sql)) counter.n += 1;
+              return (target as D1Database).prepare(sql);
+            };
+          }
+          const value = Reflect.get(target, prop, receiver);
+          return typeof value === 'function' ? (value as (...args: never[]) => unknown).bind(target) : value;
+        },
+      }) as D1Database;
+
+    // Control: full resolution reads membership metadata.
+    const control = { n: 0 };
+    const key = await resolveProviderRawKey(countingDb(control), {
+      workspaceId: ws,
+      actorUserId: aviId,
+      entry,
+      platformKeys: { gemini: 'test-key' },
+    });
+    expect(key).toBe('test-key');
+    expect(control.n).toBeGreaterThan(0);
+
+    // Pre-resolved rounds issue zero metadata reads and still stream text.
+    for (let round = 0; round < 2; round++) {
+      const roundCounter = { n: 0 };
+      const events = [];
+      for await (const event of runProviderTurn(countingDb(roundCounter), {
+        workspaceId: ws,
+        actorUserId: aviId,
+        entry,
+        platformKeys: { gemini: 'test-key' },
+        preResolvedRawKey: key,
+        input: { ...baseInput, requestId: `req-reuse-${round}` },
+        fetchFn,
+      })) {
+        events.push(event);
+      }
+      expect(roundCounter.n).toBe(0);
+      expect(events.some((event) => event.type === 'text_delta')).toBe(true);
+    }
+  });
+
+  it('maps mid-turn credential resolution failure to provider_stream_error, not the retry loop', async () => {
+    const { setWorkspaceCredential } = await import('@otis/identity');
+    const goodKey = await crypto.subtle.generateKey({ name: 'AES-GCM', length: 256 }, true, ['encrypt', 'decrypt']);
+    await setWorkspaceCredential(env.DB, {
+      workspaceId: ws,
+      provider: 'gemini',
+      rawKey: 'synthetic-real-credential',
+      wrappingKey: goodKey,
+      keyVersion: 1,
+      actorUserId: aviId,
+    });
+    const wrongKey = await crypto.subtle.generateKey({ name: 'AES-GCM', length: 256 }, true, ['encrypt', 'decrypt']);
+    await env.DB.prepare(`UPDATE provider_credentials SET status = 'available' WHERE workspace_id = ? AND provider = 'gemini'`).bind(ws).run();
+    await env.DB.prepare(`INSERT INTO workspace_settings (workspace_id, default_model, created_at, updated_at) VALUES (?, 'gemini-3.1-flash-lite', ?, ?) ON CONFLICT(workspace_id) DO UPDATE SET default_model = 'gemini-3.1-flash-lite'`).bind(ws, nowIso, nowIso).run();
+    const accepted = await acceptWebMessage(env.DB, {
+      workspaceId: ws, chatId: chatAvi, userId: aviId, clientMessageId: 'msg-bad-key', text: 'Hello with broken key',
+    });
+    const handler = new AgentHandler({ wrappingKey: wrongKey, limits: defaultTestLimits });
+    const result = await dispatchOutboxItem(env.DB, await outboxIdForRun(accepted.run_id), ws, { handler });
+    // Terminal failure with the provider error, not a deferred retry loop.
+    expect(result.status).toBe('failed');
+    expect(await env.DB.prepare(`SELECT status FROM agent_runs WHERE id = ?`).bind(accepted.run_id).first<{ status: string }>()).toEqual({ status: 'failed' });
+    await env.DB.prepare(`DELETE FROM provider_credentials WHERE workspace_id = ? AND provider = 'gemini'`).bind(ws).run();
+    await env.DB.prepare(`UPDATE workspace_settings SET default_model = NULL WHERE workspace_id = ?`).bind(ws).run();
   });
 
 });

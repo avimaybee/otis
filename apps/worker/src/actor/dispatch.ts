@@ -20,8 +20,8 @@ import { liveChatBus } from '../chat/liveBus.js';
 import {
   adoptStep,
   completeStep,
-  listRunSteps,
   markStepRunning,
+  nextStepIndex,
   persistStep,
   StepError,
 } from './steps.js';
@@ -1215,7 +1215,10 @@ export async function dispatchOutboxItem(
     // Unexpected handler failure: requeue while attempts remain, else poison.
     // Every write is gated on this attempt still owning the run.
     if (attempts >= itemMax) {
-      const steps = await listRunSteps(db, run.id);
+      const anySucceeded = await db
+        .prepare(`SELECT 1 FROM run_steps WHERE run_id = ? AND status = 'succeeded' LIMIT 1`)
+        .bind(run.id)
+        .first();
       const failed = await failRunTerminal(db, {
         run,
         expectedStatus: 'running',
@@ -1223,7 +1226,7 @@ export async function dispatchOutboxItem(
         errorCode: 'handler_error',
         errorMessage: err instanceof Error ? err.message : String(err),
         outboxId,
-        runStatus: steps.some((s) => s.status === 'succeeded') ? 'partial' : 'failed',
+        runStatus: anySucceeded ? 'partial' : 'failed',
         nowIso: now(),
       });
       return failed
@@ -1297,7 +1300,7 @@ export async function dispatchOutboxItem(
       if (!(await holderStillOwns(db, run.id, attemptId, now()))) {
         return { status: 'deferred', run_id: run.id, detail: 'stale_attempt' };
       }
-      const checkpointIndex = (await listRunSteps(db, run.id)).length;
+      const checkpointIndex = await nextStepIndex(db, run.id);
       const persisted = await persistStep(db, {
         runId: run.id,
         workspaceId,
