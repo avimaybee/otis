@@ -100,7 +100,7 @@ All paths below are proposed implementation names, frozen when `packages/contrac
 | `GET /api/workspaces/:workspaceId/chats` | Cursor pagination; mine/team filters only, no privilege difference |
 | `POST /api/workspaces/:workspaceId/chats` | Create author's chat; idempotent creation key |
 | `GET .../chats/:chatId/messages` | Paged content, stable IDs and permissions |
-| `POST .../chats/:chatId/messages` | `{client_message_id,text?,media_id?}`; 202 stable message/run IDs after durable commit |
+| `POST .../chats/:chatId/messages` | `{client_message_id,text?,media_id?,image_media_ids?}`; 202 stable message/run IDs after durable commit. Text may be empty when media is attached; at most 4 finalized still images per message, each validated, owned and unexpired at commit, linked atomically as receipts |
 | `GET .../chats/:chatId/activity?after=` | SSE with chat cursor; same records available as catch-up JSON |
 | `GET .../runs/:runId` | Authoritative run/partial result and actions |
 | `POST .../runs/:runId/stop` | Author-scoped stop request, explicit idempotency key |
@@ -110,7 +110,7 @@ All paths below are proposed implementation names, frozen when `packages/contrac
 | `POST .../clarifications/:id/reply` | Optional choice shortcut; ordinary message replies always work |
 | `GET .../commands` | Enabled command registry for that surface/workspace |
 | `GET .../models?chat_id=` | Approved configured choices and current/default selection |
-| `POST .../media/uploads` / upload / finalize | Bounded claim, bytes, validation; no public R2 object |
+| `POST .../media/uploads` / upload / finalize | Bounded claim, bytes, validation; no public R2 object. Voice notes (audio/webm, audio/mp4, audio/ogg) route to transcription; still images (image/jpeg, image/png, image/webp, 5 MiB each) are prompt attachments with no transcription intent. Magic bytes and bounds re-verified server-side; renamed or oversized bytes reject with 422 |
 | `GET .../media/:mediaId` | Authenticated private streaming/range access |
 | `POST .../exports` | Idempotent consistent snapshot job |
 | `GET .../exports/:id/download` | Authenticated membership plus expiring download ticket |
