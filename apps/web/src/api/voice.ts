@@ -111,24 +111,35 @@ async function voiceRequest<T>(
   const timeoutId = setTimeout(() => {
     controller.abort(new DOMException('Voice request timed out', 'TimeoutError'));
   }, VOICE_REQUEST_TIMEOUT_MS);
+  const onAbort = (): void => {
+    controller.abort(init.signal?.reason);
+  };
   if (init.signal) {
     if (init.signal.aborted) {
       controller.abort(init.signal.reason);
     } else {
-      init.signal.addEventListener('abort', () => controller.abort(init.signal?.reason), { once: true });
+      init.signal.addEventListener('abort', onAbort, { once: true });
     }
   }
 
   // A network failure (offline, DNS, aborted) keeps its transport error so
   // the recorder can offer the same-identity Retry; only HTTP answers map to
-  // ApiError below.
+  // ApiError below. The deadline stays armed through body consumption.
   let response: Response;
   try {
     response = await fetchImpl(path, { ...init, headers, credentials: 'same-origin', signal: controller.signal });
+  } catch (err) {
+    clearTimeout(timeoutId);
+    init.signal?.removeEventListener('abort', onAbort);
+    throw err;
+  }
+  let text: string;
+  try {
+    text = await response.text();
   } finally {
     clearTimeout(timeoutId);
+    init.signal?.removeEventListener('abort', onAbort);
   }
-  const text = await response.text();
   let payload: unknown = null;
   try {
     payload = text.length > 0 ? JSON.parse(text) : null;

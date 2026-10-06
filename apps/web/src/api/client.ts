@@ -72,11 +72,16 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const timeoutId = setTimeout(() => {
     controller.abort(new DOMException('Request timed out', 'TimeoutError'));
   }, DEFAULT_REQUEST_TIMEOUT_MS);
+  // Linked listener is removed on settle below: without cleanup every
+  // request would pin a listener on its (possibly long-lived) signal.
+  const onAbort = (): void => {
+    controller.abort(init.signal?.reason);
+  };
   if (init.signal) {
     if (init.signal.aborted) {
       controller.abort(init.signal.reason);
     } else {
-      init.signal.addEventListener('abort', () => controller.abort(init.signal?.reason), { once: true });
+      init.signal.addEventListener('abort', onAbort, { once: true });
     }
   }
 
@@ -85,11 +90,19 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
     response = await fetch(path, { ...init, headers, credentials: 'same-origin', signal: controller.signal });
   } catch (err) {
     failureLog('api', 'network failure before HTTP', { method, path, ms: Date.now() - started, error: String(err) });
+    clearTimeout(timeoutId);
+    init.signal?.removeEventListener('abort', onAbort);
     throw err;
+  }
+  // The deadline stays armed through body consumption: headers arriving
+  // says nothing about a body that then stalls forever.
+  let text: string;
+  try {
+    text = await response.text();
   } finally {
     clearTimeout(timeoutId);
+    init.signal?.removeEventListener('abort', onAbort);
   }
-  const text = await response.text();
   let payload: unknown = null;
   try { payload = text.length > 0 ? JSON.parse(text) : null; } catch {
     failureLog('api', 'non-JSON response', { method, path, status: response.status, ms: Date.now() - started, bytes: text.length });
@@ -118,9 +131,10 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
 export const api = {
   me: () => request<{ user: { id: string; display_name: string | null }; workspaces: { id: string; name: string; role: string }[] }>('/api/me'),
 
-  listChats: (workspaceId: string, filter: 'mine' | 'team' = 'mine', cursor?: string) =>
+  listChats: (workspaceId: string, filter: 'mine' | 'team' = 'mine', cursor?: string, signal?: AbortSignal) =>
     request<{ chats: Chat[]; next_cursor?: string }>(
       `/api/workspaces/${workspaceId}/chats?filter=${filter}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`,
+      signal ? { signal } : undefined,
     ),
 
   createChat: (workspaceId: string, clientChatId: string, expectedUserId?: string) =>
@@ -219,12 +233,13 @@ export const api = {
       { method: 'POST', body: JSON.stringify(body) },
     ),
 
-  commands: (surface: 'web' | 'telegram' = 'web') =>
-    request<CommandRegistryResponse>(`/api/commands?surface=${surface}`),
+  commands: (surface: 'web' | 'telegram' = 'web', signal?: AbortSignal) =>
+    request<CommandRegistryResponse>(`/api/commands?surface=${surface}`, signal ? { signal } : undefined),
 
-  models: (workspaceId: string, chatId?: string) =>
+  models: (workspaceId: string, chatId?: string, signal?: AbortSignal) =>
     request<ModelListResponse>(
       `/api/workspaces/${workspaceId}/models${chatId ? `?chat_id=${encodeURIComponent(chatId)}` : ''}`,
+      signal ? { signal } : undefined,
     ),
 
   settings: (workspaceId: string) => request<{ settings: WorkspaceSettings }>(`/api/workspaces/${workspaceId}/settings`),

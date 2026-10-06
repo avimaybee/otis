@@ -59,8 +59,8 @@ export interface ChatListState {
 export function useNavChats(userId: string, workspaceId: string, filter: 'mine' | 'team', disabled: boolean) {
   return useQuery({
     queryKey: qk.chats(userId, workspaceId, filter),
-    queryFn: async (): Promise<ChatListState> => {
-      const page = await api.listChats(workspaceId, filter);
+    queryFn: async ({ signal }): Promise<ChatListState> => {
+      const page = await api.listChats(workspaceId, filter, undefined, signal);
       return { chats: page.chats, nextCursor: page.next_cursor };
     },
     enabled: !disabled,
@@ -86,7 +86,7 @@ export async function fetchMoreChats(
 export function useModels(userId: string, workspaceId: string, chatId: string | null, revision: number, readOnly: boolean) {
   return useQuery({
     queryKey: [...qk.models(userId, workspaceId, chatId), revision] as const,
-    queryFn: async () => api.models(workspaceId, chatId ?? undefined),
+    queryFn: async ({ signal }) => api.models(workspaceId, chatId ?? undefined, signal),
     enabled: !readOnly,
   });
 }
@@ -94,7 +94,7 @@ export function useModels(userId: string, workspaceId: string, chatId: string | 
 export function useCommands(disabled: boolean) {
   return useQuery({
     queryKey: qk.commands(),
-    queryFn: (): Promise<CommandRegistryResponse> => api.commands(),
+    queryFn: async ({ signal }): Promise<CommandRegistryResponse> => api.commands('web', signal),
     staleTime: 60_000,
     enabled: !disabled,
   });

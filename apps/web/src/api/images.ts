@@ -66,21 +66,34 @@ async function imageRequest<T>(
   const timeoutId = setTimeout(() => {
     controller.abort(new DOMException('Image request timed out', 'TimeoutError'));
   }, IMAGE_REQUEST_TIMEOUT_MS);
+  const onAbort = (): void => {
+    controller.abort(init.signal?.reason);
+  };
   if (init.signal) {
     if (init.signal.aborted) {
       controller.abort(init.signal.reason);
     } else {
-      init.signal.addEventListener('abort', () => controller.abort(init.signal?.reason), { once: true });
+      init.signal.addEventListener('abort', onAbort, { once: true });
     }
   }
 
   let response: Response;
   try {
     response = await fetchImpl(path, { ...init, headers, credentials: 'same-origin', signal: controller.signal });
+  } catch (err) {
+    clearTimeout(timeoutId);
+    init.signal?.removeEventListener('abort', onAbort);
+    throw err;
+  }
+  // The deadline stays armed through body consumption: a 5 MB object with a
+  // stalled body must still time out instead of hanging the composer submit.
+  let text: string;
+  try {
+    text = await response.text();
   } finally {
     clearTimeout(timeoutId);
+    init.signal?.removeEventListener('abort', onAbort);
   }
-  const text = await response.text();
   let payload: unknown = null;
   try {
     payload = text.length > 0 ? JSON.parse(text) : null;
