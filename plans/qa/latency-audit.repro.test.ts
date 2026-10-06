@@ -11,52 +11,58 @@ afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); });
 
 function recordingDb(rowsFor: (sql: string) => unknown = () => []) {
   const calls: string[] = [];
+  const toRows = (sql: string): unknown[] => {
+    const value = rowsFor(sql);
+    return Array.isArray(value) ? value : value ? [value] : [];
+  };
   const db = {
     prepare(sql: string) {
       const statement = {
+        __sql: sql,
         bind: (..._args: unknown[]) => statement,
-        async first() { calls.push(sql); const value = rowsFor(sql); return Array.isArray(value) ? value[0] ?? null : value; },
-        async all() { calls.push(sql); return { results: rowsFor(sql) }; },
+        async first() { calls.push(sql); return toRows(sql)[0] ?? null; },
+        async all() { calls.push(sql); return { results: toRows(sql) }; },
       };
       return statement;
     },
-    async batch(statements: unknown[]) {
+    async batch(statements: Array<{ __sql?: string }>) {
       calls.push(`BATCH ${statements.length}`);
-      return statements.map(() => ({ success: true, results: [], meta: { changes: 1 } }));
+      return statements.map((item) => {
+        const sql = typeof item?.__sql === 'string' ? item.__sql : '';
+        return { success: true, results: toRows(sql), meta: { changes: 1 } };
+      });
     },
   };
   return { calls, db: db as unknown as D1Database };
 }
 
-describe('Latency audit: current behavior reproductions, not desired behavior', () => {
-  it('a token just after an interval tick can wait 799ms for publication', async () => {
+describe('Latency audit: fixed behavior (reproductions now prove the cures)', () => {
+  it('first preview flushes on the short cadence, not a fixed 400ms tick', async () => {
     vi.useFakeTimers();
     vi.setSystemTime(1);
     const publish = vi.fn<StreamPublishFn>(async () => undefined);
     const publisher = new StreamPublisher(publish, 0, 'gemini');
     publisher.pushText('Hi');
     await publisher.tick(400);
-    expect(publish).not.toHaveBeenCalled();
-    await publisher.tick(800);
     expect(publish).toHaveBeenCalledTimes(1);
     expect(publish.mock.calls[0]?.[1]).toBe('text_chunk');
     await publisher.close('complete');
+    expect(publish).toHaveBeenCalledTimes(1);
   });
 
-  it('one text chunk has three sequential database calls before broadcast', async () => {
-    let cursorReads = 0;
-    const { calls, db } = recordingDb(() => ++cursorReads === 1 ? null : { cursor: 1 });
-    const received = vi.fn(() => expect(calls).toHaveLength(3));
+  it('one text chunk persists in a single atomic batch before broadcast', async () => {
+    const { calls, db } = recordingDb(sql => (sql.startsWith('INSERT INTO run_activity') ? { cursor: 7 } : []));
+    const received = vi.fn(() => undefined);
     const unsubscribe = liveChatBus.subscribe('audit-ws', 'audit-chat', received);
     try {
       await publishAgentActivity({ db, workspaceId: 'audit-ws', chatId: 'audit-chat', runId: 'audit-run' } as never,
         'text0', 'text_chunk', { text: 'Hi' });
-      expect(calls[1]).toBe('BATCH 2');
+      expect(calls).toEqual(['BATCH 2']);
       expect(received).toHaveBeenCalledTimes(1);
     } finally { unsubscribe(); }
   });
 
-  it('greeting context executes 11 reads and can crowd out relevant memory', async () => {
+  it('greeting context batches independent reads; the note cap still applies first', async () => {
     const note = (id: string, scope = 'workspace') => ({
       id, scope, subject_id: scope === 'workspace' ? null : 'audit-user',
       category: 'other', content: id, observed_at: '2026-10-06T00:00:00Z', business_revision: 1,
@@ -71,16 +77,17 @@ describe('Latency audit: current behavior reproductions, not desired behavior', 
     const context = await getTurnContext(db, {
       workspaceId: 'audit-ws', actorUserId: 'audit-user', chatId: 'audit-chat', sourceText: 'hi',
     });
-    expect(calls).toHaveLength(11);
-    expect(calls.some(sql => sql === 'SELECT id, name FROM entities WHERE workspace_id = ?')).toBe(true);
+    expect(calls).toHaveLength(3);
+    expect(calls[0]!.startsWith('BATCH')).toBe(true);
+    expect(calls.slice(1).every(sql => sql.includes('memory_entries_fts') || sql.includes('FROM briefs'))).toBe(true);
     expect(context.activeNotes).toHaveLength(12);
     expect(context.activeNotes.some(note => note.id.startsWith('relevant-'))).toBe(false);
   });
 
-  it('ordinary projection load queries seven complete tables', async () => {
+  it('ordinary projection load batches the seven tables into two roundtrips', async () => {
     const { calls, db } = recordingDb();
     await getWorkspaceProjectionState(db, 'audit-ws');
-    expect(calls).toHaveLength(7);
+    expect(calls).toEqual(['BATCH 5', 'BATCH 2']);
     expect(calls.every(sql => !/\bLIMIT\b/.test(sql))).toBe(true);
   });
 

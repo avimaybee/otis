@@ -15,16 +15,26 @@ vi.mock('idb-keyval', () => ({
 }));
 afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
-describe('Expanded audit: reproductions of current inefficiencies', () => {
-  it('17 enabled, not-yet-due brief members require 52 separate reads', async () => {
+describe('Expanded audit: fixed behavior (reproductions now prove the cures)', () => {
+  it('not-yet-due brief members are evaluated once, then never re-read until due', async () => {
     const calls: string[] = [];
+    const stamps = new Map<string, string>();
+    const NOW = '2026-10-06T12:00:00.000Z';
     const db = {
       prepare(sql: string) {
+        const bound: unknown[] = [];
         const statement = {
-          bind: (..._values: unknown[]) => statement,
+          bind: (...values: unknown[]) => {
+            bound.push(...values);
+            return statement;
+          },
           async all() {
             calls.push(sql);
-            return { results: Array.from({ length: 17 }, (_, i) => ({ workspace_id: 'audit-brief', user_id: `member-${i}` })) };
+            return { results: Array.from({ length: 17 }, (_, i) => ({ workspace_id: 'audit-brief', user_id: `member-${i}` }))
+              .filter(member => {
+                const stamp = stamps.get(member.user_id);
+                return stamp === undefined || stamp <= NOW;
+              }) };
           },
           async first() {
             calls.push(sql);
@@ -35,13 +45,23 @@ describe('Expanded audit: reproductions of current inefficiencies', () => {
             };
             return null;
           },
+          async run() {
+            calls.push(`RUN ${sql.split(' ').slice(0, 2).join(' ')}`);
+            if (sql.startsWith('UPDATE member_settings')) {
+              stamps.set(String(bound[3]), String(bound[0]));
+            }
+            return { success: true };
+          },
         };
         return statement;
       },
     };
-    const result = await processScheduledDailyBriefs(db as unknown as D1Database, '2026-10-06T12:00:00Z');
-    expect(result).toEqual({ evaluated: 17, generated: 0, skipped: 17, errors: 0 });
-    expect(calls).toHaveLength(52);
+    const first = await processScheduledDailyBriefs(db as unknown as D1Database, NOW);
+    expect(first).toEqual({ evaluated: 17, generated: 0, skipped: 17, errors: 0 });
+    // Legacy NULL stamps evaluate once, then park at the coming slot.
+    expect(calls.filter(call => call.startsWith('RUN UPDATE'))).toHaveLength(17);
+    const second = await processScheduledDailyBriefs(db as unknown as D1Database, NOW);
+    expect(second).toEqual({ evaluated: 0, generated: 0, skipped: 0, errors: 0 });
   });
 
   it.each([
