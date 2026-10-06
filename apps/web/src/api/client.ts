@@ -141,7 +141,7 @@ export const api = {
     );
   },
 
-  sendMessage: (workspaceId: string, chatId: string, clientMessageId: string, text: string, clarificationId?: string, mediaId?: string, expectedUserId?: string) =>
+  sendMessage: (workspaceId: string, chatId: string, clientMessageId: string, text: string, clarificationId?: string, mediaId?: string, expectedUserId?: string, imageMediaIds?: string[]) =>
     request<AcceptMessageResponse>(`/api/workspaces/${workspaceId}/chats/${chatId}/messages`, {
       method: 'POST',
       headers: expectedUserId ? { 'x-expected-user-id': expectedUserId } : undefined,
@@ -150,6 +150,7 @@ export const api = {
         text,
         clarification_id: clarificationId,
         ...(mediaId ? { media_id: mediaId } : {}),
+        ...(imageMediaIds && imageMediaIds.length > 0 ? { image_media_ids: imageMediaIds } : {}),
       }),
     }),
 

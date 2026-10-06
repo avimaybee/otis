@@ -447,6 +447,29 @@ export async function listChatMessages(
 
   const rows = (await db.prepare(query).bind(...binds).all<Record<string, unknown>>()).results || [];
 
+  // Attached still images for the listed messages, in send order. One
+  // bounded query over the page's message ids; messages without attachments
+  // simply map to an empty list.
+  const ids = rows.map((r) => String(r['id']));
+  const attached = new Map<string, string[]>();
+  if (ids.length > 0) {
+    const placeholders = ids.map(() => '?').join(',');
+    const linkRows = (
+      await db
+        .prepare(
+          `SELECT chat_message_id, media_id FROM message_image_attachments
+           WHERE workspace_id = ? AND chat_message_id IN (${placeholders}) ORDER BY position ASC`,
+        )
+        .bind(workspaceId, ...ids)
+        .all<{ chat_message_id: string; media_id: string }>()
+    ).results || [];
+    for (const link of linkRows) {
+      const list = attached.get(link.chat_message_id) ?? [];
+      list.push(link.media_id);
+      attached.set(link.chat_message_id, list);
+    }
+  }
+
   return rows.reverse().map((r) => ({
     id: String(r['id']),
     workspace_id: String(r['workspace_id']),
@@ -459,6 +482,7 @@ export async function listChatMessages(
     client_message_id: r['client_message_id'] ? String(r['client_message_id']) : null,
     content_text: String(r['content_text']),
     media_id: r['media_id'] ? String(r['media_id']) : null,
+    image_media_ids: attached.get(String(r['id'])) ?? null,
     run_id: r['run_id'] ? String(r['run_id']) : null,
     sequence: Number(r['sequence']),
     created_at: String(r['created_at']),

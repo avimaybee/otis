@@ -1,5 +1,6 @@
 import type { Meta, StoryObj } from '@storybook/react-vite';
 import { Composer } from '../components/Composer.js';
+import type { ImageAttachment } from '../components/Composer.js';
 import { storyCommands, storyModels } from './fixtures.js';
 
 const base = {
@@ -82,6 +83,46 @@ export const FollowUp: Story = {
     docs: {
       description: {
         story: 'A valid follow-up draft shows Send in the shared slot while Stop stays reachable through chat overflow.',
+      },
+    },
+  },
+};
+
+const TINY_PNG_DATA_URL =
+  'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+
+function storyPhoto(id: string, status: ImageAttachment['status']): ImageAttachment {
+  return {
+    id,
+    file: new File([], `${id}.png`, { type: 'image/png' }),
+    previewUrl: TINY_PNG_DATA_URL,
+    status,
+  };
+}
+
+export const WithPhotos: Story = {
+  name: 'composer/with-photos',
+  args: {
+    ...base,
+    draftValue: 'What is in these photos?',
+    images: {
+      available: true,
+      workspaceId: 'ws-1',
+      chatId: 'chat-1',
+      onEnsureChat: async () => 'chat-1',
+      upload: async () => ({ mediaId: 'med_story_1', format: 'image/png' as const }),
+      controller: {
+        attachments: [storyPhoto('photo-ready-1', 'ready'), storyPhoto('photo-uploading-2', 'uploading')],
+        addFiles: () => {},
+        remove: () => {},
+        clear: () => {},
+      },
+    },
+  },
+  parameters: {
+    docs: {
+      description: {
+        story: 'Local previews render instantly with per-photo upload state; remove is per photo and the draft is untouched.',
       },
     },
   },

@@ -452,6 +452,8 @@ export interface ChatMessage {
   client_message_id: string | null;
   content_text: string;
   media_id: string | null;
+  /** Validated still-image uploads attached to this message, in send order. */
+  image_media_ids?: string[] | null;
   run_id: string | null;
   sequence: number;
   created_at: string;

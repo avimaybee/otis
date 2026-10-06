@@ -43,6 +43,12 @@ export interface OutboxEntry {
    * preserved across retry, so a retried recording keeps one message identity.
    */
   mediaId?: string;
+  /**
+   * Validated still-image uploads attached to this message (Slice 4).
+   * Immutable server media identities finalized before submit, preserved
+   * across retry like the voice recording above.
+   */
+  imageMediaIds?: string[];
   /** Immutable clarification linkage, preserved across retry. */
   clarificationId?: string;
   createdAt: string;
@@ -482,6 +488,8 @@ export function createOutboxEntry(input: {
   clientId?: string;
   /** Validated media identity to attach through the acceptance path. */
   mediaId?: string;
+  /** Validated still-image identities to attach through the acceptance path. */
+  imageMediaIds?: string[];
   clarificationId?: string;
 }): OutboxEntry {
   const now = new Date().toISOString();
@@ -494,6 +502,7 @@ export function createOutboxEntry(input: {
     newChatKey: input.chatId ? null : getOrCreatePendingNewChat(input.userId, input.workspaceId),
     text: input.text,
     ...(input.mediaId ? { mediaId: input.mediaId } : {}),
+    ...(input.imageMediaIds && input.imageMediaIds.length > 0 ? { imageMediaIds: input.imageMediaIds } : {}),
     ...(input.clarificationId ? { clarificationId: input.clarificationId } : {}),
     createdAt: now,
     state: 'sending',

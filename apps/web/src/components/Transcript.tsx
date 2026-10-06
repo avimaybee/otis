@@ -8,6 +8,7 @@ import { ChevronDownIcon, CheckIcon, AlertCircleIcon, UndoIcon, TerminalIcon, Fi
 import { Button } from './ui/button.js';
 import { ThinkingDisclosure } from './Thinking.js';
 import { VoiceMessagePlayer } from './VoiceMessagePlayer.js';
+import { MessageImages } from './MessageImages.js';
 import { reduceThinking } from '../api/thinking.js';
 import { dayKeyInZone, formatClockTime, formatDayLabel } from '../i18n/format.js';
 import { transientTextForRun, type TransientPreview } from '../hooks/useActivityStream.js';
@@ -351,6 +352,9 @@ export function Transcript({ messages, members, currentUserId, steps, run, runs 
               {isMember && message.author_user_id !== currentUserId && <div className="otis-turn__meta text-xs text-subtle">{author}</div>}
               {isMember
                 ? <div className="otis-turn__bubble ml-auto w-fit max-w-[85%] rounded-2xl bg-card px-4 py-2 text-base text-card-foreground nav:max-w-[80%] whitespace-pre-wrap break-words">
+                    {(message.image_media_ids?.length ?? 0) > 0 && (
+                      <MessageImages workspaceId={message.workspace_id} mediaIds={message.image_media_ids ?? []} />
+                    )}
                     {message.media_id ? (
                       <VoiceMessagePlayer
                         workspaceId={message.workspace_id}

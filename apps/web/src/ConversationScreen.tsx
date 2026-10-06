@@ -3,6 +3,7 @@ import { Toaster, toast } from 'sonner';
 import Markdown from 'react-markdown';
 import type { CommandDescriptor, ModelOption, RunDetailResponse, VoiceMediaSummary } from '@otis/contracts';
 import { api, ApiError } from './api/client.js';
+import { createWorkerImageTransport, uploadImageFile } from './api/images.js';
 import { debugLog } from './api/log.js';
 import { subscribeToActivity, type StreamStatus } from './hooks/useActivityStream.js';
 import {
@@ -494,7 +495,7 @@ export function ConversationScreen({ workspaceId, chat: routeChat, chatParamPres
       }
       if (!chatId) throw new Error('Failed to resolve conversation');
       debugLog('send', 'starting', { operationId: entry.clientId, chatId, chars: entry.text.length, clarificationId: entry.clarificationId ?? null });
-      const accepted = await api.sendMessage(entryWorkspaceId, chatId, entry.clientId, entry.text, entry.clarificationId, entry.mediaId, entryUserId);
+      const accepted = await api.sendMessage(entryWorkspaceId, chatId, entry.clientId, entry.text, entry.clarificationId, entry.mediaId, entryUserId, entry.imageMediaIds);
       debugLog('send', 'accepted; run queued server-side', { chatId, message_id: accepted.message_id, run_id: accepted.run_id, sequence: accepted.acceptance_sequence });
       markOutboxSaved(entry.clientId, { messageId: accepted.message_id, runId: accepted.run_id, sequence: accepted.acceptance_sequence });
       if (!sameView(chatId)) return true;
@@ -513,8 +514,9 @@ export function ConversationScreen({ workspaceId, chat: routeChat, chatParamPres
             chat_id: chatId,
             author_user_id: entryUserId,
             client_message_id: entry.clientId,
-            content_text: entry.text || (entry.mediaId ? 'Voice note' : ''),
+            content_text: entry.text || (entry.mediaId ? 'Voice note' : entry.imageMediaIds?.length ? 'Photos' : ''),
             media_id: entry.mediaId ?? null,
+            image_media_ids: entry.imageMediaIds ?? null,
             run_id: accepted.run_id,
             sequence: accepted.acceptance_sequence,
             created_at: acceptedAt,
@@ -580,13 +582,14 @@ export function ConversationScreen({ workspaceId, chat: routeChat, chatParamPres
     }
   }, [epoch, queryClient, userId, workspaceId, workspaces, navigate, loseAccess, refreshRun, refreshMessages, refreshQuestions, replyId, switchWorkspace]);
 
-  const send = useCallback(async (text: string): Promise<boolean> => {
+  const send = useCallback(async (text: string, imageMediaIds?: string[]): Promise<boolean> => {
     if (readOnly || accessLost) return false;
     createOutboxEntry({
       userId,
       workspaceId,
       chatId: activeChatId,
       text,
+      ...(imageMediaIds && imageMediaIds.length > 0 ? { imageMediaIds } : {}),
       ...(activeClarification ? { clarificationId: activeClarification.id } : {}),
     });
     // Explicit send-triggered return to the newly sent message, taken at the
@@ -651,6 +654,24 @@ export function ConversationScreen({ workspaceId, chat: routeChat, chatParamPres
     if (!retryOutboxEntry(clientId)) return;
     requestFlush('retry');
   }, []);
+
+  /**
+   * Photo attachments (Slice 4): the composer hands over local files with
+   * previews; uploads need a real chat first, so a first message ensures the
+   * conversation exactly like the voice path, then finalizes each file and
+   * submits their server identities with the text.
+   */
+  const imageTransport = useMemo(() => createWorkerImageTransport(), []);
+  const ensureChatForImages = useCallback(async (): Promise<string | null> => {
+    if (activeChatId) return activeChatId;
+    if (readOnly || accessLost) return null;
+    const pendingKey = getOrCreatePendingNewChat(userId, workspaceId);
+    const created = await api.createChat(workspaceId, `new-${pendingKey}`, userId);
+    const chatId = created.chat.id;
+    setNewChatMapping(pendingKey, chatId, userId);
+    navigate(workspaceId, chatId);
+    return chatId;
+  }, [accessLost, activeChatId, navigate, readOnly, userId, workspaceId]);
 
   const discardMessage = useCallback((clientId: string): void => {
     // Local-only: accepted rows reconcile through snapshots and are kept.
@@ -894,7 +915,7 @@ export function ConversationScreen({ workspaceId, chat: routeChat, chatParamPres
       {streamStatus === 'resyncing' && <p className="otis-connection text-xs" role="status">Reconnecting to activity… Your conversation is retained.</p>}
       <Transcript key={`${workspaceId}:${activeChatId ?? 'new'}`} messages={derived.messages} members={members} currentUserId={userId} runs={snapshot?.runs ?? {}} activities={snapshot?.activities ?? []} steps={[]} transients={transients} delivery={derived.delivery} onRetryMessage={(clientId) => void retryMessage(clientId)} onDiscardMessage={discardMessage} onInspectSource={setSourceId} onInspectAction={setDetailActionId} onReply={readOnly ? undefined : setReplyId} onEditMessage={readOnly ? undefined : setDraftValue} loading={loading} hasOlder={Boolean(snapshot?.older)} loadingOlder={loadingOlder} olderError={olderError} followSignal={followSignal} positionKey={`${userId}:${workspaceId}:${activeChatId ?? 'new'}`} onLoadOlder={() => void loadOlder()}/>
       {error && <div className="otis-chat-error text-sm" role="alert"><p>{error}</p>{activeChatId && !loading && <Button variant="ghost" size="sm" type="button" onClick={() => { setError(null); void resyncChat(activeChatId); }}>Reload conversation</Button>}</div>}
-      {readOnly ? <div className="otis-readonly text-sm"><p>This is {currentDetail!.chat.author_display_name ?? members[currentDetail!.chat.author_user_id] ?? 'a teammate'}’s conversation.</p><Button variant="ghost" size="sm" type="button" onClick={() => navigate(workspaceId, ownChats[0]?.id ?? null)}>Continue in your own chat</Button></div> : <div ref={composerRef} className="otis-composer-slot"><Composer key={`${workspaceId}:${userId}:${activeChatId ?? 'new'}`} draftKey={`otis:draft:${userId}:${workspaceId}:${activeChatId ?? 'new'}`} draftValue={draftValue} disabled={Boolean(activeChatId && !snapshot)} disabledReason={error ? 'Conversation unavailable' : 'Opening conversation…'} running={Boolean(running)} commands={commands} models={models} workspaces={workspaces} controlPending={controlPending} modelReady={models.some(model => model.is_current && model.available)} modelsLoading={modelsQuery.isLoading} modelsError={modelsQuery.isError ? (modelsQuery.error instanceof Error ? modelsQuery.error.message : 'Could not load models.') : undefined} onRetryModels={() => void modelsQuery.refetch()} voice={{ available: voiceAvailable, adapter: voiceAdapter, scope: { userId, workspaceId, chatId: activeChatId }, onSent: voiceSend }} onCommand={applyCommand} onStop={running ? async () => { await api.stopRun(workspaceId, running.run.id); if (activeChatId) refreshRun(workspaceId, activeChatId, running.run.id); } : undefined} replyTo={activeClarification ? { id: activeClarification.id, question: activeClarification.question, candidates: activeClarification.candidates, missing_fields: activeClarification.missing_fields, intended_operation: activeClarification.intended_operation, onCancel: () => { setDismissedClarificationId(activeClarification.id); setReplyId(null); } } : undefined} onSend={send}/></div>}
+      {readOnly ? <div className="otis-readonly text-sm"><p>This is {currentDetail!.chat.author_display_name ?? members[currentDetail!.chat.author_user_id] ?? 'a teammate'}’s conversation.</p><Button variant="ghost" size="sm" type="button" onClick={() => navigate(workspaceId, ownChats[0]?.id ?? null)}>Continue in your own chat</Button></div> : <div ref={composerRef} className="otis-composer-slot"><Composer key={`${workspaceId}:${userId}:${activeChatId ?? 'new'}`} draftKey={`otis:draft:${userId}:${workspaceId}:${activeChatId ?? 'new'}`} draftValue={draftValue} disabled={Boolean(activeChatId && !snapshot)} disabledReason={error ? 'Conversation unavailable' : 'Opening conversation…'} running={Boolean(running)} commands={commands} models={models} workspaces={workspaces} controlPending={controlPending} modelReady={models.some(model => model.is_current && model.available)} modelsLoading={modelsQuery.isLoading} modelsError={modelsQuery.isError ? (modelsQuery.error instanceof Error ? modelsQuery.error.message : 'Could not load models.') : undefined} onRetryModels={() => void modelsQuery.refetch()} voice={{ available: voiceAvailable, adapter: voiceAdapter, scope: { userId, workspaceId, chatId: activeChatId }, onSent: voiceSend }} images={{ available: !readOnly && !accessLost, workspaceId, chatId: activeChatId, onEnsureChat: ensureChatForImages, upload: request => uploadImageFile(imageTransport, request) }} onCommand={applyCommand} onStop={running ? async () => { await api.stopRun(workspaceId, running.run.id); if (activeChatId) refreshRun(workspaceId, activeChatId, running.run.id); } : undefined} replyTo={activeClarification ? { id: activeClarification.id, question: activeClarification.question, candidates: activeClarification.candidates, missing_fields: activeClarification.missing_fields, intended_operation: activeClarification.intended_operation, onCancel: () => { setDismissedClarificationId(activeClarification.id); setReplyId(null); } } : undefined} onSend={send}/></div>}
     </div>}</main>
     {controlResult && <Overlay label="Command result" className="otis-overlay--settings" onClose={() => setControlResult(null)}><section className="otis-settings"><header className="otis-pane-header"><h2 className="text-base font-medium">Result</h2><Button variant="outline" size="sm" type="button" onClick={() => setControlResult(null)}>Close</Button></header><div className="otis-settings__content text-sm"><Markdown skipHtml disallowedElements={['img']}>{controlResult}</Markdown></div></section></Overlay>}
     {sourceId && <SourcePane workspaceId={workspaceId} memoryId={sourceId} onClose={() => setSourceId(null)} onAccessLost={loseAccess} onOpenChat={id => navigate(workspaceId, id)}/>} {detailActionId && <DetailPane onAccessLost={loseAccess} workspaceId={workspaceId} chatId={readOnly ? '' : activeChatId ?? ''} actionId={detailActionId} onClose={() => setDetailActionId(null)} onUndone={() => { if (activeChatId) void resyncChat(activeChatId); }}/>} {settingsOpen && <SettingsPane onAccessLost={loseAccess} workspaceId={workspaceId} workspaceName={workspaceName} members={members} currentUserId={userId} currentUserRole={workspaces.find(w => w.id === workspaceId)?.role as ('owner' | 'member') | undefined ?? 'member'} onUpdated={() => setModelRevision(value => value + 1)} onClose={() => setSettingsOpen(false)} onSignOut={onSignOut} onWorkspaceRenamed={handleWorkspaceRenamed} onWorkspaceDeleted={handleWorkspaceDeleted} onWorkspaceCreated={handleWorkspaceCreated}/>}

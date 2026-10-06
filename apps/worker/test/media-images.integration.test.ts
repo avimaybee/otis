@@ -20,7 +20,7 @@ import { sha256 } from '@otis/identity';
 import type { Env } from '../src/index.js';
 import { inspectImageBytes } from '../src/media/container.js';
 import { handleVoiceMediaRoute } from '../src/media/routes.js';
-import { acceptWebMessage } from '../src/inbox/repository.js';
+import { acceptWebMessage, listChatMessages } from '../src/inbox/repository.js';
 import { dispatchOutboxItem } from '../src/actor/dispatch.js';
 
 const E = env as unknown as Env;
@@ -303,6 +303,10 @@ describe('image attachments in the agent turn (workerd, Slice 3)', () => {
       .bind(WS, accepted.run_id)
       .first<{ payload_json: string }>();
     expect(JSON.parse(String(activity?.payload_json))).toMatchObject({ image_media_ids: [first, second] });
+
+    const listed = await listChatMessages(E.DB, WS, CHAT, { limit: 50 });
+    const listedMessage = listed.find((m) => m.client_message_id === 'cm_s3_msg1');
+    expect(listedMessage?.image_media_ids).toEqual([first, second]);
   });
 
   it('refuses invalid image attachments', async () => {

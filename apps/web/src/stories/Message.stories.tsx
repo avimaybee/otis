@@ -153,3 +153,25 @@ export const PartialFiled: Story = {
     runs: { 'run-story-1': partialRun },
   },
 };
+
+export const ImagesUnavailable: Story = {
+  name: 'message/images-unavailable',
+  args: {
+    ...base,
+    messages: [
+      storyMessage({
+        content_text: 'The signed invoice is attached.',
+        image_media_ids: ['med_expired_1', 'med_expired_2'],
+        run_id: 'run-story-1',
+        client_message_id: 'client-img-1',
+      }),
+    ],
+  },
+  parameters: {
+    docs: {
+      description: {
+        story: 'Expired or deleted photo objects fail per image with a quiet inline note; the caption and bubble survive. (Storybook has no media backend, so every private photo 404s here.)',
+      },
+    },
+  },
+};

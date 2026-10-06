@@ -31,9 +31,12 @@ function localMessage(entry: OutboxEntry, sequence: number): ChatMessage {
     inbound_message_id: null,
     client_message_id: entry.clientId,
     // A voice note has no typed text until the transcript commits; the local
-    // echo carries a factual label so the bubble is not blank.
-    content_text: entry.text || (entry.mediaId ? 'Voice note' : ''),
+    // echo carries a factual label so the bubble is not blank. Photos behave
+    // the same: the server media identities are already finalized, so the
+    // echo renders them through the private media route immediately.
+    content_text: entry.text || (entry.mediaId ? 'Voice note' : entry.imageMediaIds?.length ? 'Photos' : ''),
     media_id: entry.mediaId ?? null,
+    image_media_ids: entry.imageMediaIds ?? null,
     run_id: entry.runId ?? null,
     sequence,
     created_at: entry.createdAt,

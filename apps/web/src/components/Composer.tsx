@@ -1,12 +1,13 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import TextareaAutosize from 'react-textarea-autosize';
 import type { CommandDescriptor, ModelOption, VoiceMediaSummary } from '@otis/contracts';
-import { DOMAIN_BOUNDS } from '@otis/contracts';
+import { DOMAIN_BOUNDS, IMAGE_BOUNDS } from '@otis/contracts';
 import { cancelDraftSave, deleteDraft, draftSession, flushDraftSaves, loadDraft, scheduleDraftSave } from '../api/drafts.js';
 import type { VoiceUploadAdapter } from '../api/voice.js';
+import { validateImageFile, type ImageUploadRequest, type ImageUploadResult } from '../api/images.js';
 import { useMediaQuery } from '../hooks/useMediaQuery.js';
 import { useVoiceRecorder, type VoiceController, type VoiceRecorderEnvironment, type VoiceRecorderScope } from '../hooks/useVoiceRecorder.js';
-import { ChevronDownIcon, CloseIcon, MicIcon, SendIcon, StopIcon } from './icons.js';
+import { ChevronDownIcon, CloseIcon, MicIcon, PlusIcon, SendIcon, StopIcon } from './icons.js';
 import { VoiceCapturePanel } from './VoiceCapturePanel.js';
 import { Button } from './ui/button.js';
 import { Command, CommandItem, CommandList } from './ui/command.js';
@@ -35,21 +36,48 @@ export interface VoiceComposerConfig {
   /** Resolves only after durable outbox acceptance; rejection retains local bytes. */
   onSent?: (result: { clientMessageId: string; media: VoiceMediaSummary; durationMs: number; mimeType: string; chatId?: string }) => Promise<void>;
 }
+export interface ImageComposerConfig {
+  /** True when the chat scope can take attachments (workspace always; chat ensured at send). */
+  available: boolean;
+  workspaceId: string;
+  chatId: string | null;
+  /** Creates the conversation for a first message, or returns the active id. Null aborts the send. */
+  onEnsureChat: () => Promise<string | null>;
+  /** Claim/PUT/finalize handoff for one file; resolves only with a server media identity. */
+  upload: (request: ImageUploadRequest) => Promise<ImageUploadResult>;
+  /** Story/test seam: bypasses the transport with scripted results. */
+  controller?: ImageAttachmentController;
+}
+export interface ImageAttachment {
+  id: string;
+  file: File;
+  previewUrl: string;
+  status: 'ready' | 'uploading' | 'done' | 'error';
+  mediaId?: string;
+  error?: string;
+}
+export interface ImageAttachmentController {
+  attachments: ImageAttachment[];
+  addFiles: (files: File[]) => void;
+  remove: (id: string) => void;
+  clear: () => void;
+}
 export interface ComposerProps {
   disabled?: boolean; disabledReason?: string; running: boolean;
   commands: CommandDescriptor[]; models?: ModelOption[]; workspaces?: { id: string; name: string }[];
   placeholder?: string; draftKey?: string; draftValue?: string | null; replyTo?: ClarificationContext;
   controlPending?: boolean; modelReady?: boolean; modelsLoading?: boolean; voice?: VoiceComposerConfig;
+  images?: ImageComposerConfig;
   modelsError?: string; onRetryModels?: () => void;
   onCommand?: (text: string) => Promise<boolean>;
-  onStop?: () => Promise<void>; onSend: (text: string) => void | boolean | Promise<boolean>;
+  onStop?: () => Promise<void>; onSend: (text: string, imageMediaIds?: string[]) => void | boolean | Promise<boolean>;
 }
 export interface SuggestionItem { name: string; label?: string; summary: string; insert: string; hasSubmenu?: boolean; }
 // Only offer choices the server actually supplied. Never invent a due date or consent.
 export function deriveCandidates(_question: string, candidates?: string[] | null, _missingFields?: string[], _intendedOp?: string): string[] { return candidates ?? []; }
 
 export function Composer({ disabled, disabledReason, running, commands, models = [], workspaces = [],
-  placeholder = 'Message Otis', draftKey, draftValue, replyTo, controlPending, modelReady = true, modelsLoading = false, voice, modelsError, onRetryModels, onCommand, onStop, onSend }: ComposerProps) {
+  placeholder = 'Message Otis', draftKey, draftValue, replyTo, controlPending, modelReady = true, modelsLoading = false, voice, images, modelsError, onRetryModels, onCommand, onStop, onSend }: ComposerProps) {
   const id = useId();
   const input = useRef<HTMLTextAreaElement>(null);
   const sendingRef = useRef(false);
@@ -79,6 +107,61 @@ export function Composer({ disabled, disabledReason, running, commands, models =
   const [dismissed, setDismissed] = useState(false);
   const [index, setIndex] = useState(0);
   const desktop = useMediaQuery('(min-width: 900px) and (pointer: fine)');
+  // Attached still images are session-local previews, never drafted: each
+  // file carries a stable upload UUID so a retried handoff reuses one media
+  // identity, and object URLs are revoked on remove/send/unmount.
+  const fileInput = useRef<HTMLInputElement>(null);
+  const [attachments, setAttachments] = useState<ImageAttachment[]>([]);
+  const attachmentsRef = useRef<ImageAttachment[]>([]);
+  const setAttachmentList = (next: ImageAttachment[]) => {
+    attachmentsRef.current = next;
+    setAttachments(next);
+  };
+  const revokeAttachments = (list: ImageAttachment[]) => {
+    for (const attachment of list) URL.revokeObjectURL(attachment.previewUrl);
+  };
+  useEffect(() => () => revokeAttachments(attachmentsRef.current), []);
+  const patchAttachment = (id: string, patch: Partial<ImageAttachment>) => {
+    setAttachmentList(attachmentsRef.current.map(item => (item.id === id ? { ...item, ...patch } : item)));
+  };
+  const internalAttachments: ImageAttachmentController = {
+    attachments,
+    addFiles: files => {
+      const room = IMAGE_BOUNDS.MAX_PER_MESSAGE - attachmentsRef.current.length;
+      if (room <= 0) {
+        setError(`At most ${IMAGE_BOUNDS.MAX_PER_MESSAGE} photos per message.`);
+        return;
+      }
+      const accepted: ImageAttachment[] = [];
+      for (const file of files.slice(0, room)) {
+        const gate = validateImageFile(file);
+        if (!gate.valid) {
+          setError(gate.message);
+          continue;
+        }
+        accepted.push({
+          id: crypto.randomUUID(),
+          file,
+          previewUrl: URL.createObjectURL(file),
+          status: 'ready',
+        });
+      }
+      if (accepted.length > 0) {
+        setError('');
+        setAttachmentList([...attachmentsRef.current, ...accepted]);
+      }
+    },
+    remove: id => {
+      const target = attachmentsRef.current.find(item => item.id === id);
+      if (target) URL.revokeObjectURL(target.previewUrl);
+      setAttachmentList(attachmentsRef.current.filter(item => item.id !== id));
+    },
+    clear: () => {
+      revokeAttachments(attachmentsRef.current);
+      setAttachmentList([]);
+    },
+  };
+  const imageController = images?.controller ?? internalAttachments;
   // The internal recorder only runs when the composer owns the capture scope
   // and no story/test controller was injected. Capture never touches the
   // typed draft: the field is swapped out visually, not cleared.
@@ -94,6 +177,10 @@ export function Composer({ disabled, disabledReason, running, commands, models =
     || voiceController.phase === 'finalizing'
     || voiceController.phase === 'review';
   const micVisible = Boolean(voice?.available) && !voiceActive;
+  // Answers to Otis questions cannot carry photos yet (the clarification
+  // endpoint takes text only), so the affordance hides while replying or
+  // while a recording takes over the field.
+  const attachVisible = Boolean(images?.available) && !voiceActive && !replyTo;
   const voiceError = voiceActive ? null : voiceController.error;
   const voiceStorageWarning = voiceController.phase === 'recording' && !voiceController.durable
     ? 'This recording is not saved in the browser. Keep this tab open.'
@@ -157,19 +244,67 @@ export function Composer({ disabled, disabledReason, running, commands, models =
     setDismissed(true); await command(row.insert, true); input.current?.focus();
   };
   const submit = async () => {
-    const text = value.trim(); if (!text || disabled || sendingRef.current || tooLong || controlPending) return;
+    const text = value.trim();
+    const pending = imageController.attachments;
+    const hasImages = images && pending.length > 0;
+    if ((!text && !hasImages) || disabled || sendingRef.current || tooLong || controlPending) return;
     // A double slash is literal text (product command escape), never a command.
-    if (text.startsWith('/') && !text.startsWith('//') && !replyTo) { await command(text, true); return; }
+    if (text.startsWith('/') && !text.startsWith('//') && !replyTo && !hasImages) { await command(text, true); return; }
     if (!modelReady) return;
+    // Attached photos upload first: acceptance only takes finalized media,
+    // so the message send below carries server identities, never local
+    // bytes. A failed handoff keeps its preview with the precise reason and
+    // blocks this submit without touching the draft.
+    let imageMediaIds: string[] | undefined;
+    if (hasImages && images && !images.controller) {
+      const chatId = images.chatId ?? await images.onEnsureChat();
+      if (!chatId) {
+        setError('Could not open a conversation. Try again.');
+        return;
+      }
+      const uploaded: string[] = [];
+      for (const attachment of pending) {
+        if (attachment.status === 'done' && attachment.mediaId) {
+          uploaded.push(attachment.mediaId);
+          continue;
+        }
+        patchAttachment(attachment.id, { status: 'uploading', error: undefined });
+        try {
+          const result = await images.upload({
+            workspaceId: images.workspaceId,
+            chatId,
+            clientMessageId: attachment.id,
+            file: attachment.file,
+          });
+          patchAttachment(attachment.id, { status: 'done', mediaId: result.mediaId });
+          uploaded.push(result.mediaId);
+        } catch (err) {
+          const message = err instanceof Error ? err.message : 'Photo upload failed. Try again.';
+          patchAttachment(attachment.id, { status: 'error', error: message });
+          setError(message);
+          return;
+        }
+      }
+      imageMediaIds = uploaded;
+    } else if (hasImages && images?.controller) {
+      // Story/test controller: attachments are fixtures, not uploads.
+      imageMediaIds = pending.map(attachment => attachment.mediaId ?? attachment.id);
+    }
     // The submitted snapshot is accepted locally here: the outbox entry owns
     // retry and redraft, so the composer clears without waiting for HTTP and
     // a second message can submit immediately with its own identity.
     sendingRef.current = true;
     clearDraft();
+    const sentAttachments = imageController.attachments;
+    if (!images?.controller) {
+      revokeAttachments(sentAttachments);
+      setAttachmentList([]);
+    }
+    if (fileInput.current) fileInput.current.value = '';
     setSending(true); setError('');
     sendingRef.current = false;
     try {
-      await onSend(text);
+      await onSend(text, imageMediaIds);
     } catch { setError('Message not confirmed. It is kept in the conversation with Retry.'); }
     finally { setSending(false); }
   };
@@ -192,6 +327,38 @@ export function Composer({ disabled, disabledReason, running, commands, models =
       </CommandList>
     </Command>}
     <div className="otis-composer__field flex flex-col min-h-[52px] rounded-2xl bg-card p-3 gap-2">
+      {imageController.attachments.length > 0 && (
+        <div className="otis-composer__attachments flex gap-2 overflow-x-auto" role="list" aria-label="Attached photos">
+          {imageController.attachments.map(attachment => (
+            <div key={attachment.id} role="listitem" className="relative shrink-0">
+              <img
+                src={attachment.previewUrl}
+                alt="Attached file preview"
+                className="h-20 w-20 rounded-xl border border-border/40 object-cover"
+              />
+              {attachment.status === 'uploading' && (
+                <span className="absolute inset-0 grid place-items-center rounded-xl bg-card/60" aria-label="Uploading photo">
+                  <span className="otis-spinner" aria-hidden="true" />
+                </span>
+              )}
+              {attachment.status === 'error' && (
+                <span className="absolute inset-x-0 bottom-0 rounded-b-xl bg-destructive/90 px-1 py-0.5 text-[10px] text-destructive-foreground" role="alert">
+                  Failed
+                </span>
+              )}
+              <button
+                type="button"
+                className="absolute -right-2 -top-2 grid size-6 place-items-center rounded-full border border-border bg-card text-muted-foreground hover:text-foreground"
+                aria-label="Remove photo"
+                disabled={sending}
+                onClick={() => imageController.remove(attachment.id)}
+              >
+                <CloseIcon />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
       {voiceActive ? (
         <VoiceCapturePanel
           controller={voiceController}
@@ -286,6 +453,31 @@ export function Composer({ disabled, disabledReason, running, commands, models =
             </div>
 
             <div className="flex items-center gap-2 shrink-0">
+              <input
+                ref={fileInput}
+                type="file"
+                accept="image/jpeg,image/png,image/webp"
+                multiple
+                className="otis-visually-hidden"
+                aria-label="Attach photos"
+                disabled={disabled || sending}
+                onChange={event => {
+                  const files = [...(event.target.files ?? [])];
+                  event.target.value = '';
+                  if (files.length > 0) imageController.addFiles(files);
+                }}
+              />
+              {attachVisible && (
+                <button
+                  type="button"
+                  className="otis-composer__action grid size-9 shrink-0 place-items-center rounded-full text-muted-foreground hover:bg-accent hover:text-foreground"
+                  aria-label="Attach photos"
+                  disabled={disabled || sending}
+                  onClick={() => fileInput.current?.click()}
+                >
+                  <PlusIcon />
+                </button>
+              )}
               {micVisible && (
                 <button
                   type="button"
@@ -298,7 +490,7 @@ export function Composer({ disabled, disabledReason, running, commands, models =
                   {voiceController.phase === 'requesting' ? <span className="otis-spinner" aria-hidden="true"/> : <MicIcon/>}
                 </button>
               )}
-              {running && onStop && !value.trim() ? (
+              {running && onStop && !value.trim() && imageController.attachments.length === 0 ? (
                 <button
                   type="button"
                   className="otis-composer__action otis-composer__send grid size-9 shrink-0 place-items-center rounded-full bg-primary text-primary-foreground"
@@ -312,13 +504,13 @@ export function Composer({ disabled, disabledReason, running, commands, models =
                 <button
                   type="button"
                   className={`otis-composer__action otis-composer__send grid size-9 shrink-0 place-items-center rounded-full ${
-                    value.trim() && !disabled
+                    (value.trim() || imageController.attachments.length > 0) && !disabled
                       ? 'bg-highlight text-highlight-foreground hover:bg-highlight-hover active:bg-highlight-pressed'
                       : 'bg-accent text-subtle'
                   }`}
                   aria-label="Send"
                   aria-busy={sending}
-                  disabled={disabled || tooLong || !value.trim() || controlPending || (!modelReady && !(value.trim().startsWith('/') && !value.trim().startsWith('//')))}
+                  disabled={disabled || tooLong || (value.trim() === '' && imageController.attachments.length === 0) || controlPending || (!modelReady && !(value.trim().startsWith('/') && !value.trim().startsWith('//')))}
                   onClick={() => void submit()}
                 >
                   {sending ? <span className="otis-spinner" aria-hidden="true"/> : <SendIcon/>}
