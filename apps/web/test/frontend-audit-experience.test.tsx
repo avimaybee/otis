@@ -758,6 +758,7 @@ describe('Frontend Experience Audit & Confidence Verification (FE-01 - FE-16)', 
       expect(view.host.textContent).toContain('Morning brief schedule');
       expect(view.host.textContent).toContain('Disabled');
       expect(view.host.textContent).toContain('Morning briefs start disabled until you configure a schedule.');
+      expect(view.host.textContent).toContain('Weekday brief at 08:30');
 
       await view.unmount();
     });

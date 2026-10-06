@@ -19,7 +19,7 @@ const supportedTimezones = (() => {
 })();
 
 function formatWeekdays(weekdays: number[] | null | undefined): string {
-  if (!weekdays || weekdays.length === 0) return 'Weekdays';
+  if (!weekdays || weekdays.length === 0) return 'Not set';
   const dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
   return weekdays.map(d => dayNames[d] ?? String(d)).join(', ');
 }
@@ -289,7 +289,7 @@ export function SettingsPane({
             <div className="rounded-lg border border-border bg-card/60 p-2 mt-2 space-y-1 text-xs">
               <div className="flex justify-between">
                 <span className="text-muted-foreground">Delivery time</span>
-                <span className="font-medium text-foreground">{personal.brief_local_time ?? '08:30'}</span>
+                <span className="font-medium text-foreground">{personal.brief_local_time ?? 'Not set'}</span>
               </div>
               <div className="flex justify-between">
                 <span className="text-muted-foreground">Active days</span>
@@ -302,7 +302,7 @@ export function SettingsPane({
             </div>
           ) : (
             <p className="otis-detail__label text-xs mt-1">
-              Morning briefs start disabled until you configure a schedule. When active, Otis prepares a morning summary of upcoming promises, visits, and follow-ups.
+              Morning briefs start disabled until you configure a schedule. When active, Otis prepares a morning summary of upcoming promises, visits, and follow-ups. No forms needed: just tell Otis in chat, e.g. “Weekday brief at 08:30”.
             </p>
           )}
           <form className="mt-3" onSubmit={event => { event.preventDefault(); void saveTimezone(); }}>
