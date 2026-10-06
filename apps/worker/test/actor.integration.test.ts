@@ -421,7 +421,7 @@ describe('Worker Actor Dispatch & Recovery Integration (workerd)', () => {
         runId: second.run_id,
         answer: { text: 'n/a', messageId: 'msg-ans-nopend-h09' },
       }),
-    ).toEqual({ resumed: false });
+    ).toEqual({ resumed: false, failureReason: 'run_not_waiting', runStatus: 'succeeded' });
 
     // The answer is persisted on the clarification and resumes exactly once.
     await insertAnswerMessage('msg-ans-friday-h09', aviId, 'ans-friday-h09');
@@ -491,7 +491,7 @@ describe('Worker Actor Dispatch & Recovery Integration (workerd)', () => {
         runId: queued.run_id,
         answer: { text: 'x', messageId: 'msg-ans-stopped-h11' },
       }),
-    ).toEqual({ resumed: false });
+    ).toEqual({ resumed: false, failureReason: 'run_not_waiting', runStatus: 'cancelled' });
 
     const other = await accept(chatAvi, aviId, 'act-msg-012', 'not yours to stop');
     const forbidden = await SELF.fetch(`http://localhost/api/workspaces/${ws}/runs/${other.run_id}/stop`, {
@@ -1767,19 +1767,19 @@ describe('Worker Actor Dispatch & Recovery Integration (workerd)', () => {
         runId: msg.run_id,
         answer: { text: 'x', messageId: 'msg-ans-h08-hunor', clarificationId: clar!.id },
       }),
-    ).toEqual({ resumed: false });
+    ).toEqual({ resumed: false, failureReason: 'answer_invalid' });
 
     // Missing or unknown sources are rejected.
     expect(
       await resumeRun(env.DB, { workspaceId: ws, runId: msg.run_id, answer: { text: 'x', clarificationId: clar!.id } }),
-    ).toEqual({ resumed: false });
+    ).toEqual({ resumed: false, failureReason: 'answer_invalid' });
     expect(
       await resumeRun(env.DB, {
         workspaceId: ws,
         runId: msg.run_id,
         answer: { text: 'x', messageId: 'msg-missing-h08', clarificationId: clar!.id },
       }),
-    ).toEqual({ resumed: false });
+    ).toEqual({ resumed: false, failureReason: 'answer_invalid' });
 
     // Claimed author must match the derived source author.
     expect(
@@ -1788,7 +1788,7 @@ describe('Worker Actor Dispatch & Recovery Integration (workerd)', () => {
         runId: msg.run_id,
         answer: { text: 'x', messageId: 'msg-ans-h08-avi', clarificationId: clar!.id, authorUserId: hunorId },
       }),
-    ).toEqual({ resumed: false });
+    ).toEqual({ resumed: false, failureReason: 'answer_invalid' });
 
     // Removal after the pre-check still fails the committing guard.
     const hunorMsg = await accept(chatHunor, hunorId, 'act-msg-h08b', 'hunor question');

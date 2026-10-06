@@ -9,8 +9,10 @@ import { isVoiceRecordingActive } from '../hooks/useVoiceRecorder.js';
 /**
  * Safe service-worker update prompt. It never auto-reloads: the notice
  * appears only when the new worker is waiting, and Reload is refused while
- * this account still has unsent local entries (they resume after a manual
- * reload, but interrupting an in-flight send is never forced). Otherwise the
+ * a send is actually in flight — interrupting a live POST is never forced.
+ * Failed entries do NOT block: they are durable in IndexedDB and resume
+ * after reload, so holding the update for them would trap the user behind
+ * a send that can never succeed. Otherwise the
  * action first commits this account's pending debounced drafts to IndexedDB
  * and awaits them — a browser reload does not promise a React unmount, so a
  * keystroke inside the debounce window would otherwise disappear when the
@@ -39,7 +41,10 @@ export function UpdatePrompt({ userId, onReload }: { userId: string; onReload?: 
       toast('Finish recording first — an update is ready and will apply afterwards.');
       return;
     }
-    const hasUnsent = () => entriesForUser(userId).some(entry => entry.state !== 'saved');
+    // Only an actually in-flight send blocks: failed entries are durable in
+    // IndexedDB and resume after reload, so holding the update for them
+    // would trap the user behind a send that can never succeed.
+    const hasUnsent = () => entriesForUser(userId).some(entry => entry.state === 'sending');
     if (hasUnsent()) {
       toast('Finish sending first — an update is ready and will apply afterwards.');
       return;

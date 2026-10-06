@@ -216,7 +216,30 @@ export async function handleReplyToClarification(
   const result = answerMessage ? await resumeRun(env.DB, {
     workspaceId, runId, answer: { clarificationId, messageId: answerMessage.id, authorUserId: scope.user.id, text, resolvedFields: body.resolved_fields },
   }) : { resumed: false };
-  if (!result.resumed && !('replay' in result && result.replay)) return jsonError(422, 'resume_failed', 'I could not use that answer yet. Give the requested detail or a date and timezone.', requestId);
+  if (!result.resumed && !('replay' in result && result.replay)) {
+    // Dead questions get terminal codes so the client stops offering retry
+    // against them; fixable answers keep the retryable 422 with guidance.
+    const reason = 'failureReason' in result ? result.failureReason : undefined;
+    if (reason === 'question_resolved') {
+      return jsonError(409, 'already_resolved', 'That question has already been answered.', requestId);
+    }
+    if (reason === 'question_not_pending' || reason === 'question_unknown') {
+      return jsonError(410, 'question_closed', 'That question is no longer open.', requestId);
+    }
+    if (reason === 'run_not_waiting' || reason === 'run_missing') {
+      const status = 'runStatus' in result && typeof result.runStatus === 'string' ? result.runStatus : null;
+      return jsonError(
+        410,
+        'question_closed',
+        status ? `That question is closed — its run ${status}.` : 'That question is closed — its run is gone.',
+        requestId,
+      );
+    }
+    if (reason === 'question_ambiguous') {
+      return jsonError(422, 'resume_failed', 'There is more than one open question — answer the specific one.', requestId);
+    }
+    return jsonError(422, 'resume_failed', 'I could not use that answer yet. Give the requested detail or a date and timezone.', requestId);
+  }
   const body2: ClarificationReplyResponse = {
     status: 'resumed',
     clarification_id: clarificationId,

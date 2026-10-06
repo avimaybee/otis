@@ -1298,6 +1298,62 @@ describe('007 round 2 owning-suite pins: shortcut reply and command endpoint', (
     expect(await env.DB.prepare(`SELECT status FROM agent_runs WHERE id = ?`).bind(accepted.run_id).first()).toEqual({ status: 'queued' });
   });
 
+  it('closes a dead question with 410 and retires it when its run already ended', async () => {
+    const chatId = (await createChat(env.DB, { workspaceId: WS, authorUserId: AVI })).id;
+    const accepted = await acceptWebMessage(env.DB, { workspaceId: WS, chatId, userId: AVI, clientMessageId: 'dead-q-orig', text: 'Log this expense' });
+    const source = await env.DB.prepare(`SELECT id FROM messages_in WHERE external_id = 'dead-q-orig'`).first<{ id: string }>();
+    const now = new Date().toISOString();
+    const clarId = 'dead-q-clar-1';
+    const runsBefore = await env.DB.prepare(`SELECT COUNT(*) AS n FROM agent_runs WHERE chat_id = ?`).bind(chatId).first<{ n: number }>();
+    await env.DB.batch([
+      env.DB.prepare(`UPDATE agent_runs SET status = 'failed' WHERE id = ?`).bind(accepted.run_id),
+      env.DB.prepare(`INSERT INTO pending_clarifications (id, workspace_id, chat_id, run_id, source_message_id, requester_user_id, question, intended_operation, missing_fields, operation_payload_json, source_revision, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, 'Which account?', 'log_event', '[]', ?, 0, 'pending', ?, ?)`)
+        .bind(clarId, WS, chatId, accepted.run_id, source!.id, AVI, null, now, now),
+    ]);
+
+    const res = await call(`/api/workspaces/${WS}/clarifications/${clarId}/reply`, {
+      method: 'POST',
+      cookie: aviCookie,
+      headers: CSRF,
+      body: JSON.stringify({ text: 'Savings account.', client_message_id: 'dead-q-ans-1' }),
+    });
+    expect(res.status).toBe(410);
+    const body = await res.json() as { error: { code: string; message: string } };
+    expect(body.error.code).toBe('question_closed');
+    expect(body.error.message).toContain('failed');
+
+    // The dead question is retired so answers stop failing forever; the run
+    // is untouched and no continuation run was minted.
+    expect(await env.DB.prepare(`SELECT status FROM pending_clarifications WHERE id = ?`).bind(clarId).first()).toEqual({ status: 'superseded' });
+    expect(await env.DB.prepare(`SELECT status FROM agent_runs WHERE id = ?`).bind(accepted.run_id).first()).toEqual({ status: 'failed' });
+    expect(await env.DB.prepare(`SELECT COUNT(*) AS n FROM agent_runs WHERE chat_id = ?`).bind(chatId).first()).toEqual(runsBefore);
+  });
+
+  it('answers an already-resolved question with 409 instead of a bare failure', async () => {
+    const chatId = (await createChat(env.DB, { workspaceId: WS, authorUserId: AVI })).id;
+    const accepted = await acceptWebMessage(env.DB, { workspaceId: WS, chatId, userId: AVI, clientMessageId: 'dead-q-orig-2', text: 'Log this too' });
+    const source = await env.DB.prepare(`SELECT id FROM messages_in WHERE external_id = 'dead-q-orig-2'`).first<{ id: string }>();
+    const now = new Date().toISOString();
+    const clarId = 'dead-q-clar-2';
+    await env.DB.batch([
+      env.DB.prepare(`UPDATE agent_runs SET status = 'waiting_for_input' WHERE id = ?`).bind(accepted.run_id),
+      env.DB.prepare(`INSERT INTO pending_clarifications (id, workspace_id, chat_id, run_id, source_message_id, requester_user_id, question, intended_operation, missing_fields, operation_payload_json, source_revision, status, answer_message_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, 'Which account?', 'log_event', '[]', ?, 0, 'resolved', ?, ?, ?)`)
+        .bind(clarId, WS, chatId, accepted.run_id, source!.id, AVI, null, source!.id, now, now),
+    ]);
+
+    const res = await call(`/api/workspaces/${WS}/clarifications/${clarId}/reply`, {
+      method: 'POST',
+      cookie: aviCookie,
+      headers: CSRF,
+      body: JSON.stringify({ text: 'A different answer.', client_message_id: 'dead-q-ans-2' }),
+    });
+    expect(res.status).toBe(409);
+    const body = await res.json() as { error: { code: string } };
+    expect(body.error.code).toBe('already_resolved');
+    // Rejected before acceptance: no answer row was stored for the retry.
+    expect(await env.DB.prepare(`SELECT id FROM messages_in WHERE external_id = 'dead-q-ans-2'`).first()).toBeNull();
+  });
+
   it('pins /model switch, default clear, and unknown key via POST commands route', async () => {
     const now = new Date().toISOString();
     const model = PRODUCTION_REGISTRY.entries.find(entry => entry.provider === 'opencode_go' && entry.lifecycle === 'active')!;

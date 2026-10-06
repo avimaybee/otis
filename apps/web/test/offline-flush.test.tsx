@@ -1385,6 +1385,37 @@ describe('008D offline shell, update prompt and PWA contract', () => {
     });
   });
 
+  it('reloads with permanently failed entries; only in-flight sends block', async () => {
+    const { useRegisterSW } = await import('./pwa-register-stub.js');
+    const mocked = vi.mocked(useRegisterSW);
+    mocked.mockReturnValue({
+      needRefresh: [true, vi.fn()],
+      offlineReady: [false, vi.fn()],
+      updateServiceWorker: vi.fn(),
+    });
+    const reloaded = vi.fn();
+    resetOutboxForTests();
+    const view = await mount(
+      <div>
+        <Toaster />
+        <UpdatePrompt userId={USER} onReload={reloaded} />
+      </div>,
+    );
+    // A failed send is durable in storage and resumes after reload: it must
+    // not trap the update behind a send that can never succeed.
+    const failed = createOutboxEntry({ userId: USER, workspaceId: WS, chatId: 'chat', text: 'dead send' });
+    markOutboxFailed(failed.clientId, { code: 'question_closed', message: 'That question is no longer open.' });
+    await React.act(async () => (view.host.querySelectorAll('button')[0] as HTMLElement).click());
+    expect(reloaded).toHaveBeenCalled();
+    await view.unmount();
+    resetOutboxForTests();
+    mocked.mockReturnValue({
+      needRefresh: [false, vi.fn()],
+      offlineReady: [false, vi.fn()],
+      updateServiceWorker: vi.fn(),
+    });
+  });
+
   it('commits a scheduled draft before activating the update, and still blocks on unsent entries', async () => {
     const { useRegisterSW } = await import('./pwa-register-stub.js');
     const mocked = vi.mocked(useRegisterSW);

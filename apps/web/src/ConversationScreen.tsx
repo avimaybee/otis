@@ -420,6 +420,22 @@ export function ConversationScreen({ workspaceId, chat: routeChat, chatParamPres
     // snapshot is consulted as authority for transport.
     const entryUserId = entry.userId;
     const entryWorkspaceId = entry.workspaceId;
+    // A clarification answer for a question this client already knows is
+    // closed must never POST: the server would reject it and each retry
+    // would mint orphan answer rows. Fail open when the snapshot is absent.
+    // Releases the delivery claim like every other early return.
+    if (entry.clarificationId && entry.chatId) {
+      const known = queryClient.getQueryData<ChatSnapshot>(qk.chat(entryUserId, entryWorkspaceId, entry.chatId));
+      if (known && !known.questions.some(question => question.id === entry.clarificationId && question.status === 'pending')) {
+        markOutboxFailed(entry.clientId, {
+          code: 'question_closed',
+          message: 'That question is no longer open.',
+        });
+        if (replyId === entry.clarificationId) setReplyId(null);
+        releaseDelivery(entry.clientId);
+        return false;
+      }
+    }
     // Visible UI updates additionally require the current view.
     const sameView = (chatId: string) =>
       generation === epoch.current
@@ -506,10 +522,27 @@ export function ConversationScreen({ workspaceId, chat: routeChat, chatParamPres
       // Transient failures additionally schedule one bounded automatic retry
       // each (Retry-After honored); permanent failures stay failed until the
       // user retries or discards. Stale clarifications never reroute.
-      markOutboxFailed(entry.clientId, {
-        code: err instanceof ApiError ? err.code : 'transport',
-        message: err instanceof ApiError ? err.message : 'Message not confirmed. It is kept in the conversation with Retry.',
-      });
+      const failureCode = err instanceof ApiError ? err.code : 'transport';
+      const failureMessage = err instanceof ApiError ? err.message : 'Message not confirmed. It is kept in the conversation with Retry.';
+      markOutboxFailed(entry.clientId, { code: failureCode, message: failureMessage });
+      if ((failureCode === 'already_resolved' || failureCode === 'question_closed') && entry.clarificationId) {
+        // The question is dead by server verdict: converge the view (the
+        // answer text was still accepted server-side and reconciles by
+        // client UUID, so no duplicate bubble) and leave the dead
+        // "Replying to" mode instead of inviting another doomed retry.
+        const deadChat = targetChat ?? entry.chatId ?? '';
+        if (deadChat) {
+          const view = queryClient.getQueryData<ChatSnapshot>(qk.chat(entryUserId, entryWorkspaceId, deadChat));
+          const deadRun = view ? Object.values(view.runs).find(candidate => candidate.pending_clarification?.id === entry.clarificationId) : undefined;
+          if (deadRun) refreshRun(entryWorkspaceId, deadChat, deadRun.run.id);
+          refreshMessages(entryWorkspaceId, deadChat);
+          refreshQuestions(deadChat);
+        }
+        if (replyId === entry.clarificationId) setReplyId(null);
+      } else if (failureCode === 'resume_failed' && entry.clarificationId) {
+        const failedChat = targetChat ?? entry.chatId ?? '';
+        if (failedChat) refreshQuestions(failedChat);
+      }
       if (classifySendError(err) === 'transient') {
         const attempts = getOutboxEntry(entry.clientId)?.attempts ?? entry.attempts + 1;
         deferOutboxRetry(entry.clientId, new Date(Date.now() + computeBackoffMs(attempts, err instanceof ApiError ? err.retryAfterMs : undefined)).toISOString());
@@ -518,7 +551,7 @@ export function ConversationScreen({ workspaceId, chat: routeChat, chatParamPres
     } finally {
       releaseDelivery(entry.clientId);
     }
-  }, [epoch, queryClient, userId, workspaceId, workspaces, navigate, loseAccess, refreshRun, refreshMessages, switchWorkspace]);
+  }, [epoch, queryClient, userId, workspaceId, workspaces, navigate, loseAccess, refreshRun, refreshMessages, refreshQuestions, replyId, switchWorkspace]);
 
   const send = useCallback(async (text: string): Promise<boolean> => {
     if (readOnly || accessLost) return false;

@@ -127,6 +127,21 @@ export interface ResumeRunResult {
   resumed: boolean;
   replay?: boolean;
   clarificationId?: string | null;
+  /**
+   * Machine-readable failure reason when resumed is false. Lets callers tell
+   * a dead question (terminal run, resolved/superseded) apart from a fixable
+   * answer (ambiguous, invalid detail) instead of one blanket failure.
+   */
+  failureReason?:
+    | 'run_missing'
+    | 'run_not_waiting'
+    | 'question_unknown'
+    | 'question_ambiguous'
+    | 'question_not_pending'
+    | 'question_resolved'
+    | 'answer_invalid';
+  /** Run status observed when resume was refused; null when the run is gone. */
+  runStatus?: string | null;
 }
 
 export interface DispatchResult {
@@ -1452,8 +1467,27 @@ export async function resumeRun(
   }
 
   const run = await loadRun(db, params.workspaceId, params.runId);
-  if (!run || run.status !== 'waiting_for_input') {
-    return { resumed: false };
+  if (!run) {
+    // The run is gone: any named question for it can never be answered, so
+    // retire it instead of leaving a permanently failing question behind.
+    if (params.answer.clarificationId) {
+      await db
+        .prepare(`UPDATE pending_clarifications SET status = 'superseded', updated_at = ? WHERE id = ? AND workspace_id = ? AND status = 'pending'`)
+        .bind(nowIso, params.answer.clarificationId, params.workspaceId)
+        .run();
+    }
+    return { resumed: false, failureReason: 'run_missing', runStatus: null };
+  }
+  if (run.status !== 'waiting_for_input') {
+    if (isTerminal(run.status)) {
+      // A terminal run can never consume its pending questions: supersede
+      // them so answers stop failing forever against a dead question.
+      await db
+        .prepare(`UPDATE pending_clarifications SET status = 'superseded', updated_at = ? WHERE run_id = ? AND workspace_id = ? AND status = 'pending'`)
+        .bind(nowIso, params.runId, params.workspaceId)
+        .run();
+    }
+    return { resumed: false, failureReason: 'run_not_waiting', runStatus: run.status };
   }
 
   // 2. Locate target clarification
@@ -1466,12 +1500,15 @@ export async function resumeRun(
       )
       .bind(params.answer.clarificationId, params.workspaceId, params.runId)
       .first<Record<string, unknown>>();
-    if (!clar) return { resumed: false };
+    if (!clar) return { resumed: false, failureReason: 'question_unknown' };
     if (clar['status'] !== 'pending') {
       if (clar['status'] === 'resolved' && params.answer.messageId && clar['answer_message_id'] === params.answer.messageId) {
         return { resumed: false, replay: true, ...(params.answer.clarificationId ? { clarificationId: String(clar['id']) } : {}) };
       }
-      return { resumed: false };
+      if (clar['status'] === 'resolved') {
+        return { resumed: false, failureReason: 'question_resolved', clarificationId: String(clar['id']) };
+      }
+      return { resumed: false, failureReason: 'question_not_pending', clarificationId: String(clar['id']) };
     }
   } else {
     // No explicit question: only safe for single-question runs. If this run
@@ -1482,7 +1519,7 @@ export async function resumeRun(
       .bind(params.runId, params.workspaceId)
       .first<{ n: number }>();
     if (Number(total?.n ?? 0) !== 1) {
-      return { resumed: false };
+      return { resumed: false, failureReason: 'question_ambiguous' };
     }
     clar = await db
       .prepare(
@@ -1492,7 +1529,7 @@ export async function resumeRun(
       )
       .bind(params.runId, params.workspaceId)
       .first<Record<string, unknown>>();
-    if (!clar) return { resumed: false };
+    if (!clar) return { resumed: false, failureReason: 'question_not_pending' };
   }
 
   const clarId = String(clar['id']);
@@ -1504,38 +1541,38 @@ export async function resumeRun(
   // both carry one, and come from the requesting member. Membership is checked
   // here for a fast reject and repeated inside the committing transaction.
   if (!params.answer.messageId) {
-    return { resumed: false };
+    return { resumed: false, failureReason: 'answer_invalid' };
   }
   const answerMsg = await db
     .prepare(`SELECT workspace_id, chat_id, user_id FROM messages_in WHERE id = ?`)
     .bind(params.answer.messageId)
     .first<Record<string, unknown>>();
   if (!answerMsg || !answerMsg['user_id']) {
-    return { resumed: false };
+    return { resumed: false, failureReason: 'answer_invalid' };
   }
   if (String(answerMsg['workspace_id'] ?? '') !== params.workspaceId) {
-    return { resumed: false };
+    return { resumed: false, failureReason: 'answer_invalid' };
   }
   if (
     clar['chat_id'] &&
     answerMsg['chat_id'] &&
     String(answerMsg['chat_id']) !== String(clar['chat_id'])
   ) {
-    return { resumed: false };
+    return { resumed: false, failureReason: 'answer_invalid' };
   }
   const authorUserId = String(answerMsg['user_id']);
   if (params.answer.authorUserId && String(params.answer.authorUserId) !== authorUserId) {
-    return { resumed: false };
+    return { resumed: false, failureReason: 'answer_invalid' };
   }
   if (requesterUserId && authorUserId !== requesterUserId) {
-    return { resumed: false };
+    return { resumed: false, failureReason: 'answer_invalid' };
   }
   {
     const member = await db
       .prepare(`SELECT 1 FROM workspace_users WHERE workspace_id = ? AND user_id = ?`)
       .bind(params.workspaceId, authorUserId)
       .first();
-    if (!member) return { resumed: false };
+    if (!member) return { resumed: false, failureReason: 'answer_invalid' };
   }
 
   if (params.testHooks?.afterPrecheck) {
@@ -1586,7 +1623,7 @@ export async function resumeRun(
     if (resolvedFields && typeof resolvedFields['due'] === 'string') {
       const settings = await db.prepare(`SELECT brief_timezone FROM member_settings WHERE workspace_id = ? AND user_id = ?`).bind(params.workspaceId, authorUserId).first<{ brief_timezone: string | null }>();
       const due = resolveDateAnswer(resolvedFields['due'], nowIso, settings?.brief_timezone ?? null);
-      if (due === undefined) return { resumed: false };
+      if (due === undefined) return { resumed: false, failureReason: 'answer_invalid' };
       resolvedFields = { ...resolvedFields, due };
     }
 
@@ -1651,6 +1688,8 @@ export async function resumeRun(
     if (ledgerRes.status === 'applied' || ledgerRes.status === 'already_applied') {
       return { resumed: true, ...(params.answer.clarificationId ? { clarificationId: clarId } : {}) };
     }
+    // Late-commit race (revision moved between precheck and commit): no
+    // failureReason, so the route keeps the generic retryable 422.
     return { resumed: false };
   }
 
@@ -1721,6 +1760,7 @@ export async function resumeRun(
         .bind(nowIso, params.runId),
     ]);
   } catch (err) {
+    // Guard lost to a concurrent commit: generic retryable 422, no reason.
     if (isGuardFailure(err)) return { resumed: false };
     throw err;
   }
