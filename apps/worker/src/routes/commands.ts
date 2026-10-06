@@ -663,7 +663,7 @@ export async function handleExecuteCommand(request: Request, env: Env, workspace
   if (prior) {
     try {
       const accepted = await acceptWebMessage(env.DB, { workspaceId, chatId, userId: scope.user.id, clientMessageId: clientMessageId, text: text, command: { reply: '', presentation } });
-      const saved = await env.DB.prepare(`SELECT payload_json FROM run_activity WHERE run_id = ? AND type = 'answer_saved' ORDER BY cursor DESC LIMIT 1`).bind(accepted.run_id).first<{ payload_json: string }>();
+      const saved = await env.DB.prepare(`SELECT payload_json FROM run_activity WHERE workspace_id = ? AND chat_id = ? AND run_id = ? AND type = 'answer_saved' ORDER BY cursor DESC LIMIT 1`).bind(workspaceId, chatId, accepted.run_id).first<{ payload_json: string }>();
       if (saved) return jsonSuccess({ ...accepted, ...JSON.parse(saved.payload_json), deduplicated: true }, request.url.includes('/commands') ? 200 : 202, { 'x-request-id': requestId });
     } catch { return jsonError(409, 'conflict', 'Message ID already used with different content or context.', requestId); }
   }
@@ -702,7 +702,7 @@ export async function handleExecuteCommand(request: Request, env: Env, workspace
   }
   try {
     const accepted = await acceptWebMessage(env.DB, { workspaceId, chatId, userId: scope.user.id, clientMessageId: clientMessageId, text: text, command });
-    const saved = await env.DB.prepare(`SELECT payload_json FROM run_activity WHERE run_id = ? AND type = 'answer_saved' ORDER BY cursor DESC LIMIT 1`).bind(accepted.run_id).first<{ payload_json: string }>();
+    const saved = await env.DB.prepare(`SELECT payload_json FROM run_activity WHERE workspace_id = ? AND chat_id = ? AND run_id = ? AND type = 'answer_saved' ORDER BY cursor DESC LIMIT 1`).bind(workspaceId, chatId, accepted.run_id).first<{ payload_json: string }>();
     const completion = saved ? JSON.parse(saved.payload_json) as { reply: string; selected_workspace_id: string | null } : { reply: command.reply, selected_workspace_id: null };
     return jsonSuccess({ ...accepted, ...completion }, request.url.includes('/commands') ? 200 : 202, { 'x-request-id': requestId });
   } catch (err) {
