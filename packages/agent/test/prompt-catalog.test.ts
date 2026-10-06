@@ -59,4 +59,12 @@ describe('model catalog prompt section', () => {
     expect(prompt).toContain('Your senses:');
     expect(prompt).toContain('up to four per message');
   });
+
+  it('names no business in the stable instructions; the workspace comes from context', () => {
+    const prompt = renderSystemPrompt({ workspaceName: 'Kerning' });
+    const stable = prompt.split('--- Current Workspace Context ---')[0]!;
+    expect(stable).not.toContain('Kerning');
+    expect(stable).toContain('workspace name in your context');
+    expect(prompt).toContain('Workspace: Kerning');
+  });
 });
