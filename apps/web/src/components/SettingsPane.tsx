@@ -30,6 +30,7 @@ export function SettingsPane({
   members = {},
   currentUserId,
   currentUserRole = 'owner',
+  models: providedModels,
   onClose,
   onSignOut,
   onAccessLost,
@@ -43,6 +44,8 @@ export function SettingsPane({
   members?: Record<string, string>;
   currentUserId?: string;
   currentUserRole?: 'owner' | 'member';
+  /** App model catalog reuse: when supplied, no duplicate catalog fetch runs. */
+  models?: ModelOption[];
   onClose: () => void;
   onSignOut: () => void;
   onAccessLost?: () => void;
@@ -55,14 +58,12 @@ export function SettingsPane({
   const isOwner = currentUserRole === 'owner';
   const [tab, setTab] = useState<'personal' | 'workspace'>('personal');
   const [personal, setPersonal] = useState<MemberSettings | null>(null);
-  const [models, setModels] = useState<ModelOption[]>([]);
+  const [models, setModels] = useState<ModelOption[]>(providedModels ?? []);
   const [timezone, setTimezone] = useState('');
   const [defaultModel, setDefaultModel] = useState<string | null>(null);
-  const [loaded, setLoaded] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
   const [message, setMessage] = useState('');
   const [saved, setSaved] = useState('');
-  const [reload, setReload] = useState(0);
 
   const [wsName, setWsName] = useState(workspaceName);
   const [memberList, setMemberList] = useState<{ user_id: string; role: string; display_name: string | null; email?: string }[]>([]);
@@ -74,6 +75,19 @@ export function SettingsPane({
   const [confirmRemoveUserId, setConfirmRemoveUserId] = useState<string | null>(null);
   const newWsInputRef = useRef<HTMLInputElement>(null);
   const newWsBtnRef = useRef<HTMLButtonElement>(null);
+  // Scope fence: the pane is not remounted on workspace switches, so late
+  // responses for a previous workspace must never fill this one's sections.
+  const liveScope = useRef(workspaceId);
+  liveScope.current = workspaceId;
+  // Independent section readiness (F24): personal settings, workspace
+  // settings and the model catalog load and fail separately, so a dead
+  // catalog never blanks personal settings and vice versa.
+  const [loadedPersonal, setLoadedPersonal] = useState(false);
+  const [loadedWorkspace, setLoadedWorkspace] = useState(false);
+  const [loadedModels, setLoadedModels] = useState(providedModels !== undefined);
+  const [personalError, setPersonalError] = useState('');
+  const [workspaceError, setWorkspaceError] = useState('');
+  const [modelsError, setModelsError] = useState('');
 
   useEffect(() => {
     if (showCreateWs) {
@@ -89,17 +103,71 @@ export function SettingsPane({
     if (err instanceof ApiError && (err.status === 401 || err.code === 'not_member')) onAccessLost?.();
     else setMessage(err instanceof Error ? err.message : 'Could not save the change. Try again.');
   };
+  const loadPersonal = async () => {
+    const scope = workspaceId;
+    const live = () => liveScope.current === scope;
+    setPersonalError('');
+    try {
+      const own = await api.memberSettings(workspaceId);
+      if (!live()) return;
+      setPersonal(own.settings);
+      setTimezone(own.settings.brief_timezone ?? '');
+      setLoadedPersonal(true);
+    } catch (err) {
+      if (!live()) return;
+      if (err instanceof ApiError && (err.status === 401 || err.code === 'not_member')) onAccessLost?.();
+      else setPersonalError('Could not load personal settings. Try again.');
+    }
+  };
+  const loadWorkspace = async () => {
+    const scope = workspaceId;
+    const live = () => liveScope.current === scope;
+    setWorkspaceError('');
+    try {
+      const shared = await api.settings(workspaceId);
+      if (!live()) return;
+      setDefaultModel(shared.settings.default_model);
+      setLoadedWorkspace(true);
+    } catch (err) {
+      if (!live()) return;
+      if (err instanceof ApiError && (err.status === 401 || err.code === 'not_member')) onAccessLost?.();
+      else setWorkspaceError('Could not load workspace settings. Try again.');
+    }
+  };
+  const loadModels = async () => {
+    if (providedModels !== undefined) return;
+    const scope = workspaceId;
+    const live = () => liveScope.current === scope;
+    setModelsError('');
+    try {
+      const options = await api.models(workspaceId);
+      if (!live()) return;
+      setModels(options.models);
+      setLoadedModels(true);
+    } catch {
+      if (!live()) return;
+      setModelsError('Could not load the model catalog. Personal settings still work.');
+    }
+  };
   useEffect(() => {
-    let cancelled = false; setMessage('');
-    Promise.all([api.settings(workspaceId), api.memberSettings(workspaceId), api.models(workspaceId)]).then(([shared, own, options]) => {
-      if (cancelled) return;
-      setDefaultModel(shared.settings.default_model); setPersonal(own.settings); setTimezone(own.settings.brief_timezone ?? ''); setModels(options.models); setLoaded(true);
-    }).catch(err => { if (!cancelled) { if (err instanceof ApiError && (err.status === 401 || err.code === 'not_member')) onAccessLost?.(); else setMessage('Could not load settings. Try again.'); } });
+    setMessage('');
+    void loadPersonal();
+    void loadWorkspace();
+    void loadModels();
     api.listMembers(workspaceId).then(res => {
-      if (!cancelled) setMemberList(res.members);
+      if (liveScope.current !== workspaceId) return;
+      setMemberList(res.members);
     }).catch(() => { /* non-fatal fallback to members prop */ });
-    return () => { cancelled = true; };
-  }, [workspaceId, reload]);
+    // Workspace scope only; loaders capture their scope and ignore late responses.
+  }, [workspaceId]);
+  // App-supplied catalog wins over the local fetch whenever it arrives.
+  useEffect(() => {
+    if (providedModels !== undefined) {
+      setModels(providedModels);
+      setModelsError('');
+      setLoadedModels(true);
+    }
+  }, [providedModels]);
   // The application interface is English. Member preferred_language
   // governs agent response language, not the interface shell itself.
   // Document language remains 'en' to ensure correct screen-reader pronunciation.
@@ -204,7 +272,12 @@ export function SettingsPane({
       {(['personal', 'workspace'] as const).map((value, index) => <button id={`${id}-${value}-tab`} key={value} type="button" role="tab" aria-selected={tab === value} aria-controls={`${id}-${value}`} tabIndex={tab === value ? 0 : -1} onClick={() => setTab(value)} onKeyDown={event => { if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') { event.preventDefault(); const next = index === 0 ? 'workspace' : 'personal'; setTab(next); document.getElementById(`${id}-${next}-tab`)?.focus(); } }} className="text-sm">{value === 'personal' ? 'You' : workspaceName}</button>)}
     </div>
     <div className="otis-settings__content text-sm" id={`${id}-${tab}`} role="tabpanel" aria-labelledby={`${id}-${tab}-tab`}>
-      {!loaded ? <p role="status" className="text-sm">Loading settings…</p> : tab === 'personal' ? <>
+      {tab === 'personal' ? (!loadedPersonal ? (
+        personalError
+          ? <div role="alert"><Alert variant="destructive" className="my-2"><AlertDescription>{personalError}</AlertDescription><Button variant="outline" size="sm" className="mt-2" onClick={() => void loadPersonal()}>Retry</Button></Alert></div>
+          : <p role="status" className="text-sm">Loading settings…</p>
+      ) : <>
+        {personalError && <Alert variant="destructive" className="my-2"><AlertDescription>{personalError}</AlertDescription></Alert>}
         <div className="otis-settings__section">
           <div className="flex items-center justify-between">
             <h3 className="text-sm font-medium">Morning brief schedule</h3>
@@ -270,7 +343,13 @@ export function SettingsPane({
           </form>
         </div>
         <TelegramConnection workspaceId={workspaceId} workspaceName={workspaceName}/>
-      </> : <>
+      </>) : <>
+        {!loadedWorkspace ? (
+          workspaceError
+            ? <div role="alert"><Alert variant="destructive" className="my-2"><AlertDescription>{workspaceError}</AlertDescription><Button variant="outline" size="sm" className="mt-2" onClick={() => void loadWorkspace()}>Retry</Button></Alert></div>
+            : <p role="status" className="text-sm">Loading settings…</p>
+        ) : <>
+          {workspaceError && <Alert variant="destructive" className="my-2"><AlertDescription>{workspaceError}</AlertDescription></Alert>}
         {isOwner ? (
           <form className="otis-settings__section" onSubmit={event => { event.preventDefault(); void saveWorkspaceName(); }}>
             <label htmlFor={`${id}-wsname`} className="text-sm font-medium">Workspace name</label>
@@ -288,7 +367,7 @@ export function SettingsPane({
             <p className="otis-detail__label text-xs mt-1">Only workspace owners can rename this workspace.</p>
           </div>
         )}
-        <div className="otis-settings__section"><label htmlFor={`${id}-model`} className="text-sm font-medium">Workspace model</label><p className="otis-detail__label text-xs">Chats follow this model unless you choose another in that chat.</p><ChoiceSelect id={`${id}-model`} label="Workspace model" value={defaultModel ?? 'none'} options={[{ value: 'none', label: 'No default model' }, ...models.filter(model => model.available || model.command_key === defaultModel).map(model => ({ value: model.command_key, label: model.display_name, disabled: !model.available }))]} onChange={(value: string) => void saveDefault(value)} disabled={Boolean(busy)}/></div>
+        <div className="otis-settings__section"><label htmlFor={`${id}-model`} className="text-sm font-medium">Workspace model</label><p className="otis-detail__label text-xs">Chats follow this model unless you choose another in that chat.</p>{modelsError ? <div role="alert" className="mt-1 flex items-center gap-2 text-xs text-destructive"><span>{modelsError}</span><Button variant="outline" size="sm" className="h-6 px-2 text-xs" type="button" onClick={() => void loadModels()}>Retry</Button></div> : !loadedModels ? <p role="status" className="text-xs mt-1">Loading models…</p> : <ChoiceSelect id={`${id}-model`} label="Workspace model" value={defaultModel ?? 'none'} options={[{ value: 'none', label: 'No default model' }, ...models.filter(model => model.available || model.command_key === defaultModel).map(model => ({ value: model.command_key, label: model.display_name, disabled: !model.available }))]} onChange={(value: string) => void saveDefault(value)} disabled={Boolean(busy)}/>}</div>
         <div className="otis-settings__section">
           <div className="flex items-center justify-between">
             <h3 className="text-sm font-medium">Workspace members</h3>
@@ -470,8 +549,8 @@ export function SettingsPane({
             <p className="otis-detail__label text-xs">Only workspace owners can delete this workspace.</p>
           </div>
         )}
-      </>}
-      {message && <Alert variant="destructive" className="my-2"><AlertDescription>{message}</AlertDescription>{!loaded && <Button variant="outline" size="sm" className="mt-2" onClick={() => setReload(value => value + 1)}>Retry</Button>}</Alert>}
+      </>}</>}
+      {message && <Alert variant="destructive" className="my-2"><AlertDescription>{message}</AlertDescription></Alert>}
     </div>
     <footer className="otis-settings__footer text-xs"><span role="status">{saved}</span><Button variant="ghost" size="sm" className="text-muted-foreground hover:text-foreground" onClick={onSignOut}>Sign out</Button></footer>
   </section></Overlay>;

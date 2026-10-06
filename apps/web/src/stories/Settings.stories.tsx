@@ -107,3 +107,34 @@ export const ModelUnavailable: Story = {
   args: { ...props },
   parameters: { docs: { description: { story: 'No usable model is reported plainly with readable names, never a raw key or silent substitution.' } } },
 };
+
+export const ModelCatalogFailing: Story = {
+  name: 'settings/model-catalog-failing',
+  render: args => (
+    <MockApi
+      routes={[
+        { match: url => url.endsWith('/settings') && !url.includes('/me/'), body: { settings: { workspace_id: 'ws-1', default_model: null } } },
+        {
+          match: url => url.endsWith('/me/settings'),
+          body: { settings: { workspace_id: 'ws-1', user_id: 'user-avi', preferred_language: 'ro', brief_enabled: false, brief_local_time: null, brief_timezone: null, brief_weekdays: null } },
+        },
+        { match: url => url.includes('/models'), status: 500, body: { error: { code: 'internal_error', message: 'Catalog unavailable.' } } },
+      ]}
+    >
+      <SettingsPane {...args} />
+    </MockApi>
+  ),
+  args: { ...props },
+  play: async ({ canvasElement }) => {
+    const tabs = canvasElement.querySelectorAll('[role="tab"]');
+    const workspaceTab = [...tabs].find(tab => tab.textContent !== 'You') as HTMLButtonElement | null;
+    workspaceTab?.click();
+  },
+  parameters: {
+    docs: {
+      description: {
+        story: 'A dead model catalog fails only its own section with a retry; personal and workspace settings still load and save.',
+      },
+    },
+  },
+};
