@@ -21,11 +21,12 @@ describe('Turn context batching (workerd)', () => {
     scope: 'workspace' | 'entity' | 'member_in_workspace',
     subjectId: string | null,
     content: string,
+    observedAt: string = now,
   ): Promise<void> {
     await env.DB.prepare(
       `INSERT INTO memory_entries (id, workspace_id, scope, subject_id, category, content, status, observed_at, created_at, business_revision)
        VALUES (?, ?, ?, ?, 'other_context', ?, 'active', ?, ?, 0)`,
-    ).bind(id, ws, scope, subjectId, content, now, now).run();
+    ).bind(id, ws, scope, subjectId, content, observedAt, now).run();
   }
 
   beforeAll(async () => {
@@ -170,5 +171,89 @@ describe('Turn context batching (workerd)', () => {
     expect(await promptFor({ opencode_go: true })).not.toContain('Muse Spark 1.3 Contributor');
     expect(await promptFor({ opencode_go: true })).not.toContain('DeepSeek V4.1 Flash');
     await env.DB.prepare(`DELETE FROM provider_credentials WHERE workspace_id = ?`).bind(ws).run();
+  });
+
+  it('ranks member, entity and text-search notes before general notes in every language', async () => {
+    // Isolated scope: every seeded note fits the cap, so order is exact.
+    const iso = (day: string) => `${day}T10:00:00.000Z`;
+    await env.DB.prepare(
+      `INSERT INTO users (id, firebase_uid, email, display_name, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`,
+    ).bind('usr_ctx_f10', 'fb_f10', 'f10@test', 'F10', iso('2026-10-01'), iso('2026-10-01')).run();
+    await env.DB.prepare(
+      `INSERT INTO workspaces (id, name, owner_user_id, business_revision, membership_revision, created_at, updated_at)
+       VALUES ('ws-context-f10', 'F10 WS', 'usr_ctx_f10', 0, 1, ?, ?)`,
+    ).bind(iso('2026-10-01'), iso('2026-10-01')).run();
+    await env.DB.prepare(
+      `INSERT INTO workspace_users (workspace_id, user_id, role, joined_at, created_at, updated_at) VALUES ('ws-context-f10', 'usr_ctx_f10', 'member', ?, ?, ?)`,
+    ).bind(iso('2026-10-01'), iso('2026-10-01'), iso('2026-10-01')).run();
+    await env.DB.prepare(
+      `INSERT INTO entities (id, workspace_id, name, created_at, updated_at) VALUES ('ent_f10_shop', 'ws-context-f10', 'F10Shop', ?, ?)`,
+    ).bind(iso('2026-10-01'), iso('2026-10-01')).run();
+    const seedF10Note = (id: string, scope: string, subject: string | null, content: string, observed: string) =>
+      env.DB.prepare(
+        `INSERT INTO memory_entries (id, workspace_id, scope, subject_id, category, content, status, observed_at, created_at, business_revision)
+         VALUES (?, 'ws-context-f10', ?, ?, 'other_context', ?, 'active', ?, ?, 0)`,
+      ).bind(id, scope, subject, content, observed, observed).run();
+    await seedF10Note('f10_general_ro', 'workspace', null, 'Factură restantă pentru brutărie.', iso('2026-10-06'));
+    await seedF10Note('f10_general_hu', 'workspace', null, 'Lejárt számla a pékség számára.', iso('2026-10-06'));
+    await seedF10Note('f10_general_en', 'workspace', null, 'Overdue invoice for the bakery.', iso('2026-10-06'));
+    await seedF10Note('f10_member', 'member_in_workspace', 'usr_ctx_f10', 'Avi esti riportot kér.', iso('2026-10-06'));
+    await seedF10Note('f10_ent', 'entity', 'ent_f10_shop', 'Notă permanentă pentru F10Shop.', iso('2026-10-06'));
+    await seedF10Note('f10_search', 'workspace', null, 'Ledger holds the zxcvan receipt.', iso('2026-10-06'));
+    await env.DB.prepare(`INSERT INTO memory_entries_fts (entry_id, content) VALUES (?, ?)`)
+      .bind('f10_search', 'Ledger holds the zxcvan receipt.')
+      .run();
+    const context = await getTurnContext(env.DB, {
+      workspaceId: 'ws-context-f10',
+      actorUserId: 'usr_ctx_f10',
+      chatId: null,
+      sourceText: 'F10Shop zxcvan Rugăciune factură számla invoice',
+    });
+    const ids = context.activeNotes.map(n => n.id);
+    // Same instant everywhere: tier decides, id breaks ties deterministically.
+    expect(ids).toEqual([
+      'f10_ent',
+      'f10_member',
+      'f10_search',
+      'f10_general_en',
+      'f10_general_hu',
+      'f10_general_ro',
+    ]);
+    // All three languages survive wherever they rank: ordering never reads language.
+    const contents = context.activeNotes.map(n => n.content).join(' ');
+    expect(contents).toContain('Avi esti riportot kér');
+    expect(contents).toContain('Notă permanentă');
+    expect(contents).toContain('Overdue invoice');
+  });
+
+  it('enforces the character budget with whole notes, never mid-fact truncation', async () => {
+    const iso = (day: string) => `${day}T10:00:00.000Z`;
+    await env.DB.prepare(
+      `INSERT INTO users (id, firebase_uid, email, display_name, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`,
+    ).bind('usr_ctx_budget', 'fb_budget', 'budget@test', 'Budget', iso('2026-10-01'), iso('2026-10-01')).run();
+    await env.DB.prepare(
+      `INSERT INTO workspaces (id, name, owner_user_id, business_revision, membership_revision, created_at, updated_at)
+       VALUES ('ws-context-budget', 'Budget WS', 'usr_ctx_budget', 0, 1, ?, ?)`,
+    ).bind(iso('2026-10-01'), iso('2026-10-01')).run();
+    await env.DB.prepare(
+      `INSERT INTO workspace_users (workspace_id, user_id, role, joined_at, created_at, updated_at) VALUES ('ws-context-budget', 'usr_ctx_budget', 'member', ?, ?, ?)`,
+    ).bind(iso('2026-10-01'), iso('2026-10-01'), iso('2026-10-01')).run();
+    await env.DB.prepare(
+      `INSERT INTO memory_entries (id, workspace_id, scope, subject_id, category, content, status, observed_at, created_at, business_revision)
+       VALUES
+        ('mem_big_general', 'ws-context-budget', 'workspace', NULL, 'other_context', ?, 'active', ?, ?, 0),
+        ('mem_small_member', 'ws-context-budget', 'member_in_workspace', 'usr_ctx_budget', 'other_context', 'Small personal fact.', 'active', ?, ?, 0)`,
+    ).bind('x'.repeat(10000), iso('2026-10-06'), iso('2026-10-06'), iso('2026-10-05'), iso('2026-10-05')).run();
+    const context = await getTurnContext(env.DB, {
+      workspaceId: 'ws-context-budget',
+      actorUserId: 'usr_ctx_budget',
+      chatId: null,
+      sourceText: 'hi',
+    });
+    const ids = context.activeNotes.map(n => n.id);
+    expect(ids).toContain('mem_small_member');
+    expect(ids).not.toContain('mem_big_general');
+    const total = context.activeNotes.reduce((sum, n) => sum + n.content.length, 0);
+    expect(total).toBeLessThanOrEqual(6000);
   });
 });

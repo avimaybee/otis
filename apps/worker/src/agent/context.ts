@@ -35,6 +35,9 @@ export interface ActiveNoteExcerpt {
   businessRevision: number;
 }
 
+/** Total note content characters per assembled context (F10 budget). */
+export const MAX_CONTEXT_NOTE_CHARS = 6000;
+
 export interface AssembledTurnContext {
   workspaceId: string;
   actorUserId: string;
@@ -199,6 +202,7 @@ export async function getTurnContext(
   // 4. Active Memory Notes. Suppression tombstones already filter inside
   // each note query, so no standalone suppression-ID pull is needed.
   const candidateNotesMap = new Map<string, ActiveNoteExcerpt>();
+  const ftsHitIds = new Set<string>();
 
   // 4a. Workspace-scoped active notes
   const wsNotes = rowsAt(3);
@@ -302,6 +306,7 @@ export async function getTurnContext(
 
         for (const r of ftsRows) {
           const id = String(r['id']);
+          ftsHitIds.add(id);
           // Only include notes belonging to this workspace or acting member
           const scope = r['scope'] as 'workspace' | 'entity' | 'member_in_workspace';
           if (scope !== 'member_in_workspace' || r['subject_id'] === actorUserId) {
@@ -323,7 +328,37 @@ export async function getTurnContext(
     }
   }
 
-  const activeNotes = Array.from(candidateNotesMap.values()).slice(0, limitNotes);
+  // F10 relevance order: notes tied to this member, a mentioned entity, or
+  // the text search outrank general workspace notes; newest first within a
+  // tier, id order breaks timestamp ties deterministically. Ordering never
+  // inspects language: ro/hu/en notes rank by tier and recency only.
+  const rankedNotes = [...candidateNotesMap.values()].sort((a, b) => {
+    const tierA = a.scope === 'workspace' && !ftsHitIds.has(a.id) ? 1 : 0;
+    const tierB = b.scope === 'workspace' && !ftsHitIds.has(b.id) ? 1 : 0;
+    if (tierA !== tierB) return tierA - tierB;
+    if (a.observedAt !== b.observedAt) return a.observedAt < b.observedAt ? 1 : -1;
+    return a.id < b.id ? -1 : 1;
+  });
+
+  // Character budget: whole notes in rank order while they fit; the rest is
+  // omitted, never truncated mid-fact. A single oversized top note still
+  // arrives truncated with an explicit marker rather than an empty context.
+  const activeNotes: ActiveNoteExcerpt[] = [];
+  let budgetedChars = 0;
+  for (const note of rankedNotes) {
+    if (activeNotes.length >= limitNotes) break;
+    if (budgetedChars + note.content.length <= MAX_CONTEXT_NOTE_CHARS) {
+      activeNotes.push(note);
+      budgetedChars += note.content.length;
+    }
+  }
+  if (activeNotes.length === 0 && rankedNotes.length > 0) {
+    const top = rankedNotes[0]!;
+    activeNotes.push({
+      ...top,
+      content: `${top.content.slice(0, MAX_CONTEXT_NOTE_CHARS)}…[truncated]`,
+    });
+  }
 
   // 5. Extractive summary (checked against current business revision)
   let currentSummary: AssembledTurnContext['currentSummary'] = null;
