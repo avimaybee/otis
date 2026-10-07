@@ -317,6 +317,16 @@ export const api = {
       method: 'DELETE',
     }),
 
+  /**
+   * Downloads the workspace export document. Returns the raw response so
+   * the caller can save the attachment blob; the typed client only parses
+   * JSON bodies. Membership is enforced server-side; secrets never ship.
+   */
+  downloadWorkspaceExport: (workspaceId: string) =>
+    fetch(`/api/workspaces/${encodeURIComponent(workspaceId)}/export`, {
+      credentials: 'same-origin',
+    }),
+
   signOut: (signal?: AbortSignal) =>
     request<LogoutResponse>(`/api/auth/session`, {
       method: 'DELETE',

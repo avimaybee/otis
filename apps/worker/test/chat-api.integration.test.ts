@@ -715,6 +715,81 @@ describe('Chat API: transcript, activity and run status', () => {
     expect(missing.status).toBe(404);
   });
 
+  it('exports member-readable business data with secrets excluded', async () => {
+    const accepted = await acceptWebMessage(env.DB, {
+      workspaceId: WS,
+      chatId: aviChat,
+      userId: AVI,
+      clientMessageId: 'cm-export-1',
+      text: 'Exportable field note',
+    });
+    const now = new Date().toISOString();
+    await env.DB.prepare(
+      `INSERT INTO provider_credentials (workspace_id, provider, encrypted_key, key_nonce, key_version, status, created_at, updated_at)
+       VALUES (?, 'gemini', 'ENCRYPTED-SECRET-MATERIAL', 'nonce-1', 1, 'available', ?, ?)`,
+    ).bind(WS, now, now).run();
+    try {
+      const res = await call(`/api/workspaces/${WS}/export`, { cookie: aviCookie });
+      expect(res.status).toBe(200);
+      expect(res.headers.get('Content-Type')).toContain('application/json');
+      expect(res.headers.get('Content-Disposition')).toContain('attachment');
+      const doc = (await res.json()) as Record<string, unknown>;
+      expect(doc['version']).toBe(1);
+      expect((doc['workspace'] as Record<string, unknown>)['id']).toBe(WS);
+
+      const messages = doc['chat_messages'] as Array<Record<string, unknown>>;
+      expect(messages.some((m) => m['content_text'] === 'Exportable field note')).toBe(true);
+      const inbound = doc['messages_in'] as Array<Record<string, unknown>>;
+      expect(inbound.some((m) => String(m['chat_id']) === aviChat)).toBe(true);
+      expect(accepted.run_id).toBeTruthy();
+
+      // Secrets never enter the document: no credential rows, sessions,
+      // invites, bindings, or key material under any key.
+      const serialized = JSON.stringify(doc);
+      expect(serialized).not.toContain('ENCRYPTED-SECRET-MATERIAL');
+      expect(serialized).not.toContain('token_hash');
+      expect(doc).not.toHaveProperty('provider_credentials');
+      expect(doc).not.toHaveProperty('sessions');
+      expect(doc).not.toHaveProperty('invites');
+      expect(doc).not.toHaveProperty('telegram_users');
+      // Membership is member-visible and needed to interpret authorship.
+      const memberships = doc['memberships'] as Array<Record<string, unknown>>;
+      expect(memberships.some((m) => m['user_id'] === AVI)).toBe(true);
+      const users = doc['users'] as Array<Record<string, unknown>>;
+      expect(users.every((u) => !('email' in u))).toBe(true);
+    } finally {
+      // The credential seed must not leak into sibling tests: model
+      // availability assertions depend on a keyless workspace.
+      await env.DB.prepare(
+        `DELETE FROM provider_credentials WHERE workspace_id = ? AND provider = 'gemini'`,
+      ).bind(WS).run();
+    }
+  });
+
+  it('round-trips ledger events through a rebuild identically', async () => {
+    await commitEntity('Export Bakery', aviChat);
+    const res = await call(`/api/workspaces/${WS}/export`, { cookie: aviCookie });
+    expect(res.status).toBe(200);
+    const doc = (await res.json()) as {
+      events: Array<{ id: string; kind: string }>;
+      tasks: unknown[];
+      entities: Array<{ id: string; name: string }>;
+    };
+    expect(doc.entities.some((e) => e.name === 'Export Bakery')).toBe(true);
+    const { getWorkspaceEvents, rebuildProjections } = await import('@otis/ledger');
+    const live = await getWorkspaceEvents(env.DB, WS);
+    expect(live.length).toBe(doc.events.length);
+    const rebuilt = rebuildProjections(live);
+    expect(rebuilt.tasks.size).toBe((doc.tasks as unknown[]).length);
+  });
+
+  it('denies outsiders and unknown workspaces without leaking existence', async () => {
+    const outsider = await call(`/api/workspaces/${WS}/export`, { cookie: outsiderCookie });
+    expect(outsider.status).toBe(404);
+    const missing = await call(`/api/workspaces/ws_export_missing/export`, { cookie: aviCookie });
+    expect(missing.status).toBe(404);
+  });
+
   it('batches run details in request order, omitting unknown ids', async () => {    const first = await acceptWebMessage(env.DB, {
       workspaceId: WS,
       chatId: aviChat,

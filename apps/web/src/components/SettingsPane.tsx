@@ -214,6 +214,31 @@ export function SettingsPane({
     } catch (err) { handleError(err); }
     finally { setBusy(null); }
   };
+  const downloadExport = async () => {
+    if (busy) return;
+    setBusy('export_json'); setMessage(''); setSaved('');
+    try {
+      const response = await api.downloadWorkspaceExport(workspaceId);
+      if (!response.ok) {
+        const body = (await response.json().catch(() => null)) as { error?: { message?: string } } | null;
+        throw new Error(body?.error?.message ?? 'Workspace export is unavailable right now.');
+      }
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      try {
+        const anchor = document.createElement('a');
+        anchor.href = url;
+        anchor.download = `otis-export-${workspaceId}.json`;
+        document.body.appendChild(anchor);
+        anchor.click();
+        anchor.remove();
+      } finally {
+        setTimeout(() => URL.revokeObjectURL(url), 5000);
+      }
+      setSaved('Workspace data downloaded');
+    } catch (err) { handleError(err); }
+    finally { setBusy(null); }
+  };
   const createNewWorkspace = async () => {
     const trimmed = newWsName.trim();
     if (!trimmed || busy) return;
@@ -520,6 +545,15 @@ export function SettingsPane({
               </Button>
             </form>
           )}
+        </div>
+        <div className="otis-settings__section">
+          <h3 className="text-sm font-medium">Workspace data</h3>
+          <p className="otis-detail__label text-xs">Download everything in this workspace as one JSON file: conversations, business records, tasks, drafts, memory, briefs and reminders. Secrets and sessions are never included.</p>
+          <div className="flex items-center gap-2 mt-2">
+            <Button variant="outline" size="sm" type="button" onClick={() => void downloadExport()} disabled={Boolean(busy)}>
+              {busy === 'export_json' ? 'Preparing…' : 'Download JSON'}
+            </Button>
+          </div>
         </div>
         {isOwner ? (
           <div className="otis-settings__section border-t border-border pt-4 mt-4">

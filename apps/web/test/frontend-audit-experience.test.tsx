@@ -149,6 +149,71 @@ describe('Frontend Experience Audit & Confidence Verification (FE-01 - FE-16)', 
 
       await view.unmount();
     });
+
+    it('SettingsPane downloads the workspace export with success and failure states', async () => {
+      vi.spyOn(api, 'settings').mockResolvedValue({
+        settings: { workspace_id: 'ws_test', default_model: null, created_at: '', updated_at: '' },
+      });
+      vi.spyOn(api, 'memberSettings').mockResolvedValue({ settings: mockMemberSettings });
+      vi.spyOn(api, 'models').mockResolvedValue({ models: [], current_command_key: null, default_command_key: null });
+      vi.spyOn(api, 'listMembers').mockResolvedValue({
+        members: [{ user_id: 'user_1', role: 'owner', joined_at: '', email: 'user@example.com', display_name: 'User' }],
+      });
+      const download = vi.spyOn(api, 'downloadWorkspaceExport').mockResolvedValue(
+        new Response(JSON.stringify({ version: 1 }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+      );
+      const createdUrls: string[] = [];
+      vi.spyOn(URL, 'createObjectURL').mockImplementation(((blob: Blob) => {
+        expect(blob).toBeInstanceOf(Blob);
+        const url = 'blob:mock-export';
+        createdUrls.push(url);
+        return url;
+      }) as typeof URL.createObjectURL);
+      vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {});
+
+      const view = await mount(
+        <SettingsPane
+          workspaceId="ws_test"
+          workspaceName="Kerning Test"
+          currentUserRole="owner"
+          onClose={vi.fn()}
+          onSignOut={vi.fn()}
+        />,
+      );
+      const wsTab = Array.from(view.host.querySelectorAll('[role="tab"]')).find((el) =>
+        el.textContent === 'Kerning Test',
+      ) as HTMLButtonElement;
+      await React.act(async () => {
+        wsTab.click();
+      });
+
+      const downloadBtn = Array.from(view.host.querySelectorAll('button')).find((b) =>
+        b.textContent === 'Download JSON',
+      ) as HTMLButtonElement;
+      expect(downloadBtn).toBeTruthy();
+      await React.act(async () => {
+        downloadBtn.click();
+      });
+      expect(download).toHaveBeenCalledWith('ws_test');
+      expect(createdUrls).toEqual(['blob:mock-export']);
+      expect(view.host.textContent).toContain('Workspace data downloaded');
+
+      download.mockResolvedValueOnce(
+        new Response(JSON.stringify({ error: { message: 'Export failed here.' } }), {
+          status: 500,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+      );
+      await React.act(async () => {
+        downloadBtn.click();
+      });
+      expect(view.host.textContent).toContain('Export failed here.');
+
+      await view.unmount();
+    });
   });
 
   describe('FE-02: Brief Schedule Timezone Copy', () => {

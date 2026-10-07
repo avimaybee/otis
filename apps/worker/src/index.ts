@@ -20,6 +20,7 @@ import {
   handleDeleteChat,
 } from './routes/chats.js';
 import { handleGetChatDetail, handleGetMessages } from './routes/chat.js';
+import { handleExportWorkspace } from './routes/exports.js';
 import { handleGetActivity } from './routes/activity.js';
 import { handleGetMemorySource } from './routes/sources.js';
 import {
@@ -520,6 +521,16 @@ export default {
         }
         if (request.method === 'DELETE' && workspaceId) {
           return await handleDeleteWorkspace(request, env, workspaceId, requestId);
+        }
+        return jsonError(405, 'method_not_allowed', 'Method not allowed.', requestId);
+      }
+
+      // 4a. Workspace export route: /api/workspaces/:workspaceId/export
+      const exportMatch = url.pathname.match(/^\/api\/workspaces\/([^/]+)\/export$/);
+      if (exportMatch) {
+        const workspaceId = exportMatch[1];
+        if (request.method === 'GET' && workspaceId) {
+          return await handleExportWorkspace(request, env, workspaceId, requestId);
         }
         return jsonError(405, 'method_not_allowed', 'Method not allowed.', requestId);
       }
