@@ -1584,8 +1584,7 @@ describe('Worker Actor Dispatch & Recovery Integration (workerd)', () => {
     expect(inbox?.status).toBe('cancelled');
   });
 
-  it('empty model reply fails honestly without persisting an empty answer', async () => {
-    const msg = await accept(chatAvi, aviId, 'act-msg-empty-reply', 'say nothing useful');
+  it('empty model reply fails honestly without persisting an empty answer', async () => {    const msg = await accept(chatAvi, aviId, 'act-msg-empty-reply', 'say nothing useful');
     const outboxId = await outboxIdForRun(msg.run_id);
     const fake = new FakeProviderAdapter({
       provider: 'gemini',
@@ -1608,6 +1607,47 @@ describe('Worker Actor Dispatch & Recovery Integration (workerd)', () => {
       `SELECT COUNT(*) AS n FROM run_activity WHERE run_id = ? AND type = 'answer_saved'`,
     ).bind(msg.run_id).first<{ n: number }>();
     expect(Number(answers?.n ?? 0)).toBe(0);
+  });
+
+  it('partial failure records receipt-backed committed/unfinished copy in its activity', async () => {
+    const msg = await accept(chatAvi, aviId, 'act-msg-partial-copy', 'remember this then break');
+    const outboxId = await outboxIdForRun(msg.run_id);
+    const fake = new FakeProviderAdapter({
+      provider: 'gemini',
+      scripts: [
+        {
+          kind: 'tool_calls',
+          calls: [{
+            callId: 'c1',
+            name: 'remember_context',
+            args: { scope: 'workspace', category: 'other_context', content: 'Partial survival note.' },
+          }],
+        },
+        { kind: 'fail', code: 'transient', message: 'Upstream went away mid-turn.' },
+      ],
+    });
+    const handler = new AgentHandler({
+      providerAdapter: fake,
+      limits: { maxDailyActions: 50, maxRoundsPerRun: 10 },
+    });
+    // A planned step left by the dead holder mirrors crash-recovery reality:
+    // the summary must name it as unfinished instead of dropping it.
+    await env.DB.prepare(
+      `INSERT INTO run_steps (id, run_id, workspace_id, step_index, tool_name, arguments_hash, arguments_json, status, created_at, updated_at)
+       VALUES (?, ?, ?, 7, 'draft_message', 'h', '{}', 'planned', ?, ?)`,
+    ).bind(`step_${msg.run_id}_planned`, msg.run_id, ws, new Date().toISOString(), new Date().toISOString()).run();
+    const result = await dispatchOutboxItem(env.DB, outboxId, ws, { handler });
+    expect(result.status).toBe('failed');
+    expect(await runStatus(msg.run_id)).toBe('partial');
+    const payloadRow = await env.DB.prepare(
+      `SELECT payload_json FROM run_activity WHERE run_id = ? AND type = 'partial_failure'`,
+    ).bind(msg.run_id).first<{ payload_json: string }>();
+    const payload = JSON.parse(payloadRow!.payload_json) as {
+      error_code: string; committed_actions: number; unfinished_steps: string[];
+    };
+    expect(payload.error_code).toBe('provider_stream_error');
+    expect(payload.committed_actions).toBe(1);
+    expect(payload.unfinished_steps).toEqual(['draft_message']);
   });
 
   it('F08: stop aborts the in-flight provider stream and the run stays cancelled', async () => {    const msg = await accept(chatAvi, aviId, 'act-msg-f08-stop', 'take your time');

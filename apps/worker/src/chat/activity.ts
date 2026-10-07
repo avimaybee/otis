@@ -99,7 +99,8 @@ function safePayload(type: string, json: string): unknown {
       action_applied: ['action_id', 'command_name', 'summary', 'event_ids'],
       action_reverted: ['action_id', 'mode', 'requested_by_user_id'],
       reasoning_summary: ['text', 'provider', 'round_index', 'block_id', 'content_kind', 'mode', 'state'],
-      clarification_required: ['question', 'missing_fields'], partial_failure: ['error_code'],
+      clarification_required: ['question', 'missing_fields'],
+      partial_failure: ['error_code', 'committed_actions', 'unfinished_steps'],
       answer_saved: ['reply', 'selected_workspace_id', 'message_id', 'sequence', 'text', 'text_truncated', 'channel'],
       run_finished: ['status', 'message_id'],
     };

@@ -57,6 +57,31 @@ function failureMessage(code: string | null | undefined) {
   return 'I couldn’t finish that request. Your message is saved.';
 }
 
+/**
+ * Receipt-backed failure copy: what the failed run actually committed,
+ * from the partial_failure activity payload. Tool names print humanized;
+ * at most three unfinished steps ever reach the bubble.
+ */
+export function formatFailureOutcome(committed: number, unfinished: string[]): string {
+  const saved = `Saved ${committed} change${committed === 1 ? '' : 's'}`;
+  const names = unfinished
+    .filter((step): step is string => typeof step === 'string')
+    .slice(0, 3)
+    .map((step) => step.replace(/_/g, ' '));
+  if (names.length === 0) return saved;
+  return `${saved}; couldn't finish ${names.join(', ')}`;
+}
+
+function partialOutcome(activities: PublicActivity[], runId?: string): { committed: number; unfinished: string[] } | null {
+  const item = activities.find((activity) => activity.type === 'partial_failure' && (!runId || activity.run_id === runId));
+  const payload = item?.payload as { committed_actions?: unknown; unfinished_steps?: unknown } | null;
+  if (!payload || typeof payload.committed_actions !== 'number' || !Number.isFinite(payload.committed_actions)) return null;
+  const unfinished = Array.isArray(payload.unfinished_steps)
+    ? payload.unfinished_steps.filter((step): step is string => typeof step === 'string').slice(0, 3)
+    : [];
+  return { committed: payload.committed_actions, unfinished };
+}
+
 function StepIcon({ label, state }: { label: string; state: WorkingStep['state'] }) {
   if (state === 'failed') return <AlertCircleIcon />;
   if (state === 'undone') return <UndoIcon />;
@@ -210,8 +235,18 @@ function RunWork({ run, steps, activities, onInspectAction, onReply, hasAgentMes
     {run?.status === 'waiting_for_input' && !run.pending_clarification && (
       <p className="otis-run__status text-sm text-subtle" role="status">Needs your answer</p>
     )}
-    {run?.status === 'partial' && <p className="otis-run__status otis-run__status--error text-sm" role="status">Some changes were saved. The run could not finish; inspect the completed changes above.</p>}
-    {run?.status === 'failed' && <div><p className="otis-run__status otis-run__status--error flex items-start gap-2 text-sm" role="status"><AlertCircleIcon /><span>{failureMessage(run.run.error_code)}</span></p>{run.run.error_code && <details className="otis-provider-summary text-xs"><summary>Error details</summary><p>{run.run.error_code}{run.run.error_message ? `: ${run.run.error_message}` : ''}</p></details>}</div>}
+    {run?.status === 'partial' && (() => {
+      const outcome = partialOutcome(activities, run?.run.id);
+      return <p className="otis-run__status otis-run__status--error text-sm" role="status">{
+        outcome && outcome.committed > 0
+          ? `${formatFailureOutcome(outcome.committed, outcome.unfinished)}. Inspect the completed changes above.`
+          : 'Some changes were saved. The run could not finish; inspect the completed changes above.'
+      }</p>;
+    })()}
+    {run?.status === 'failed' && (() => {
+      const outcome = partialOutcome(activities, run?.run.id);
+      return <div><p className="otis-run__status otis-run__status--error flex items-start gap-2 text-sm" role="status"><AlertCircleIcon /><span>{failureMessage(run.run.error_code)}</span></p>{outcome && outcome.committed > 0 && <p className="otis-run__status text-sm" role="status">{formatFailureOutcome(outcome.committed, outcome.unfinished)} before it stopped.</p>}{run.run.error_code && <details className="otis-provider-summary text-xs"><summary>Error details</summary><p>{run.run.error_code}{run.run.error_message ? `: ${run.run.error_message}` : ''}</p></details>}</div>;
+    })()}
     {run?.status === 'cancelled' && <p className="otis-run__status text-sm">Stopped. Saved changes remain available to inspect or undo.</p>}
   </div>;
 }

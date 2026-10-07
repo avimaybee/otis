@@ -331,6 +331,34 @@ describe('Clarification dismissal', () => {
     expect(host.textContent).toContain('Partial response — Otis could not finish.');
     await React.act(async () => root.unmount()); host.remove();
   });
+  it('names committed work and unfinished steps from the partial_failure receipt', async () => {
+    const doneStep = { id: 's1', label: 'Saving follow-up', state: 'succeeded' } as never;
+    const failedActivity = activity('a9', 9, 'partial_failure', {
+      error_code: 'provider_stream_error',
+      committed_actions: 2,
+      unfinished_steps: ['draft_message', 'mark_message_sent'],
+    });
+    const host = document.createElement('div'); document.body.appendChild(host);
+    const root = createRoot(host);
+    const base = {
+      messages: [], members: {}, currentUserId: 'usr_1', steps: [doneStep],
+      activities: [failedActivity],
+      onInspectAction: vi.fn(),
+    };
+    const partial = { run: { id: 'run_1' }, status: 'partial', steps: [], actions: [], activities: [] } as never;
+    await React.act(async () => root.render(<Transcript {...base} run={partial} />));
+    expect(host.textContent).toContain('Saved 2 changes; couldn\'t finish draft message, mark message sent.');
+    expect(host.textContent).toContain('Inspect the completed changes above.');
+    const failed = { run: { id: 'run_1', error_code: 'provider_stream_error' }, status: 'failed', steps: [], actions: [], activities: [] } as never;
+    await React.act(async () => root.render(<Transcript {...base} run={failed} />));
+    expect(host.textContent).toContain('Saved 2 changes; couldn\'t finish draft message, mark message sent before it stopped.');
+    // Legacy rows without the receipt payload keep the blanket sentence.
+    const bare = activity('a8', 8, 'partial_failure', { error_code: 'provider_stream_error' });
+    await React.act(async () => root.render(<Transcript {...base} activities={[bare]} run={partial} />));
+    expect(host.textContent).toContain('Some changes were saved.');
+    expect(host.textContent).not.toContain('Saved 2 changes');
+    await React.act(async () => root.unmount()); host.remove();
+  });
   it('keeps a reloaded cancelled historical preview labeled as unfinished', async () => {
     const view = await mount(<Transcript
       messages={[message({ id: 'm1', content_text: 'Draft me a reply', run_id: 'run_1' })]}

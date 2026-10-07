@@ -489,10 +489,46 @@ async function telegramDeliveryStatements(
 }
 
 /** Concise user-facing failure copy; never stack traces or provider detail. */
-function telegramFailureCopy(runStatus: 'failed' | 'partial'): string {
+function telegramFailureCopy(runStatus: 'failed' | 'partial', committed = 0, unfinished: string[] = []): string {
+  if (committed > 0) {
+    const names = unfinished.map((step) => step.replace(/_/g, ' ')).join(', ');
+    const tail = names ? ` Couldn't finish: ${names}.` : '';
+    const next = runStatus === 'partial'
+      ? ' Open Otis to see what changed, or reply here to continue.'
+      : " Reply here and I'll try again.";
+    return `I saved ${committed} change${committed === 1 ? '' : 's'}.${tail}${next}`;
+  }
   return runStatus === 'partial'
     ? 'I saved your message, but I could only finish part of that task. Open Otis to see what changed, or reply here to continue.'
     : 'I saved your message, but I couldn\u2019t finish that task. Reply here and I\u2019ll try again.';
+}
+
+/**
+ * Receipt-backed outcome summary for failure copy: how many actions
+ * committed vs which steps never finished. Read once on the terminal
+ * failure path only; both queries are single-run scoped and bounded.
+ */
+async function summarizeRunOutcome(
+  db: D1Database,
+  workspaceId: string,
+  runId: string,
+): Promise<{ committed: number; unfinished: string[] }> {
+  const applied = await db
+    .prepare(
+      `SELECT COUNT(*) AS n FROM action_receipts WHERE workspace_id = ? AND run_id = ? AND result_status = 'applied'`,
+    )
+    .bind(workspaceId, runId)
+    .first<{ n: number }>();
+  const openSteps = await db
+    .prepare(
+      `SELECT tool_name FROM run_steps WHERE workspace_id = ? AND run_id = ? AND status IN ('planned', 'running', 'failed') ORDER BY step_index ASC LIMIT 3`,
+    )
+    .bind(workspaceId, runId)
+    .all<{ tool_name: string }>();
+  return {
+    committed: Number(applied?.n ?? 0),
+    unfinished: (openSteps.results ?? []).map((row) => String(row.tool_name)),
+  };
 }
 
 /**
@@ -694,6 +730,9 @@ export async function failRunTerminal(
   const guardPredicate = `(SELECT 1 FROM agent_runs WHERE id = ? AND status = ? AND ${attemptPredicate})`;
   const guardBinds: Array<string | number | null> = [run.id, params.expectedStatus];
   if (params.expectedAttemptId !== null) guardBinds.push(params.expectedAttemptId);
+  // Receipt-backed copy: the failure activity and the Telegram notice name
+  // what actually committed, instead of a blanket "couldn't finish".
+  const outcome = await summarizeRunOutcome(db, run.workspace_id, run.id);
   const batch: D1PreparedStatement[] = [
     db
       .prepare(`INSERT INTO acceptance_guards (id, guard_ok) VALUES (?, ${guardPredicate}) ON CONFLICT(id) DO UPDATE SET guard_ok = excluded.guard_ok`)
@@ -711,7 +750,12 @@ export async function failRunTerminal(
     runId: run.id,
     cursorSelect: `(SELECT activity_cursor + 1 FROM chats WHERE id = ?)`,
     type: 'partial_failure',
-    payload: { error_code: params.errorCode, error_message: params.errorMessage },
+    payload: {
+      error_code: params.errorCode,
+      error_message: params.errorMessage,
+      committed_actions: outcome.committed,
+      unfinished_steps: outcome.unfinished,
+    },
     nowIso: params.nowIso,
   });
   batch.push(
@@ -761,7 +805,7 @@ export async function failRunTerminal(
       run,
       kind: 'failure',
       key: run.id,
-      text: telegramFailureCopy(params.runStatus),
+      text: telegramFailureCopy(params.runStatus, outcome.committed, outcome.unfinished),
     })),
   );
   try {
