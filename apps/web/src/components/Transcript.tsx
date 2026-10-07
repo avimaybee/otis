@@ -173,13 +173,13 @@ function RunWork({ run, steps, activities, onInspectAction, onReply, hasAgentMes
   });
   return <div className="otis-run">
     {(run?.status === 'queued' || (run?.status === 'running' && !steps.length && thinking.blocks.length === 0)) && (
-      <div className="mb-2 flex items-center gap-2 text-xs text-muted-foreground" role="status">
+      <div className="flex items-center gap-2 text-xs text-muted-foreground" role="status">
         <span aria-hidden="true" className="size-2 shrink-0 rounded-full bg-highlight" />
         <span>{run?.status === 'queued' ? 'Thinking…' : 'Working…'}</span>
       </div>
     )}
     {steps.length === 0 && thinking.blocks.length > 0 && (
-      <button type="button" className="otis-working__disclosure mb-2 flex items-center gap-2 text-xs text-muted-foreground" aria-expanded={expanded} onClick={() => setManual(!expanded)}>
+      <button type="button" className="otis-working__disclosure flex items-center gap-2 text-xs text-muted-foreground" aria-expanded={expanded} onClick={() => setManual(!expanded)}>
         {!finished && <span aria-hidden="true" className={`size-2 shrink-0 rounded-full ${isWaiting ? 'bg-muted-foreground/60' : 'bg-highlight'}`} />}
         <span className="size-4 text-subtle" aria-hidden="true"><ChevronDownIcon /></span>
         <span>{finished ? 'Worked' : isWaiting ? 'Paused · Needs your answer' : 'Working…'}</span>
@@ -435,7 +435,7 @@ export function Transcript({ messages, members, currentUserId, steps, run, runs 
   return <div className="otis-transcript-region">
     {/* eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex -- the transcript is the conversation's only scroller; keyboard users need it focusable to scroll and review. */}
     <div className="otis-transcript flex-1 overflow-y-auto" ref={scrollRef} tabIndex={0} role="log" aria-label="Conversation" aria-live="polite" aria-busy={busy}>
-      <div ref={contentRef} className={`otis-transcript__inner mx-auto flex w-full max-w-[760px] flex-col gap-6 px-4 py-6${!messages.length ? ' otis-transcript__inner--empty' : ''}`}>
+      <div ref={contentRef} className={`otis-transcript__inner mx-auto flex w-full max-w-[760px] flex-col gap-4 px-4 py-4${!messages.length ? ' otis-transcript__inner--empty' : ''}`}>
         {hasOlder && <Button variant="ghost" size="sm" className="otis-load-older" type="button" disabled={loadingOlder} onClick={() => onLoadOlder?.()}>{olderError ?? (loadingOlder ? 'Loading…' : 'Load earlier messages')}</Button>}
         {loading && !messages.length ? <p className="otis-run__status text-sm">Opening conversation…</p> : !messages.length && !steps.length && <div className="otis-empty"><h2 className="otis-empty__title text-xl">What’s happening?</h2><p className="otis-empty__subtitle text-sm text-subtle mt-1">Keep track of visits, promises, and follow-ups.</p></div>}
         {messages.map((message, index) => {

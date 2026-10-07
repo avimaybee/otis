@@ -54,12 +54,9 @@
 /* Transcript: scroller flex-1 overflow-y-auto; column max 760 centered. */
 .otis-transcript-region { position: relative; display: flex; flex: 1; min-height: 0; }
 .otis-transcript { flex: 1; min-width: 0; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
-.otis-transcript__inner { width: 100%; max-width: 760px; margin: 0 auto; padding: 24px 16px; display: flex; flex-direction: column; gap: 24px; }
+.otis-transcript__inner { width: 100%; max-width: 760px; margin: 0 auto; padding: 16px; display: flex; flex-direction: column; gap: 16px; }
 .otis-transcript__inner--empty { min-height: 100%; justify-content: center; }
-@media (min-width: 56.25rem) {
-  .otis-transcript__inner { padding-left: 24px; padding-right: 24px; }
-}
-.otis-message-group { display: flex; flex-direction: column; gap: 24px; min-width: 0; }
+.otis-message-group { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
 .otis-turn { position: relative; display: flex; flex-direction: column; gap: 4px; min-width: 0; }
 .otis-turn--member { align-items: flex-end; }
 .otis-turn--agent { align-items: flex-start; }
@@ -86,7 +83,8 @@
 .otis-dayseparator { display: flex; justify-content: center; margin: 0; color: var(--subtle); }
 
 /* Message delivery state: always visible beside its bubble, never hover-gated.
-   Copy/edit actions stay hover-revealed on precise pointers (always on touch). */
+   Copy/edit actions hover-reveal on precise pointers as a floating pill so
+   they reserve no row height (always in flow on touch). */
 .otis-delivery { display: flex; align-items: center; gap: 8px; }
 .otis-turn--member .otis-delivery { justify-content: flex-end; }
 .otis-turn--agent .otis-delivery { justify-content: flex-start; }
@@ -94,7 +92,9 @@
 .otis-turn--member .otis-turn__actions { justify-content: flex-end; }
 .otis-turn--agent .otis-turn__actions { justify-content: flex-start; }
 @media (hover: hover) and (pointer: fine) {
-  .otis-turn__actions { opacity: 0; }
+  .otis-turn__actions { position: absolute; top: calc(100% + 4px); z-index: 2; padding: 4px; border: 1px solid var(--border); border-radius: 8px; background: var(--popover); box-shadow: var(--shadow-popover); opacity: 0; }
+  .otis-turn--member .otis-turn__actions { right: 0; }
+  .otis-turn--agent .otis-turn__actions { left: 0; }
   .otis-turn:hover .otis-turn__actions, .otis-turn:focus-within .otis-turn__actions { opacity: 1; }
 }
 .otis-msg-action { position: relative; }
@@ -108,15 +108,15 @@
   .otis-attach-remove::after { content: ''; position: absolute; inset: -10px; }
 }
 
-/* Run status lines stay in place; failures pair destructive text with a label. */
-.otis-run { margin: 0 0 8px; }
+/* Run groups own the Working-to-answer gap; one owner, no stacked margins. */
+.otis-run { margin: 0; }
 .otis-run:empty { display: none; }
-.otis-run__status { color: var(--muted-foreground); margin: 8px 0; }
+.otis-run__status { color: var(--muted-foreground); margin: 0; }
 .otis-run__status--error { color: var(--destructive); }
 
 /* Working: static 8px highlight dot, real current activity, chronological steps. */
 .otis-working { display: flex; flex-direction: column; gap: 8px; color: var(--muted-foreground); }
-.otis-working__disclosure { display: flex; align-items: center; gap: 8px; align-self: flex-start; min-height: 44px; padding: 0; border: 0; background: transparent; color: var(--muted-foreground); cursor: pointer; }
+.otis-working__disclosure { display: flex; align-items: center; gap: 8px; align-self: flex-start; min-height: 24px; padding: 0; border: 0; background: transparent; color: var(--muted-foreground); cursor: pointer; }
 .otis-working__disclosure svg { transition: transform 150ms ease-out; }
 .otis-working__disclosure[aria-expanded='false'] svg { transform: rotate(-90deg); }
 .otis-thinking__trigger { display: flex; align-items: center; gap: 8px; min-height: 32px; padding: 0; border: 0; background: transparent; color: var(--muted-foreground); cursor: pointer; }
@@ -132,9 +132,10 @@
 .otis-provider-summary { margin-top: 12px; color: var(--muted-foreground); }
 .otis-provider-summary summary { min-height: 44px; cursor: pointer; }
 
-/* Clarifications are ordinary conversational text answered in the composer. */
-.otis-question { display: flex; flex-direction: column; gap: 8px; margin-top: 12px; }
-.otis-streamed { margin-top: 16px; }
+/* The transcript callout keeps the question reachable; answering happens in
+   the explicit panel above the composer, never in the main field. */
+.otis-question { display: flex; flex-direction: column; gap: 8px; margin-top: 0; }
+.otis-streamed { margin-top: 0; }
 .otis-load-older { display: flex; margin: 0 auto; }
 
 /* Jump to latest: neutral icon-button treatment with a count extension. */
@@ -213,7 +214,8 @@ a.otis-button, a.otis-button:hover { text-decoration: none; }
   .otis-topbar__menu { display: none; }
 }
 @media (min-width: 56.25rem) and (pointer: fine) {
-  .otis-working__disclosure, .otis-provider-summary summary { min-height: 32px; }
+  .otis-working__disclosure { min-height: 24px; }
+  .otis-provider-summary summary { min-height: 32px; }
   .otis-pane-header { min-height: 44px; }
 }
 @media (prefers-reduced-motion: reduce) {
