@@ -191,6 +191,8 @@ export interface QueryToolArgs {
     assignee_user_id?: string;
     due_before?: string;
     due_after?: string;
+    /** Exact entity kind (entities only): lead, client, partner. */
+    kind?: string;
     /** Substring match on the source message text (attachments only). */
     text?: string;
     /** Lead status filter (lead_overview only). */
@@ -801,6 +803,7 @@ export function validateQueryArgs(raw: unknown): ValidationResult<QueryToolArgs>
         'assignee_user_id',
         'due_before',
         'due_after',
+        'kind',
         'text',
         'status',
         'overdue_only',
@@ -830,8 +833,12 @@ export function validateQueryArgs(raw: unknown): ValidationResult<QueryToolArgs>
       assignee_user_id: typeof fObj['assignee_user_id'] === 'string' ? fObj['assignee_user_id'].trim() : undefined,
       due_before: typeof fObj['due_before'] === 'string' ? fObj['due_before'].trim() : undefined,
       due_after: typeof fObj['due_after'] === 'string' ? fObj['due_after'].trim() : undefined,
+      kind: typeof fObj['kind'] === 'string' ? fObj['kind'].trim() : undefined,
       text: typeof fObj['text'] === 'string' ? fObj['text'].trim() : undefined,
     };
+    if (filters.kind !== undefined && (filters.kind.length === 0 || filters.kind.length > 64)) {
+      return fail('invalid_argument', "Filter 'kind' must be a non-empty string of at most 64 characters.");
+    }
   }
 
   if (obj['resource'] === 'lead_overview') {
@@ -1500,7 +1507,7 @@ export const ALL_AGENT_TOOLS: ProviderToolDeclaration[] = [
   },
   {
     name: 'query',
-    description: 'Query structured records (entities, tasks, events, drafts, attachments, lead_overview) with whitelisted filters.',
+    description: 'Query structured records with whitelisted filters. entities/tasks/events/drafts/attachments return raw rows. lead_overview is an efficient lead report read: full-set counts, overdue-first order and page cursors — use it when its data answers the request, never as a template for unrelated tables.',
     parameters: {
       type: 'object',
       properties: {
@@ -1515,6 +1522,7 @@ export const ALL_AGENT_TOOLS: ProviderToolDeclaration[] = [
             assignee_user_id: { type: 'string' },
             due_before: { type: 'string' },
             due_after: { type: 'string' },
+            kind: { type: 'string' },
             text: { type: 'string' },
             status: { type: 'string' },
             overdue_only: { type: 'boolean' },

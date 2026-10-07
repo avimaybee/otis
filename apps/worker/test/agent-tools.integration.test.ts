@@ -264,6 +264,56 @@ describe('Worker Agent Tools & Guarded Repositories D1 Integration (006A workerd
     expect(revAfter).toBe(revBefore);
   });
 
+  it('filters entity queries by kind without leaking other kinds', async () => {
+    await env.DB.prepare(
+      `INSERT INTO entities (id, workspace_id, name, kind, status, created_at, updated_at)
+       VALUES ('ent_kind_lead', ?, 'Kind Lead', 'lead', 'warm', ?, ?),
+              ('ent_kind_client', ?, 'Kind Client', 'client', 'warm', ?, ?)`
+    )
+      .bind(ws1, nowIso, nowIso, ws1, nowIso, nowIso)
+      .run();
+
+    const clients = await executeAgentTool({
+      db: env.DB,
+      workspaceId: ws1,
+      actorUserId: aviId,
+      runId: run1Id,
+      stepId: step1Id,
+      fence: fence1,
+      expectedBusinessRevision: (await getWorkspaceRevision(env.DB, ws1))?.business_revision ?? 0,
+      actionId: 'act_kind_clients',
+      sourceMessageId: 'msg_tools_1',
+      chatId: chat1,
+      toolName: 'query',
+      toolArgs: { resource: 'entities', filters: { kind: 'client' } },
+    });
+    expect(clients.status).toBe('applied');
+    if (clients.status === 'applied') {
+      const rows = clients.data as Array<{ id: string; kind: string }>;
+      expect(rows.some((r) => r.id === 'ent_kind_client')).toBe(true);
+      expect(rows.some((r) => r.kind !== 'client')).toBe(false);
+    }
+
+    const leads = await executeAgentTool({
+      db: env.DB,
+      workspaceId: ws1,
+      actorUserId: aviId,
+      runId: run1Id,
+      stepId: step1Id,
+      fence: fence1,
+      actionId: 'act_kind_leads',
+      sourceMessageId: 'msg_tools_1',
+      chatId: chat1,
+      toolName: 'query',
+      toolArgs: { resource: 'entities', filters: { kind: 'lead' } },
+    });
+    expect(leads.status).toBe('applied');
+    if (leads.status === 'applied') {
+      const rows = leads.data as Array<{ id: string; kind: string }>;
+      expect(rows.some((r) => r.id === 'ent_kind_lead')).toBe(true);
+      expect(rows.some((r) => r.id === 'ent_kind_client')).toBe(false);
+    }
+  });
   it('enforces workspace isolation: wrong-workspace entities, tasks, sources, and memory denied without leaking contents', async () => {
     // 1. Seed an entity in ws2
     await env.DB.prepare(

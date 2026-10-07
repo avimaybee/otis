@@ -132,6 +132,10 @@ describe('006A: Tool Schemas and Argument Validation', () => {
   });
 
   it('validates lead_overview filters, columns and page bounds', () => {
+    const kind = validateQueryArgs({ resource: 'entities', filters: { kind: 'client' } });
+    expect(kind.ok).toBe(true);
+    if (kind.ok) expect(kind.data.filters?.kind).toBe('client');
+    expect(validateQueryArgs({ resource: 'entities', filters: { kind: '' } }).ok).toBe(false);
     const res = validateQueryArgs({
       resource: 'lead_overview',
       filters: { status: 'warm', overdue_only: true, columns: ['status', 'due'] },

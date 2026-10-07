@@ -179,6 +179,8 @@ Transcript is role log with polite announcements of completed new messages only,
 
 Dialogs/sheets trap and return focus. Keyboard traversal, IME, 200% zoom, enlarged text, reduced motion and read-only history need actual review. Tooltip text is not the only label.
 
+Tables in replies use the shared MarkdownTable shell: one semantic table per scroll region (keyboard-focusable, labeled), quiet row separators, wrapped long cells at normal text size with tabular numerals, and a functional Copy-table action producing tab-separated values. No sorting, filtering or download controls. Wide tables scroll inside their region; the page and composer never acquire horizontal overflow.
+
 ## 12. Offline and settings
 
 PWA opens its static shell without signal after installation/caching; it cannot invent authentication, fresh data or answers. Scope IndexedDB input/recordings to the authenticated owner. Do not indiscriminately service-worker-cache private API responses, audio, credentials or provider requests.

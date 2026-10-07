@@ -281,6 +281,10 @@ export async function executeAgentTool(
           sql += ` AND id = ?`;
           binds.push(qArgs.filters.entity_id);
         }
+        if (qArgs.filters?.kind) {
+          sql += ` AND kind = ?`;
+          binds.push(qArgs.filters.kind);
+        }
         if (qArgs.filters?.entity_status) {
           sql += ` AND status = ?`;
           binds.push(qArgs.filters.entity_status);
