@@ -24,6 +24,7 @@ import type {
   CredentialStatusResponse,
   ProviderName,
   RunDetailResponse,
+  RunBatchResponse,
   TelegramConnectionResponse,
   TelegramDisconnectResponse,
   TelegramLinkResponse,
@@ -185,6 +186,11 @@ export const api = {
 
   run: (workspaceId: string, runId: string) =>
     request<RunDetailResponse>(`/api/workspaces/${workspaceId}/runs/${runId}`),
+
+  runs: (workspaceId: string, runIds: string[]) =>
+    request<RunBatchResponse>(
+      `/api/workspaces/${workspaceId}/runs?ids=${encodeURIComponent(runIds.join(','))}`,
+    ),
 
   stopRun: (workspaceId: string, runId: string) =>
     request<{ stopped: boolean; run_status: string }>(

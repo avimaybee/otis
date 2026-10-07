@@ -453,6 +453,7 @@ describe('End-to-End UI to Backend Flow Verification', () => {
     vi.spyOn(api, 'clarifications').mockResolvedValue({ clarifications: [] });
     vi.spyOn(api, 'models').mockResolvedValue({ models: DEFAULT_MODELS, current_command_key: 'mimo-25', default_command_key: 'mimo-25' });
     vi.spyOn(api, 'run').mockResolvedValue(runningRun);
+    vi.spyOn(api, 'runs').mockResolvedValue({ runs: [runningRun] });
 
     const stopSpy = vi.spyOn(api, 'stopRun').mockResolvedValue({ stopped: true, run_status: 'cancelled' });
 
@@ -512,6 +513,7 @@ describe('End-to-End UI to Backend Flow Verification', () => {
     });
     vi.spyOn(api, 'models').mockResolvedValue({ models: DEFAULT_MODELS, current_command_key: 'mimo-25', default_command_key: 'mimo-25' });
     vi.spyOn(api, 'run').mockResolvedValue(clarifyRun);
+    vi.spyOn(api, 'runs').mockResolvedValue({ runs: [clarifyRun] });
 
     const sendSpy = vi.spyOn(api, 'sendMessage').mockResolvedValue({
       status: 'accepted',
@@ -624,6 +626,7 @@ describe('End-to-End UI to Backend Flow Verification', () => {
     vi.spyOn(api, 'clarifications').mockResolvedValue({ clarifications: [] });
     vi.spyOn(api, 'models').mockResolvedValue({ models: DEFAULT_MODELS, current_command_key: 'mimo-25', default_command_key: 'mimo-25' });
     vi.spyOn(api, 'run').mockResolvedValue(actionRun);
+    vi.spyOn(api, 'runs').mockResolvedValue({ runs: [actionRun] });
 
     const actionSpy = vi.spyOn(api, 'action').mockResolvedValue(actionDetail);
     const previewSpy = vi.spyOn(api, 'undoPreview')
@@ -725,6 +728,7 @@ describe('End-to-End UI to Backend Flow Verification', () => {
     vi.spyOn(api, 'clarifications').mockResolvedValue({ clarifications: [] });
     vi.spyOn(api, 'models').mockResolvedValue({ models: DEFAULT_MODELS, current_command_key: 'mimo-25', default_command_key: 'mimo-25' });
     vi.spyOn(api, 'run').mockResolvedValue(agentRun);
+    vi.spyOn(api, 'runs').mockResolvedValue({ runs: [agentRun] });
 
     const memSourceSpy = vi.spyOn(api, 'memorySource').mockResolvedValue(memorySourceResponse);
 

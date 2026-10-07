@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { Toaster, toast } from 'sonner';
 import Markdown from 'react-markdown';
-import type { CommandDescriptor, ModelOption, RunDetailResponse, VoiceMediaSummary } from '@otis/contracts';
+import type { CommandDescriptor, ModelOption, VoiceMediaSummary } from '@otis/contracts';
 import { api, ApiError } from './api/client.js';
 import { createWorkerImageTransport, uploadImageFile } from './api/images.js';
 import { debugLog } from './api/log.js';
@@ -756,10 +756,7 @@ export function ConversationScreen({ workspaceId, chat: routeChat, chatParamPres
     try {
       const page = await api.listMessages(workspaceId, activeChatId, snapshot.older);
       const ids = [...new Set(page.messages.flatMap(message => message.run_id ? [message.run_id] : []))];
-      const runResults = await Promise.allSettled(ids.map(id => api.run(workspaceId, id)));
-      const runs = runResults
-        .filter((r): r is PromiseFulfilledResult<RunDetailResponse> => r.status === 'fulfilled')
-        .map(r => r.value);
+      const runs = ids.length > 0 ? (await api.runs(workspaceId, ids)).runs : [];
       if (generation !== epoch.current || selected.current.chat !== activeChatId) return;
       queryClient.setQueryData<ChatSnapshot>(qk.chat(userId, workspaceId, activeChatId), previous => {
         if (!previous) return previous;

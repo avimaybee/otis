@@ -103,6 +103,7 @@ All paths below are proposed implementation names, frozen when `packages/contrac
 | `POST .../chats/:chatId/messages` | `{client_message_id,text?,media_id?,image_media_ids?}`; 202 stable message/run IDs after durable commit. Text may be empty when media is attached; at most 4 finalized still images per message, each validated, owned and unexpired at commit, linked atomically as receipts |
 | `GET .../chats/:chatId/activity?after=` | SSE with chat cursor; same records available as catch-up JSON |
 | `GET .../runs/:runId` | Authoritative run/partial result and actions |
+| `GET .../runs?ids=a,b` | Same run-detail shapes in request order, unknown ids omitted; at most one transcript page (50). Snapshot and older-page loads use this instead of one request per run |
 | `POST .../runs/:runId/stop` | Author-scoped stop request, explicit idempotency key |
 | `GET .../actions/:actionId` | Safe detail, original source, undo state |
 | `POST .../actions/:actionId/undo-preview` | Mode `from_here` or `single`; selected IDs/effects/dependencies and revision |
@@ -230,6 +231,7 @@ Implemented route shapes (2026-10-02, gate 007). DTOs live in `packages/contract
 - `GET .../chats/:chatId/activity?after=` returns `{activities, next_cursor, latest_cursor}`. A cursor beyond the chat's activity cursor is `409 cursor_superseded` with `latest_cursor`, which the client answers with an authoritative transcript fetch.
 - `GET .../chats/:chatId/activity?stream=sse&after=` emits named events `activity`, `resync_required`, `membership_revoked` and `heartbeat` over the same persisted rows, revalidating session and membership between polls.
 - `GET .../runs/:runId` is the authoritative run view: run, steps, action receipts, run activity and the pending clarification.
+- `GET .../runs?ids=` batches the same per-run shapes with workspace-scoped `IN` reads (runs, steps, receipts, activities capped at the most recent 200 per run, pending clarifications, sources). Live single-run refreshes keep using the singular route.
 - `POST .../actions/:actionId/undo` takes `mode`, `client_operation_id` and `expected_revision`, plus an optional `chat_id`. The undo's own action identity is derived from `client_operation_id`, so a retry replays the recorded receipt instead of reverting twice. An undo without `chat_id` is attributed to the requester's most recent conversation; a requester with no conversation cannot create an unattributed business event.
 - `POST .../clarifications/:id/reply` requires `client_message_id` and the requesting member; the answer is durably accepted as an ordinary message before the saved typed operation resumes.
 - `GET .../models?chat_id=` reports registry entries, current/default selection, voice capability separately from native audio support, and `thinking: ThinkingOptionDTO` (`state`, `current_choice_id`, `effective_choice_id`, `is_default`, `choices: [{ id, label }]`, `unavailability_reason`).

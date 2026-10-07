@@ -177,7 +177,15 @@ export interface RunDetailResponse {
 }
 
 export interface MemorySourceReference { memory_id: string; label: string; provenance: 'stated' | 'inferred'; }
-export interface MemorySourceResponse {
+
+/**
+ * Batched run-detail page: the same RunDetailResponse shapes as the
+ * single-run route, in request order, omitting unknown ids. One HTTP
+ * roundtrip replaces the per-run N+1 on snapshot and older-page loads.
+ */
+export interface RunBatchResponse {
+  runs: RunDetailResponse[];
+}export interface MemorySourceResponse {
   memory: { id: string; content: string; provenance: 'stated' | 'inferred'; status: string; observed_at: string };
   source: { chat_id: string | null; author_name: string | null; text: string | null; created_at: string; channel: string } | null;
 }

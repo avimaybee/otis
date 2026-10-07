@@ -93,7 +93,7 @@ describe('Latency audit: fixed behavior (reproductions now prove the cures)', ()
     expect(calls.every(sql => !/\bLIMIT\b/.test(sql))).toBe(true);
   });
 
-  it('a 50-run chat snapshot issues 54 API calls', async () => {
+  it('a 50-run chat snapshot issues 5 API calls: 4 parallel plus one batched run page', async () => {
     vi.spyOn(api, 'getChat').mockResolvedValue({ chat: { id: 'audit-chat' } } as never);
     vi.spyOn(api, 'listMessages').mockResolvedValue({
       messages: Array.from({ length: 50 }, (_, i) => ({ id: `m${i}`, run_id: `r${i}`, sequence: i })),
@@ -101,12 +101,14 @@ describe('Latency audit: fixed behavior (reproductions now prove the cures)', ()
     } as never);
     vi.spyOn(api, 'activity').mockResolvedValue({ activities: [], latest_cursor: 0 } as never);
     vi.spyOn(api, 'clarifications').mockResolvedValue({ clarifications: [] } as never);
-    const runs = vi.spyOn(api, 'run').mockImplementation(async (_ws, id) => ({
-      run: { id }, activities: [], steps: [], actions: [],
+    const batched = vi.spyOn(api, 'runs').mockImplementation(async (_ws, ids) => ({
+      runs: ids.map((id) => ({ run: { id }, activities: [], steps: [], actions: [] })),
     } as never));
-    await fetchChatSnapshot('audit-ws', 'audit-chat');
-    expect(runs).toHaveBeenCalledTimes(50);
-    expect([api.getChat, api.listMessages, api.activity, api.clarifications]
-      .reduce((count, method) => count + vi.mocked(method).mock.calls.length, runs.mock.calls.length)).toBe(54);
+    const snapshot = await fetchChatSnapshot('audit-ws', 'audit-chat');
+    expect(batched).toHaveBeenCalledTimes(1);
+    expect(batched).toHaveBeenCalledWith('audit-ws', expect.arrayContaining(['r0', 'r49']));
+    expect(Object.keys(snapshot.runs)).toHaveLength(50);
+    expect([api.getChat, api.listMessages, api.activity, api.clarifications, api.runs]
+      .reduce((count, method) => count + vi.mocked(method).mock.calls.length, 0)).toBe(5);
   });
 });

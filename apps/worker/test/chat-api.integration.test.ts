@@ -9,6 +9,7 @@ import type {
   MessageListResponse,
   ModelListResponse,
   RunDetailResponse,
+  RunBatchResponse,
   UndoCommitResponse,
   UndoPreviewResponse,
   ClarificationListResponse,
@@ -662,6 +663,48 @@ describe('Chat API: transcript, activity and run status', () => {
     for (const activity of detail.activities) {
       expect(activity.run_id).toBe(accepted.run_id);
     }
+  });
+
+  it('batches run details in request order, omitting unknown ids', async () => {
+    const first = await acceptWebMessage(env.DB, {
+      workspaceId: WS,
+      chatId: aviChat,
+      userId: AVI,
+      clientMessageId: 'cm-run-batch-1',
+      text: 'First batched question?',
+    });
+    const second = await acceptWebMessage(env.DB, {
+      workspaceId: WS,
+      chatId: aviChat,
+      userId: AVI,
+      clientMessageId: 'cm-run-batch-2',
+      text: 'Second batched question?',
+    });
+
+    const batch = await callJson<RunBatchResponse>(
+      `/api/workspaces/${WS}/runs?ids=${second.run_id},${first.run_id},run_missing`,
+      { cookie: aviCookie },
+    );
+    expect(batch.runs.map((run) => run.run.id)).toEqual([second.run_id, first.run_id]);
+    for (const run of batch.runs) {
+      expect(Array.isArray(run.steps)).toBe(true);
+      expect(Array.isArray(run.actions)).toBe(true);
+      for (const activity of run.activities) {
+        expect(activity.run_id).toBe(run.run.id);
+      }
+    }
+
+    const empty = await callJson<RunBatchResponse>(
+      `/api/workspaces/${WS}/runs?ids=`,
+      { cookie: aviCookie },
+    );
+    expect(empty.runs).toEqual([]);
+
+    const outsider = await call(
+      `/api/workspaces/${WS}/runs?ids=${first.run_id}`,
+      { cookie: outsiderCookie },
+    );
+    expect([401, 403, 404]).toContain(outsider.status);
   });
 
   it('reports a pending clarification and refuses an answer from another member', async () => {

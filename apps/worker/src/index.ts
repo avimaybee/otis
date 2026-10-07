@@ -79,7 +79,7 @@ import {
   handleUpdateMemberSettings,
   handleUpdateWorkspaceSettings,
 } from './routes/settings.js';
-import { handleStopRun, handleGetRun } from './routes/runs.js';
+import { handleStopRun, handleGetRun, handleListRuns } from './routes/runs.js';
 import { extractPlatformKeys } from './providers/service.js';
 import { jsonError, jsonSuccess } from './middleware/errors.js';
 import { workerDebug } from './observability.js';
@@ -727,6 +727,15 @@ export default {
       }
 
       // 11. Run routes: /api/workspaces/:workspaceId/runs/:runId and /stop
+      // Batch run details: one roundtrip for snapshot/older-page loads.
+      const runsMatch = url.pathname.match(/^\/api\/workspaces\/([^/]+)\/runs$/);
+      if (runsMatch) {
+        const workspaceId = runsMatch[1];
+        if (request.method === 'GET' && workspaceId) {
+          return await handleListRuns(request, env, workspaceId, requestId);
+        }
+        return jsonError(405, 'method_not_allowed', 'Method not allowed.', requestId);
+      }
       const stopMatch = url.pathname.match(/^\/api\/workspaces\/([^/]+)\/runs\/([^/]+)\/stop$/);
       if (stopMatch) {
         const workspaceId = stopMatch[1];

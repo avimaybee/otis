@@ -39,10 +39,9 @@ export async function fetchChatSnapshot(workspaceId: string, chatId: string): Pr
     api.clarifications(workspaceId, chatId),
   ]);
   const runIds = [...new Set(page.messages.flatMap(message => (message.run_id ? [message.run_id] : [])))];
-  const runResults = await Promise.allSettled(runIds.map(id => api.run(workspaceId, id)));
-  const runData = runResults
-    .filter((r): r is PromiseFulfilledResult<RunDetailResponse> => r.status === 'fulfilled')
-    .map(r => r.value);
+  // One batched roundtrip instead of one request per run; unknown ids are
+  // omitted server-side, mirroring the previous per-run settled behavior.
+  const runData = runIds.length > 0 ? (await api.runs(workspaceId, runIds)).runs : [];
   const activities = [...new Map(
     [...firstActivity.activities, ...runData.flatMap(run => run.activities)].map(activity => [activity.id, activity]),
   ).values()].sort((left, right) => left.cursor - right.cursor);
