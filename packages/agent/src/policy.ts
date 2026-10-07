@@ -182,6 +182,69 @@ export function sentConfirmationMatchesTarget(
 
 /**
  * Checks if the source text contains an explicit statement by a member that
+ * they promise to do something. Only affirmative first-person commitments
+ * count; questions, quotes, conditionals, negations, and reported speech
+ * about someone else's promise are rejected. Used to rank promised work
+ * above ordinary tasks — never to invent obligations.
+ */
+export function isExplicitPromise(sourceText: string): { isPromise: boolean; reason?: string } {
+  const unquoted = stripQuotes(sourceText).trim();
+  if (!unquoted) {
+    return {
+      isPromise: false,
+      reason: 'No source-backed explicit promise found.',
+    };
+  }
+
+  const promisePatterns = [
+    /\b(i\s+promise|i\s+promised|i['’]ll\s+promise|promise\s+(to|that)|promised\s+(to|that))\b/i,
+    /\b(promit|am\s+promis)\b/i,
+    /\b(meg)?ígér\w*/iu,
+  ];
+
+  const sentences = splitSentences(unquoted);
+  let foundCandidate = false;
+  let rejectedReason: string | undefined;
+
+  for (const sentence of sentences) {
+    const sLower = sentence.toLowerCase();
+    if (!promisePatterns.some((rx) => rx.test(sLower))) continue;
+
+    foundCandidate = true;
+
+    // Questions are inquiries, not commitments
+    if (sentence.includes('?') || /^(did|have|has|would|could|can|will)\s+/i.test(sentence)) {
+      rejectedReason = 'Source text is a question, not an explicit promise.';
+      continue;
+    }
+
+    // Conditional / hypothetical check
+    if (CONDITIONAL_PATTERN.test(sLower)) {
+      rejectedReason = 'Source text is conditional or hypothetical, not an explicit promise.';
+      continue;
+    }
+
+    // Negation check
+    if (NEGATION_PATTERN.test(sLower)) {
+      rejectedReason = `Source text contains negation ('${sLower.match(NEGATION_PATTERN)?.[0]}'). Not an explicit promise.`;
+      continue;
+    }
+
+    return { isPromise: true };
+  }
+
+  if (foundCandidate && rejectedReason) {
+    return { isPromise: false, reason: rejectedReason };
+  }
+
+  return {
+    isPromise: false,
+    reason: 'No source-backed explicit promise found.',
+  };
+}
+
+/**
+ * Checks if the source text contains an explicit statement by a member that
  * they sent a message. Questions, quotes, conditionals, and negations are
  * rejected; only an explicit member statement confirms.
  */

@@ -684,6 +684,10 @@ export interface TaskCreatedPayload {
   entity_id?: string | null;
   assignee_user_id?: string | null;
   due: TaskDue;
+  /** True when the member explicitly chose no deadline. Absent on old rows. */
+  explicit_no_deadline?: boolean;
+  /** True when the member explicitly promised this work. Absent on old rows. */
+  is_promise?: boolean;
 }
 
 export interface TaskUpdatedPayload {
@@ -784,6 +788,10 @@ export interface Task {
   due_instant: string | null;
   due_timezone: string | null;
   snooze_until: string | null;
+  /** Persisted explicit no-deadline choice; false for pre-marker rows. */
+  explicit_no_deadline: boolean;
+  /** Persisted explicit promise marker; false for pre-marker rows. */
+  is_promise: boolean;
   source_event_id: string;
   revision: number;
   created_at: string;

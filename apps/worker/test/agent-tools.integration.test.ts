@@ -20,6 +20,8 @@ import migration0008Sql from '../../../migrations/0008_memory_and_agent_runs.sql
 import migration0009Sql from '../../../migrations/0009_thinking_controls.sql?raw';
 // @ts-expect-error vite raw import
 import migration0016Sql from '../../../migrations/0016_brief_next_due.sql?raw';
+// @ts-expect-error vite raw import
+import migration0017Sql from '../../../migrations/0017_task_markers.sql?raw';
 
 import { executeAgentTool } from '../src/agent/repository.js';
 import {
@@ -81,6 +83,7 @@ describe('Worker Agent Tools & Guarded Repositories D1 Integration (006A workerd
 
   beforeAll(async () => {
     // 1. Apply migrations 0001 through 0009 plus 0016 (member-settings sweep stamp)
+    // and 0017 (task selection markers).
     for (const sql of [
       migration0001Sql,
       migration0002Sql,
@@ -92,6 +95,7 @@ describe('Worker Agent Tools & Guarded Repositories D1 Integration (006A workerd
       migration0008Sql,
       migration0009Sql,
       migration0016Sql,
+      migration0017Sql,
     ]) {
       for (const stmt of splitSqlStatements(sql)) {
         await env.DB.prepare(stmt).run();

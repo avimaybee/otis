@@ -66,6 +66,8 @@ export function handleCreateTask(
       entity_id: args.entity_id || null,
       assignee_user_id: assignee,
       due: resolvedDue,
+      explicit_no_deadline: args.explicit_no_deadline === true,
+      is_promise: args.is_promise === true,
     },
     provenance: 'stated',
   });

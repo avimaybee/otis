@@ -21,6 +21,9 @@ import {
   type BriefKernel,
 } from '../src/brief/service.js';
 import { setMemberSettings } from '@otis/identity';
+import { executeAgentTool } from '../src/agent/repository.js';
+import { getWorkspaceEvents } from '@otis/ledger';
+import { rebuildProjections } from '@otis/ledger';
 import { readBriefCandidates } from '../src/brief/read.js';
 import { processScheduledDailyBriefs } from '../src/brief/cron.js';
 import { deliverTelegramOutbox } from '../src/inbox/telegramDelivery.js';
@@ -457,6 +460,92 @@ describe('011B daily brief', () => {
 
     // Web channel: canonical message only, no Telegram intent.
     expect(await count('outbox', 'workspace_id = ?', WS)).toBe(0);
+  });
+
+  it('ranks promised and explicitly undated tasks from persisted markers', async () => {
+    const ws = 'ws-brf-markers';
+    const user = 'usr_brf_mark';
+    await seedUser(user, 'fb_brf_mark', 'mark@brief.test', 'Mark');
+    await seedWorkspace(ws, 'Markers', user);
+    await seedMembership(ws, user, 'owner');
+    await seedChat('chat-brf-mark', ws, user, 'Mark chat');
+    await env.DB.prepare(
+      `INSERT INTO messages_in (id, workspace_id, chat_id, user_id, channel, external_id, payload_fingerprint, status, created_at, updated_at)
+       VALUES ('min-brf-mark', ?, 'chat-brf-mark', ?, 'web', 'ext-brf-mark', 'fp-brf-mark', 'processing', ?, ?)`,
+    ).bind(ws, user, NOW, NOW).run();
+
+    const create = (actionId: string, sourceText: string, toolArgs: unknown) =>
+      executeAgentTool({
+        db: env.DB,
+        workspaceId: ws,
+        actorUserId: user,
+        actionId,
+        chatId: 'chat-brf-mark',
+        sourceMessageId: 'min-brf-mark',
+        sourceText,
+        toolName: 'create_task',
+        toolArgs,
+      });
+
+    const promised = await create('act-mark-promised', 'I promise to send the offer by Monday.', {
+      title: 'Send offer',
+      due: { kind: 'date', local_date: '2026-10-06', timezone: 'Europe/Bucharest' },
+    });
+    expect(promised.status).toBe('applied');
+    const promisedId = promised.affected_resource_ids?.[0];
+    const undated = await create('act-mark-undated', 'Park this for later, no deadline.', {
+      title: 'Parked follow-up',
+      explicit_no_deadline: true,
+    });
+    expect(undated.status).toBe('applied');
+    const undatedId = undated.affected_resource_ids?.[0];
+    const ordinary = await create('act-mark-ordinary', 'Remind me about the contract.', {
+      title: 'Review contract',
+      due: { kind: 'date', local_date: '2026-10-06', timezone: 'Europe/Bucharest' },
+    });
+    expect(ordinary.status).toBe('applied');
+    const ordinaryId = ordinary.affected_resource_ids?.[0];
+
+    // Markers persist on the projection exactly as created.
+    const rows = (
+      await env.DB.prepare(
+        `SELECT id, explicit_no_deadline, is_promise FROM tasks WHERE workspace_id = ?`,
+      ).bind(ws).all<{ id: string; explicit_no_deadline: number; is_promise: number }>()
+    ).results ?? [];
+    const byId = new Map(rows.map((row) => [row.id, row]));
+    expect(byId.get(promisedId!)?.is_promise).toBe(1);
+    expect(byId.get(promisedId!)?.explicit_no_deadline).toBe(0);
+    expect(byId.get(undatedId!)?.explicit_no_deadline).toBe(1);
+    expect(byId.get(undatedId!)?.is_promise).toBe(0);
+    expect(byId.get(ordinaryId!)?.is_promise).toBe(0);
+    expect(byId.get(ordinaryId!)?.explicit_no_deadline).toBe(0);
+
+    // Rebuilds from events reproduce the markers: no silent drift.
+    const rebuilt = rebuildProjections(await getWorkspaceEvents(env.DB, ws));
+    expect(rebuilt.tasks.get(promisedId!)?.is_promise).toBe(true);
+    expect(rebuilt.tasks.get(undatedId!)?.explicit_no_deadline).toBe(true);
+    expect(rebuilt.tasks.get(ordinaryId!)?.is_promise).toBe(false);
+
+    // Selection ranks the promise first, then the dated task, then the
+    // explicitly undated action — from stored truth, not hardcoded flags.
+    const candidates = await readBriefCandidates(env.DB, ws, user);
+    expect(candidates.tasks.find((task) => task.id === promisedId)?.reason).toBe('promise');
+    expect(candidates.tasks.find((task) => task.id === undatedId)?.explicitNoDeadline).toBe(true);
+    const selected = kernel.selectItems({
+      nowUtcIso: NOW,
+      briefLocalDate: '2026-10-06',
+      briefTimezone: 'Europe/Bucharest',
+      tasks: candidates.tasks,
+      leads: [],
+      staleAfterDays: STALE_DAYS,
+    });
+    expect(selected.map((item) => [item.kind, item.taskId])).toEqual([
+      ['promise_due', promisedId],
+      ['task_due', ordinaryId],
+      ['undated', undatedId],
+    ]);
+    expect(selected[0]?.reason).toBe('Promise due 2026-10-06');
+    expect(selected[2]?.reason).toBe('Next action with no deadline');
   });
 
   it('dedupes concurrent ticks to one canonical brief', async () => {

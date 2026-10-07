@@ -69,6 +69,8 @@ export interface CreateTaskArgs {
   assignee_user_id?: string | null;
   due?: TaskDue;
   explicit_no_deadline?: boolean;
+  /** Policy-derived explicit promise marker; never model-supplied. */
+  is_promise?: boolean;
 }
 
 export interface UpdateTaskArgs {

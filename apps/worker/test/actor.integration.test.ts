@@ -26,6 +26,8 @@ import migration0011Sql from '../../../migrations/0011_link_workspace_intent.sql
 import migration0012Sql from '../../../migrations/0012_voice_media.sql?raw';
 // @ts-expect-error vite raw import
 import migration0015Sql from '../../../migrations/0015_message_image_attachments.sql?raw';
+// @ts-expect-error vite raw import
+import migration0017Sql from '../../../migrations/0017_task_markers.sql?raw';
 import { AUTH_BOUNDS } from '@otis/contracts';
 import type { HttpErrorResponse } from '@otis/contracts';
 import { acceptWebMessage, createChat } from '../src/inbox/repository.js';
@@ -189,6 +191,7 @@ describe('Worker Actor Dispatch & Recovery Integration (workerd)', () => {
       migration0011Sql,
       migration0012Sql,
       migration0015Sql,
+      migration0017Sql,
     ]) {
       for (const stmt of splitSqlStatements(sql)) {
         await env.DB.prepare(stmt).run();

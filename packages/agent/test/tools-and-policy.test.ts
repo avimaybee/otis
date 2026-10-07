@@ -10,6 +10,7 @@ import {
   checkBulkOperationPolicy,
   checkPreferenceScopePolicy,
   checkUntrustedContentPolicy,
+  isExplicitPromise,
   isExplicitSentConfirmation,
   isExplicitStatusIntent,
   sentConfirmationMatchesTarget,
@@ -462,6 +463,24 @@ describe('006A: Pure Policy Rules', () => {
     expect(sentConfirmationMatchesTarget('Sent it to +40722222222', null).matches).toBe(true);
     expect(sentConfirmationMatchesTarget('Sent it to +40722222222', 'Dan').matches).toBe(true);
     expect(sentConfirmationMatchesTarget('Sent it to +40722222222', '').matches).toBe(true);
+  });
+
+  it('recognizes explicit member promises across languages, rejecting questions and negations', () => {
+    // Affirmative first-person commitments.
+    expect(isExplicitPromise('I promise to send the offer tomorrow.').isPromise).toBe(true);
+    expect(isExplicitPromise('Promit să trimit oferta mâine.').isPromise).toBe(true);
+    expect(isExplicitPromise('Am promis că vin luni.').isPromise).toBe(true);
+    expect(isExplicitPromise('Megígérem, hogy elküldöm az ajánlatot.').isPromise).toBe(true);
+    expect(isExplicitPromise('I promised to call them back.').isPromise).toBe(true);
+
+    // Questions, conditionals, negations and quotes are not promises.
+    expect(isExplicitPromise('Did you promise anything?').isPromise).toBe(false);
+    expect(isExplicitPromise('If I promise, will they sign?').isPromise).toBe(false);
+    expect(isExplicitPromise('I did not promise a discount.').isPromise).toBe(false);
+    expect(isExplicitPromise('Nu am promis nimic.').isPromise).toBe(false);
+    expect(isExplicitPromise('Nem ígértem semmit.').isPromise).toBe(false);
+    expect(isExplicitPromise('They said: "I promise to pay"').isPromise).toBe(false);
+    expect(isExplicitPromise('We should probably follow up.').isPromise).toBe(false);
   });
 
   it('enforces bulk scope policy: more than 3 distinct targets requires explicit confirmation', () => {

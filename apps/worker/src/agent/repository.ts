@@ -8,6 +8,7 @@
 import type { CommandResult, LeadStatus } from '@otis/contracts';
 import {
   checkUntrustedContentPolicy,
+  isExplicitPromise,
   isExplicitSentConfirmation,
   isExplicitStatusIntent,
   sentConfirmationMatchesTarget,
@@ -1164,11 +1165,15 @@ export async function executeAgentTool(
 
     case 'create_task': {
       const ctArgs = args as CreateTaskToolArgs;
+      // Promise ranking is policy-derived from member words, never
+      // model-supplied: an explicit "I promise" in the source marks the
+      // task so the brief kernel ranks it first. Anything else stays an
+      // ordinary task.
       return executeLedgerCommand(
         db,
         ledgerContext,
         'create_task',
-        ctArgs,
+        { ...ctArgs, is_promise: isExplicitPromise(sourceText).isPromise },
         DEFAULT_COMMAND_HANDLERS['create_task']!,
         undefined,
         { deferRunTransition: true },

@@ -7,15 +7,6 @@
  * brief policy. Tasks assigned to a teammate never enter your brief.
  *
  * Honest omissions (reported schema gaps, not silent policy):
- * - Promise markers: the task projection carries no reason/promise marker
- *   and keyword matching is forbidden, so every due task maps with reason
- *   'task'. The promise rank group is inactive until a persisted marker
- *   exists (e.g. reason_key on tasks or a task_created payload flag).
- * - Explicit undated actions: a null due cannot be proven explicit (the
- *   transient explicit_no_deadline arg is never persisted), so null-due
- *   tasks pass explicitNoDeadline=false and the kernel excludes them as
- *   pending clarification. The undated group is inactive until the flag is
- *   persisted on the task_created payload/projection.
  * - Deal values: quotes live on separate events with offered/expected roles
  *   and no task attribution policy, so valueMinor/currency pass null; the
  *   kernel orders by age then stable ID until a value policy is decided.
@@ -161,6 +152,8 @@ interface TaskRow {
   due_instant: string | null;
   due_timezone: string | null;
   snooze_until: string | null;
+  explicit_no_deadline: number | null;
+  is_promise: number | null;
   source_event_id: string;
 }
 
@@ -235,7 +228,7 @@ export async function readBriefCandidates(
     await db
       .prepare(
         `SELECT id, entity_id, title, status, due_kind, due_local_date, due_instant,
-                due_timezone, snooze_until, source_event_id
+                due_timezone, snooze_until, explicit_no_deadline, is_promise, source_event_id
          FROM tasks
          WHERE workspace_id = ? AND status = 'open'
            AND (assignee_user_id = ? OR assignee_user_id IS NULL)
@@ -262,10 +255,11 @@ export async function readBriefCandidates(
     dueInstantAt: row.due_instant === null ? null : String(row.due_instant),
     dueTimezone: row.due_timezone === null ? null : String(row.due_timezone),
     snoozeUntil: row.snooze_until === null ? null : String(row.snooze_until),
-    // No persisted promise marker exists; never derive one from wording.
-    reason: 'task' as const,
-    // Explicit no-deadline is not persisted; null dues stay unprovable.
-    explicitNoDeadline: false,
+    // Persisted markers feed the kernel directly: an explicit member
+    // promise ranks first, an explicit no-deadline choice joins the undated
+    // group. Pre-marker rows read false and keep historical behavior.
+    reason: Number(row.is_promise ?? 0) === 1 ? ('promise' as const) : ('task' as const),
+    explicitNoDeadline: Number(row.explicit_no_deadline ?? 0) === 1,
     // No quote-to-task value policy exists; values stay out of ranking.
     valueMinor: null,
     currency: null,

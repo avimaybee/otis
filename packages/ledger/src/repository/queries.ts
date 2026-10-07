@@ -194,8 +194,8 @@ export async function getWorkspaceProjectionState(
     db
       .prepare(
         `SELECT id, workspace_id, entity_id, title, assignee_user_id, status, due_kind,
-                due_local_date, due_instant, due_timezone, snooze_until, source_event_id,
-                revision, created_at, updated_at
+                due_local_date, due_instant, due_timezone, snooze_until, explicit_no_deadline,
+                is_promise, source_event_id, revision, created_at, updated_at
          FROM tasks WHERE workspace_id = ?`,
       )
       .bind(workspaceId),
@@ -289,6 +289,8 @@ export async function getWorkspaceProjectionState(
       due_instant: r['due_instant'] ? String(r['due_instant']) : null,
       due_timezone: r['due_timezone'] ? String(r['due_timezone']) : null,
       snooze_until: r['snooze_until'] ? String(r['snooze_until']) : null,
+      explicit_no_deadline: Number(r['explicit_no_deadline'] ?? 0) === 1,
+      is_promise: Number(r['is_promise'] ?? 0) === 1,
       source_event_id: String(r['source_event_id']),
       revision: Number(r['revision']),
       created_at: String(r['created_at']),

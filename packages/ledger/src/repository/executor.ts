@@ -1,7 +1,7 @@
 /**
  * @otis/ledger/repository/executor
  * Transactional D1 execution boundary for ledger commands.
- * In accordance with architecture.md section 8 and plans/002-ledger.md.
+ * In accordance with architecture.md section 8 and docs/archive/plans/002-ledger.md.
  */
 
 import type {
@@ -1324,9 +1324,9 @@ export async function executeLedgerCommand<TArgs>(
         .prepare(
           `INSERT INTO tasks (
              id, workspace_id, entity_id, title, assignee_user_id, status, due_kind,
-             due_local_date, due_instant, due_timezone, snooze_until, source_event_id,
-             revision, created_at, updated_at
-           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             due_local_date, due_instant, due_timezone, snooze_until, explicit_no_deadline,
+             is_promise, source_event_id, revision, created_at, updated_at
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
            ON CONFLICT(id) DO UPDATE SET
              title = excluded.title,
              assignee_user_id = excluded.assignee_user_id,
@@ -1336,6 +1336,8 @@ export async function executeLedgerCommand<TArgs>(
              due_instant = excluded.due_instant,
              due_timezone = excluded.due_timezone,
              snooze_until = excluded.snooze_until,
+             explicit_no_deadline = excluded.explicit_no_deadline,
+             is_promise = excluded.is_promise,
              revision = excluded.revision,
              updated_at = excluded.updated_at`
         )
@@ -1351,6 +1353,8 @@ export async function executeLedgerCommand<TArgs>(
           task.due_instant || null,
           task.due_timezone || null,
           task.snooze_until || null,
+          task.explicit_no_deadline ? 1 : 0,
+          task.is_promise ? 1 : 0,
           task.source_event_id,
           task.revision,
           task.created_at,

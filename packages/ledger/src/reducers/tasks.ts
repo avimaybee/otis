@@ -24,6 +24,10 @@ export function reduceTasks(
         due_instant: p.due && p.due.kind === 'instant' ? p.due.at : null,
         due_timezone: p.due ? p.due.timezone : null,
         snooze_until: null,
+        // Old task_created rows predate both markers and reduce to false,
+        // preserving their historical selection behavior exactly.
+        explicit_no_deadline: p.explicit_no_deadline === true,
+        is_promise: p.is_promise === true,
         source_event_id: event.id,
         revision: 1,
         created_at: event.recorded_at,
