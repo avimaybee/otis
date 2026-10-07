@@ -629,6 +629,28 @@ describe('Worker Agent Tools & Guarded Repositories D1 Integration (006A workerd
     });
     const rowsAfter = searchAfterForget.data as Array<{ id: string }>;
     expect(rowsAfter.some((r) => r.id === memoryId)).toBe(false);
+
+    // 6. Direct read of forgotten memory reports inactivity, never content.
+    const getAfterForget = await executeAgentTool({
+      db: env.DB,
+      workspaceId: ws1,
+      actorUserId: aviId,
+      runId: run1Id,
+      stepId: step1Id,
+      fence: fence1,
+      expectedBusinessRevision: rev,
+      actionId: 'act_get_after_forget',
+      sourceMessageId: 'msg_tools_1',
+      chatId: chat1,
+      toolName: 'get_memory',
+      toolArgs: {
+        memory_id: memoryId,
+      },
+    });
+    expect(getAfterForget.status).toBe('rejected');
+    if (getAfterForget.status === 'rejected') {
+      expect(getAfterForget.error?.code).toBe('memory_inactive');
+    }
   });
 
   it('handles duplicate action idempotency: identical retry returns already_applied; changed payload conflicts', async () => {
@@ -925,6 +947,97 @@ describe('Worker Agent Tools & Guarded Repositories D1 Integration (006A workerd
     );
     expect(sent).toBeDefined();
     expect((sent!.payload as { confirmed_by_user_id?: string }).confirmed_by_user_id).toBe(aviId);
+  });
+
+  it('scopes memory search to visible notes: own member notes, never teammates, never forgotten', async () => {
+    let rev = (await getWorkspaceRevision(env.DB, ws1))?.business_revision ?? 0;
+    const remember = (actionId: string, actor: string, toolArgs: unknown) =>
+      executeAgentTool({
+        db: env.DB,
+        workspaceId: ws1,
+        actorUserId: actor,
+        runId: run1Id,
+        stepId: step1Id,
+        fence: fence1,
+        actionId,
+        sourceMessageId: 'msg_tools_1',
+        chatId: chat1,
+        toolName: 'remember_context',
+        toolArgs,
+      });
+
+    const aviNote = await remember('act_scope_avi', aviId, {
+      scope: 'member_in_workspace',
+      subject_id: aviId,
+      category: 'relationship_context',
+      content: 'Avi private riverside pickup preference',
+    });
+    expect(aviNote.status).toBe('applied');
+    const hunorNote = await remember('act_scope_hunor', aviId, {
+      scope: 'member_in_workspace',
+      subject_id: hunorId,
+      category: 'relationship_context',
+      content: 'Hunor private riverside pickup preference',
+    });
+    expect(hunorNote.status).toBe('applied');
+    const teamNote = await remember('act_scope_team', aviId, {
+      scope: 'workspace',
+      category: 'workflow_context',
+      content: 'Team riverside delivery workflow',
+    });
+    expect(teamNote.status).toBe('applied');
+    rev = teamNote.committed_revision!;
+    const teamId = teamNote.affected_resource_ids?.[0];
+    expect(teamId).toBeDefined();
+
+    const searchAs = (actionId: string, actor: string) =>
+      executeAgentTool({
+        db: env.DB,
+        workspaceId: ws1,
+        actorUserId: actor,
+        runId: run1Id,
+        stepId: step1Id,
+        fence: fence1,
+        expectedBusinessRevision: rev,
+        actionId,
+        sourceMessageId: 'msg_tools_1',
+        chatId: chat1,
+        toolName: 'search_memory',
+        toolArgs: { query: 'riverside pickup' },
+      });
+
+    // Avi sees their own member note and the workspace note, never Hunor's.
+    const aviSearch = await searchAs('act_scope_search_avi', aviId);
+    expect(aviSearch.status).toBe('applied');
+    const aviIds = (aviSearch.data as Array<{ id: string }>).map((r) => r.id);
+    expect(aviIds).toContain(aviNote.affected_resource_ids?.[0]);
+    expect(aviIds).toContain(teamId);
+    expect(aviIds).not.toContain(hunorNote.affected_resource_ids?.[0]);
+
+    // Forgetting the workspace note removes it from search for everyone.
+    const forgetRes = await executeAgentTool({
+      db: env.DB,
+      workspaceId: ws1,
+      actorUserId: aviId,
+      runId: run1Id,
+      stepId: step1Id,
+      fence: fence1,
+      expectedBusinessRevision: rev,
+      actionId: 'act_scope_forget',
+      sourceMessageId: 'msg_tools_1',
+      chatId: chat1,
+      toolName: 'forget_memory',
+      toolArgs: { memory_id: teamId },
+    });
+    expect(forgetRes.status).toBe('applied');
+    rev = forgetRes.committed_revision!;
+
+    const hunorSearch = await searchAs('act_scope_search_hunor', hunorId);
+    expect(hunorSearch.status).toBe('applied');
+    const hunorIds = (hunorSearch.data as Array<{ id: string }>).map((r) => r.id);
+    expect(hunorIds).toContain(hunorNote.affected_resource_ids?.[0]);
+    expect(hunorIds).not.toContain(teamId);
+    expect(hunorIds).not.toContain(aviNote.affected_resource_ids?.[0]);
   });
 
   it('snoozes a task on a valid instant and clears it on explicit null', async () => {

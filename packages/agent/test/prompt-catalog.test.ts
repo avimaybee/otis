@@ -67,4 +67,26 @@ describe('model catalog prompt section', () => {
     expect(stable).toContain('workspace name in your context');
     expect(prompt).toContain('Workspace: Kerning');
   });
+
+  it('attributes durable notes to their scope, subject and observation date', () => {
+    const prompt = renderSystemPrompt({
+      workspaceName: 'Kerning',
+      recentNotes: [
+        { id: 'n1', category: 'fact', content: 'Dan pays on Fridays.', scope: 'entity', subject: "Dan's Bakery", observedAt: '2026-10-03T12:00:00.000Z' },
+        { id: 'n2', category: 'preference', content: 'Prefers email.', scope: 'member_in_workspace', subject: 'own', observedAt: '2026-10-04T09:00:00.000Z' },
+        { id: 'n3', category: 'workflow_context', content: 'Invoices go out Mondays.', scope: 'workspace', subject: null, observedAt: '2026-10-05T09:00:00.000Z' },
+      ],
+    });
+    expect(prompt).toContain(`- [fact · Dan's Bakery · observed 2026-10-03] Dan pays on Fridays.`);
+    expect(prompt).toContain('- [preference · own note · observed 2026-10-04] Prefers email.');
+    expect(prompt).toContain('- [workflow_context · workspace · observed 2026-10-05] Invoices go out Mondays.');
+  });
+
+  it('keeps the legacy note shape rendering when attribution is absent', () => {
+    const prompt = renderSystemPrompt({
+      workspaceName: 'Kerning',
+      recentNotes: [{ id: 'n1', category: 'fact', content: 'Plain note.' }],
+    });
+    expect(prompt).toContain('- [fact] Plain note.');
+  });
 });

@@ -1,7 +1,7 @@
 /**
  * @otis/worker/agent/context
  * Bounded context retrieval, memory assembly, and structured prompt context.
- * In accordance with plans/006-implementation-handoff.md Section 8 & 10.
+ * In accordance with docs/archive/plans/006-implementation-handoff.md Section 8 & 10.
  */
 
 import { listAvailableModels, PRODUCTION_REGISTRY, renderSystemPrompt, type DynamicPromptContext } from '@otis/agent';
@@ -88,8 +88,9 @@ export function sanitizeFtsQuery(raw: string): string {
     .map((t) => t.trim())
     .filter((t) => t.length >= 2);
   if (tokens.length === 0) return '';
-  // Wrap tokens as prefix match: token*
-  return tokens.slice(0, 6).map((t) => `"${t}"*`).join(' OR ');
+  // Wrap tokens as prefix match: token*. Up to ten terms so a subject named
+  // late in a long report is still searched, not silently dropped.
+  return tokens.slice(0, 10).map((t) => `"${t}"*`).join(' OR ');
 }
 
 /**
@@ -153,6 +154,11 @@ export async function getTurnContext(
     ).bind(workspaceId),
     db.prepare(
       `SELECT provider, status FROM provider_credentials WHERE workspace_id = ? AND provider IN ('gemini', 'opencode_go')`
+    ).bind(workspaceId),
+    // Alias index for mention matching below: bounded by construction so a
+    // workspace with heavy rename history cannot bloat the turn.
+    db.prepare(
+      `SELECT entity_id, alias FROM entity_aliases WHERE workspace_id = ? LIMIT 200`
     ).bind(workspaceId),
   ]);
   const rowsAt = (index: number): Record<string, unknown>[] =>
@@ -274,18 +280,33 @@ export async function getTurnContext(
   }
 
   // 4c. Entity-scoped notes if entity mentioned: bounded matches, one
-  // UNION ALL roundtrip preserving each entity's own recency cap.
+  // UNION ALL roundtrip preserving each entity's own recency cap. Names
+  // match by substring; recorded aliases match the same way (minimum three
+  // characters, so a two-letter alias cannot claim every sentence).
   const MAX_ENTITY_MATCHES = 5;
   const ENTITY_NOTES_EACH = 5;
   if (sourceText) {
     const entities = (rowsAt(5) as { id: string; name: string }[]);
+    const aliases = (rowsAt(9) as { entity_id: string; alias: string }[]);
 
     const lowerText = sourceText.toLowerCase();
     const matched: { id: string }[] = [];
+    const seen = new Set<string>();
+    const consider = (id: string) => {
+      if (matched.length >= MAX_ENTITY_MATCHES || seen.has(id)) return;
+      seen.add(id);
+      matched.push({ id });
+    };
     for (const ent of entities) {
       if (matched.length >= MAX_ENTITY_MATCHES) break;
       if (ent.name && lowerText.includes(ent.name.toLowerCase())) {
-        matched.push({ id: ent.id });
+        consider(ent.id);
+      }
+    }
+    for (const row of aliases ?? []) {
+      if (matched.length >= MAX_ENTITY_MATCHES) break;
+      if (row.alias && row.alias.trim().length >= 3 && lowerText.includes(row.alias.toLowerCase())) {
+        consider(row.entity_id);
       }
     }
     if (matched.length > 0) {
@@ -321,7 +342,10 @@ export async function getTurnContext(
     }
   }
 
-  // 4d. FTS search on active notes (with safe syntax sanitization & fallback)
+  // 4d. FTS search on active notes (with safe syntax sanitization & fallback).
+  // The member predicate lives inside the query so LIMIT keeps the newest
+  // visible rows instead of rows discarded afterwards; other members'
+  // private notes never enter the candidate set.
   if (sourceText) {
     const ftsQuery = sanitizeFtsQuery(sourceText);
     if (ftsQuery) {
@@ -334,29 +358,28 @@ export async function getTurnContext(
                JOIN memory_entries m ON m.id = fts.entry_id
                WHERE m.workspace_id = ? AND m.status = 'active'
                  AND NOT EXISTS (SELECT 1 FROM memory_suppressions s WHERE s.workspace_id = m.workspace_id AND s.target_memory_id = m.id)
+                 AND (m.scope != 'member_in_workspace' OR m.subject_id = ?)
                  AND memory_entries_fts MATCH ?
+               ORDER BY m.observed_at DESC
                LIMIT 5`,
             )
-            .bind(workspaceId, ftsQuery)
+            .bind(workspaceId, actorUserId, ftsQuery)
             .all<Record<string, unknown>>()
         ).results || [];
 
         for (const r of ftsRows) {
           const id = String(r['id']);
           ftsHitIds.add(id);
-          // Only include notes belonging to this workspace or acting member
           const scope = r['scope'] as 'workspace' | 'entity' | 'member_in_workspace';
-          if (scope !== 'member_in_workspace' || r['subject_id'] === actorUserId) {
-            candidateNotesMap.set(id, {
-              id,
-              scope,
-              subjectId: r['subject_id'] ? String(r['subject_id']) : null,
-              category: String(r['category']),
-              content: String(r['content']),
-              observedAt: String(r['observed_at']),
-              businessRevision: Number(r['business_revision']),
-            });
-          }
+          candidateNotesMap.set(id, {
+            id,
+            scope,
+            subjectId: r['subject_id'] ? String(r['subject_id']) : null,
+            category: String(r['category']),
+            content: String(r['content']),
+            observedAt: String(r['observed_at']),
+            businessRevision: Number(r['business_revision']),
+          });
         }
       } catch (ftsErr) {
         // Safe graceful degradation: malformed query or index availability does not break answering
@@ -496,6 +519,12 @@ export async function getTurnContext(
     // If briefs table does not exist or fails, degrade gracefully
   }
 
+  // Entity display names for note attribution: the workspace's entities were
+  // fetched in the first wave, so no extra roundtrip is needed.
+  const entityNames = new Map<string, string>(
+    ((rowsAt(5) as { id: string; name: string }[]) ?? []).map((ent) => [ent.id, ent.name]),
+  );
+
   const dynamicContext: DynamicPromptContext = {
     workspaceName,
     actingMemberLanguage: memberPreferences?.preferredLanguage ?? undefined,
@@ -505,6 +534,16 @@ export async function getTurnContext(
       id: n.id,
       category: n.category,
       content: n.content,
+      scope: n.scope,
+      // Member-scoped notes in this context are always the acting member's
+      // own (other members' notes are filtered at every read); entity notes
+      // resolve through the workspace's entity names fetched above.
+      subject: n.scope === 'entity'
+        ? (entityNames.get(n.subjectId ?? '') ?? null)
+        : n.scope === 'member_in_workspace'
+          ? 'own'
+          : null,
+      observedAt: n.observedAt,
     })),
     recentSummaries: currentSummary ? [currentSummary.summaryText] : undefined,
     disputedFacts: disputedRows.map((r) => ({

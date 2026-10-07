@@ -548,14 +548,19 @@ export async function executeAgentTool(
       let rows: Record<string, unknown>[] = [];
 
       if (ftsQuery) {
+        // Suppressed entries never surface, and another member's private
+        // notes never surface: both predicates live inside the query so the
+        // LIMIT applies to visible rows, not rows discarded afterwards.
         let ftsSql = `
           SELECT m.id, m.scope, m.subject_id, m.category, m.content, m.status, m.observed_at, m.created_at, m.business_revision
           FROM memory_entries_fts f
           JOIN memory_entries m ON m.id = f.entry_id
           WHERE m.workspace_id = ? AND m.status = 'active'
+            AND NOT EXISTS (SELECT 1 FROM memory_suppressions s WHERE s.workspace_id = m.workspace_id AND s.target_memory_id = m.id)
+            AND (m.scope != 'member_in_workspace' OR m.subject_id = ?)
             AND memory_entries_fts MATCH ?
         `;
-        const ftsBinds: unknown[] = [workspaceId, ftsQuery];
+        const ftsBinds: unknown[] = [workspaceId, actorUserId, ftsQuery];
         if (smArgs.scope) {
           ftsSql += ` AND m.scope = ?`;
           ftsBinds.push(smArgs.scope);
@@ -585,8 +590,10 @@ export async function executeAgentTool(
           SELECT id, scope, subject_id, category, content, status, observed_at, created_at, business_revision
           FROM memory_entries
           WHERE workspace_id = ? AND status = 'active' AND content LIKE ?
+            AND NOT EXISTS (SELECT 1 FROM memory_suppressions s WHERE s.workspace_id = memory_entries.workspace_id AND s.target_memory_id = memory_entries.id)
+            AND (scope != 'member_in_workspace' OR subject_id = ?)
         `;
-        const likeBinds: unknown[] = [workspaceId, `%${smArgs.query.trim()}%`];
+        const likeBinds: unknown[] = [workspaceId, `%${smArgs.query.trim()}%`, actorUserId];
         if (smArgs.scope) {
           likeSql += ` AND scope = ?`;
           likeBinds.push(smArgs.scope);
@@ -619,6 +626,36 @@ export async function executeAgentTool(
           status: 'rejected',
           action_id: actionId,
           error: { code: 'not_found', message: `Memory entry '${gmArgs.memory_id}' not found.` },
+        };
+      }
+      // Forgotten, superseded or otherwise inactive entries are never
+      // returned as current facts: the read reports their state instead of
+      // their content, so a stale id cannot resurrect discarded memory.
+      const entry = row as Record<string, unknown>;
+      if (entry['status'] !== 'active') {
+        return {
+          status: 'rejected',
+          action_id: actionId,
+          error: {
+            code: 'memory_inactive',
+            message: `Memory entry '${gmArgs.memory_id}' is no longer active (status: ${String(entry['status'])}).`,
+          },
+        };
+      }
+      const suppressed = await db
+        .prepare(
+          `SELECT 1 FROM memory_suppressions WHERE workspace_id = ? AND target_memory_id = ?`
+        )
+        .bind(workspaceId, gmArgs.memory_id)
+        .first();
+      if (suppressed) {
+        return {
+          status: 'rejected',
+          action_id: actionId,
+          error: {
+            code: 'memory_inactive',
+            message: `Memory entry '${gmArgs.memory_id}' is no longer active (forgotten).`,
+          },
         };
       }
       return { status: 'applied', action_id: actionId, data: row };

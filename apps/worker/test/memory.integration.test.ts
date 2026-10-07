@@ -2,7 +2,7 @@
  * @otis/worker/test/memory.integration.test
  * Checkpoint 006C: Bounded context retrieval, sourced memory, deterministic summaries,
  * and reconciliation in workerd real D1.
- * In accordance with plans/006-implementation-handoff.md Section 11 (006C).
+ * In accordance with docs/archive/plans/006-implementation-handoff.md Section 11 (006C).
  */
 
 import { describe, it, expect, beforeAll } from 'vitest';
@@ -728,5 +728,84 @@ describe('Durable Memory, Context Retrieval & Summaries Integration (006C worker
     const summary = await env.DB.prepare("SELECT id, built_from_revision FROM memory_summaries WHERE workspace_id = ? AND scope = 'workspace' AND subject_key = '__workspace__'").bind(ws1).first<{ id: string; built_from_revision: number }>();
     expect(summary).not.toBeNull();
     expect(summary?.built_from_revision).toBe(currentRev);
+  });
+
+  it('12. notes carry scope/subject/date attribution; aliases resolve mentions; teammate notes stay out', async () => {
+    const today = new Date().toISOString().slice(0, 10);
+    const tool = (actionId: string, actor: string, toolName: string, toolArgs: unknown, sourceText?: string) =>
+      executeAgentTool({
+        db: env.DB,
+        workspaceId: ws1,
+        actorUserId: actor,
+        actionId,
+        chatId: chat1Ws1,
+        sourceMessageId: actor === aviId ? 'msg_mem_avi' : 'msg_mem_hunor',
+        ...(sourceText !== undefined ? { sourceText } : {}),
+        toolName,
+        toolArgs,
+      });
+
+    // Entity with a note, then renamed so only the alias matches the mention.
+    const entRes = await tool('mem-12-entity', aviId, 'upsert_entity', { name: 'Riverside Bakery' });
+    expect(entRes.status).toBe('applied');
+    const entityId = entRes.affected_resource_ids?.[0];
+    expect(entityId).toBeDefined();
+    const noteRes = await tool('mem-12-note', aviId, 'remember_context', {
+      scope: 'entity',
+      subject_id: entityId,
+      category: 'relationship_context',
+      content: 'Wholesale flour arrangement finalized.',
+    });
+    expect(noteRes.status).toBe('applied');
+    const entityNoteId = (noteRes.data as { memory_id: string }).memory_id;
+    const renamed = await tool('mem-12-rename', aviId, 'rename_entity', {
+      entity_id: entityId,
+      new_name: 'Harbor Foods SRL',
+    });
+    expect(renamed.status).toBe('applied');
+
+    // Teammate private note whose text matches the query tokens.
+    const hunorRes = await tool('mem-12-hunor', hunorId, 'remember_context', {
+      scope: 'member_in_workspace',
+      subject_id: hunorId,
+      category: 'relationship_context',
+      content: 'Hunor confidential zipwire retainer terms.',
+    });
+    expect(hunorRes.status).toBe('applied');
+
+    // Mentioning the old name resolves through the retained alias even
+    // though neither the current name nor the note text matches.
+    const context = await getTurnContext(env.DB, {
+      workspaceId: ws1,
+      actorUserId: aviId,
+      chatId: chat2Ws1,
+      sourceText: 'Any news from Riverside Bakery?',
+    });
+    expect(context.activeNotes.some((n) => n.id === entityNoteId)).toBe(true);
+    expect(context.systemPrompt).toContain(
+      `[relationship_context · Harbor Foods SRL · observed ${today}] Wholesale flour arrangement finalized.`,
+    );
+
+    // Attribution holds for the other scopes from the earlier workspace note.
+    expect(context.systemPrompt).toContain('· workspace · observed');
+
+    // Hunor's note matches the FTS tokens but never enters Avi's context.
+    const scoped = await getTurnContext(env.DB, {
+      workspaceId: ws1,
+      actorUserId: aviId,
+      chatId: chat2Ws1,
+      sourceText: 'zipwire retainer status?',
+    });
+    expect(scoped.activeNotes.some((n) => n.category === 'relationship_context' && n.content.includes('Hunor confidential'))).toBe(false);
+    expect(scoped.systemPrompt).not.toContain('Hunor confidential');
+
+    // An unrelated mention pulls no entity notes through the alias path.
+    const cold = await getTurnContext(env.DB, {
+      workspaceId: ws1,
+      actorUserId: aviId,
+      chatId: chat2Ws1,
+      sourceText: 'Any news from unrelated Corp?',
+    });
+    expect(cold.activeNotes.some((n) => n.id === entityNoteId)).toBe(false);
   });
 });
