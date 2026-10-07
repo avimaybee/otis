@@ -344,6 +344,13 @@ describe('History navigation', () => {  it('uses a drawer on mobile with functio
     await React.act(async () => Array.from(document.querySelectorAll('div[role="dialog"] button')).find(button => button.textContent === 'Bistro')!.click()); expect(onSelect).toHaveBeenCalledWith('chat_1');
     await React.act(async () => Array.from(document.querySelectorAll('div[role="dialog"] button')).find(button => button.textContent === 'Settings')!.click()); expect(onSettings).toHaveBeenCalledOnce(); await view.unmount();
   });
+  it('names the workspace creation action for assistive tech', async () => {
+    const onCreateWorkspace = vi.fn();
+    const view = await mount(<HistoryNav variant="sidebar" workspaceId="ws_1" workspaceName="Kerning" workspaces={[{ id: 'ws_1', name: 'Kerning' }]} ownChats={[]} teamChats={[]} activeChatId={null} onSelectChat={vi.fn()} onNewChat={vi.fn()} onSwitchWorkspace={vi.fn()} onOpenSettings={vi.fn()} onCreateWorkspace={onCreateWorkspace}/>);
+    const create = view.host.querySelector('[aria-label="Create workspace"]') as HTMLButtonElement;
+    expect(create?.textContent).toBe('+ New');
+    await React.act(async () => create.click()); expect(onCreateWorkspace).toHaveBeenCalledOnce(); await view.unmount();
+  });
 });
 
 describe('Completion reconcile', () => {

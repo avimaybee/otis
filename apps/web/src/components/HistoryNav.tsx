@@ -60,7 +60,7 @@ export function HistoryNav(props: HistoryNavProps) {
     <label className="otis-visually-hidden" htmlFor={`${id}-workspace`}>Workspace</label>
     <div className="flex items-center justify-between px-4 pb-2">
       {props.workspaces.length > 1 ? <ChoiceSelect id={`${id}-workspace`} label="Workspace" className="otis-nav__workspace flex-1 mr-2" value={props.workspaceId} options={props.workspaces.map(workspace => ({ value: workspace.id, label: workspace.name }))} onChange={props.onSwitchWorkspace}/> : <p className="otis-nav__workspace-label text-base flex-1 m-0 p-0">{props.workspaceName}</p>}
-      {props.onCreateWorkspace && <Button variant="ghost" size="sm" type="button" className="text-xs text-muted-foreground hover:text-foreground h-6 px-2 shrink-0" title="Create workspace" onClick={props.onCreateWorkspace}>+ New</Button>}
+      {props.onCreateWorkspace && <Button variant="ghost" size="sm" type="button" className="text-xs text-muted-foreground hover:text-foreground h-6 px-2 shrink-0" title="Create workspace" aria-label="Create workspace" onClick={props.onCreateWorkspace}>+ New</Button>}
     </div>
     <Button variant="ghost" className="otis-nav__action justify-start text-sm" type="button" onClick={props.onNewChat}><ComposeIcon /><span>New chat</span></Button>
     {!searching ? (
