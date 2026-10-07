@@ -167,4 +167,17 @@ describe('index.html', () => {
     expect(html).not.toContain('maximum-scale=1.0');
     expect(html).toContain('width=device-width');
   });
+
+  it('keeps the pre-CSS boot shell on token values', () => {
+    // Inline literals are the only paint before globals.css loads, so they
+    // must copy the tokens exactly: canvas background, subtle metadata text,
+    // destructive red, dynamic viewport height with a legacy fallback.
+    const html = readFileSync(resolve(__dirname, '../index.html'), 'utf-8');
+    expect(html).toContain('background:#181818');
+    expect(html).toContain('color:#8c8c8c');
+    expect(html).toContain('color:#ff9c9c');
+    expect(html).toContain('min-height:100dvh');
+    expect(html).not.toContain('#f87171');
+    expect(html).not.toContain('#242424');
+  });
 });
