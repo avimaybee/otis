@@ -35,6 +35,12 @@ jobs:
       - name: Lint
         run: pnpm lint
 
+      - name: Design tokens
+        run: pnpm check:design
+
+      - name: Story inventory
+        run: pnpm check:stories
+
       - name: Test
         run: pnpm test
 
