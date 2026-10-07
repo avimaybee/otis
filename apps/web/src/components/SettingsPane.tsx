@@ -214,11 +214,11 @@ export function SettingsPane({
     } catch (err) { handleError(err); }
     finally { setBusy(null); }
   };
-  const downloadExport = async () => {
+  const downloadExport = async (format: 'json' | 'xlsx') => {
     if (busy) return;
-    setBusy('export_json'); setMessage(''); setSaved('');
+    setBusy(format === 'xlsx' ? 'export_xlsx' : 'export_json'); setMessage(''); setSaved('');
     try {
-      const response = await api.downloadWorkspaceExport(workspaceId);
+      const response = await api.downloadWorkspaceExport(workspaceId, format);
       if (!response.ok) {
         const body = (await response.json().catch(() => null)) as { error?: { message?: string } } | null;
         throw new Error(body?.error?.message ?? 'Workspace export is unavailable right now.');
@@ -228,7 +228,7 @@ export function SettingsPane({
       try {
         const anchor = document.createElement('a');
         anchor.href = url;
-        anchor.download = `otis-export-${workspaceId}.json`;
+        anchor.download = `otis-export-${workspaceId}.${format === 'xlsx' ? 'xlsx' : 'json'}`;
         document.body.appendChild(anchor);
         anchor.click();
         anchor.remove();
@@ -548,10 +548,13 @@ export function SettingsPane({
         </div>
         <div className="otis-settings__section">
           <h3 className="text-sm font-medium">Workspace data</h3>
-          <p className="otis-detail__label text-xs">Download everything in this workspace as one JSON file: conversations, business records, tasks, drafts, memory, briefs and reminders. Secrets and sessions are never included.</p>
+          <p className="otis-detail__label text-xs">Download everything in this workspace as JSON or a spreadsheet: conversations, business records, tasks, drafts, memory, briefs and reminders. Secrets and sessions are never included.</p>
           <div className="flex items-center gap-2 mt-2">
-            <Button variant="outline" size="sm" type="button" onClick={() => void downloadExport()} disabled={Boolean(busy)}>
+            <Button variant="outline" size="sm" type="button" onClick={() => void downloadExport('json')} disabled={Boolean(busy)}>
               {busy === 'export_json' ? 'Preparing…' : 'Download JSON'}
+            </Button>
+            <Button variant="outline" size="sm" type="button" onClick={() => void downloadExport('xlsx')} disabled={Boolean(busy)}>
+              {busy === 'export_xlsx' ? 'Preparing…' : 'Download spreadsheet'}
             </Button>
           </div>
         </div>

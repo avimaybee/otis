@@ -14,3 +14,6 @@ export interface GeneratedWorkbook {
   contentType: string;
   bytes: Uint8Array;
 }
+
+export { buildStoredZip, buildWorkbook, escapeXmlText, guardFormulaText, sanitizeSheetName, MAX_SHEET_ROWS } from './workbook.js';
+export type { BuiltWorkbook, SheetCell, SheetData } from './workbook.js';

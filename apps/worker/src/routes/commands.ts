@@ -530,6 +530,18 @@ export async function executeCommand(
       }
       return { kind: 'reply', text: briefResult.text || 'You have no due work right now.', effects: [] };
     }
+
+    case 'sheet': {
+      // Deterministic snapshot link: the file generates on download from
+      // the same scoped export, so the command carries no bytes and stays
+      // fresh. Telegram clients cannot follow a same-origin session link,
+      // so they get the honest web path instead of a dead URL.
+      const path = `/api/workspaces/${context.workspaceId}/export?format=xlsx`;
+      const text = context.surface === 'telegram'
+        ? 'Your spreadsheet snapshot is ready. Open Otis on the web to download it from Settings → Workspace data.'
+        : `Your spreadsheet snapshot is ready: [Download spreadsheet](${path}). It covers chats, messages, entities, tasks, memory and drafts as of now.`;
+      return { kind: 'reply', text, effects: [] };
+    }
     default:
       // Gated commands report their availability without calling a provider.
       return {

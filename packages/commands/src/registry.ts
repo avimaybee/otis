@@ -2,7 +2,7 @@
  * @otis/commands/registry
  * The single supported slash-command registry. Both web and Telegram read
  * this list, so a command cannot exist on one channel without the other.
- * In accordance with docs/contracts.md section 9.
+ * In accordance with docs/contracts.md (shared commands).
  */
 
 import type { CommandDescriptor, CommandSurface } from '@otis/contracts';
@@ -14,7 +14,6 @@ export interface CommandDefinition extends CommandDescriptor {
 
 /**
  * Order is the display order for the picker and for `/help`.
- * `/sheet` is registered but unavailable until its owning gate ships.
  */
 export const COMMAND_REGISTRY: readonly CommandDefinition[] = [
   {
@@ -69,7 +68,7 @@ export const COMMAND_REGISTRY: readonly CommandDefinition[] = [
     name: 'sheet',
     summary: 'Create a private spreadsheet snapshot of current workspace data.',
     usage: '/sheet',
-    available: false,
+    available: true,
     deterministic: true,
     surfaces: ['web', 'telegram'],
   },

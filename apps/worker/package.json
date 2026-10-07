@@ -14,7 +14,8 @@
     "@otis/ledger": "workspace:*",
     "@otis/agent": "workspace:*",
     "@otis/commands": "workspace:*",
-    "@otis/brief": "workspace:*"
+    "@otis/brief": "workspace:*",
+    "@otis/sheet": "workspace:*"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20250224.0"

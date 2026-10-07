@@ -1285,6 +1285,51 @@ describe('Chat API: command registry and models', () => {
     });
     expect(res.status).toBe(403);
   });
+
+  it('answers /sheet with a scoped spreadsheet download link', async () => {
+    const res = await call(`/api/workspaces/${WS}/chats/${aviChat}/commands`, {
+      method: 'POST',
+      cookie: aviCookie,
+      headers: CSRF,
+      body: JSON.stringify({ text: '/sheet', client_message_id: 'cm-sheet-1' }),
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { reply: string };
+    expect(body.reply).toContain(`/api/workspaces/${WS}/export?format=xlsx`);
+    expect(body.reply).toContain('Download spreadsheet');
+  });
+
+  it('rejects unknown export formats instead of guessing', async () => {
+    const res = await call(`/api/workspaces/${WS}/export?format=pdf`, { cookie: aviCookie });
+    expect(res.status).toBe(422);
+  });
+
+  it('serves the spreadsheet snapshot as a valid workbook download', async () => {
+    const res = await call(`/api/workspaces/${WS}/export?format=xlsx`, { cookie: aviCookie });
+    expect(res.status).toBe(200);
+    expect(res.headers.get('Content-Type')).toContain('spreadsheetml.sheet');
+    expect(res.headers.get('Content-Disposition')).toContain('.xlsx');
+    const bytes = new Uint8Array(await res.arrayBuffer());
+    expect(bytes[0]).toBe(0x50);
+    expect(bytes[1]).toBe(0x4b);
+    // Workbook central directory names every sheet part.
+    const text = new TextDecoder('utf-8', { fatal: false }).decode(bytes);
+    expect(text).toContain('xl/workbook.xml');
+    expect(text).toContain('xl/worksheets/sheet1.xml');
+  });
+
+  it('answers /sheet on Telegram with the web path instead of a dead link', async () => {
+    const { executeCommand } = await import('../src/routes/commands.js');
+    const result = await executeCommand(
+      { db: env.DB, workspaceId: WS, userId: AVI, surface: 'telegram' },
+      null,
+      '/sheet',
+    );
+    expect(result.kind).toBe('reply');
+    if (result.kind !== 'reply') throw new Error('expected reply');
+    expect(result.text).toContain('Settings');
+    expect(result.text).not.toContain('/api/workspaces');
+  });
 });
 
 describe('007 review regressions: normal composer route', () => {

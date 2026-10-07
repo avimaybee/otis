@@ -15,6 +15,7 @@
  */
 
 import type { Env } from '../index.js';
+import type { SheetData } from '@otis/sheet';
 import { requireWorkspaceScope } from './scope.js';
 import { jsonError, jsonSuccess } from '../middleware/errors.js';
 
@@ -53,7 +54,12 @@ export interface WorkspaceExport {
 }
 
 /**
- * GET /api/workspaces/:workspaceId/export
+ * GET /api/workspaces/:workspaceId/export[?format=json|xlsx]
+ *
+ * JSON (default) returns the WorkspaceExport document below. `format=xlsx`
+ * renders the same collection as a spreadsheet snapshot through the shared
+ * zero-dependency writer: same scope, same membership check, same secret
+ * exclusions.
  */
 export async function handleExportWorkspace(
   request: Request,
@@ -69,18 +75,125 @@ export async function handleExportWorkspace(
     .first<{ id: string; name: string }>();
   if (!ws) return jsonError(404, 'not_found', 'Workspace not found or access denied.', requestId);
 
-  const q = (sql: string) => env.DB.prepare(sql).bind(workspaceId);
-  // The reminders table ships with migration 0018 alongside this route; a
-  // database that has not applied it yet exports an empty reminder list
-  // instead of failing the whole document.
-  const hasReminders = await env.DB.prepare(
+  const url = new URL(request.url);
+  const format = url.searchParams.get('format') ?? 'json';
+  if (format !== 'json' && format !== 'xlsx') {
+    return jsonError(422, 'validation_error', "format must be 'json' or 'xlsx'.", requestId);
+  }
+
+  const exportedAt = new Date().toISOString();
+  if (format === 'xlsx') {
+    const { buildWorkbook } = await import('@otis/sheet');
+    const { sheets, filename } = workspaceExportToSheets(
+      await collectWorkspaceExportSections(env.DB, workspaceId),
+      ws.name,
+      workspaceId,
+      exportedAt,
+    );
+    const workbook = buildWorkbook(sheets, filename);
+    return new Response(workbook.bytes as BodyInit, {
+      status: 200,
+      headers: {
+        'Content-Type': workbook.contentType,
+        'Content-Disposition': `attachment; filename="${workbook.filename}"`,
+        'x-request-id': requestId,
+      },
+    });
+  }
+
+  const sections = await collectWorkspaceExportSections(env.DB, workspaceId);
+  const document: WorkspaceExport = {
+    version: 1,
+    workspace: { id: ws.id, name: ws.name, exported_at: exportedAt, exported_by: scope.user.id },
+    users: sections.users as WorkspaceExport['users'],
+    memberships: sections.memberships as WorkspaceExport['memberships'],
+    workspace_settings: sections.settings[0] ?? null,
+    chats: sections.chats,
+    messages_in: sections.messagesIn,
+    chat_messages: sections.chatMessages,
+    agent_runs: sections.agentRuns,
+    run_steps: sections.runSteps,
+    run_activity: sections.runActivity,
+    pending_clarifications: sections.pendingClarifications,
+    entities: sections.entities,
+    entity_aliases: sections.entityAliases,
+    entity_state: sections.entityState,
+    field_defs: sections.fieldDefs,
+    events: sections.events,
+    action_receipts: sections.actionReceipts,
+    tasks: sections.tasks,
+    draft_projections: sections.draftProjections,
+    memory_entries: sections.memoryEntries,
+    memory_suppressions: sections.memorySuppressions,
+    memory_summaries: sections.memorySummaries,
+    briefs: sections.briefs,
+    brief_items: sections.briefItems,
+    reminders: sections.reminders,
+    system_jobs: sections.systemJobs,
+    outbox: sections.outbox,
+    media_objects: [...sections.mediaObjects, ...sections.mediaObjectsV2],
+    media_transcriptions: sections.mediaTranscriptions,
+    message_image_attachments: sections.messageAttachments,
+  };
+
+  return jsonSuccess(document, 200, {
+    'x-request-id': requestId,
+    'Content-Disposition': `attachment; filename="otis-export-${workspaceId}-${exportedAt.slice(0, 10)}.json"`,
+  });
+}
+export interface ExportSections {
+  users: Record<string, unknown>[];
+  memberships: Record<string, unknown>[];
+  settings: Record<string, unknown>[];
+  chats: Record<string, unknown>[];
+  messagesIn: Record<string, unknown>[];
+  chatMessages: Record<string, unknown>[];
+  agentRuns: Record<string, unknown>[];
+  runSteps: Record<string, unknown>[];
+  runActivity: Record<string, unknown>[];
+  pendingClarifications: Record<string, unknown>[];
+  entities: Record<string, unknown>[];
+  entityAliases: Record<string, unknown>[];
+  entityState: Record<string, unknown>[];
+  fieldDefs: Record<string, unknown>[];
+  events: Record<string, unknown>[];
+  actionReceipts: Record<string, unknown>[];
+  tasks: Record<string, unknown>[];
+  draftProjections: Record<string, unknown>[];
+  memoryEntries: Record<string, unknown>[];
+  memorySuppressions: Record<string, unknown>[];
+  memorySummaries: Record<string, unknown>[];
+  briefs: Record<string, unknown>[];
+  briefItems: Record<string, unknown>[];
+  reminders: Record<string, unknown>[];
+  systemJobs: Record<string, unknown>[];
+  outbox: Record<string, unknown>[];
+  mediaObjects: Record<string, unknown>[];
+  mediaObjectsV2: Record<string, unknown>[];
+  mediaTranscriptions: Record<string, unknown>[];
+  messageAttachments: Record<string, unknown>[];
+}
+
+/**
+ * Reads every exported workspace store in one batch roundtrip. The
+ * reminders and v2 media reads degrade to empty lists on databases that
+ * predate those migrations instead of failing the whole collection.
+ */
+export async function collectWorkspaceExportSections(
+  db: D1Database,
+  workspaceId: string,
+): Promise<ExportSections> {
+  const q = (sql: string) => db.prepare(sql).bind(workspaceId);
+  // The reminders table ships with migration 0018; a database that has not
+  // applied it yet exports an empty reminder list instead of failing.
+  const hasReminders = await db.prepare(
     `SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'reminders'`,
   ).first();
   const reminderQuery = hasReminders
     ? q(`SELECT * FROM reminders WHERE workspace_id = ?`)
     : null;
-  const results = await env.DB.batch([
-    env.DB.prepare(
+  const results = await db.batch([
+    db.prepare(
       `SELECT u.id, u.display_name FROM users u JOIN workspace_users wu ON wu.user_id = u.id WHERE wu.workspace_id = ?`,
     ).bind(workspaceId),
     q(`SELECT user_id, role, joined_at FROM workspace_users WHERE workspace_id = ?`),
@@ -120,40 +233,11 @@ export async function handleExportWorkspace(
   // Indices 24+ assume the reminders statement is present; shift back by
   // one when it is absent.
   const tailAt = (index: number): Record<string, unknown>[] => rowsAt(index - (hasReminders ? 0 : 1));
-  const users = rowsAt(0);
-  const memberships = rowsAt(1);
-  const settings = rowsAt(2);
-  const chats = rowsAt(3);
-  const messagesIn = rowsAt(4);
-  const chatMessages = rowsAt(5);
-  const agentRuns = rowsAt(6);
-  const runSteps = rowsAt(7);
-  const runActivity = rowsAt(8);
-  const pendingClarifications = rowsAt(9);
-  const entities = rowsAt(10);
-  const entityAliases = rowsAt(11);
-  const entityState = rowsAt(12);
-  const fieldDefs = rowsAt(13);
-  const events = rowsAt(14);
-  const actionReceipts = rowsAt(15);
-  const tasks = rowsAt(16);
-  const draftProjections = rowsAt(17);
-  const memoryEntries = rowsAt(18);
-  const memorySuppressions = rowsAt(19);
-  const memorySummaries = rowsAt(20);
-  const briefs = rowsAt(21);
-  const briefItems = rowsAt(22);
-  const reminders = hasReminders ? rowsAt(23) : [];
-  const systemJobs = tailAt(24);
-  const outbox = tailAt(25);
-  const mediaObjects = tailAt(26);
-  const mediaTranscriptions = tailAt(27);
-  const messageAttachments = tailAt(28);
 
   // media_objects_v2 carries the current image inventory when present.
   let mediaV2: Record<string, unknown>[] = [];
   try {
-    const v2 = await env.DB.prepare(`SELECT * FROM media_objects_v2 WHERE workspace_id = ?`)
+    const v2 = await db.prepare(`SELECT * FROM media_objects_v2 WHERE workspace_id = ?`)
       .bind(workspaceId)
       .all();
     mediaV2 = ((v2 as unknown as { results?: Record<string, unknown>[] }).results ?? []);
@@ -161,43 +245,180 @@ export async function handleExportWorkspace(
     // Pre-images migration databases simply have no v2 inventory.
   }
 
-  const exportedAt = new Date().toISOString();
-  const document: WorkspaceExport = {
-    version: 1,
-    workspace: { id: ws.id, name: ws.name, exported_at: exportedAt, exported_by: scope.user.id },
-    users: users as WorkspaceExport['users'],
-    memberships: memberships as WorkspaceExport['memberships'],
-    workspace_settings: settings[0] ?? null,
-    chats,
-    messages_in: messagesIn,
-    chat_messages: chatMessages,
-    agent_runs: agentRuns,
-    run_steps: runSteps,
-    run_activity: runActivity,
-    pending_clarifications: pendingClarifications,
-    entities,
-    entity_aliases: entityAliases,
-    entity_state: entityState,
-    field_defs: fieldDefs,
-    events,
-    action_receipts: actionReceipts,
-    tasks,
-    draft_projections: draftProjections,
-    memory_entries: memoryEntries,
-    memory_suppressions: memorySuppressions,
-    memory_summaries: memorySummaries,
-    briefs,
-    brief_items: briefItems,
-    reminders,
-    system_jobs: systemJobs,
-    outbox,
-    media_objects: [...mediaObjects, ...mediaV2],
-    media_transcriptions: mediaTranscriptions,
-    message_image_attachments: messageAttachments,
+  return {
+    users: rowsAt(0),
+    memberships: rowsAt(1),
+    settings: rowsAt(2),
+    chats: rowsAt(3),
+    messagesIn: rowsAt(4),
+    chatMessages: rowsAt(5),
+    agentRuns: rowsAt(6),
+    runSteps: rowsAt(7),
+    runActivity: rowsAt(8),
+    pendingClarifications: rowsAt(9),
+    entities: rowsAt(10),
+    entityAliases: rowsAt(11),
+    entityState: rowsAt(12),
+    fieldDefs: rowsAt(13),
+    events: rowsAt(14),
+    actionReceipts: rowsAt(15),
+    tasks: rowsAt(16),
+    draftProjections: rowsAt(17),
+    memoryEntries: rowsAt(18),
+    memorySuppressions: rowsAt(19),
+    memorySummaries: rowsAt(20),
+    briefs: rowsAt(21),
+    briefItems: rowsAt(22),
+    reminders: hasReminders ? rowsAt(23) : [],
+    systemJobs: tailAt(24),
+    outbox: tailAt(25),
+    mediaObjects: tailAt(26),
+    mediaObjectsV2: mediaV2,
+    mediaTranscriptions: tailAt(27),
+    messageAttachments: tailAt(28),
   };
+}
 
-  return jsonSuccess(document, 200, {
-    'x-request-id': requestId,
-    'Content-Disposition': `attachment; filename="otis-export-${workspaceId}-${exportedAt.slice(0, 10)}.json"`,
-  });
+type SheetCell = string | number | boolean | null;
+
+/** Longest cell body kept per spreadsheet cell; overflow is marked, not cut silently. */
+const MAX_CELL_CHARS = 8000;
+
+function cellText(value: unknown): SheetCell {
+  if (value === null || value === undefined) return null;
+  if (typeof value === 'number' || typeof value === 'boolean') return value;
+  const text = String(value);
+  return text.length > MAX_CELL_CHARS ? `${text.slice(0, MAX_CELL_CHARS)}…[truncated]` : text;
+}
+
+function rowDate(value: unknown): SheetCell {
+  if (typeof value !== 'string' || !value) return null;
+  return value.slice(0, 19).replace('T', ' ');
+}
+
+/**
+ * Maps collected export sections onto spreadsheet sheets. Scoped to the
+ * same member-readable stores as the JSON document: conversations,
+ * business records, tasks, drafts, memory and briefs. Secrets never enter
+ * (they are not collected), and every sheet carries its source so a reader
+ * can trace each row back to the workspace record.
+ */
+export function workspaceExportToSheets(
+  sections: ExportSections,
+  workspaceName: string,
+  workspaceId: string,
+  exportedAt: string,
+): { sheets: SheetData[]; filename: string } {
+  const memberName = (userId: unknown): string | null => {
+    if (typeof userId !== 'string' || !userId) return null;
+    const member = sections.users.find((user) => user['id'] === userId);
+    const display = member?.['display_name'];
+    return typeof display === 'string' && display ? display : null;
+  };
+  const entityName = (entityId: unknown): string | null => {
+    if (typeof entityId !== 'string' || !entityId) return null;
+    const entity = sections.entities.find((row) => row['id'] === entityId);
+    const name = entity?.['name'];
+    return typeof name === 'string' ? name : null;
+  };
+  const chatTitle = (chatId: unknown): string | null => {
+    if (typeof chatId !== 'string' || !chatId) return null;
+    const chat = sections.chats.find((row) => row['id'] === chatId);
+    const title = chat?.['title'];
+    return typeof title === 'string' ? title : null;
+  };
+  const dueLabel = (task: Record<string, unknown>): string | null => {
+    if (task['due_local_date']) return String(task['due_local_date']);
+    if (task['due_instant']) return String(task['due_instant']);
+    return null;
+  };
+  const counts: Array<[string, number]> = [
+    ['Chats', sections.chats.length],
+    ['Messages', sections.chatMessages.length],
+    ['Entities', sections.entities.length],
+    ['Tasks', sections.tasks.length],
+    ['Drafts', sections.draftProjections.length],
+    ['Memory notes', sections.memoryEntries.length],
+    ['Briefs', sections.briefs.length],
+    ['Reminders', sections.reminders.length],
+  ];
+  const sheets: SheetData[] = [
+    {
+      name: 'Summary',
+      headers: ['Workspace snapshot', ''],
+      rows: [
+        ['Workspace', workspaceName],
+        ['Workspace ID', workspaceId],
+        ['Exported at (UTC)', exportedAt],
+        ...counts.map(([label, total]): SheetCell[] => [label, total]),
+      ],
+    },
+    {
+      name: 'Chats',
+      headers: ['Title', 'Author', 'Created'],
+      rows: sections.chats.map((chat) => [
+        cellText(chat['title']),
+        cellText(memberName(chat['author_user_id']) ?? chat['author_user_id']),
+        rowDate(chat['created_at']),
+      ]),
+    },
+    {
+      name: 'Messages',
+      headers: ['Chat', 'Author', 'Text', 'Sequence', 'Sent at (UTC)'],
+      rows: sections.chatMessages.map((message) => [
+        cellText(chatTitle(message['chat_id']) ?? message['chat_id']),
+        message['author_kind'] === 'member'
+          ? cellText(memberName(message['author_user_id']) ?? message['author_user_id'])
+          : 'Otis',
+        cellText(message['content_text']),
+        typeof message['sequence'] === 'number' ? message['sequence'] : null,
+        rowDate(message['created_at']),
+      ]),
+    },
+    {
+      name: 'Entities',
+      headers: ['Name', 'Kind', 'Status'],
+      rows: sections.entities.map((entity) => [
+        cellText(entity['name']),
+        cellText(entity['kind']),
+        cellText(entity['status']),
+      ]),
+    },
+    {
+      name: 'Tasks',
+      headers: ['Title', 'Status', 'Due', 'Snoozed until', 'Promise', 'No deadline'],
+      rows: sections.tasks.map((task) => [
+        cellText(task['title']),
+        cellText(task['status']),
+        cellText(dueLabel(task)),
+        cellText(task['snooze_until']),
+        task['is_promise'] ? 'yes' : null,
+        task['due_kind'] === null && task['explicit_no_deadline'] ? 'yes' : null,
+      ]),
+    },
+    {
+      name: 'Memory',
+      headers: ['Scope', 'Subject', 'Category', 'Observed', 'Content'],
+      rows: sections.memoryEntries.map((note) => [
+        cellText(note['scope']),
+        note['scope'] === 'entity'
+          ? cellText(entityName(note['subject_id']) ?? note['subject_id'])
+          : cellText(note['subject_id']),
+        cellText(note['category']),
+        rowDate(note['observed_at']),
+        cellText(note['content']),
+      ]),
+    },
+    {
+      name: 'Drafts',
+      headers: ['Channel', 'Recipient', 'Status', 'Content'],
+      rows: sections.draftProjections.map((draft) => [
+        cellText(draft['channel']),
+        cellText(draft['recipient_address']),
+        cellText(draft['status']),
+        cellText(draft['content_text']),
+      ]),
+    },
+  ];
+  return { sheets, filename: `otis-export-${workspaceId}-${exportedAt.slice(0, 10)}.xlsx` };
 }

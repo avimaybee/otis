@@ -17,6 +17,7 @@
     { "path": "../../packages/ledger" },
     { "path": "../../packages/agent" },
     { "path": "../../packages/commands" },
-    { "path": "../../packages/brief" }
+    { "path": "../../packages/brief" },
+    { "path": "../../packages/sheet" }
   ]
 }

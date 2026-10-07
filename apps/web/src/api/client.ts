@@ -322,8 +322,8 @@ export const api = {
    * the caller can save the attachment blob; the typed client only parses
    * JSON bodies. Membership is enforced server-side; secrets never ship.
    */
-  downloadWorkspaceExport: (workspaceId: string) =>
-    fetch(`/api/workspaces/${encodeURIComponent(workspaceId)}/export`, {
+  downloadWorkspaceExport: (workspaceId: string, format: 'json' | 'xlsx' = 'json') =>
+    fetch(`/api/workspaces/${encodeURIComponent(workspaceId)}/export${format === 'xlsx' ? '?format=xlsx' : ''}`, {
       credentials: 'same-origin',
     }),
 

@@ -197,9 +197,18 @@ describe('Frontend Experience Audit & Confidence Verification (FE-01 - FE-16)', 
       await React.act(async () => {
         downloadBtn.click();
       });
-      expect(download).toHaveBeenCalledWith('ws_test');
+      expect(download).toHaveBeenCalledWith('ws_test', 'json');
       expect(createdUrls).toEqual(['blob:mock-export']);
       expect(view.host.textContent).toContain('Workspace data downloaded');
+
+      const sheetBtn = Array.from(view.host.querySelectorAll('button')).find((b) =>
+        b.textContent === 'Download spreadsheet',
+      ) as HTMLButtonElement;
+      expect(sheetBtn).toBeTruthy();
+      await React.act(async () => {
+        sheetBtn.click();
+      });
+      expect(download).toHaveBeenCalledWith('ws_test', 'xlsx');
 
       download.mockResolvedValueOnce(
         new Response(JSON.stringify({ error: { message: 'Export failed here.' } }), {
