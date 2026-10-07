@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { Toaster, toast } from 'sonner';
 import Markdown from 'react-markdown';
-import type { CommandDescriptor, ModelOption, VoiceMediaSummary } from '@otis/contracts';
+import type { ClarificationSummary, CommandDescriptor, ModelOption, VoiceMediaSummary } from '@otis/contracts';
 import { api, ApiError } from './api/client.js';
 import { createWorkerImageTransport, uploadImageFile } from './api/images.js';
 import { debugLog } from './api/log.js';
@@ -103,6 +103,45 @@ function safeError(error: unknown, fallback: string) { if (error instanceof ApiE
 function isSessionError(error: unknown): boolean { return error instanceof ApiError && error.status === 401; }
 function isNotFoundError(error: unknown): boolean { return error instanceof ApiError && error.status === 404; }
 function isForbiddenError(error: unknown): boolean { return error instanceof ApiError && error.status === 403; }
+
+/**
+ * Resolves a pending question from run details when the question-list read
+ * failed. Mirrors the server's answerability rule (requester answers while
+ * pending) and parses candidates defensively; anything unparseable reads as
+ * no candidates rather than a broken panel.
+ */
+function runKnownQuestion(
+  snapshot: ChatSnapshot,
+  questionId: string,
+  callerUserId: string,
+): ClarificationSummary | undefined {
+  for (const run of Object.values(snapshot.runs)) {
+    const pending = run.pending_clarification;
+    if (!pending || pending.id !== questionId || pending.status !== 'pending') continue;
+    let candidates: string[] | null = null;
+    if (typeof pending.candidates_json === 'string' && pending.candidates_json !== '') {
+      try {
+        const parsed: unknown = JSON.parse(pending.candidates_json);
+        candidates = Array.isArray(parsed) && parsed.every(item => typeof item === 'string') ? parsed : null;
+      } catch {
+        candidates = null;
+      }
+    }
+    return {
+      id: pending.id,
+      chat_id: pending.chat_id,
+      run_id: pending.run_id,
+      question: pending.question,
+      intended_operation: pending.intended_operation,
+      missing_fields: pending.missing_fields,
+      candidates,
+      status: pending.status,
+      created_at: pending.created_at,
+      answerable_by_caller: pending.requester_user_id === callerUserId,
+    };
+  }
+  return undefined;
+}
 
 export function ConversationScreen({ workspaceId, chat: routeChat, chatParamPresent, workspaces, userId, members, onSignOut, onNavigate, onRefreshSession }: ConversationScreenProps) {
   const activeChatId = routeChat;
@@ -271,6 +310,11 @@ export function ConversationScreen({ workspaceId, chat: routeChat, chatParamPres
   // full snapshot lands. The staged value is local state merged here at read
   // time, never a cache write, so live patches cannot be clobbered by it.
   const snapshot = snapshotQuery.data ?? snapshotQuery.primarySnapshot ?? null;
+  // Cache-mutating consumers split by hazard: the live subscription starts
+  // off the staged transcript at cursor 0 (server catch-up replays anything
+  // the empty cache cannot yet apply, and merges dedupe by id), while older
+  // pagination waits for the committed full snapshot — paginating off an
+  // uncommitted primary would fetch against state the cache never held.
   // Cache-mutating consumers (live stream cursor, older pagination) wait for
   // the committed full snapshot: paginating or subscribing off an
   // uncommitted primary would fetch against, then be overwritten by, state
@@ -377,7 +421,12 @@ export function ConversationScreen({ workspaceId, chat: routeChat, chatParamPres
   // closed it when the flag landed, and nothing resubscribes until a session
   // refresh clears the flag.
   const workspaceGone = workspaceLost.includes(workspaceId);
-  const readyChatId = fullSnapshot && !accessLost && !workspaceGone ? fullSnapshot.detail.chat.id : null;
+  // Live readiness follows the staged transcript, not the full snapshot:
+  // the stream opens as soon as the conversation identity is known instead
+  // of waiting on unrelated run/question metadata. The cursor still comes
+  // from committed cache state (0 until the full snapshot lands), so opening
+  // early replays from scratch and merges dedupe — never a gap.
+  const readyChatId = snapshot && !accessLost && !workspaceGone ? snapshot.detail.chat.id : null;
   useEffect(() => {
     if (!readyChatId || accessLost || !isVisible) {
       // Hidden tabs keep no live stream: the teardown below already closed
@@ -480,8 +529,13 @@ export function ConversationScreen({ workspaceId, chat: routeChat, chatParamPres
   // Answer intent lives in the explicit question panel; the ordinary
   // composer never inherits it. replyId opens a panel (explicit action or
   // a fresh arrival); no selection ever flows into main send.
+  // When the question-list read failed, the list is an outage, not an
+  // authoritative empty: a run-known pending question still resolves from
+  // run details (same answerability rule the server applies) so the answer
+  // path stays usable, with an explicit list retry beside it.
   const openQuestion = replyId
     ? snapshot?.questions.find(question => question.id === replyId)
+      ?? (snapshot?.questionsFailed ? runKnownQuestion(snapshot, replyId, userId) : undefined)
     : undefined;
   const panelQuestion = openQuestion && openQuestion.status === 'pending' && openQuestion.answerable_by_caller
     ? openQuestion
@@ -522,8 +576,10 @@ export function ConversationScreen({ workspaceId, chat: routeChat, chatParamPres
 
   // A resolved or superseded question closes its panel instead of accepting
   // a stale answer; the payload guard below is the backstop, not the router.
+  // A failed list read never closes the panel: the empty list is an outage,
+  // and the run-known fallback above keeps the answer path usable.
   useEffect(() => {
-    if (replyId !== null && snapshot && !snapshot.questions.some(question => question.id === replyId && question.status === 'pending' && question.answerable_by_caller)) {
+    if (replyId !== null && snapshot && !snapshot.questionsFailed && !snapshot.questions.some(question => question.id === replyId && question.status === 'pending' && question.answerable_by_caller)) {
       setReplyId(null);
     }
   }, [snapshot, replyId]);
@@ -575,10 +631,16 @@ export function ConversationScreen({ workspaceId, chat: routeChat, chatParamPres
     // A clarification answer for a question this client already knows is
     // closed must never POST: the server would reject it and each retry
     // would mint orphan answer rows. Fail open when the snapshot is absent.
-    // Releases the delivery claim like every other early return.
+    // A failed list read is an outage, not a verdict: run-known pending
+    // questions stay sendable. Releases the delivery claim like every other
+    // early return.
     if (entry.clarificationId && entry.chatId) {
       const known = queryClient.getQueryData<ChatSnapshot>(qk.chat(entryUserId, entryWorkspaceId, entry.chatId));
-      if (known && !known.questions.some(question => question.id === entry.clarificationId && question.status === 'pending')) {
+      const listedOpen = known?.questions.some(question => question.id === entry.clarificationId && question.status === 'pending') ?? false;
+      const runOpen = !listedOpen && (known?.questionsFailed ?? false) && known
+        ? runKnownQuestion(known, entry.clarificationId, entryUserId) !== undefined
+        : false;
+      if (known && !listedOpen && !runOpen) {
         markOutboxFailed(entry.clientId, {
           code: 'question_closed',
           message: 'That question is no longer open.',
@@ -780,8 +842,14 @@ export function ConversationScreen({ workspaceId, chat: routeChat, chatParamPres
   const answerQuestion = useCallback((questionId: string, text: string): boolean => {
     if (readOnly || accessLost || !activeChatId) return false;
     const current = queryClient.getQueryData<ChatSnapshot>(qk.chat(userId, workspaceId, activeChatId));
-    if (current && !current.questions.some(question => question.id === questionId && question.status === 'pending' && question.answerable_by_caller)) {
-      return false;
+    if (current) {
+      const listed = current.questions.some(question => question.id === questionId && question.status === 'pending' && question.answerable_by_caller);
+      // A failed list read is an outage, not a verdict: the run-known
+      // fallback carries the same answerability rule as the panel.
+      const fallback = !listed && current.questionsFailed
+        ? runKnownQuestion(current, questionId, userId)
+        : undefined;
+      if (!listed && !(fallback && fallback.answerable_by_caller)) return false;
     }
     createOutboxEntry({
       userId,
@@ -1128,7 +1196,7 @@ export function ConversationScreen({ workspaceId, chat: routeChat, chatParamPres
       <div className="otis-access"><h2 className="text-xl font-medium">Could not load conversation</h2><p className="text-sm text-muted-foreground">{error ?? 'A network or server error occurred.'}</p><div className="flex gap-2"><Button variant="outline" type="button" onClick={() => { setError(null); void snapshotQuery.refetch(); void resyncChat(activeChatId!); }}>Try again</Button><Button variant="ghost" type="button" onClick={() => navigate(workspaceId, null)}>Start new conversation</Button></div></div>
     ) : <div className="otis-chat">
       {streamStatus === 'resyncing' && <p className="otis-connection text-xs" role="status">Reconnecting to activity… Your conversation is retained.</p>}
-      <Transcript key={`${workspaceId}:${activeChatId ?? 'new'}`} messages={derived.messages} members={members} currentUserId={userId} runs={snapshot?.runs ?? {}} activities={snapshot?.activities ?? []} steps={[]} transients={transients} delivery={derived.delivery} onRetryMessage={(clientId) => void retryMessage(clientId)} onRetryRun={readOnly ? undefined : (runId) => void retryRun(runId)} onDiscardMessage={discardMessage} onInspectSource={setSourceId} onInspectAction={setDetailActionId} onReply={readOnly ? undefined : (id) => openQuestionPanel(id, true)} onEditMessage={readOnly ? undefined : setDraftValue} loading={loading} hasOlder={Boolean(fullSnapshot?.older)} loadingOlder={loadingOlder} olderError={olderError} followSignal={followSignal} positionKey={`${userId}:${workspaceId}:${activeChatId ?? 'new'}`} onLoadOlder={() => void loadOlder()}/>
+      <Transcript key={`${workspaceId}:${activeChatId ?? 'new'}`} messages={derived.messages} members={members} currentUserId={userId} runs={snapshot?.runs ?? {}} activities={snapshot?.activities ?? []} steps={[]} transients={transients} delivery={derived.delivery} onRetryMessage={(clientId) => void retryMessage(clientId)} onRetryRun={readOnly ? undefined : (runId) => void retryRun(runId)} onRetryQuestions={activeChatId && snapshot?.questionsFailed ? () => refreshQuestions(activeChatId) : undefined} questionsFailed={snapshot?.questionsFailed ?? false} onDiscardMessage={discardMessage} onInspectSource={setSourceId} onInspectAction={setDetailActionId} onReply={readOnly ? undefined : (id) => openQuestionPanel(id, true)} onEditMessage={readOnly ? undefined : setDraftValue} loading={loading} hasOlder={Boolean(fullSnapshot?.older)} loadingOlder={loadingOlder} olderError={olderError} followSignal={followSignal} positionKey={`${userId}:${workspaceId}:${activeChatId ?? 'new'}`} onLoadOlder={() => void loadOlder()}/>
       {error && <div className="otis-chat-error text-sm" role="alert"><p>{error}</p>{activeChatId && !loading && <Button variant="ghost" size="sm" type="button" onClick={() => { setError(null); void resyncChat(activeChatId); }}>Reload conversation</Button>}</div>}
       {readOnly ? <div className="otis-readonly text-sm"><p>This is {currentDetail!.chat.author_display_name ?? members[currentDetail!.chat.author_user_id] ?? 'a teammate'}’s conversation.</p><Button variant="ghost" size="sm" type="button" onClick={() => navigate(workspaceId, ownChats[0]?.id ?? null)}>Continue in your own chat</Button></div> : <div ref={composerRef} className="otis-composer-slot"><div className="flex flex-col gap-2">{panelQuestion && activeChatId && <div className="mx-auto w-full max-w-[760px] px-4"><QuestionPanel key={panelQuestion.id} question={panelQuestion} draftKey={`otis:draft:${userId}:${workspaceId}:${activeChatId}:${panelQuestion.id}`} focusSignal={panelFocusId === panelQuestion.id ? panelFocusSignal : 0} onSubmit={(questionId, text) => answerQuestion(questionId, text)} onSkip={dismissQuestion} onClose={dismissQuestion}/></div>}<Composer key={`${workspaceId}:${userId}:${activeChatId ?? 'new'}`} draftKey={`otis:draft:${userId}:${workspaceId}:${activeChatId ?? 'new'}`} draftValue={draftValue} disabled={Boolean(activeChatId && !snapshot)} disabledReason={error ? 'Conversation unavailable' : 'Opening conversation…'} running={Boolean(running)} commands={commands} models={models} workspaces={workspaces} controlPending={controlPending} modelReady={models.some(model => model.is_current && model.available)} modelsLoading={modelsQuery.isLoading} modelsError={modelsQuery.isError ? (modelsQuery.error instanceof Error ? modelsQuery.error.message : 'Could not load models.') : undefined} onRetryModels={() => void modelsQuery.refetch()} voice={{ available: voiceAvailable, adapter: voiceAdapter, scope: { userId, workspaceId, chatId: activeChatId }, onSent: voiceSend }} images={{ available: !readOnly && !accessLost, workspaceId, chatId: activeChatId, onEnsureChat: ensureChatForImages, upload: request => uploadImageFile(imageTransport, request) }} onCommand={applyCommand} onStop={running ? async () => { await api.stopRun(workspaceId, running.run.id); if (activeChatId) refreshRun(workspaceId, activeChatId, running.run.id); } : undefined} onSend={send}/></div></div>}
     </div>}</main>

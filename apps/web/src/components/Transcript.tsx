@@ -187,7 +187,7 @@ export function WorkingDisclosure({ steps, finished, expanded, onToggle, onInspe
     </section>
   );
 }
-function RunWork({ run, steps, activities, onInspectAction, onReply, onRetryRun, hasAgentMessage = false }: { run?: RunDetailResponse; steps: WorkingStep[]; activities: PublicActivity[]; onInspectAction: (id: string) => void; onReply?: (id: string) => void; onRetryRun?: (runId: string) => void; hasAgentMessage?: boolean }) {
+function RunWork({ run, steps, activities, onInspectAction, onReply, onRetryRun, onRetryQuestions, questionsFailed = false, hasAgentMessage = false }: { run?: RunDetailResponse; steps: WorkingStep[]; activities: PublicActivity[]; onInspectAction: (id: string) => void; onReply?: (id: string) => void; onRetryRun?: (runId: string) => void; onRetryQuestions?: () => void; questionsFailed?: boolean; hasAgentMessage?: boolean }) {
   const [manual, setManual] = useState<boolean | null>(null);
   const finished = Boolean(run && ['succeeded', 'partial', 'failed', 'cancelled'].includes(run.status));
   const isWaiting = Boolean(run && (run.status === 'waiting_for_input' || Boolean(run.pending_clarification)));
@@ -229,6 +229,14 @@ function RunWork({ run, steps, activities, onInspectAction, onReply, onRetryRun,
           <Button variant="ghost" size="sm" type="button" className="otis-question__reply-btn self-start" onClick={() => onReply(run.pending_clarification!.id)}>
             Answer question
           </Button>
+        )}
+        {questionsFailed && onRetryQuestions && (
+          <div className="flex items-center gap-2 text-xs text-muted-foreground">
+            <span>Couldn&apos;t load the question list.</span>
+            <Button variant="ghost" size="sm" type="button" className="self-start" onClick={onRetryQuestions}>
+              Retry
+            </Button>
+          </div>
         )}
       </div>
     )}
@@ -365,6 +373,10 @@ export interface TranscriptProps {
   onRetryMessage?: (clientId: string) => void;
   /** Retries a terminal failed/partial run through the server owner. Offered only on failed/partial run blocks. */
   onRetryRun?: (runId: string) => void;
+  /** The question-list read failed while run details survived: the empty list is an outage. */
+  questionsFailed?: boolean;
+  /** Re-reads the question list. Offered beside a run-known pending question while the list is failed. */
+  onRetryQuestions?: () => void;
   /** Removes one unsent local entry. Never offered for accepted rows. */
   onDiscardMessage?: (clientId: string) => void;
   /** In-place older-page failure; retry reuses the same cursor. */
@@ -374,7 +386,7 @@ export interface TranscriptProps {
   /** Scope key for saved reading position (user/workspace/chat). */
   positionKey?: string;
 }
-export function Transcript({ messages, members, currentUserId, steps, run, runs = {}, activities = [], transients = {}, pendingUnread = 0, onJumpToLatest, onInspectAction, onReply, onRetryRun, onInspectSource, onEditMessage, loading, hasOlder, loadingOlder, onLoadOlder, delivery = {}, onRetryMessage, onDiscardMessage, olderError = null, followSignal = 0, positionKey = '' }: TranscriptProps) {
+export function Transcript({ messages, members, currentUserId, steps, run, runs = {}, activities = [], transients = {}, pendingUnread = 0, onJumpToLatest, onInspectAction, onReply, onRetryRun, onRetryQuestions, questionsFailed = false, onInspectSource, onEditMessage, loading, hasOlder, loadingOlder, onLoadOlder, delivery = {}, onRetryMessage, onDiscardMessage, olderError = null, followSignal = 0, positionKey = '' }: TranscriptProps) {
   // Sole follow/release/Jump owner. Instant adjustments only: no animated
   // token-driven scrolling, so reduced motion is honored by construction.
   // Native overflow-anchor (default) owns prepend/in-place anchoring; no
@@ -496,7 +508,7 @@ export function Transcript({ messages, members, currentUserId, steps, run, runs 
           const localDelivery = message.client_message_id ? delivery[message.client_message_id] : undefined;
           return <div key={message.client_message_id ?? message.id} className="otis-message-group" aria-live={historyFloor !== null && message.sequence < historyFloor ? 'off' : undefined}>
             {(index > 0 && dayKey(message.created_at) !== dayKey(messages[index - 1]!.created_at)) && <div className="otis-dayseparator text-xs"><span>{formatDay(message.created_at)}</span></div>}
-            {firstAgent && <RunWork run={runData} steps={runSteps} activities={runActivities} onInspectAction={onInspectAction} onReply={onReply} onRetryRun={onRetryRun} hasAgentMessage={Boolean(message.content_text?.trim())}/>}
+            {firstAgent && <RunWork run={runData} steps={runSteps} activities={runActivities} onInspectAction={onInspectAction} onReply={onReply} onRetryRun={onRetryRun} onRetryQuestions={onRetryQuestions} questionsFailed={questionsFailed} hasAgentMessage={Boolean(message.content_text?.trim())}/>}
             <article className={`otis-turn group otis-turn--${isMember ? 'member' : 'agent'}`} data-author-kind={message.author_kind}>
               {isMember && message.author_user_id !== currentUserId && <div className="otis-turn__meta text-xs text-subtle">{author}</div>}
               <MessageBody message={message} />
@@ -555,7 +567,7 @@ export function Transcript({ messages, members, currentUserId, steps, run, runs 
                 ) : null}
               </div>
             </article>
-            {noAnswerYet && <><RunWork run={runData} steps={runSteps} activities={runActivities} onInspectAction={onInspectAction} onReply={onReply} onRetryRun={onRetryRun} hasAgentMessage={false}/>{(() => {
+            {noAnswerYet && <><RunWork run={runData} steps={runSteps} activities={runActivities} onInspectAction={onInspectAction} onReply={onReply} onRetryRun={onRetryRun} onRetryQuestions={onRetryQuestions} questionsFailed={questionsFailed} hasAgentMessage={false}/>{(() => {
               // Durable chunks plus live transient preview for rounds not yet
               // persisted. Transient frames carry each round's full text, so
               // joining is order-safe; durable coverage drops preview rounds.
@@ -574,7 +586,7 @@ export function Transcript({ messages, members, currentUserId, steps, run, runs 
             ));})()}</>}
           </div>;
         })}
-        {!messages.length && steps.length > 0 && <RunWork run={run ?? undefined} steps={steps} activities={activities} onInspectAction={onInspectAction} onRetryRun={onRetryRun} hasAgentMessage={false}/>}
+        {!messages.length && steps.length > 0 && <RunWork run={run ?? undefined} steps={steps} activities={activities} onInspectAction={onInspectAction} onRetryRun={onRetryRun} onRetryQuestions={onRetryQuestions} questionsFailed={questionsFailed} hasAgentMessage={false}/>}
       </div>
     </div>
     {(messages.length > 0 && (pendingUnread > 0 || !isAtBottom)) && (

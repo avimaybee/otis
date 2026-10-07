@@ -140,6 +140,67 @@ describe('fetchChatSnapshot authorization failures', () => {
   });
 });
 
+describe('fetchChatSnapshot concurrent reads', () => {
+  it('starts secondary reads alongside the primary instead of waterfalling', async () => {
+    let releasePrimary!: () => void;
+    const gate = new Promise<void>((resolve) => { releasePrimary = resolve; });
+    vi.spyOn(api, 'getChat').mockImplementation(() => gate.then(() => ({ chat: { id: CHAT, title: 'Snap' } } as never)));
+    vi.spyOn(api, 'listMessages').mockResolvedValue({
+      chat_id: CHAT,
+      messages: [message('m1', 1, 'run_1')],
+      next_before_sequence: null,
+    } as never);
+    const activity = vi.spyOn(api, 'activity').mockResolvedValue({ activities: [], latest_cursor: 0 } as never);
+    const clarifications = vi.spyOn(api, 'clarifications').mockResolvedValue({ clarifications: [] });
+    vi.spyOn(api, 'runs').mockResolvedValue({ runs: [] });
+
+    const pending = fetchChatSnapshot(WS, CHAT);
+    // The primary is still gated, yet both secondary reads are already issued.
+    expect(activity).toHaveBeenCalledWith(WS, CHAT, 0, undefined);
+    expect(clarifications).toHaveBeenCalledWith(WS, CHAT, undefined);
+    releasePrimary();
+    const full = await pending;
+    expect(full.messages.map((m) => m.id)).toEqual(['m1']);
+  });
+
+  it('still settles issued secondary reads when the primary fails', async () => {
+    vi.spyOn(api, 'getChat').mockRejectedValue(new Error('nope'));
+    vi.spyOn(api, 'listMessages').mockResolvedValue({
+      chat_id: CHAT,
+      messages: [],
+      next_before_sequence: null,
+    } as never);
+    vi.spyOn(api, 'activity').mockResolvedValue({ activities: [], latest_cursor: 0 } as never);
+    vi.spyOn(api, 'clarifications').mockResolvedValue({ clarifications: [] });
+    await expect(fetchChatSnapshot(WS, CHAT)).rejects.toThrow('nope');
+  });
+});
+
+describe('fetchChatSnapshot question-read failure', () => {
+  it('marks a failed question list instead of reporting an authoritative empty one', async () => {
+    primary();
+    vi.spyOn(api, 'activity').mockResolvedValue({ activities: [], latest_cursor: 0 } as never);
+    vi.spyOn(api, 'clarifications').mockRejectedValue(new ApiError(503, 'unavailable', 'Passing outage.'));
+    vi.spyOn(api, 'runs').mockResolvedValue({ runs: [] });
+
+    const seen: ChatPrimary[] = [];
+    const full = await fetchChatSnapshot(WS, CHAT, undefined, (staged) => { seen.push(staged); });
+    expect(full.questions).toEqual([]);
+    expect(full.questionsFailed).toBe(true);
+  });
+
+  it('leaves the flag clear when the question list reads successfully', async () => {
+    primary();
+    vi.spyOn(api, 'activity').mockResolvedValue({ activities: [], latest_cursor: 0 } as never);
+    vi.spyOn(api, 'clarifications').mockResolvedValue({ clarifications: [{ id: 'q1' }] as never });
+    vi.spyOn(api, 'runs').mockResolvedValue({ runs: [] });
+
+    const full = await fetchChatSnapshot(WS, CHAT);
+    expect(full.questions.map((question) => question.id)).toEqual(['q1']);
+    expect(full.questionsFailed).toBe(false);
+  });
+});
+
 describe('fetchChatSnapshot staged primary', () => {
   it('calls onPrimary with the primary transcript before secondary metadata resolves', async () => {
     primary();
@@ -280,6 +341,36 @@ describe('staged primary paint', () => {
         await new Promise((resolve) => setTimeout(resolve, 0));
       });
       expect(bubbles().filter((node) => node.textContent === 'Alpha note')).toHaveLength(1);
+    } finally {
+      releaseSecondary();
+      await view.unmount();
+    }
+  });
+
+  it('opens the live subscription off the staged transcript without waiting for metadata', async () => {
+    let releaseSecondary!: () => void;
+    const gate = new Promise<void>((resolve) => { releaseSecondary = resolve; });
+    stageMocks(releaseSecondary, gate);
+    const subscribe = vi.spyOn(stream, 'subscribeToActivity');
+    const view = await mountRoute(`/?workspace=${STAGE_WS}&chat=chat_A`, {
+      userId: STAGE_USER,
+      workspaces: [{ id: STAGE_WS, name: 'Kerning' }],
+      members: { [STAGE_USER]: 'Avi' },
+    });
+    try {
+      // The primary painted while secondary metadata is still gated…
+      await vi.waitFor(() => expect(view.host.textContent).toContain('Alpha note'));
+      // …and the live stream is already open from cursor 0 instead of
+      // waiting on the unrelated metadata tail.
+      await vi.waitFor(() => expect(subscribe).toHaveBeenCalled());
+      const url = String(subscribe.mock.calls[0]?.[0] ?? '');
+      expect(url).toContain('chat_A');
+      expect(url).toContain('after=0');
+      releaseSecondary();
+      await React.act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
+      expect(view.host.textContent).toContain('Alpha note');
     } finally {
       releaseSecondary();
       await view.unmount();

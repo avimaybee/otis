@@ -17,7 +17,7 @@ import { RouterProvider } from '@tanstack/react-router';
 import { SessionContext, createAppRouter } from '../src/router.js';
 import { TestQueryProvider } from './query.js';
 import { resetOutboxForTests } from '../src/api/outbox.js';
-import { api } from '../src/api/client.js';
+import { ApiError, api } from '../src/api/client.js';
 import * as stream from '../src/hooks/useActivityStream.js';
 
 // @ts-expect-error React act flag
@@ -639,6 +639,121 @@ describe('End-to-End UI to Backend Flow Verification', () => {
 
     // Verify clarification_id was passed to sendMessage
     expect(sendSpy).toHaveBeenCalledWith(WS, 'chat_clarify_1', expect.any(String), 'At 2:00 PM', 'clarification_123', undefined, expect.anything());
+
+    await view.unmount();
+  });
+
+  // FLOW 5b: a failed question-list read keeps the run-known answer path usable with an explicit retry
+  it('Flow 5b: 503 question list still answers from run details and offers a list retry', async () => {
+    const myChat = makeChat('chat_clarify_503', 'Bistro Outage');
+    history.replaceState({}, '', `/?workspace=${WS}&chat=chat_clarify_503`);
+
+    const outageRun: RunDetailResponse = {
+      run: { id: 'run_c503', status: 'waiting_for_input' } as never,
+      status: 'waiting_for_input',
+      steps: [],
+      actions: [],
+      activities: [],
+      pending_clarification: {
+        id: 'clarification_503',
+        workspace_id: WS,
+        chat_id: 'chat_clarify_503',
+        run_id: 'run_c503',
+        source_message_id: 'in_m1',
+        requester_user_id: USER,
+        question: 'What time on Friday should I call them?',
+        intended_operation: 'create_task',
+        missing_fields: ['due'],
+        candidates_json: null,
+        source_revision: 3,
+        status: 'pending',
+        resolution_response: null,
+        resolved_at: null,
+        created_at: TIMESTAMP,
+        updated_at: TIMESTAMP,
+      },
+    };
+    const recoveredQuestion = {
+      id: 'clarification_503',
+      chat_id: 'chat_clarify_503',
+      run_id: 'run_c503',
+      question: 'What time on Friday should I call them?',
+      intended_operation: 'create_task',
+      missing_fields: ['due'],
+      candidates: null,
+      status: 'pending',
+      created_at: TIMESTAMP,
+      answerable_by_caller: true,
+    };
+
+    vi.spyOn(api, 'listChats').mockResolvedValue({ chats: [myChat] });
+    vi.spyOn(api, 'commands').mockResolvedValue({ surface: 'web', commands: [] });
+    vi.spyOn(api, 'getChat').mockResolvedValue({ chat: myChat, is_author: true });
+    vi.spyOn(api, 'listMessages').mockResolvedValue({
+      chat_id: 'chat_clarify_503',
+      messages: [makeMessage('m1', 'Schedule call', 'member', USER, 'run_c503')],
+      next_before_sequence: null,
+    });
+    vi.spyOn(api, 'activity').mockResolvedValue({ activities: [], latest_cursor: 0 } as never);
+    // The list read fails while run details survive: first attempt 503s, the
+    // retry recovers.
+    const clarificationsSpy = vi.spyOn(api, 'clarifications')
+      .mockRejectedValueOnce(new ApiError(503, 'unavailable', 'Passing outage.'))
+      .mockResolvedValue({ clarifications: [recoveredQuestion] });
+    vi.spyOn(api, 'models').mockResolvedValue({ models: DEFAULT_MODELS, current_command_key: 'mimo-25', default_command_key: 'mimo-25' });
+    vi.spyOn(api, 'run').mockResolvedValue(outageRun);
+    vi.spyOn(api, 'runs').mockResolvedValue({ runs: [outageRun] });
+    const sendSpy = vi.spyOn(api, 'sendMessage').mockResolvedValue({
+      status: 'accepted',
+      message_id: 'msg_c503_reply',
+      run_id: 'run_c503',
+      acceptance_sequence: 2,
+    });
+
+    const view = await mount(<RouteShell />);
+
+    // The run-known question renders with its answer action…
+    const region = view.host.querySelector('[aria-label="Awaiting input"]') as HTMLElement;
+    expect(region).toBeTruthy();
+    expect(region.textContent).toContain('What time on Friday should I call them?');
+    // …beside a visible, retryable list failure — never a silent empty list.
+    expect(region.textContent).toContain("Couldn't load the question list.");
+    const retryBtn = Array.from(region.querySelectorAll('button')).find((button) =>
+      button.textContent === 'Retry',
+    ) as HTMLButtonElement;
+    expect(retryBtn).toBeTruthy();
+
+    // "Answer question" opens a usable panel from run details alone.
+    expect(view.host.querySelector('[aria-label="Question from Otis"]')).toBeNull();
+    const replyBtn = view.host.querySelector('.otis-question__reply-btn') as HTMLButtonElement;
+    await React.act(async () => replyBtn.click());
+    const panel = view.host.querySelector('[aria-label="Question from Otis"]') as HTMLElement;
+    expect(panel).toBeTruthy();
+    expect(panel.textContent).toContain('What time on Friday should I call them?');
+
+    // The panel answers with the run-known question identity…
+    const panelTextarea = panel.querySelector('textarea') as HTMLTextAreaElement;
+    await fill(panelTextarea, 'At 2:00 PM');
+    const panelSend = Array.from(panel.querySelectorAll('button')).find((button) => button.textContent === 'Send') as HTMLButtonElement;
+    await React.act(async () => panelSend.click());
+    expect(sendSpy).toHaveBeenCalledWith(WS, 'chat_clarify_503', expect.any(String), 'At 2:00 PM', 'clarification_503', undefined, expect.anything());
+
+    // …and the retry recovers the authoritative list, clearing the outage UI.
+    // The button is re-queried: answering re-rendered the transcript, so the
+    // earlier node is detached and its click would be a no-op.
+    const retryAfterAnswer = Array.from(view.host.querySelectorAll('button')).find((button) =>
+      button.textContent === 'Retry',
+    ) as HTMLButtonElement;
+    expect(retryAfterAnswer).toBeTruthy();
+    await React.act(async () => retryAfterAnswer.click());
+    await React.act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 300));
+    });
+    expect(clarificationsSpy.mock.calls.length).toBeGreaterThanOrEqual(2);
+    await React.act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 0));
+    });
+    expect(view.host.textContent).not.toContain("Couldn't load the question list.");
 
     await view.unmount();
   });

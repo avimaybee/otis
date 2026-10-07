@@ -25,6 +25,12 @@ export interface ChatSnapshot {
   runs: Record<string, RunDetailResponse>;
   activities: PublicActivity[];
   questions: ClarificationSummary[];
+  /**
+   * True when the question-list read failed while run details survived: the
+   * empty list is an outage, not an authoritative "no questions". The UI
+   * keeps the run-known answer path usable and offers an explicit retry.
+   */
+  questionsFailed: boolean;
   cursor: number;
 }
 
@@ -77,26 +83,36 @@ export async function fetchChatSnapshot(
   signal?: AbortSignal,
   onPrimary?: (primary: ChatPrimary) => void,
 ): Promise<ChatSnapshot> {
-  // The primary transcript paints through the caller's local state as soon
-  // as its two reads resolve, without waiting for secondary run metadata.
-  // It never touches the query cache: cache writes stay exclusively with the
-  // single TanStack return below plus the existing live updaters
+  // Independent reads start together: the primary transcript (detail +
+  // messages) and the secondary metadata (activity + questions) no longer
+  // waterfall. The primary still paints through the caller's local state the
+  // moment its two reads resolve, without waiting for metadata; runs fetch
+  // as soon as message IDs are known without waiting for metadata either.
+  // Nothing here touches the query cache: cache writes stay exclusively with
+  // the single TanStack return below plus the existing live updaters
   // (acceptance, activity, refresh), so a late or aborted primary can never
   // overwrite live-patched cache state the way a seeded write could.
-  const primary = await fetchChatPrimary(workspaceId, chatId, signal);
-  // Navigation wins before secondary work starts: an abort landing in the
-  // gap between primary and secondary must propagate without issuing doomed
-  // reads, and must never paint a chat the user already left.
+  const primaryPromise = fetchChatPrimary(workspaceId, chatId, signal);
+  const activityPromise = api.activity(workspaceId, chatId, 0, signal);
+  const questionsPromise = api.clarifications(workspaceId, chatId, signal);
+  let primary: ChatPrimary;
+  try {
+    primary = await primaryPromise;
+  } catch (err) {
+    // The primary sinks the snapshot, but the already-issued secondary reads
+    // must still settle to avoid floating unhandled rejections.
+    await Promise.allSettled([activityPromise, questionsPromise]);
+    throw err;
+  }
+  // Navigation wins before painting: an abort landing while secondary work
+  // is outstanding propagates without painting a chat the user already left.
   if (signal?.aborted) throw signal.reason;
   onPrimary?.(primary);
   // Secondary metadata degrades truthfully: activity, questions and run
   // details fill when available, and a failure leaves the transcript with
   // empty metadata instead of sinking the whole snapshot. Live events and
   // targeted refreshes repair the gaps. Only the primary is load-bearing.
-  const [activitySettled, questionsSettled] = await Promise.allSettled([
-    api.activity(workspaceId, chatId, 0, signal),
-    api.clarifications(workspaceId, chatId, signal),
-  ]);
+  const [activitySettled, questionsSettled] = await Promise.allSettled([activityPromise, questionsPromise]);
   // Navigation wins over degradation: an aborted fetch propagates so
   // TanStack keeps whatever the cache already holds.
   if (signal?.aborted) throw signal.reason;
@@ -111,6 +127,7 @@ export async function fetchChatSnapshot(
   const questions = questionsSettled.status === 'fulfilled'
     ? questionsSettled.value
     : { clarifications: [] as ClarificationSummary[] };
+  const questionsFailed = questionsSettled.status === 'rejected';
   if (activitySettled.status === 'rejected' || questionsSettled.status === 'rejected') {
     debugLog('chat', 'secondary snapshot metadata unavailable; rendering transcript without it', {
       chatId,
@@ -145,6 +162,7 @@ export async function fetchChatSnapshot(
     runs: Object.fromEntries(runData.map(run => [run.run.id, run])),
     activities,
     questions: questions.clarifications,
+    questionsFailed,
     cursor: firstActivity.latest_cursor,
   };
 }
@@ -169,6 +187,7 @@ export function useChatSnapshot(userId: string, workspaceId: string, chatId: str
           runs: {},
           activities: [],
           questions: [],
+          questionsFailed: false,
           cursor: 0,
         },
       });
@@ -283,7 +302,10 @@ export function applyOlderMessages(
 }
 
 export function applyQuestions(snapshot: ChatSnapshot, questions: ClarificationSummary[]): ChatSnapshot {
-  return { ...snapshot, questions };
+  // A successful list read is authoritative: it replaces the outage flag
+  // along with the list, so the retry affordance and run-known fallback
+  // stand down together.
+  return { ...snapshot, questions, questionsFailed: false };
 }
 
 /**
