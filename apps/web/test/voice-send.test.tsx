@@ -540,14 +540,14 @@ describe('conversation voice send integration', () => {
     await view.unmount();
   });
 
-  it('access loss during a slow upload purges local bytes and creates no entry', async () => {
+  it('workspace revocation during a slow upload parks the workspace without purging bytes or the session', async () => {
     mockConversation([makeChat(CHAT)]);
     let resolveUpload!: (value: { media: VoiceMediaSummary }) => void;
     const upload = vi.fn().mockImplementation(() => new Promise(resolve => { resolveUpload = resolve; }));
     configureVoiceUpload({ upload });
-    let handlers: { onAccessLost: () => void } | null = null;
+    let handlers: { onMembershipRevoked?: () => void } | null = null;
     vi.mocked(stream.subscribeToActivity).mockImplementation((_url, options) => {
-      handlers = options as unknown as { onAccessLost: () => void };
+      handlers = options as unknown as { onMembershipRevoked?: () => void };
       return { close: vi.fn() };
     });
     const sendMessage = vi.spyOn(api, 'sendMessage');
@@ -567,16 +567,21 @@ describe('conversation voice send integration', () => {
     await waitFor(() => upload.mock.calls.length === 1);
     await waitFor(() => handlers !== null);
 
+    // Revocation parks the workspace: an explicit notice, never a
+    // session-wide purge. The composer unmounts with the parked chat, so the
+    // late upload resolves exactly like a scope switch: no entry, no send.
     await React.act(async () => {
-      handlers!.onAccessLost();
+      handlers!.onMembershipRevoked?.();
     });
+    expect(view.host.textContent).toContain('Workspace unavailable');
+    expect(view.host.textContent).not.toContain('Reload access');
     await React.act(async () => {
       resolveUpload({ media: storyMedia });
     });
     await waitFor(() => true, 300);
     expect(sendMessage).not.toHaveBeenCalled();
     expect(entriesForUser(USER)).toHaveLength(0);
-    expect(await listVoiceSessions({ userId: USER, workspaceId: WS, chatId: CHAT })).toHaveLength(0);
+    expect(await listVoiceSessions({ userId: USER, workspaceId: WS, chatId: CHAT })).toHaveLength(1);
     await view.unmount();
   });
 });

@@ -24,7 +24,12 @@ export interface StreamHandlers {
   onActivity: (activity: PublicActivity) => void;
   onStatus: (status: StreamStatus) => void;
   onResyncRequired: () => void;
-  onAccessLost?: () => void;
+  /**
+   * The server closed the stream because this workspace revoked membership.
+   * Workspace-scoped by construction (the URL carries the workspace); it
+   * must never trigger a user-wide purge.
+   */
+  onMembershipRevoked?: () => void;
 }
 
 export interface ActivitySubscription {
@@ -79,7 +84,7 @@ export function subscribeToActivity(
     failureLog('stream', 'membership revoked; closing', { url: stripOrigin(url) });
     handlers.onStatus('closed');
     source.close();
-    handlers.onAccessLost?.();
+    handlers.onMembershipRevoked?.();
   });
 
   source.addEventListener('error', () => {

@@ -32,7 +32,7 @@ export function DetailPane({ workspaceId, chatId, actionId, onClose, onUndone, o
   const [mode, setMode] = useState<'from_here' | 'single'>('from_here'); const [error, setError] = useState<string | null>(null); const [busy, setBusy] = useState(false);
   const [previewLoading, setPreviewLoading] = useState(true); const [refresh, setRefresh] = useState(0);
   const [runActive, setRunActive] = useState(false);
-  const failedAccess = (err: unknown) => { if (err instanceof ApiError && [401, 403].includes(err.status)) { onAccessLost?.(); return true; } return false; };
+  const failedAccess = (err: unknown) => { if (err instanceof ApiError && err.status === 401) { onAccessLost?.(); return true; } return false; };
   const operation = useRef<{ mode: string; revision: number; id: string } | null>(null);
   useEffect(() => {
     let cancelled = false;

@@ -70,6 +70,7 @@ import {
 } from './api/snapshot.js';
 import {
   clearUserQueries,
+  clearWorkspaceQueries,
   fetchMoreChats,
   qk,
   useAppQueryClient,
@@ -92,7 +93,14 @@ export interface ConversationScreenProps {
   onRefreshSession?: () => Promise<void>;
 }
 function safeError(error: unknown, fallback: string) { if (error instanceof ApiError && error.status === 401) return 'Your session has expired. Sign in again.'; if (error instanceof ApiError && error.status === 404) return 'This conversation is unavailable or your access has changed.'; return fallback; }
-function isAuthError(error: unknown): boolean { return error instanceof ApiError && (error.status === 401 || error.status === 403); }
+/**
+ * Session death (expired/invalid credentials) is the only condition that
+ * discards user-wide local state. A 403 is always object- or
+ * workspace-scoped (not the chat author, removed member on a legacy route):
+ * it surfaces in the affected control and never purges the session, sibling
+ * workspaces, or unsent work.
+ */
+function isSessionError(error: unknown): boolean { return error instanceof ApiError && error.status === 401; }
 function isNotFoundError(error: unknown): boolean { return error instanceof ApiError && error.status === 404; }
 
 export function ConversationScreen({ workspaceId, chat: routeChat, chatParamPresent, workspaces, userId, members, onSignOut, onNavigate, onRefreshSession }: ConversationScreenProps) {
@@ -168,6 +176,36 @@ export function ConversationScreen({ workspaceId, chat: routeChat, chatParamPres
     setDetailActionId(null); setSourceId(null); setDrawerOpen(false); setSettingsOpen(false); setAccessLost(true); setReplyId(null); setDismissedClarificationIds([]);
   }, [queryClient, userId, clearRefreshTimers]);
 
+  // Workspaces the server stopped serving (removed member, deleted
+  // workspace). Only that workspace's server snapshots are dropped; the
+  // session, sibling workspaces, drafts and unsent work all survive. The
+  // lost workspace's own pending entries fail honestly on the next send
+  // (403/404 becomes a failed bubble with Retry) instead of being silently
+  // deleted. No epoch bump and no timer clear: in-flight work for other
+  // workspaces must continue, and their updaters no-op against removed
+  // cache by construction.
+  const [workspaceLost, setWorkspaceLost] = useState<string[]>([]);
+  const loseWorkspace = useCallback((lostWorkspaceId: string, reason: 'revoked' | 'forbidden') => {
+    clearWorkspaceQueries(queryClient, userId, lostWorkspaceId);
+    setWorkspaceLost(previous => (previous.includes(lostWorkspaceId) ? previous : [...previous, lostWorkspaceId]));
+    if (lostWorkspaceId === selected.current.workspace) {
+      setDetailActionId(null); setSourceId(null); setDrawerOpen(false); setSettingsOpen(false);
+      setReplyId(null); setDismissedClarificationIds([]);
+    } else {
+      const name = workspaces.find(workspace => workspace.id === lostWorkspaceId)?.name ?? 'A workspace';
+      toast.warning(`${name} is no longer available. Your other workspaces and unsent work are kept.`);
+    }
+    debugLog('chat', 'workspace access lost; scope retained', { workspaceId: lostWorkspaceId, reason });
+  }, [queryClient, userId, workspaces]);
+
+  const refreshSession = useCallback(async () => {
+    await onRefreshSession?.();
+    // Session refresh re-resolves membership: a restored workspace rejoins
+    // through its normal queries instead of staying parked as lost.
+    setWorkspaceLost([]);
+    setError(null);
+  }, [onRefreshSession]);
+
   // Browser Back/Forward arrives as new route props: detach transient UI from
   // the previous chat exactly like a programmatic navigation, without
   // resending, restarting a run or creating another chat. The scoped query
@@ -217,9 +255,12 @@ export function ConversationScreen({ workspaceId, chat: routeChat, chatParamPres
     navigate(workspaceId, last === 'new' ? null : last ?? mineQuery.data.chats[0]?.id ?? null, true);
   }, [accessLost, mineQuery.data, chatParamPresent, navigate, userId, workspaceId]);
   useEffect(() => {
-    const authLost = (mineQuery.error && isAuthError(mineQuery.error))
-      || (teamQuery.error && isAuthError(teamQuery.error));
-    if (authLost) { if (!accessLost) loseAccess(); return; }
+    // Only a dead session discards user-wide state. A 403/404 on the
+    // workspace listing is scoped: the session stays alive and the error
+    // below names the affected workspace instead of closing everything.
+    const sessionLost = (mineQuery.error && isSessionError(mineQuery.error))
+      || (teamQuery.error && isSessionError(teamQuery.error));
+    if (sessionLost) { if (!accessLost) loseAccess(); return; }
     if (mineQuery.error && !accessLost) setError('Could not load conversations. Reload to try again.');
   }, [mineQuery.error, teamQuery.error, accessLost, loseAccess]);
 
@@ -237,7 +278,7 @@ export function ConversationScreen({ workspaceId, chat: routeChat, chatParamPres
   const chatNotFound = Boolean(activeChatId && snapshotQuery.error && isNotFoundError(snapshotQuery.error));
   useEffect(() => {
     if (!snapshotQuery.error || accessLost) return;
-    if (isAuthError(snapshotQuery.error)) loseAccess();
+    if (isSessionError(snapshotQuery.error)) loseAccess();
     else if (isNotFoundError(snapshotQuery.error)) setError('This conversation is unavailable or was deleted.');
     else setError(safeError(snapshotQuery.error, 'Could not open this conversation. Try again.'));
   }, [snapshotQuery.error, accessLost, loseAccess]);
@@ -283,7 +324,7 @@ export function ConversationScreen({ workspaceId, chat: routeChat, chatParamPres
       const generation = epoch.current;
       void work().catch(err => {
         if (generation !== epoch.current) return;
-        if (isAuthError(err)) loseAccess();
+        if (isSessionError(err)) loseAccess();
         else debugLog('chat', 'targeted refresh failed', { key, status: err instanceof ApiError ? err.status : null });
       });
     }, 120));
@@ -323,7 +364,11 @@ export function ConversationScreen({ workspaceId, chat: routeChat, chatParamPres
     }
   }, [queryClient, userId, workspaceId]);
 
-  const readyChatId = fullSnapshot && !accessLost ? fullSnapshot.detail.chat.id : null;
+  // A lost workspace holds no live stream either: the teardown below already
+  // closed it when the flag landed, and nothing resubscribes until a session
+  // refresh clears the flag.
+  const workspaceGone = workspaceLost.includes(workspaceId);
+  const readyChatId = fullSnapshot && !accessLost && !workspaceGone ? fullSnapshot.detail.chat.id : null;
   useEffect(() => {
     if (!readyChatId || accessLost || !isVisible) {
       // Hidden tabs keep no live stream: the teardown below already closed
@@ -412,10 +457,13 @@ export function ConversationScreen({ workspaceId, chat: routeChat, chatParamPres
       },
       onStatus: status => { if (generation === epoch.current) setStreamStatus(status); },
       onResyncRequired: () => { void resyncChat(readyChatId); },
-      onAccessLost: loseAccess,
+      // Membership revocation is workspace-scoped: drop this workspace's
+      // snapshots and park it, but keep the session, sibling workspaces and
+      // every unsent entry. It must never become a user-wide purge.
+      onMembershipRevoked: () => { if (generation === epoch.current) loseWorkspace(workspaceId, 'revoked'); },
     });
     return () => subscription.close();
-  }, [readyChatId, workspaceId, accessLost, isVisible, streamGeneration, loseAccess, queryClient, userId, refreshRun, refreshMessages, refreshQuestions, resyncChat]);
+  }, [readyChatId, workspaceId, accessLost, workspaceLost, isVisible, streamGeneration, loseAccess, loseWorkspace, queryClient, userId, refreshRun, refreshMessages, refreshQuestions, resyncChat]);
 
   const workspaceName = workspaces.find(workspace => workspace.id === workspaceId)?.name ?? 'Workspace';
   const activeRuns = Object.values(snapshot?.runs ?? {}).filter(run => ['queued', 'running'].includes(run.status));
@@ -628,14 +676,19 @@ export function ConversationScreen({ workspaceId, chat: routeChat, chatParamPres
       // only closing the view is fenced, and therefore only ever closes the
       // view its failure belongs to.
       const scopeMatchesView = selected.current.workspace === entryWorkspaceId && selected.current.chat === targetChat;
-      if (isAuthError(err)) {
-        if (scopeMatchesView) loseAccess();
-        else {
-          markOutboxFailed(entry.clientId, {
-            code: err instanceof ApiError ? err.code : 'transport',
-            message: err instanceof ApiError ? err.message : 'Message not confirmed. It is kept in the conversation with Retry.',
-          });
-        }
+      // Only a dead session closes the view. A 403/404 (removed member,
+      // deleted workspace, not the chat author) files the server's verdict
+      // as a failed bubble with Retry: the entry, the session and every
+      // sibling workspace survive it.
+      if (err instanceof ApiError && err.status === 401 && scopeMatchesView) {
+        loseAccess();
+        return false;
+      }
+      if (err instanceof ApiError && (err.status === 401 || err.status === 403 || err.status === 404)) {
+        markOutboxFailed(entry.clientId, {
+          code: err.code,
+          message: err.message,
+        });
         return false;
       }
       // Stored as a failed entry with attached Retry; no global or composer
@@ -1014,6 +1067,10 @@ export function ConversationScreen({ workspaceId, chat: routeChat, chatParamPres
   // never leave an endless opening spinner.
   const loading = Boolean(activeChatId) && !accessLost && snapshotQuery.isLoading && !snapshot;
   const currentDetail = snapshot?.detail ?? null;
+  const otherWorkspaces = workspaces.filter(workspace => workspace.id !== workspaceId);
+  const switchAway = () => {
+    if (otherWorkspaces.length > 0) switchWorkspace(otherWorkspaces[0]!.id);
+  };
 
   return <div className="otis-shell h-dvh bg-background text-foreground flex">
     <Toaster theme="dark" position="top-center" visibleToasts={2} closeButton toastOptions={{ className: 'otis-toast', duration: 3000 }} offset={64}/>
@@ -1021,6 +1078,8 @@ export function ConversationScreen({ workspaceId, chat: routeChat, chatParamPres
     <main id="main-content" className="otis-main"><header className="otis-topbar flex h-12 items-center gap-2 border-b border-border px-4"><Button variant="ghost" size="icon" type="button" className="otis-iconbutton otis-topbar__menu" aria-label="Open history" aria-expanded={drawerOpen} onClick={() => setDrawerOpen(true)} disabled={accessLost}><MenuIcon/></Button><div className="otis-topbar__identity"><h1 className="otis-topbar__title truncate text-sm font-medium" title={currentDetail?.chat.title ?? workspaceName}>{currentDetail?.chat.title ?? workspaceName}</h1><span className="otis-topbar__subtitle text-xs text-subtle">{readOnly ? `${currentDetail!.chat.author_display_name ?? members[currentDetail!.chat.author_user_id] ?? 'Teammate'} · read only` : activeChatId ? workspaceName : 'New conversation'}</span></div><div className="otis-topbar__actions"><ChatOverflow models={models} followsDefault={followsDefault} disabled={accessLost || readOnly} pending={controlPending} running={Boolean(running)} onCommand={applyCommand} onStop={running ? async () => { await api.stopRun(workspaceId, running.run.id); if (activeChatId) refreshRun(workspaceId, activeChatId, running.run.id); } : undefined} onRename={activeChatId && !readOnly ? () => handleOpenRename(activeChatId, currentDetail?.chat.title ?? '') : undefined} onDelete={activeChatId && !readOnly ? () => handleOpenDelete(activeChatId, currentDetail?.chat.title ?? '') : undefined}/><Button variant="ghost" size="icon" type="button" className="otis-iconbutton" aria-label="New chat" onClick={() => navigate(workspaceId, null)} disabled={accessLost}><ComposeIcon/></Button></div></header>
     {accessLost ? (
       <div className="otis-access"><h2 className="text-xl font-medium">Conversation unavailable</h2><p className="text-sm text-muted-foreground">Your session may have expired or your workspace access has changed. Private content has been closed.</p><Button variant="outline" type="button" onClick={() => location.reload()}>Reload access</Button><Button variant="secondary" type="button" onClick={onSignOut}>Sign out</Button></div>
+    ) : workspaceGone ? (
+      <div className="otis-access"><h2 className="text-xl font-medium">Workspace unavailable</h2><p className="text-sm text-muted-foreground">{workspaceName} is no longer available. You may have been removed, or it was deleted. Your other workspaces and unsent work are kept.</p><div className="flex gap-2">{otherWorkspaces.length > 0 && <Button variant="outline" type="button" onClick={switchAway}>Switch workspace</Button>}<Button variant="ghost" type="button" onClick={() => void refreshSession()}>Refresh session</Button></div></div>
     ) : chatNotFound ? (
       <div className="otis-access"><h2 className="text-xl font-medium">Conversation unavailable</h2><p className="text-sm text-muted-foreground">This conversation was not found or has been deleted.</p><Button variant="outline" type="button" onClick={() => navigate(workspaceId, null)}>Start new conversation</Button></div>
     ) : activeChatId && !snapshot && snapshotQuery.isError ? (

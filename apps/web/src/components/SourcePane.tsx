@@ -22,7 +22,7 @@ export function SourcePane({ workspaceId, memoryId, onClose, onAccessLost, onOpe
       .then(value => { if (!cancelled) setDetail(value); })
       .catch(err => {
         if (cancelled) return;
-        if (err instanceof ApiError && [401, 403].includes(err.status)) onAccessLost();
+        if (err instanceof ApiError && err.status === 401) onAccessLost();
         else if (err instanceof ApiError && err.status === 404) setErrorType('missing');
         else setErrorType('network');
       })

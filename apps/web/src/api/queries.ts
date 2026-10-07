@@ -107,6 +107,19 @@ export function clearUserQueries(client: QueryClient, userId: string): void {
   debugLog('queries', 'cleared user scope', { userId });
 }
 
+/**
+ * Drop one workspace's cached content after access loss (removed member,
+ * deleted workspace). Sibling workspaces, the session and local delivery
+ * state all survive: every chat/list/model key carries the workspace id, so
+ * prefix removal cannot touch another workspace. Global keys (commands)
+ * stay.
+ */
+export function clearWorkspaceQueries(client: QueryClient, userId: string, workspaceId: string): void {
+  void client.cancelQueries({ queryKey: ['otis', userId, workspaceId] });
+  client.removeQueries({ queryKey: ['otis', userId, workspaceId] });
+  debugLog('queries', 'cleared workspace scope', { userId, workspaceId });
+}
+
 export function useAppQueryClient(): QueryClient {
   return useQueryClient();
 }
