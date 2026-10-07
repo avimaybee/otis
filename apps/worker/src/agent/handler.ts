@@ -31,8 +31,10 @@ import {
   collectAndValidateProviderStream,
   createInitialProgress,
   getOrderedToolDeclarations,
+  isExplicitCorrection,
   PRODUCTION_REGISTRY,
   PROMPT_VERSION,
+  runAppliedBusinessMutation,
   SCHEMA_VERSION,
   type AssistantCall,
   type DurableAgentProgress,
@@ -1345,6 +1347,26 @@ export class AgentHandler implements TurnHandler {
           // instead so the run reports failed and the member can retry.
           if (!collectedRound.text.trim()) {
             return { kind: 'failed', errorCode: 'empty_response', errorMessage: 'The model returned an empty reply. Nothing was saved.' };
+          }
+          // An explicit value correction answered with words alone is never
+          // a completed fix: the member believes the record changed while
+          // nothing mutated. Steer exactly one more round with the
+          // correction restated as an instruction instead of completing.
+          // The flag lives in durable progress, so restarts cannot loop it.
+          if (
+            !progress.correctionSteerSent &&
+            isExplicitCorrection(ctx.sourceText).isCorrection &&
+            !runAppliedBusinessMutation(progress.completedToolResults)
+          ) {
+            progress.correctionSteerSent = true;
+            progress.phase = 'provider_pending';
+            progress.roundIndex++;
+            roundsExecutedThisTurn++;
+            ctx.sourceText = `${ctx.sourceText}\n[Correction guard]: the member corrected a previously stated business value in this message. Apply the correction with the appropriate update tool now (identify the entity first if needed), then confirm briefly what changed. Do not reply with only a promise to fix it.`;
+            if (!(await this.saveProgress(ctx, progress))) {
+              return { kind: 'failed', errorCode: 'lease_lost', errorMessage: 'Workspace lease lost or expired before saving progress.' };
+            }
+            continue slice;
           }
           progress.phase = 'completed';
           progress.finalAnswer = collectedRound.text;

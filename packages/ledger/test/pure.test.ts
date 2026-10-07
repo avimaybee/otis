@@ -2,16 +2,19 @@ import { describe, it, expect } from 'vitest';
 import {
   assertEventInvariant,
   handleCreateEntity,
+  handleDeleteEntity,
   handleRenameEntity,
   handleAddAlias,
   handleSetField,
   handleLogEvent,
   handleCreateTask,
+  handleRememberContext,
   handleUpdateTask,
   handleResolveConflict,
   computeUndoPreview,
   handleUndoCommit,
   rebuildProjections,
+  formatQuoteText,
   type LedgerCommandContext,
   type LedgerProjectionState,
 } from '../src/index.js';
@@ -294,6 +297,16 @@ describe('Ledger Invariants & Pure Reducers', () => {
   });
 
   describe('conflicting current reports and dispute resolution (CF-01, CF-02)', () => {
+    it('formats stored minor units as major units in quote display text', () => {
+      // 4000 RON stored as 400000 minor units must read back as 4000 RON,
+      // never as 400000 RON in entity state or model context.
+      expect(formatQuoteText(400000, 'RON', 'expected')).toBe('4000 RON (expected)');
+      expect(formatQuoteText(300000, 'EUR', 'offered')).toBe('3000 EUR (offered)');
+      expect(formatQuoteText(400050, 'RON', 'expected')).toBe('4000.5 RON (expected)');
+      expect(formatQuoteText(1, 'RON', 'expected')).toBe('0.01 RON (expected)');
+      // Zero-decimal currencies keep the stored amount as-is.
+      expect(formatQuoteText(5000, 'JPY', 'offered')).toBe('5000 JPY (offered)');
+    });
     it('sets field to disputed (value = null, candidates preserved) on conflicting reports (CF-01)', () => {
       const { events: [e1], nextState: s1 } = handleCreateEntity(dummyContext, emptyState, 1, {
         name: 'Restaurant X',
@@ -311,7 +324,7 @@ describe('Ledger Invariants & Pure Reducers', () => {
       const fieldKey = `${entityId}:quote`;
       const f1 = quoteA.nextState!.fields.get(fieldKey)!;
       expect(f1.state).toBe('clear');
-      expect(f1.value_text).toContain('300000 EUR');
+      expect(f1.value_text).toContain('3000 EUR');
 
       // Teammate B reports competing quote of 4000 EUR without superseding
       const quoteB = handleLogEvent(
@@ -334,7 +347,7 @@ describe('Ledger Invariants & Pure Reducers', () => {
       expect(f2.candidate_event_ids).toContain(quoteA.events[0]!.id);
       expect(f2.candidate_event_ids).toContain(quoteB.events[0]!.id);
       // Historical last confirmed value remains inspectable
-      expect(f2.last_confirmed_value_text).toContain('300000 EUR');
+      expect(f2.last_confirmed_value_text).toContain('3000 EUR');
     });
 
     it('resolves dispute via resolve_conflict command into clear state with chosen value (CF-02)', () => {
@@ -442,8 +455,125 @@ describe('Ledger Invariants & Pure Reducers', () => {
     });
   });
 
-  describe('rebuild determinism and grouped undo (UN-01, UN-02, UN-03)', () => {
-    it('produces identical projections when rebuilding from event stream', () => {
+  describe('conversational entity deletion', () => {
+    function seedLeadWithDetails() {
+      const created = handleCreateEntity(dummyContext, emptyState, 1, { name: 'Romanian Client' });
+      const entityId = created.events[0]!.entity_id!;
+      let state = created.nextState!;
+      let seq = 2;
+      const quote = handleLogEvent(dummyContext, state, seq++, {
+        entity_id: entityId,
+        kind: 'quote',
+        payload: { amount: 400000, currency: 'RON', role: 'expected' },
+      });
+      state = quote.nextState!;
+      const aliased = handleAddAlias(dummyContext, state, seq++, { entity_id: entityId, alias: 'RC' });
+      state = aliased.nextState!;
+      const tasked = handleCreateTask(dummyContext, state, seq++, {
+        entity_id: entityId,
+        title: 'Send offer',
+        explicit_no_deadline: true,
+      });
+      state = tasked.nextState!;
+      const noted = handleRememberContext(dummyContext, state, seq++, {
+        scope: 'entity',
+        subject_id: entityId,
+        category: 'relationship_context',
+        content: 'Prefers WhatsApp',
+      });
+      state = noted.nextState!;
+      const memberNote = handleRememberContext(dummyContext, state, seq++, {
+        scope: 'member_in_workspace',
+        subject_id: 'usr-avi',
+        category: 'communication_preference',
+        content: 'Short replies',
+      });
+      state = memberNote.nextState!;
+      const events = [
+        ...created.events, ...quote.events, ...aliased.events,
+        ...tasked.events, ...noted.events, ...memberNote.events,
+      ];
+      return { entityId, state, events, seq };
+    }
+
+    it('requires confirmation and rejects unknown entities', () => {
+      const { entityId, state, seq } = seedLeadWithDetails();
+      const unconfirmed = handleDeleteEntity(dummyContext, state, seq, { entity_id: entityId });
+      expect(unconfirmed.result.status).toBe('rejected');
+      expect(unconfirmed.result.error?.code).toBe('confirmation_required');
+      expect(unconfirmed.events).toHaveLength(0);
+
+      const declined = handleDeleteEntity(dummyContext, state, seq, { entity_id: entityId, confirm: 'no' });
+      expect(declined.result.status).toBe('rejected');
+
+      const missing = handleDeleteEntity(dummyContext, state, seq, { entity_id: 'ent_missing', confirm: 'yes' });
+      expect(missing.result.status).toBe('rejected');
+      expect(missing.result.error?.code).toBe('not_found');
+    });
+
+    it('removes the entity subtree from projections while history stays', () => {
+      const { entityId, state, events, seq } = seedLeadWithDetails();
+      // The stored quote reads back in major units before deletion.
+      expect(state.fields.get(`${entityId}:quote`)!.value_text).toBe('4000 RON (expected)');
+
+      const deleted = handleDeleteEntity(dummyContext, state, seq, {
+        entity_id: entityId,
+        confirm: 'yes',
+        reason: 'fake test data',
+      });
+      expect(deleted.result.status).toBe('applied');
+      expect(deleted.events).toHaveLength(1);
+      expect(deleted.events[0]!.kind).toBe('entity_deleted');
+
+      const next = deleted.nextState!;
+      expect(next.entities.has(entityId)).toBe(false);
+      expect([...next.aliases.values()].some((a) => a.entity_id === entityId)).toBe(false);
+      expect([...next.fields.keys()].some((k) => k.startsWith(`${entityId}:`))).toBe(false);
+      expect([...next.tasks.values()].some((t) => t.entity_id === entityId)).toBe(false);
+      expect([...next.drafts.values()].some((d) => d.entity_id === entityId)).toBe(false);
+      expect(
+        [...next.memoryEntries.values()].some((m) => m.scope === 'entity' && m.subject_id === entityId),
+      ).toBe(false);
+      // Member-scoped notes about other subjects survive.
+      expect(
+        [...next.memoryEntries.values()].some((m) => m.scope === 'member_in_workspace'),
+      ).toBe(true);
+      // History stays: every event including the delete is recorded.
+      expect([...events, ...deleted.events]).toHaveLength(events.length + 1);
+    });
+
+    it('replays identically through rebuildProjections', () => {
+      const { entityId, events, seq } = seedLeadWithDetails();
+      const state = rebuildProjections(events);
+      const deleted = handleDeleteEntity(dummyContext, state, seq, { entity_id: entityId, confirm: 'da' });
+      expect(deleted.result.status).toBe('applied');
+
+      const rebuilt = rebuildProjections([...events, ...deleted.events]);
+      expect(rebuilt.entities.has(entityId)).toBe(false);
+      expect([...rebuilt.tasks.values()].some((t) => t.entity_id === entityId)).toBe(false);
+      expect(rebuilt.entities.size).toBe(0);
+    });
+
+    it('restores everything when the delete event is reverted (Undo)', () => {
+      const { entityId, events, seq } = seedLeadWithDetails();
+      const state = rebuildProjections(events);
+      const deleted = handleDeleteEntity(dummyContext, state, seq, { entity_id: entityId, confirm: 'yes' });
+      const deleteEvent = deleted.events[0]!;
+      const revert = {
+        ...deleteEvent,
+        id: 'evt_revert_delete_1',
+        kind: 'revert' as const,
+        reverts_event_id: deleteEvent.id,
+        payload: { target_event_id: deleteEvent.id },
+      };
+      const restored = rebuildProjections([...events, ...deleted.events, revert]);
+      expect(restored.entities.get(entityId)?.name).toBe('Romanian Client');
+      expect(restored.fields.get(`${entityId}:quote`)!.value_text).toBe('4000 RON (expected)');
+      expect([...restored.tasks.values()].some((t) => t.entity_id === entityId)).toBe(true);
+    });
+  });
+
+  describe('rebuild determinism and grouped undo (UN-01, UN-02, UN-03)', () => {    it('produces identical projections when rebuilding from event stream', () => {
       const { events: e1, nextState: s1 } = handleCreateEntity(dummyContext, emptyState, 1, {
         name: 'Bistro One',
       });

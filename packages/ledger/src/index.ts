@@ -2,7 +2,7 @@
  * @otis/ledger
  * Append-only auditable event ledger, deterministic state projections,
  * and transactional command boundaries for Otis.
- * In accordance with architecture.md sections 5, 8-10, docs/contracts.md, and plans/002-ledger.md.
+ * In accordance with architecture.md sections 5, 8-10, docs/contracts.md, and docs/archive/plans/002-ledger.md.
  */
 
 // Types & Contracts re-export
@@ -10,7 +10,7 @@ export * from './types.js';
 
 // Reducers & Replay
 export { reduceEntity } from './reducers/entities.js';
-export { reduceFields } from './reducers/fields.js';
+export { formatQuoteText, reduceFields } from './reducers/fields.js';
 export { reduceTasks } from './reducers/tasks.js';
 export { reduceDrafts } from './reducers/drafts.js';
 export { reduceMemory } from './reducers/memory.js';
@@ -20,6 +20,7 @@ export { rebuildProjections } from './reducers/rebuild.js';
 export { assertEventInvariant, createLedgerEvent } from './commands/events.js';
 export { handleCreateEntity } from './commands/createEntity.js';
 export { handleRenameEntity, handleAddAlias } from './commands/renameEntity.js';
+export { handleDeleteEntity } from './commands/deleteEntity.js';
 export { handleLogEvent } from './commands/logEvent.js';
 export { handleSetField } from './commands/setField.js';
 export { handleCreateTask, handleUpdateTask } from './commands/tasks.js';

@@ -1,7 +1,7 @@
 /**
  * @otis/ledger/commands/undo
  * Grouped suffix ("from here") and single-action undo preview and commit.
- * In accordance with architecture.md section 10 and plans/002-ledger.md.
+ * In accordance with architecture.md section 10 and docs/archive/plans/002-ledger.md.
  */
 
 import type {
@@ -175,7 +175,7 @@ export function computeUndoPreview(
   const affectedContext: { id: string; summary: string; changes: string[] }[] = [];
   for (const evt of allEvents) {
     if (selectedActionSet.has(evt.action_id) && evt.kind !== 'revert' && !alreadyRevertedEventIds.has(evt.id)) {
-      if (['memory_note', 'memory_forgotten', 'draft_created', 'draft_updated', 'note', 'visit', 'contact', 'quote'].includes(evt.kind)) {
+      if (['memory_note', 'memory_forgotten', 'draft_created', 'draft_updated', 'note', 'visit', 'contact', 'quote', 'entity_deleted'].includes(evt.kind)) {
         const payload = (evt.payload ?? {}) as Record<string, unknown>;
         let desc = '';
         if (evt.kind === 'memory_note') {
@@ -188,6 +188,9 @@ export function computeUndoPreview(
         } else if (evt.kind === 'note') {
           const raw = String(payload['text'] ?? payload['content'] ?? 'note');
           desc = `Note: "${raw.slice(0, 60)}${raw.length > 60 ? '…' : ''}" will be removed.`;
+        } else if (evt.kind === 'entity_deleted') {
+          const raw = String(payload['name'] ?? 'entity');
+          desc = `Deleted entity "${raw.slice(0, 60)}" and its details will be restored.`;
         } else {
           desc = `${evt.kind.replace(/_/g, ' ')} record will be reverted.`;
         }

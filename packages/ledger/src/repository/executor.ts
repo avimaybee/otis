@@ -20,6 +20,7 @@ import type { LedgerCommandContext, LedgerProjectionState } from '../types.js';
 import { getActionReceipt, getWorkspaceProjectionState, getWorkspaceRevision } from './queries.js';
 import { handleCreateEntity } from '../commands/createEntity.js';
 import { handleRenameEntity } from '../commands/renameEntity.js';
+import { handleDeleteEntity } from '../commands/deleteEntity.js';
 import { handleSetField } from '../commands/setField.js';
 import { handleCreateTask, handleUpdateTask } from '../commands/tasks.js';
 import { handleLogEvent } from '../commands/logEvent.js';
@@ -55,6 +56,7 @@ export type AnyCommandHandler = CommandHandler<any>;
 export const DEFAULT_COMMAND_HANDLERS: Record<string, AnyCommandHandler> = {
   create_entity: handleCreateEntity,
   rename_entity: handleRenameEntity,
+  delete_entity: handleDeleteEntity,
   set_field: handleSetField,
   create_task: handleCreateTask,
   update_task: handleUpdateTask,

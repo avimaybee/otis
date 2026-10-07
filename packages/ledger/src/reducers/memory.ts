@@ -76,5 +76,25 @@ export function reduceMemory(
       }
       break;
     }
+
+    case 'entity_deleted': {
+      // Entity-scoped notes leave with their subject; member- and
+      // workspace-scoped notes stay. Suppressions aimed at removed notes
+      // leave with them so no tombstone dangles.
+      if (!event.entity_id) return;
+      const removedIds = new Set<string>();
+      for (const [id, entry] of entries) {
+        if (entry.scope === 'entity' && entry.subject_id === event.entity_id) {
+          entries.delete(id);
+          removedIds.add(id);
+        }
+      }
+      if (removedIds.size > 0) {
+        for (const [id, suppression] of suppressions) {
+          if (removedIds.has(suppression.target_memory_id)) suppressions.delete(id);
+        }
+      }
+      break;
+    }
   }
 }

@@ -118,6 +118,11 @@ export interface RenameEntityToolArgs {
   new_name: string;
 }
 
+export interface DeleteEntityToolArgs {
+  entity_id: string;
+  reason?: string | null;
+}
+
 export interface LogEventToolArgs {
   entity_id?: string | null;
   kind: 'note' | 'visit' | 'contact' | 'quote';
@@ -377,6 +382,21 @@ export function validateRenameEntityArgs(raw: unknown): ValidationResult<RenameE
   if (newName.length > 200) return fail('invalid_argument', "New name exceeds maximum 200 characters.");
 
   return { ok: true, data: { entity_id: obj['entity_id'].trim(), new_name: newName } };
+}
+
+export function validateDeleteEntityArgs(raw: unknown): ValidationResult<DeleteEntityToolArgs> {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return fail('invalid_type', 'Expected object.');
+  const obj = raw as Record<string, unknown>;
+  const sec = checkNoForbiddenKeys(obj);
+  if (sec) return sec;
+  const unk = checkNoUnknownKeys(obj, new Set(['entity_id', 'reason']), 'delete_entity');
+  if (unk) return unk;
+
+  if (typeof obj['entity_id'] !== 'string' || !obj['entity_id'].trim()) {
+    return fail('invalid_argument', "Field 'entity_id' must be a non-empty string.");
+  }
+  const reason = typeof obj['reason'] === 'string' && obj['reason'].trim() ? obj['reason'].trim() : undefined;
+  return { ok: true, data: { entity_id: obj['entity_id'].trim(), reason } };
 }
 
 export function validateLogEventArgs(raw: unknown): ValidationResult<LogEventToolArgs> {
@@ -1430,7 +1450,8 @@ export function validateToolCall(
       return validateUpsertEntityArgs(rawArgs);
     case 'rename_entity':
       return validateRenameEntityArgs(rawArgs);
-    case 'log_event':
+    case 'delete_entity':
+      return validateDeleteEntityArgs(rawArgs);    case 'log_event':
       return validateLogEventArgs(rawArgs);
     case 'set_fields':
       return validateSetFieldsArgs(rawArgs);
@@ -1483,9 +1504,63 @@ export function validateToolCall(
   }
 }
 
+/**
+ * Tools that change business records when applied. The correction guard
+ * treats any applied call from this set as the run having acted; everything
+ * else only reads or configures and never satisfies a pending correction.
+ */
+export const MUTATING_TOOL_NAMES: ReadonlySet<string> = new Set([
+  'upsert_entity',
+  'rename_entity',
+  'delete_entity',
+  'log_event',
+  'set_fields',
+  'resolve_conflict',
+  'create_task',
+  'update_task',
+  'draft_message',
+  'update_draft',
+  'mark_message_sent',
+  'create_reminder',
+  'update_reminder',
+  'cancel_reminder',
+  'remember_context',
+  'forget_memory',
+  'update_preference',
+  'execute_command',
+  'undo',
+]);
+
+/** Tools that never change business records: reads, questions and chat configuration. */
+export const READ_ONLY_TOOL_NAMES: ReadonlySet<string> = new Set([
+  'find_entities',
+  'read_chat_history',
+  'query',
+  'view_image',
+  'search_memory',
+  'get_memory',
+  'set_chat_model',
+  'set_chat_thinking',
+  'request_clarification',
+]);
+
+/**
+ * True when the run applied at least one business mutation (or found the
+ * requested state already applied). A correction answered with only reads
+ * or words has not acted, and the correction guard may steer one more round.
+ */
+export function runAppliedBusinessMutation(
+  results: Array<{ name: string; result: { status: string } }>,
+): boolean {
+  return results.some(
+    (entry) =>
+      MUTATING_TOOL_NAMES.has(entry.name) &&
+      (entry.result.status === 'applied' || entry.result.status === 'already_applied'),
+  );
+}
+
 // --- Provider Schema Declarations ---
-export interface ProviderToolDeclaration {
-  name: string;
+export interface ProviderToolDeclaration {  name: string;
   description: string;
   parameters: {
     type: 'object';
@@ -1533,6 +1608,19 @@ export const ALL_AGENT_TOOLS: ProviderToolDeclaration[] = [
         new_name: { type: 'string', description: 'Explicit new canonical name.' },
       },
       required: ['entity_id', 'new_name'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'delete_entity',
+    description: 'Delete an entity and all of its details (fields, aliases, tasks, drafts, entity notes) after the member confirms. Find the entity first with find_entities; the member is asked to confirm before anything is removed, and the confirmed answer resumes the deletion automatically.',
+    parameters: {
+      type: 'object',
+      properties: {
+        entity_id: { type: 'string', description: 'ID of the existing entity to delete.' },
+        reason: { type: 'string', description: 'Optional short reason recorded with the deletion (e.g. fake test data).' },
+      },
+      required: ['entity_id'],
       additionalProperties: false,
     },
   },

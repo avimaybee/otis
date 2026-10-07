@@ -64,5 +64,13 @@ export function reduceDrafts(
       }
       break;
     }
+
+    case 'entity_deleted': {
+      if (!event.entity_id) return;
+      for (const [id, draft] of drafts) {
+        if (draft.entity_id === event.entity_id) drafts.delete(id);
+      }
+      break;
+    }
   }
 }

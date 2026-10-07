@@ -81,5 +81,13 @@ export function reduceTasks(
       }
       break;
     }
+
+    case 'entity_deleted': {
+      if (!event.entity_id) return;
+      for (const [id, task] of tasks) {
+        if (task.entity_id === event.entity_id) tasks.delete(id);
+      }
+      break;
+    }
   }
 }

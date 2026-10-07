@@ -1774,6 +1774,29 @@ export async function resumeRun(
     if (ledgerRes.status === 'applied' || ledgerRes.status === 'already_applied') {
       return { resumed: true, ...(params.answer.clarificationId ? { clarificationId: clarId } : {}) };
     }
+    // An explicit decline answers the question with nothing to execute: park
+    // it as cancelled (never a 422 failure) and requeue the run so the
+    // member gets a reply. Anything else keeps the retryable 422.
+    if (ledgerRes.status === 'rejected' && ledgerRes.error?.code === 'cancelled_by_member') {
+      await db.batch([
+        db
+          .prepare(
+            `UPDATE pending_clarifications
+             SET status = 'cancelled', resolution_response = ?, answer_message_id = ?, resolved_at = ?, updated_at = ?
+             WHERE id = ? AND status = 'pending'`,
+          )
+          .bind(params.answer.text, params.answer.messageId, nowIso, nowIso, clarId),
+        db
+          .prepare(
+            `UPDATE agent_runs SET status = 'queued', updated_at = ?
+             WHERE id = ? AND workspace_id = ? AND status = 'waiting_for_input'`,
+          )
+          .bind(nowIso, params.runId, params.workspaceId),
+        outboxStmt,
+        msgInStmt,
+      ]);
+      return { resumed: true, ...(params.answer.clarificationId ? { clarificationId: clarId } : {}) };
+    }
     // Late-commit race (revision moved between precheck and commit): no
     // failureReason, so the route keeps the generic retryable 422.
     return { resumed: false };

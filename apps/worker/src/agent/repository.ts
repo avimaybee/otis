@@ -16,6 +16,7 @@ import {
   type CancelReminderToolArgs,
   type CreateReminderToolArgs,
   type CreateTaskToolArgs,
+  type DeleteEntityToolArgs,
   type DraftMessageToolArgs,
   type FindEntitiesToolArgs,
   type ForgetMemoryToolArgs,
@@ -1173,6 +1174,44 @@ export async function executeAgentTool(
         undefined,
         { deferRunTransition: true },
       );
+    }
+
+    case 'delete_entity': {
+      const deArgs = args as DeleteEntityToolArgs;
+      const target = await db
+        .prepare(`SELECT id, name FROM entities WHERE workspace_id = ? AND id = ?`)
+        .bind(workspaceId, deArgs.entity_id)
+        .first<{ id: string; name: string }>();
+      if (!target) {
+        return {
+          status: 'rejected',
+          action_id: actionId,
+          error: {
+            code: 'not_found',
+            message: `Entity '${deArgs.entity_id}' not found in this workspace. Find it first with find_entities.`,
+          },
+        };
+      }
+      // Irreversible by editing, so the member always confirms first. The
+      // confirmed answer resumes this exact operation with confirm set.
+      return {
+        status: 'needs_clarification',
+        action_id: actionId,
+        clarification: {
+          prompt: `Delete '${target.name}' and all of its details (fields, tasks, drafts, notes)? Reply yes to confirm.`,
+          missing_fields: ['confirm'],
+          candidates: ['yes', 'no'],
+          pending_operation: {
+            version: 1,
+            command_name: 'delete_entity',
+            action_id: actionId,
+            args: { entity_id: target.id, reason: deArgs.reason ?? null },
+            missing_fields: ['confirm'],
+            candidates: ['yes', 'no'],
+            source_revision: effectiveExpectedRevision,
+          },
+        },
+      };
     }
 
     case 'log_event': {

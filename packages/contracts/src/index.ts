@@ -638,6 +638,7 @@ export type LedgerEventKind =
   | 'conflict_resolved'
   | 'memory_note'
   | 'memory_forgotten'
+  | 'entity_deleted'
   | 'revert';
 
 export type Provenance = 'stated' | 'inferred';

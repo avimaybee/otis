@@ -47,6 +47,17 @@ export interface AddAliasArgs {
   alias: string;
 }
 
+export interface DeleteEntityArgs {
+  entity_id: string;
+  /**
+   * Explicit member confirmation. The conversational flow asks first and the
+   * confirmed answer resumes with confirm set; only affirmative values
+   * ('yes', 'confirm', 'delete') execute, anything else cancels.
+   */
+  confirm?: string | null;
+  reason?: string | null;
+}
+
 export interface LogEventArgs {
   entity_id?: string | null;
   kind: 'note' | 'visit' | 'contact' | 'quote';

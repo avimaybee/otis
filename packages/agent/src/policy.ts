@@ -305,6 +305,66 @@ export function isExplicitSentConfirmation(sourceText: string): { isConfirmed: b
 }
 
 /**
+ * Checks if the source text explicitly corrects a previously stated business
+ * value ("I said 4000, not 400000"). A correction carries the right value,
+ * so digit presence is required: bare complaints without a value ("that's
+ * wrong") need a follow-up question, not a guarded update round.
+ * Conditionals and hypotheticals are rejected; negations of the OLD value
+ * ("not 400,000") are the essence of a correction and never reject.
+ */
+export function isExplicitCorrection(sourceText: string): { isCorrection: boolean; reason?: string } {
+  const unquoted = stripQuotes(sourceText).trim();
+  if (!unquoted) {
+    return {
+      isCorrection: false,
+      reason: 'No explicit value correction found in source text.',
+    };
+  }
+
+  const correctionPatterns = [
+    /\b(i\s+(had\s+|have\s+)?(said|told\s+you|meant)|you\s+(said|wrote))\b/i,
+    /\b(should\s+be|supposed\s+to\s+be|meant\s+to\s+be)\b/i,
+    /\b(that'?s\s+(wrong|incorrect|not\s+right)|wrong\s+(number|amount|value|quote)|my\s+mistake|your\s+mistake|incorrect)\b/i,
+    /\b(am\s+spus|am\s+zis|ți-am\s+spus|trebuia\s+(să\s+fie|sa\s+fie)?|greșit|greșeală|nu\s+e\s+corect)\b/i,
+    /\b(azt\s+mondtam|mondtam|téves|hiba|kellett\s+volna|nem\s+ennyi|nem\s+annyi)\b/i,
+  ];
+
+  const sentences = splitSentences(unquoted);
+  let foundCandidate = false;
+  let rejectedReason: string | undefined;
+
+  for (const sentence of sentences) {
+    const sLower = sentence.toLowerCase();
+    if (!correctionPatterns.some((rx) => rx.test(sLower))) continue;
+
+    foundCandidate = true;
+
+    // Corrections carry the corrected value: no digits, no guarded round.
+    if (!/\d/.test(sentence)) {
+      rejectedReason = 'Correction pattern without a corrected value; needs a follow-up question first.';
+      continue;
+    }
+
+    // Conditional / hypothetical corrections never happened.
+    if (CONDITIONAL_PATTERN.test(sLower)) {
+      rejectedReason = 'Source text is conditional or hypothetical, not an actual correction.';
+      continue;
+    }
+
+    return { isCorrection: true };
+  }
+
+  if (foundCandidate && rejectedReason) {
+    return { isCorrection: false, reason: rejectedReason };
+  }
+
+  return {
+    isCorrection: false,
+    reason: 'No explicit value correction found in source text.',
+  };
+}
+
+/**
  * Checks whether an operation exceeds the bulk operation limit (more than 3 distinct target entities).
  */
 export function checkBulkOperationPolicy(
@@ -345,6 +405,7 @@ export function checkUntrustedContentPolicy(
   const mutatingTools = new Set([
     'upsert_entity',
     'rename_entity',
+    'delete_entity',
     'set_fields',
     'resolve_conflict',
     'create_task',

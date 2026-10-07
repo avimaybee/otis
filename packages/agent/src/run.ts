@@ -2,7 +2,7 @@
  * @otis/agent/run
  * Provider-neutral bounded agent loop, stream accumulation, tool group validation,
  * and durable progress state.
- * In accordance with plans/006-implementation-handoff.md Section 7.
+ * In accordance with docs/archive/plans/006-implementation-handoff.md Section 7.
  */
 
 import type { CommandResult } from '@otis/contracts';
@@ -68,6 +68,12 @@ export interface DurableAgentProgress {
    */
   sentAnswerMessageId?: string;
   approvedBulkScope?: string[];
+  /**
+   * Set when the correction guard steered one extra round after a text-only
+   * answer to an explicit value correction. At most one steered round per
+   * run: a second text-only answer completes normally instead of looping.
+   */
+  correctionSteerSent?: boolean;
   pendingClarification?: {
     question: string;
     intendedOperation: string;

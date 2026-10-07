@@ -5,6 +5,26 @@
 
 import type { EntityStateField, LedgerEvent, QuoteValue } from '@otis/contracts';
 
+/** ISO 4217 zero-decimal currencies: the stored amount is already major units. */
+const ZERO_DECIMAL_CURRENCIES = new Set([
+  'BIF', 'CLP', 'DJF', 'GNF', 'JPY', 'KMF', 'KRW', 'MGA',
+  'PYG', 'RWF', 'UGX', 'UYI', 'VND', 'VUV', 'XAF', 'XOF', 'XPF',
+]);
+
+/**
+ * Display text for a stored quote. Amounts arrive in integer minor units
+ * and must be rendered as major units: rendering the raw amount reads a
+ * 4000 RON quote back as "400000 RON" in entity state and model context.
+ * Whole amounts stay plain ("4000 RON"), fractions trim ("4000.50 RON"),
+ * and no thousands separators are added so the text re-reads unambiguously.
+ */
+export function formatQuoteText(amount: number, currency: string, role: string): string {
+  const code = (currency || '').toUpperCase();
+  const major = ZERO_DECIMAL_CURRENCIES.has(code) ? amount : Math.round(amount) / 100;
+  const text = Number.isInteger(major) ? String(major) : String(Math.round(major * 100) / 100);
+  return `${text} ${currency} (${role})`;
+}
+
 export function reduceFields(
   fields: Map<string, EntityStateField>,
   event: LedgerEvent,
@@ -39,7 +59,7 @@ export function reduceFields(
       const quote = event.payload as QuoteValue;
       const fieldKey = `${event.entity_id}:quote`;
       const existing = fields.get(fieldKey);
-      const formattedText = `${quote.amount} ${quote.currency} (${quote.role})`;
+      const formattedText = formatQuoteText(quote.amount, quote.currency, quote.role);
       const jsonStr = JSON.stringify(quote);
 
       if (existing && !event.supersedes_event_id) {
@@ -168,6 +188,14 @@ export function reduceFields(
         revision: (existing?.revision || 0) + 1,
         updated_at: event.recorded_at,
       });
+      break;
+    }
+
+    case 'entity_deleted': {
+      if (!event.entity_id) return;
+      for (const [key] of fields) {
+        if (key.startsWith(`${event.entity_id}:`)) fields.delete(key);
+      }
       break;
     }
 

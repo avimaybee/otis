@@ -104,5 +104,14 @@ export function reduceEntity(
       }
       break;
     }
+
+    case 'entity_deleted': {
+      if (!event.entity_id) return;
+      entities.delete(event.entity_id);
+      for (const [key, alias] of aliases) {
+        if (alias.entity_id === event.entity_id) aliases.delete(key);
+      }
+      break;
+    }
   }
 }
