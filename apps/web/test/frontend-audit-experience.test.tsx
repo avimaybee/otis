@@ -457,7 +457,7 @@ describe('Frontend Experience Audit & Confidence Verification (FE-01 - FE-16)', 
       });
 
       expect(view.host.textContent).toContain('Danger zone');
-      expect(view.host.textContent).toContain('Audited ledger records remain governed by retention policy');
+      expect(view.host.textContent).toContain('no workspace content is kept');
 
       // Click remove on member user_2
       const removeBtns = Array.from(view.host.querySelectorAll('button')).filter((b) => b.textContent === 'Remove');
@@ -480,6 +480,77 @@ describe('Frontend Experience Audit & Confidence Verification (FE-01 - FE-16)', 
       });
 
       expect(removeSpy).toHaveBeenCalledWith('ws_test', 'user_2');
+
+      await view.unmount();
+    });
+
+    it('offers a backup download in the delete confirm step without requiring it', async () => {
+      vi.spyOn(api, 'settings').mockResolvedValue({
+        settings: { workspace_id: 'ws_test', default_model: null, created_at: '', updated_at: '' },
+      });
+      vi.spyOn(api, 'memberSettings').mockResolvedValue({ settings: mockMemberSettings });
+      vi.spyOn(api, 'models').mockResolvedValue({ models: [], current_command_key: null, default_command_key: null });
+      vi.spyOn(api, 'listMembers').mockResolvedValue({
+        members: [
+          { user_id: 'user_1', role: 'owner', display_name: 'Avi', joined_at: '', email: 'avi@example.com' },
+        ],
+      });
+      const download = vi.spyOn(api, 'downloadWorkspaceExport').mockResolvedValue(
+        new Response(JSON.stringify({ version: 1 }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+      );
+      const deleted = vi.spyOn(api, 'deleteWorkspace').mockResolvedValue({ deleted: true });
+      vi.spyOn(URL, 'createObjectURL').mockImplementation((() => 'blob:mock-backup') as typeof URL.createObjectURL);
+      vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {});
+
+      const onDeleted = vi.fn();
+      const view = await mount(
+        <SettingsPane
+          workspaceId="ws_test"
+          workspaceName="Kerning Test"
+          currentUserRole="owner"
+          currentUserId="user_1"
+          onClose={vi.fn()}
+          onSignOut={vi.fn()}
+          onWorkspaceDeleted={onDeleted}
+        />,
+      );
+      const wsTab = Array.from(view.host.querySelectorAll('[role="tab"]')).find((el) =>
+        el.textContent === 'Kerning Test',
+      ) as HTMLButtonElement;
+      await React.act(async () => {
+        wsTab.click();
+      });
+
+      const armBtn = Array.from(view.host.querySelectorAll('button')).find((b) =>
+        b.textContent === 'Delete workspace',
+      ) as HTMLButtonElement;
+      await React.act(async () => {
+        armBtn.click();
+      });
+
+      // Confirm step names the workspace, offers the backup, and deletes either way.
+      expect(view.host.textContent).toContain('Permanently delete');
+      const backupBtn = Array.from(view.host.querySelectorAll('button')).find((b) =>
+        b.textContent === 'Download backup',
+      ) as HTMLButtonElement;
+      expect(backupBtn).toBeTruthy();
+      await React.act(async () => {
+        backupBtn.click();
+      });
+      expect(download).toHaveBeenCalledWith('ws_test', 'json');
+      expect(deleted).not.toHaveBeenCalled();
+
+      const confirmBtns = Array.from(view.host.querySelectorAll('button')).filter((b) =>
+        b.textContent === 'Delete workspace',
+      );
+      await React.act(async () => {
+        confirmBtns[confirmBtns.length - 1]?.click();
+      });
+      expect(deleted).toHaveBeenCalledWith('ws_test');
+      expect(onDeleted).toHaveBeenCalled();
 
       await view.unmount();
     });

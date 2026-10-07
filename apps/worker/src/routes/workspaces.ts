@@ -135,10 +135,31 @@ export async function handleDeleteWorkspace(
   if (scope instanceof Response) return scope;
 
   try {
+    // Inventory R2 keys before the rows go: originals plus deterministic
+    // inference renditions. Bytes are removed after the D1 commit so a
+    // failed erasure never strands rows without their media.
+    const mediaRows = (
+      await env.DB.prepare(`SELECT id, object_key FROM media_objects WHERE workspace_id = ?`)
+        .bind(workspaceId)
+        .all<{ id: string; object_key: string }>()
+    ).results;
     const result = await deleteWorkspace(env.DB, {
       workspaceId,
       actorUserId: scope.user.id,
     });
+    if (env.STORAGE) {
+      const { renditionKeyFor } = await import('../media/renditions.js');
+      for (const row of mediaRows) {
+        for (const key of [row.object_key, renditionKeyFor(row.id)]) {
+          try {
+            await env.STORAGE.delete(key);
+          } catch {
+            // Orphaned bytes without inventory rows are unreachable through
+            // the private media route; the tombstone still records the rows.
+          }
+        }
+      }
+    }
     return jsonSuccess(result, 200, { 'x-request-id': requestId });
   } catch (err) {
     return jsonError(403, 'workspace_delete_failed', err instanceof Error ? err.message : String(err), requestId);

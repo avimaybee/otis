@@ -364,7 +364,64 @@ export async function updateWorkspaceName(
 }
 
 /**
- * Permanently deletes a workspace and its data (owner only).
+ * Every workspace-scoped table carrying a workspace_id column, in the same
+ * order as the erasure counts. Users, sessions, link codes and Telegram
+ * bindings are person-scoped and intentionally absent.
+ */
+const WORKSPACE_ERASURE_TABLES = [
+  'workspace_users',
+  'membership_audit',
+  'invites',
+  'provider_credentials',
+  'workspace_settings',
+  'member_settings',
+  'settings_audit',
+  'chats',
+  'messages_in',
+  'system_jobs',
+  'agent_runs',
+  'chat_messages',
+  'run_steps',
+  'run_activity',
+  'pending_clarifications',
+  'outbox',
+  'entities',
+  'entity_aliases',
+  'events',
+  'action_receipts',
+  'entity_state',
+  'tasks',
+  'draft_projections',
+  'field_defs',
+  'memory_entries',
+  'memory_suppressions',
+  'memory_summaries',
+  'memory_refresh_jobs',
+  'workspace_daily_actions',
+  'workspace_voice_settings',
+  'media_objects',
+  'media_transcriptions',
+  'briefs',
+  'message_image_attachments',
+  'reminders',
+];
+
+/**
+ * Permanently deletes a workspace and all of its data (owner only).
+ *
+ * This is the one audited erasure procedure allowed to remove append-only
+ * ledger history: the events/action_receipts immutability triggers are
+ * dropped and restored inside the same atomic batch, and a tombstone row in
+ * the global `workspace_erasures` log records the workspace id, actor,
+ * timestamp and per-store counts. The log carries no business content.
+ *
+ * Share-nothing scope: user rows, sessions, link codes and Telegram bindings
+ * belong to people, not to the workspace, so they are kept (workspace
+ * pointers on them are nulled). Everything else with a workspace_id is
+ * removed, including ledger events, receipts, projections, conversations,
+ * runs, drafts, memory, briefs, reminders and media inventory rows. R2 media
+ * bytes are removed by the worker route after this commit; orphaned bytes
+ * are unreachable without their inventory rows.
  */
 export async function deleteWorkspace(
   db: D1Database,
@@ -380,16 +437,111 @@ export async function deleteWorkspace(
   if (!membership) throw new Error('not_member');
   if (membership.role !== 'owner') throw new Error('not_owner');
 
+  const ws = await getWorkspace(db, params.workspaceId);
+  if (!ws) throw new Error('not_found');
+
+  // Per-store counts for the erasure tombstone, read before deletion.
+  const counted = await db.batch([
+    ...WORKSPACE_ERASURE_TABLES.map((table) =>
+      db.prepare(`SELECT COUNT(*) AS n FROM ${table} WHERE workspace_id = ?`).bind(params.workspaceId),
+    ),
+    db.prepare(
+      `SELECT COUNT(*) AS n FROM brief_items WHERE brief_id IN (SELECT id FROM briefs WHERE workspace_id = ?)`,
+    ).bind(params.workspaceId),
+    db.prepare(
+      `SELECT COUNT(*) AS n FROM invite_redemptions WHERE invite_id IN (SELECT id FROM invites WHERE workspace_id = ?)`,
+    ).bind(params.workspaceId),
+  ]);
+  const counts: Record<string, number> = {};
+  WORKSPACE_ERASURE_TABLES.forEach((table, index) => {
+    counts[table] = Number((counted[index] as unknown as { results?: Array<{ n: number }> }).results?.[0]?.n ?? 0);
+  });
+  counts['brief_items'] = Number(
+    (counted[WORKSPACE_ERASURE_TABLES.length] as unknown as { results?: Array<{ n: number }> }).results?.[0]?.n ?? 0,
+  );
+  counts['invite_redemptions'] = Number(
+    (counted[WORKSPACE_ERASURE_TABLES.length + 1] as unknown as { results?: Array<{ n: number }> }).results?.[0]?.n ?? 0,
+  );
+
+  const erasureId = crypto.randomUUID();
+  const nowIso = new Date().toISOString();
+  const wid = params.workspaceId;
+
   await db.batch([
-    db.prepare(`DELETE FROM chat_messages WHERE workspace_id = ?`).bind(params.workspaceId),
-    db.prepare(`DELETE FROM messages_in WHERE workspace_id = ?`).bind(params.workspaceId),
-    db.prepare(`DELETE FROM run_activity WHERE workspace_id = ?`).bind(params.workspaceId),
-    db.prepare(`DELETE FROM agent_runs WHERE workspace_id = ?`).bind(params.workspaceId),
-    db.prepare(`DELETE FROM chats WHERE workspace_id = ?`).bind(params.workspaceId),
-    db.prepare(`DELETE FROM provider_credentials WHERE workspace_id = ?`).bind(params.workspaceId),
-    db.prepare(`DELETE FROM workspace_settings WHERE workspace_id = ?`).bind(params.workspaceId),
-    db.prepare(`DELETE FROM workspace_users WHERE workspace_id = ?`).bind(params.workspaceId),
-    db.prepare(`DELETE FROM workspaces WHERE id = ?`).bind(params.workspaceId),
+    // The append-only guards must be lowered for this audited erasure and
+    // are restored at the end of the same atomic batch.
+    db.prepare(`DROP TRIGGER IF EXISTS trg_events_prevent_delete`),
+    db.prepare(`DROP TRIGGER IF EXISTS trg_action_receipts_prevent_delete`),
+    // Search-index rows keyed by entry id, before their entries go.
+    db.prepare(
+      `DELETE FROM memory_entries_fts WHERE entry_id IN (SELECT id FROM memory_entries WHERE workspace_id = ?)`,
+    ).bind(wid),
+    // Events reference messages, jobs and each other with RESTRICT: rows
+    // that point at another event go first, then the remainder, and only
+    // then the referenced messages and jobs.
+    db.prepare(
+      `DELETE FROM events WHERE workspace_id = ? AND (supersedes_event_id IS NOT NULL OR reverts_event_id IS NOT NULL)`,
+    ).bind(wid),
+    db.prepare(`DELETE FROM events WHERE workspace_id = ?`).bind(wid),
+    db.prepare(`DELETE FROM action_receipts WHERE workspace_id = ?`).bind(wid),
+    db.prepare(`DELETE FROM entity_state WHERE workspace_id = ?`).bind(wid),
+    db.prepare(`DELETE FROM tasks WHERE workspace_id = ?`).bind(wid),
+    db.prepare(`DELETE FROM draft_projections WHERE workspace_id = ?`).bind(wid),
+    db.prepare(`DELETE FROM entity_aliases WHERE workspace_id = ?`).bind(wid),
+    db.prepare(`DELETE FROM entities WHERE workspace_id = ?`).bind(wid),
+    db.prepare(`DELETE FROM field_defs WHERE workspace_id = ?`).bind(wid),
+    db.prepare(`DELETE FROM memory_suppressions WHERE workspace_id = ?`).bind(wid),
+    db.prepare(`DELETE FROM memory_summaries WHERE workspace_id = ?`).bind(wid),
+    db.prepare(`DELETE FROM memory_entries WHERE workspace_id = ?`).bind(wid),
+    db.prepare(`DELETE FROM memory_refresh_jobs WHERE workspace_id = ?`).bind(wid),
+    db.prepare(`DELETE FROM pending_clarifications WHERE workspace_id = ?`).bind(wid),
+    db.prepare(`DELETE FROM run_activity WHERE workspace_id = ?`).bind(wid),
+    db.prepare(`DELETE FROM run_steps WHERE workspace_id = ?`).bind(wid),
+    db.prepare(`DELETE FROM chat_messages WHERE workspace_id = ?`).bind(wid),
+    db.prepare(`DELETE FROM agent_runs WHERE workspace_id = ?`).bind(wid),
+    db.prepare(`DELETE FROM brief_items WHERE brief_id IN (SELECT id FROM briefs WHERE workspace_id = ?)`).bind(wid),
+    db.prepare(`DELETE FROM briefs WHERE workspace_id = ?`).bind(wid),
+    db.prepare(`DELETE FROM message_image_attachments WHERE workspace_id = ?`).bind(wid),
+    db.prepare(`DELETE FROM media_transcriptions WHERE workspace_id = ?`).bind(wid),
+    db.prepare(`DELETE FROM media_objects WHERE workspace_id = ?`).bind(wid),
+    db.prepare(`DELETE FROM reminders WHERE workspace_id = ?`).bind(wid),
+    db.prepare(`DELETE FROM outbox WHERE workspace_id = ?`).bind(wid),
+    db.prepare(`DELETE FROM system_jobs WHERE workspace_id = ?`).bind(wid),
+    db.prepare(`DELETE FROM messages_in WHERE workspace_id = ?`).bind(wid),
+    // Person-scoped rows keep their user; only the workspace pointers reset.
+    db.prepare(`UPDATE telegram_users SET selected_workspace_id = NULL WHERE selected_workspace_id = ?`).bind(wid),
+    db.prepare(
+      `UPDATE telegram_users SET active_chat_id = NULL WHERE active_chat_id IN (SELECT id FROM chats WHERE workspace_id = ?)`,
+    ).bind(wid),
+    db.prepare(`UPDATE link_codes SET requested_workspace_id = NULL WHERE requested_workspace_id = ?`).bind(wid),
+    db.prepare(`DELETE FROM chats WHERE workspace_id = ?`).bind(wid),
+    db.prepare(
+      `DELETE FROM invite_redemptions WHERE invite_id IN (SELECT id FROM invites WHERE workspace_id = ?)`,
+    ).bind(wid),
+    db.prepare(`DELETE FROM invites WHERE workspace_id = ?`).bind(wid),
+    db.prepare(`DELETE FROM provider_credentials WHERE workspace_id = ?`).bind(wid),
+    db.prepare(`DELETE FROM workspace_voice_settings WHERE workspace_id = ?`).bind(wid),
+    db.prepare(`DELETE FROM member_settings WHERE workspace_id = ?`).bind(wid),
+    db.prepare(`DELETE FROM workspace_settings WHERE workspace_id = ?`).bind(wid),
+    db.prepare(`DELETE FROM settings_audit WHERE workspace_id = ?`).bind(wid),
+    db.prepare(`DELETE FROM membership_audit WHERE workspace_id = ?`).bind(wid),
+    db.prepare(`DELETE FROM workspace_users WHERE workspace_id = ?`).bind(wid),
+    db.prepare(`DELETE FROM workspace_daily_actions WHERE workspace_id = ?`).bind(wid),
+    db.prepare(`DELETE FROM workspaces WHERE id = ?`).bind(wid),
+    db.prepare(
+      `INSERT INTO workspace_erasures (id, workspace_id, workspace_name, actor_user_id, erased_at, counts_json, media_objects_deleted)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    ).bind(erasureId, wid, ws.name, params.actorUserId, nowIso, JSON.stringify(counts), counts['media_objects'] ?? 0),
+    db.prepare(`CREATE TRIGGER IF NOT EXISTS trg_events_prevent_delete
+BEFORE DELETE ON events
+BEGIN
+  SELECT RAISE(ABORT, 'events are append-only; ordinary deletion is prohibited');
+END`),
+    db.prepare(`CREATE TRIGGER IF NOT EXISTS trg_action_receipts_prevent_delete
+BEFORE DELETE ON action_receipts
+BEGIN
+  SELECT RAISE(ABORT, 'action_receipts are append-only; ordinary deletion is prohibited');
+END`),
   ]);
 
   return { deleted: true };

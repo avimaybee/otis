@@ -561,7 +561,7 @@ export function SettingsPane({
         {isOwner ? (
           <div className="otis-settings__section border-t border-border pt-4 mt-4">
             <h3 className="text-sm font-medium text-destructive">Danger zone</h3>
-            <p className="otis-detail__label text-xs">Permanently deletes this workspace and removes access to its conversations for all members. Audited ledger records remain governed by retention policy.</p>
+            <p className="otis-detail__label text-xs">Permanently deletes this workspace and all of its conversations, business records, drafts, memory, briefs, reminders, media and ledger history for every member. The erasure itself is logged; no workspace content is kept. This cannot be undone.</p>
             {!confirmDeleteWs ? (
               <Button variant="outline" size="sm" type="button" className="text-destructive hover:text-destructive mt-2" onClick={() => setConfirmDeleteWs(true)}>
                 Delete workspace
@@ -569,7 +569,11 @@ export function SettingsPane({
             ) : (
               <div className="flex flex-col gap-2 mt-2">
                 <p className="text-xs text-destructive font-medium">Permanently delete &ldquo;{workspaceName}&rdquo;? This cannot be undone.</p>
+                <p className="otis-detail__label text-xs">Download a backup first if you need one — deletion proceeds either way.</p>
                 <div className="flex items-center gap-2">
+                  <Button variant="outline" size="sm" type="button" onClick={() => void downloadExport('json')} disabled={Boolean(busy)}>
+                    {busy === 'export_json' ? 'Preparing…' : 'Download backup'}
+                  </Button>
                   <Button variant="destructive" size="sm" type="button" onClick={() => void deleteWorkspace()} disabled={busy === 'delete_workspace'}>
                     {busy === 'delete_workspace' ? 'Deleting…' : 'Delete workspace'}
                   </Button>

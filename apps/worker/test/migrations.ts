@@ -34,8 +34,10 @@ import sql15 from '../../../migrations/0016_brief_next_due.sql?raw';
 import sql16 from '../../../migrations/0017_task_markers.sql?raw';
 // @ts-expect-error Vite raw SQL import
 import sql17 from '../../../migrations/0018_reminders.sql?raw';
+// @ts-expect-error Vite raw SQL import
+import sql18 from '../../../migrations/0019_workspace_erasures.sql?raw';
 export async function applyMigrations(db: D1Database) {
-  for (const sql of [sql0, sql1, sql2, sql3, sql4, sql5, sql6, sql7, sql8, sql9, sql10, sql11, sql12, sql13, sql14, sql15, sql16, sql17]) {
+  for (const sql of [sql0, sql1, sql2, sql3, sql4, sql5, sql6, sql7, sql8, sql9, sql10, sql11, sql12, sql13, sql14, sql15, sql16, sql17, sql18]) {
     let statement = ''; let trigger = false;
     for (const line of sql.split('\n')) {
       if (!line.trim() || line.trim().startsWith('--')) continue;
