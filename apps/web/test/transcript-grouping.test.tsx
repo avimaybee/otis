@@ -2,6 +2,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   describeRunAnswers,
+  formatOutcomeSummary,
   groupActivitiesByRun,
   joinRunTextChunks,
 } from '../src/components/Transcript.js';
@@ -39,6 +40,18 @@ function activity(id: string, runId: string, type: PublicActivity['type'], text?
     created_at: '2026-10-06T10:00:00.000Z',
   } as PublicActivity;
 }
+
+describe('Outcome receipts', () => {
+  it('hides raw entity IDs from the normal confirmation', () => {
+    expect(formatOutcomeSummary(`Logged quote event for entity 'ent_01JABC123'.`, 1)).toBe('Logged quote event');
+  });
+  it('keeps human summaries and the empty fallback intact', () => {
+    expect(formatOutcomeSummary('Thai Shop offer updated.', 1)).toBe('Thai Shop offer updated saved');
+    expect(formatOutcomeSummary('Offer saved.', 1)).toBe('Offer saved');
+    expect(formatOutcomeSummary(null, 2)).toBe('2 changes saved');
+    expect(formatOutcomeSummary(`Saved visit (mem_01JXYZ).`, 1)).toBe('Saved visit');
+  });
+});
 
 describe('F12 transcript grouping', () => {
   it('groups activities by run while preserving order', () => {

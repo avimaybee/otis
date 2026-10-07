@@ -71,14 +71,17 @@ export function formatOutcomeSummary(summary?: string | null, totalActions = 1):
     return `${totalActions} change${totalActions === 1 ? '' : 's'} saved`;
   }
   let clean = summary.trim();
-  // Strip raw memory or action IDs if present: e.g. "mem_01J..." or "act_..."
-  clean = clean.replace(/\b(mem|act)_[a-zA-Z0-9_-]+/g, '').trim();
+  // Strip raw technical IDs from the normal confirmation: e.g. "mem_01J...",
+  // "act_..." or "ent_...". Durable ledger summaries stay intact; only the
+  // display drops them, and a dangling "for entity" left behind goes too.
+  clean = clean.replace(/\b(mem|act|ent)_[a-zA-Z0-9_-]+/g, '').trim();
   clean = clean.replace(/\(\s*\)/g, '').replace(/\s{2,}/g, ' ').trim();
+  clean = clean.replace(/\s+for entity\s*['"]?\s*['"]?\s*\.?$/i, '');
   if (!clean || /^[^a-zA-Z0-9]+$/.test(clean)) {
     return `${totalActions} change${totalActions === 1 ? '' : 's'} saved`;
   }
   clean = clean.replace(/\.+$/, '').trim();
-  if (clean.toLowerCase().endsWith('saved') || /^(saved|created|updated|removed|recorded|reverted)\b/i.test(clean)) {
+  if (clean.toLowerCase().endsWith('saved') || /^(saved|created|updated|removed|recorded|reverted|logged)\b/i.test(clean)) {
     return clean;
   }
   return `${clean} saved`;
