@@ -83,8 +83,9 @@
 .otis-dayseparator { display: flex; justify-content: center; margin: 0; color: var(--subtle); }
 
 /* Message delivery state: always visible beside its bubble, never hover-gated.
-   Copy/edit actions hover-reveal on precise pointers as a floating pill so
-   they reserve no row height (always in flow on touch). */
+   Copy/edit actions hover-reveal on precise pointers as a containerless
+   floating row so they reserve no height and carry no pill (always in flow
+   on touch). */
 .otis-delivery { display: flex; align-items: center; gap: 8px; }
 .otis-turn--member .otis-delivery { justify-content: flex-end; }
 .otis-turn--agent .otis-delivery { justify-content: flex-start; }
@@ -92,7 +93,7 @@
 .otis-turn--member .otis-turn__actions { justify-content: flex-end; }
 .otis-turn--agent .otis-turn__actions { justify-content: flex-start; }
 @media (hover: hover) and (pointer: fine) {
-  .otis-turn__actions { position: absolute; top: calc(100% + 4px); z-index: 2; padding: 4px; border: 1px solid var(--border); border-radius: 8px; background: var(--popover); box-shadow: var(--shadow-popover); opacity: 0; }
+  .otis-turn__actions { position: absolute; top: calc(100% + 4px); z-index: 2; opacity: 0; }
   .otis-turn--member .otis-turn__actions { right: 0; }
   .otis-turn--agent .otis-turn__actions { left: 0; }
   .otis-turn:hover .otis-turn__actions, .otis-turn:focus-within .otis-turn__actions { opacity: 1; }

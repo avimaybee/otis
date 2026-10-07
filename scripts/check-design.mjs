@@ -24,7 +24,7 @@ const SCAN_ROOTS = ['apps/web/src', 'packages/design/src'];
 const DEFINITION_STORE = 'apps/web/src/globals.css';
 const TOKEN_FILE = 'design-tokens.md';
 /** Pinned at import; a token update is explicit and must re-pin here. */
-const TOKEN_SHA256 = '69BADBF7E4F23A2BCFF18ADBA1280EADDA92570091135D250C33399C197923A2';
+const TOKEN_SHA256 = 'EAC54B39E96DC9C424DDDD76BB5A32BC47B876C0B073E2D1224DEC86F82F10C4';
 const SELF_TEST = process.argv.includes('--self-test');
 
 const failures = [];

@@ -179,7 +179,7 @@ One parent owns each gap. Use `gap-*` on the parent, not margins on children. A 
 | Detail panel | 384 px (360 to 440), only when opened |
 | Icon button (desktop) | 32 px visual |
 | Pointer target | At least 24 x 24 px; coarse-pointer controls at least 32 x 32 px, with larger nonoverlapping reach where space permits |
-| Small action icon button (copy, edit) | 28 px, 16 px icon |
+| Small action icon button (copy, edit) | 24 px, 16 px icon |
 | Idle composer surface | 56 px desktop; 76 px narrow mobile with integrated controls wrapping; grows to 6 input lines then scrolls |
 | Send, mic, stop | 32 px desktop / 36 px mobile circle; 16 / 18 px icon respectively |
 | Working disclosure row | 24 px |
@@ -309,11 +309,11 @@ Send icon is Lucide `ArrowUp`, 16 px desktop / 18 px mobile, stroke 2. Stop icon
 
 ### 8.10 Message actions (copy, edit)
 ```
-Button: grid size-7 place-items-center rounded-md text-subtle hover:bg-accent hover:text-foreground
+Button: grid size-6 place-items-center rounded-md text-subtle hover:bg-accent hover:text-foreground
 Icon: size-4
 Visibility: opacity-0 group-hover:opacity-100 focus-within:opacity-100 [@media(hover:none)]:opacity-100
 ```
-Timestamps and actions show on hover or focus, with a reachable touch/menu equivalent. An invisible toolbar is out of flow and reserves no 32 px action row. Position it without overlapping message text; preserve keyboard access and stable layout. Persistent timestamps under every message are not allowed. Date separators mark real date changes (`text-xs text-subtle`, centered).
+Timestamps and actions show on hover or focus, with a reachable touch/menu equivalent. The hover row is containerless — no pill background, border, or shadow — and reserves no row height. Position it without overlapping message text; preserve keyboard access and stable layout. Persistent timestamps under every message are not allowed. Date separators mark real date changes (`text-xs text-subtle`, centered).
 
 ### 8.11 shadcn overrides
 | Component | Rule |
