@@ -87,6 +87,8 @@ import { workerDebug } from './observability.js';
 export interface Env {
   DB: D1Database;
   STORAGE?: R2Bucket;
+  /** Cloudflare Images binding for standard inference renditions; code-only until the account enables it. */
+  IMAGES?: ImagesBinding;
   WORKSPACE_ACTOR?: DurableObjectNamespace;
   ASSETS?: Fetcher;
   ENVIRONMENT?: string;
@@ -270,6 +272,7 @@ export async function createWorkerAgentHandler(env: Env): Promise<TurnHandler> {
     registry: PRODUCTION_REGISTRY,
     limits,
     storage: env.STORAGE,
+    images: env.IMAGES,
     telegramBotToken: env.TELEGRAM_BOT_TOKEN,
   });
 }

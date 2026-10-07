@@ -131,12 +131,13 @@ describe('006A: Tool Schemas and Argument Validation', () => {
     expect(validateQueryArgs({ resource: 'photos' }).ok).toBe(false);
   });
 
-  it('validates view_image media identity without accepting extras', () => {
+  it('validates view_image media identity and detail without accepting extras', () => {
     const good = validateViewImageArgs({ media_id: 'med_abc123' });
     expect(good.ok).toBe(true);
+    expect(validateViewImageArgs({ media_id: 'med_abc123', detail: 'original' }).ok).toBe(true);
     expect(validateViewImageArgs({}).ok).toBe(false);
     expect(validateViewImageArgs({ media_id: '' }).ok).toBe(false);
-    expect(validateViewImageArgs({ media_id: 'med_abc123', detail: 'original' }).ok).toBe(false);
+    expect(validateViewImageArgs({ media_id: 'med_abc123', detail: 'huge' }).ok).toBe(false);
     expect(validateToolCall('view_image', { media_id: 'med_abc123' }).ok).toBe(true);
   });
 

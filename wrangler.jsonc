@@ -28,6 +28,9 @@
       "jurisdiction": "eu"
     }
   ],
+  "images": {
+    "binding": "IMAGES"
+  },
   "durable_objects": {
     "bindings": [
       {

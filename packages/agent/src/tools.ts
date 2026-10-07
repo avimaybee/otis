@@ -200,6 +200,8 @@ export interface QueryToolArgs {
 
 export interface ViewImageToolArgs {
   media_id: string;
+  /** Standard inference rendition by default; original for small text or precise inspection. */
+  detail?: 'standard' | 'original';
 }
 
 export interface SearchMemoryToolArgs {
@@ -836,7 +838,7 @@ export function validateViewImageArgs(raw: unknown): ValidationResult<ViewImageT
   const obj = raw as Record<string, unknown>;
   const sec = checkNoForbiddenKeys(obj);
   if (sec) return sec;
-  const unk = checkNoUnknownKeys(obj, new Set(['media_id']), 'view_image');
+  const unk = checkNoUnknownKeys(obj, new Set(['media_id', 'detail']), 'view_image');
   if (unk) return unk;
 
   if (typeof obj['media_id'] !== 'string' || obj['media_id'].trim().length === 0) {
@@ -845,10 +847,16 @@ export function validateViewImageArgs(raw: unknown): ValidationResult<ViewImageT
   if (obj['media_id'].trim().length > 128) {
     return fail('invalid_argument', "Field 'media_id' must be at most 128 characters.");
   }
+  if (obj['detail'] !== undefined && obj['detail'] !== 'standard' && obj['detail'] !== 'original') {
+    return fail('invalid_argument', "Field 'detail' must be 'standard' or 'original'.");
+  }
 
   return {
     ok: true,
-    data: { media_id: obj['media_id'].trim() },
+    data: {
+      media_id: obj['media_id'].trim(),
+      ...(obj['detail'] !== undefined ? { detail: obj['detail'] as 'standard' | 'original' } : {}),
+    },
   };
 }
 
@@ -1444,6 +1452,7 @@ export const ALL_AGENT_TOOLS: ProviderToolDeclaration[] = [
       type: 'object',
       properties: {
         media_id: { type: 'string' },
+        detail: { type: 'string', enum: ['standard', 'original'] },
       },
       required: ['media_id'],
       additionalProperties: false,

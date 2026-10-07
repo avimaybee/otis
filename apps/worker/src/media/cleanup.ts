@@ -8,6 +8,7 @@
  */
 
 import { listExpiredMedia, markMediaDeleted, markMediaExpired } from './repository.js';
+import { deleteRendition } from './renditions.js';
 
 export interface MediaCleanupResult {
   expired: number;
@@ -27,6 +28,7 @@ export async function cleanupExpiredMedia(
   for (const row of await listExpiredMedia(db, nowIso, limit)) {
     try {
       await storage.delete(row.object_key);
+      await deleteRendition(storage, row.id);
       await markMediaExpired(db, { workspaceId: row.workspace_id, mediaId: row.id, nowIso });
       result.expired += 1;
     } catch {
@@ -45,6 +47,7 @@ export async function cleanupExpiredMedia(
   for (const row of results ?? []) {
     try {
       await storage.delete(row.object_key);
+      await deleteRendition(storage, row.id);
       await markMediaDeleted(db, { workspaceId: row.workspace_id, mediaId: row.id, nowIso });
       result.abandoned += 1;
     } catch {
@@ -68,6 +71,7 @@ export async function cleanupExpiredMedia(
   for (const row of orphans ?? []) {
     try {
       await storage.delete(row.object_key);
+      await deleteRendition(storage, row.id);
       await markMediaDeleted(db, { workspaceId: row.workspace_id, mediaId: row.id, nowIso });
       result.abandoned += 1;
     } catch {

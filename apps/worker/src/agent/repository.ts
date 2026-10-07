@@ -509,6 +509,7 @@ export async function executeAgentTool(
           sequence: imageRow.sequence,
           format: imageRow.format,
           available: true,
+          requested_detail: vArgs.detail ?? 'standard',
           excerpt: imageRow.excerpt ?? '',
         },
       };

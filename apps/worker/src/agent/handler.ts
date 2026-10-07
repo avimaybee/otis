@@ -20,6 +20,7 @@ import {
   type TelegramDraftPreview,
 } from '../inbox/telegramDelivery.js';
 import { getTurnContext, type AssembledTurnContext } from './context.js';
+import { loadInferenceImageBytes, type ImageDetail } from '../media/renditions.js';
 import { publishAgentActivity } from './activity.js';
 import { liveChatBus } from '../chat/liveBus.js';
 import { StreamPublisher, createThinkingBudget, type SharedThinkingBudget } from './streamPublish.js';
@@ -61,17 +62,6 @@ export interface AgentLimitsConfig {
   maxRoundsPerRun?: number;
 }
 
-/** Reads an R2 object fully and returns base64 text for provider transport. */
-async function r2ObjectToBase64(obj: R2ObjectBody): Promise<string> {
-  const bytes = new Uint8Array(await obj.arrayBuffer());
-  let binary = '';
-  const len = bytes.byteLength;
-  for (let i = 0; i < len; i++) {
-    binary += String.fromCharCode(bytes[i]!);
-  }
-  return btoa(binary);
-}
-
 interface ImageAttachmentRow {
   id: string;
   object_key: string;
@@ -79,18 +69,22 @@ interface ImageAttachmentRow {
   content_type: string | null;
   state: string;
   expires_at: string;
+  byte_size: number | null;
 }
 
 /**
  * Hydrates selected image attachments to provider-ready bytes. Reads are
  * concurrent over the already-bounded selection and reused through the
- * per-slice cache; nothing here persists base64 or survives a restart.
- * Unloadable references are logged and skipped by the caller, which decides
- * between honest omission (history) and refusal (newly submitted input).
+ * per-slice cache (originals and standard renditions keyed separately);
+ * nothing here persists base64 or survives a restart. Unloadable references
+ * are logged and skipped by the caller, which decides between honest
+ * omission (history) and refusal (newly submitted input).
  */
 async function hydrateImageAttachments(args: {
   storage: R2Bucket;
+  images?: ImagesBinding | null;
   rows: ImageAttachmentRow[];
+  detail: ImageDetail;
   nowIso: string;
   workspaceId: string;
   runId: string;
@@ -112,13 +106,25 @@ async function hydrateImageAttachments(args: {
         });
         return;
       }
-      const cached = args.cache.get(row.id);
+      const cacheKey = args.detail === 'original' ? `img:${row.id}` : `img:${row.id}:standard`;
+      const cached = args.cache.get(cacheKey);
       if (cached) {
         slots[index] = cached;
         return;
       }
-      const obj = await args.storage.get(row.object_key);
-      if (!obj) {
+      const loaded = await loadInferenceImageBytes({
+        storage: args.storage,
+        images: args.images,
+        media: {
+          mediaId: row.id,
+          objectKey: row.object_key,
+          format: row.format,
+          contentType: row.content_type,
+          byteSize: row.byte_size,
+        },
+        detail: args.detail,
+      });
+      if (!loaded) {
         workerFailure('agent', 'image bytes missing from storage', {
           workspaceId: args.workspaceId,
           runId: args.runId,
@@ -126,16 +132,23 @@ async function hydrateImageAttachments(args: {
         });
         return;
       }
-      const loaded = {
-        data: await r2ObjectToBase64(obj),
-        mimeType: row.content_type || row.format || 'image/png',
-      };
-      args.cache.set(row.id, loaded);
-      slots[index] = loaded;
+      const ready = { data: bytesToBase64(loaded.bytes), mimeType: loaded.mimeType };
+      args.cache.set(cacheKey, ready);
+      slots[index] = ready;
     }),
   );
   const images = slots.filter((slot): slot is { data: string; mimeType: string } => slot !== null);
   return { images, referenced: args.rows.length };
+}
+
+/** Base64 transport encoding for in-memory image bytes. */
+function bytesToBase64(bytes: Uint8Array): string {
+  let binary = '';
+  const len = bytes.byteLength;
+  for (let i = 0; i < len; i++) {
+    binary += String.fromCharCode(bytes[i]!);
+  }
+  return btoa(binary);
 }
 
 /**
@@ -160,6 +173,11 @@ export interface AgentHandlerOptions {
   registry?: ModelRegistry;
   providerAdapter?: ProviderAdapter;
   storage?: R2Bucket;
+  /**
+   * Cloudflare Images binding for standard inference renditions. Absent in
+   * tests and unconfigured workers: every read preserves original access.
+   */
+  images?: ImagesBinding | null;
   telegramBotToken?: string;
   fetchFn?: FetchFn;
   maxRoundsPerSlice?: number;
@@ -642,9 +660,12 @@ export class AgentHandler implements TurnHandler {
           text: assembledContext.systemPrompt,
         });
 
-        // Media already selected for this request (current + historical).
-        // Viewed reads below join this set so each image rides exactly once.
-        const activeMediaIds = new Set<string>();
+        // Media already selected for this request (current + historical),
+        // keyed by media and detail: a standard rendition and an explicit
+        // original read are different bytes. Viewed reads below join this
+        // set so each variant rides exactly once.
+        const deliveredKeys = new Set<string>();
+        const deliveryKey = (mediaId: string, detail: ImageDetail): string => `${mediaId}:${detail}`;
 
         // Add historical chat messages from transcript (F05)
         const historicalProviderIndexByMessageId = new Map<string, number>();
@@ -679,13 +700,13 @@ export class AgentHandler implements TurnHandler {
             .find((msg) => msg.authorKind === 'member' && msg.attachments.length > 0);
           if (latestImageMessage) {
             const mediaIds = latestImageMessage.attachments.map((a) => a.mediaId).slice(0, IMAGE_BOUNDS.MAX_PER_MESSAGE);
-            for (const mediaId of mediaIds) activeMediaIds.add(mediaId);
+            for (const mediaId of mediaIds) deliveredKeys.add(deliveryKey(mediaId, 'standard'));
             if (mediaIds.length > 0) {
               const placeholders = mediaIds.map(() => '?').join(', ');
               const historicalRows = (
                 await ctx.db
                   .prepare(
-                    `SELECT m.id, m.object_key, m.format, m.content_type, m.state, m.expires_at
+                    `SELECT m.id, m.object_key, m.format, m.content_type, m.state, m.expires_at, m.byte_size
                      FROM media_objects m
                      WHERE m.workspace_id = ? AND m.id IN (${placeholders})`,
                   )
@@ -699,7 +720,9 @@ export class AgentHandler implements TurnHandler {
                 .filter((row): row is ImageAttachmentRow => row !== undefined);
               const hydrated = await hydrateImageAttachments({
                 storage: this.options.storage,
+                images: this.options?.images,
                 rows: ordered,
+                detail: 'standard',
                 nowIso: this.nowIso(),
                 workspaceId: ctx.workspaceId,
                 runId: ctx.runId,
@@ -793,7 +816,7 @@ export class AgentHandler implements TurnHandler {
           try {
             const attached = await ctx.db
               .prepare(
-                `SELECT m.id, m.object_key, m.format, m.content_type, m.state, m.expires_at
+                `SELECT m.id, m.object_key, m.format, m.content_type, m.state, m.expires_at, m.byte_size
                  FROM message_image_attachments a
                  JOIN media_objects m ON m.id = a.media_id
                  JOIN chat_messages cm ON cm.id = a.chat_message_id
@@ -805,10 +828,12 @@ export class AgentHandler implements TurnHandler {
               .all<ImageAttachmentRow>();
             const rows = attached.results ?? [];
             currentImageRefs = rows.length;
-            for (const row of rows) activeMediaIds.add(row.id);
+            for (const row of rows) deliveredKeys.add(deliveryKey(row.id, 'standard'));
             const hydrated = await hydrateImageAttachments({
               storage: this.options.storage,
+              images: this.options?.images,
               rows,
+              detail: 'standard',
               nowIso: this.nowIso(),
               workspaceId: ctx.workspaceId,
               runId: ctx.runId,
@@ -870,29 +895,33 @@ export class AgentHandler implements TurnHandler {
         const viewedImagesByCallId = new Map<string, { images: Array<{ data: string; mimeType: string }>; excerpt: string }>();
         let viewedImageCount = 0;
         if (this.options?.storage && progress.completedRounds && progress.completedRounds.length > 0) {
-          const reads: Array<{ callId: string; mediaId: string; excerpt: string }> = [];
-          const seenMedia = new Set<string>();
+          const reads: Array<{ callId: string; mediaId: string; excerpt: string; detail: ImageDetail }> = [];
+          const seenReads = new Set<string>();
           for (const completed of progress.completedRounds) {
             for (const res of completed.toolResults) {
               if (res.name !== 'view_image' || res.result.status !== 'applied') continue;
-              const data = res.result.data as { media_id?: unknown; excerpt?: unknown } | null | undefined;
-              if (!data || typeof data.media_id !== 'string' || seenMedia.has(data.media_id)) continue;
-              seenMedia.add(data.media_id);
+              const data = res.result.data as { media_id?: unknown; excerpt?: unknown; requested_detail?: unknown } | null | undefined;
+              if (!data || typeof data.media_id !== 'string') continue;
+              const detail: ImageDetail = data.requested_detail === 'original' ? 'original' : 'standard';
+              const readKey = deliveryKey(data.media_id, detail);
+              if (seenReads.has(readKey)) continue;
+              seenReads.add(readKey);
               reads.push({
                 callId: res.callId,
                 mediaId: data.media_id,
                 excerpt: typeof data.excerpt === 'string' ? data.excerpt : '',
+                detail,
               });
             }
           }
-          const fresh = reads.filter((read) => !activeMediaIds.has(read.mediaId));
+          const fresh = reads.filter((read) => !deliveredKeys.has(deliveryKey(read.mediaId, read.detail)));
           if (fresh.length > 0) {
-            const ids = fresh.map((read) => read.mediaId);
+            const ids = [...new Set(fresh.map((read) => read.mediaId))];
             const placeholders = ids.map(() => '?').join(', ');
             const viewedRows = (
               await ctx.db
                 .prepare(
-                  `SELECT m.id, m.object_key, m.format, m.content_type, m.state, m.expires_at
+                  `SELECT m.id, m.object_key, m.format, m.content_type, m.state, m.expires_at, m.byte_size
                    FROM media_objects m
                    WHERE m.workspace_id = ? AND m.id IN (${placeholders})`,
                 )
@@ -900,28 +929,37 @@ export class AgentHandler implements TurnHandler {
                 .all<ImageAttachmentRow>()
             ).results ?? [];
             const rowsById = new Map(viewedRows.map((row) => [row.id, row]));
-            const ordered = ids
-              .map((id) => rowsById.get(id))
-              .filter((row): row is ImageAttachmentRow => row !== undefined);
-            const hydrated = await hydrateImageAttachments({
-              storage: this.options.storage,
-              rows: ordered,
-              nowIso: this.nowIso(),
-              workspaceId: ctx.workspaceId,
-              runId: ctx.runId,
-              cache: imageContentCache,
-            });
-            const imageByMedia = new Map<string, { data: string; mimeType: string }>();
-            ordered.forEach((row, index) => {
-              const image = hydrated.images[index];
-              if (image) imageByMedia.set(row.id, image);
-            });
-            for (const read of fresh) {
-              const image = imageByMedia.get(read.mediaId);
-              if (!image) continue;
-              activeMediaIds.add(read.mediaId);
-              viewedImageCount += 1;
-              viewedImagesByCallId.set(read.callId, { images: [image], excerpt: read.excerpt });
+            // Hydrate per requested detail; each group stays concurrent and
+            // shares the per-slice cache with the active visual set.
+            for (const detail of ['standard', 'original'] as const) {
+              const group = fresh.filter((read) => read.detail === detail);
+              if (group.length === 0) continue;
+              const ordered = group
+                .map((read) => rowsById.get(read.mediaId))
+                .filter((row): row is ImageAttachmentRow => row !== undefined);
+              if (ordered.length === 0) continue;
+              const hydrated = await hydrateImageAttachments({
+                storage: this.options.storage,
+                images: this.options?.images,
+                rows: ordered,
+                detail,
+                nowIso: this.nowIso(),
+                workspaceId: ctx.workspaceId,
+                runId: ctx.runId,
+                cache: imageContentCache,
+              });
+              const imageByMedia = new Map<string, { data: string; mimeType: string }>();
+              ordered.forEach((row, index) => {
+                const image = hydrated.images[index];
+                if (image) imageByMedia.set(row.id, image);
+              });
+              for (const read of group) {
+                const image = imageByMedia.get(read.mediaId);
+                if (!image) continue;
+                deliveredKeys.add(deliveryKey(read.mediaId, read.detail));
+                viewedImageCount += 1;
+                viewedImagesByCallId.set(read.callId, { images: [image], excerpt: read.excerpt });
+              }
             }
           }
         }
