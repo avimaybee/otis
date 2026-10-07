@@ -188,6 +188,18 @@ export function ConversationScreen({ workspaceId, chat: routeChat, chatParamPres
   useEffect(() => { if (desktop) setDrawerOpen(false); }, [desktop]);
   useEffect(() => () => clearRefreshTimers(), [clearRefreshTimers]);
 
+  // F12-SSE: a hidden tab holds no live stream. The subscription effect
+  // below closes on hide and resubscribes from the snapshot cursor on
+  // foreground, so catch-up replays anything missed with no gap.
+  const [isVisible, setIsVisible] = useState(
+    () => typeof document === 'undefined' || document.visibilityState !== 'hidden',
+  );
+  useEffect(() => {
+    const onVisibility = () => setIsVisible(document.visibilityState !== 'hidden');
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => document.removeEventListener('visibilitychange', onVisibility);
+  }, []);
+
   // Scoped server snapshots. Keys carry the user so a late result can never
   // restore another account's content, and navigation swaps keys instead of
   // showing stale results while the new snapshot loads.
@@ -303,7 +315,12 @@ export function ConversationScreen({ workspaceId, chat: routeChat, chatParamPres
 
   const readyChatId = snapshot && !accessLost ? snapshot.detail.chat.id : null;
   useEffect(() => {
-    if (!readyChatId || accessLost) return;
+    if (!readyChatId || accessLost || !isVisible) {
+      // Hidden tabs keep no live stream: the teardown below already closed
+      // it, and the status must not claim a live connection.
+      if (!isVisible) setStreamStatus('closed');
+      return;
+    }
     const generation = epoch.current;
     const cursor = queryClient.getQueryData<ChatSnapshot>(qk.chat(userId, workspaceId, readyChatId))?.cursor ?? 0;
     const subscription = subscribeToActivity(api.activityStreamUrl(workspaceId, readyChatId, cursor), {
@@ -377,7 +394,7 @@ export function ConversationScreen({ workspaceId, chat: routeChat, chatParamPres
       onAccessLost: loseAccess,
     });
     return () => subscription.close();
-  }, [readyChatId, workspaceId, accessLost, streamGeneration, loseAccess, queryClient, userId, refreshRun, refreshMessages, refreshQuestions, resyncChat]);
+  }, [readyChatId, workspaceId, accessLost, isVisible, streamGeneration, loseAccess, queryClient, userId, refreshRun, refreshMessages, refreshQuestions, resyncChat]);
 
   const workspaceName = workspaces.find(workspace => workspace.id === workspaceId)?.name ?? 'Workspace';
   const activeRuns = Object.values(snapshot?.runs ?? {}).filter(run => ['queued', 'running'].includes(run.status));
@@ -394,7 +411,9 @@ export function ConversationScreen({ workspaceId, chat: routeChat, chatParamPres
   const lastLiveEventAt = useRef<Record<string, number>>({});
 
   useEffect(() => {
-    if (!running || accessLost || !workspaceId || !activeChatId) return;
+    // No backstop polling from a hidden tab: the foreground resubscribe
+    // replays missed events from the snapshot cursor instead.
+    if (!running || accessLost || !workspaceId || !activeChatId || !isVisible) return;
     const runId = running.run.id;
     const chatKey = activeChatId;
     const timer = setTimeout(() => {
@@ -405,7 +424,7 @@ export function ConversationScreen({ workspaceId, chat: routeChat, chatParamPres
       refreshMessages(workspaceId, activeChatId);
     }, 2500);
     return () => clearTimeout(timer);
-  }, [running, accessLost, workspaceId, activeChatId, refreshRun, refreshMessages]);
+  }, [running, accessLost, workspaceId, activeChatId, isVisible, refreshRun, refreshMessages]);
 
   const switchWorkspace = useCallback((id: string) => { if (!workspaces.some(workspace => workspace.id === id)) return; let last: string | null = null; try { last = sessionStorage.getItem(`otis:view:${userId}:${id}`); } catch { /* start new */ } navigate(id, last === 'new' ? null : last); }, [workspaces, userId, navigate]);
 
