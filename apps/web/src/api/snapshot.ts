@@ -183,6 +183,24 @@ export function applyQuestions(snapshot: ChatSnapshot, questions: ClarificationS
   return { ...snapshot, questions };
 }
 
+/**
+ * Chooses the clarification the composer answers. An explicit reply wins;
+ * otherwise the first pending answerable question outside the dismissed set.
+ * Dismissal is a sticky exclusion list, never a single rotating slot: with
+ * two pending questions, dismissing both must leave no selection rather
+ * than reselecting the first.
+ */
+export function selectPendingQuestion(
+  questions: ClarificationSummary[],
+  replyId: string | null,
+  dismissedIds: readonly string[],
+): ClarificationSummary | undefined {
+  if (replyId) return questions.find(question => question.id === replyId && question.answerable_by_caller);
+  return questions.find(
+    question => question.status === 'pending' && question.answerable_by_caller && !dismissedIds.includes(question.id),
+  );
+}
+
 export function applyDetail(snapshot: ChatSnapshot, detail: ChatDetailResponse): ChatSnapshot {
   return { ...snapshot, detail };
 }

@@ -13,7 +13,7 @@ import {
   mergeTransientPreview,
   transientTextForRun,
 } from '../src/hooks/useActivityStream.js';
-import { applyAcceptedMessage, applyAnswerSaved, type ChatSnapshot } from '../src/api/snapshot.js';
+import { applyAcceptedMessage, applyAnswerSaved, selectPendingQuestion, type ChatSnapshot } from '../src/api/snapshot.js';
 import { readFileSync } from 'fs';
 import { resolve } from 'path';
 
@@ -153,7 +153,21 @@ describe('Composer', () => {
 });
 
 describe('Transcript', () => {
-  it('keeps assistant text unboxed and member turns in one restrained bubble', async () => {
+
+describe('Clarification dismissal', () => {
+  const questions = (ids: string[]) => ids.map(id => ({ id, status: 'pending', answerable_by_caller: true, question: `Q ${id}` }) as never);
+  it('dismissed questions stay dismissed instead of alternating', async () => {
+    const both = questions(['qa', 'qb']);
+    expect(selectPendingQuestion(both, null, [])?.id).toBe('qa');
+    expect(selectPendingQuestion(both, null, ['qa'])?.id).toBe('qb');
+    expect(selectPendingQuestion(both, null, ['qa', 'qb'])).toBeUndefined();
+  });
+  it('an explicit reply still wins over the dismissed set', async () => {
+    const both = questions(['qa', 'qb']);
+    expect(selectPendingQuestion(both, 'qb', ['qa', 'qb'])?.id).toBe('qb');
+    expect(selectPendingQuestion(both, 'qx', [])).toBeUndefined();
+  });
+});  it('keeps assistant text unboxed and member turns in one restrained bubble', async () => {
     const view = await mount(<Transcript messages={[message({ id: 'm1', content_text: 'Restaurant 2 wants the website.' }), message({ id: 'm2', content_text: 'When should the offer be ready?', author_kind: 'system', author_user_id: null })]} members={{}} currentUserId="usr_1" steps={[]} onInspectAction={vi.fn()}/>);
     expect(view.host.querySelector('.otis-turn--member .otis-turn__bubble')?.textContent).toContain('Restaurant 2');
     expect(view.host.querySelector('.otis-turn--agent .otis-turn__body')?.closest('.otis-turn__bubble')).toBeNull(); await view.unmount();
