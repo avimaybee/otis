@@ -81,6 +81,15 @@ export interface ToolResultBlock {
   /** Original arguments passed to the tool call; preserved faithfully for continuation. */
   arguments?: string | Record<string, unknown> | null;
   resultText: string;
+  /**
+   * Ephemeral hydrated images for a view_image result. Lives on the in-memory
+   * request only: adapters map these into endpoint-native visual input, and
+   * they must never be written to checkpoints, logs, or durable results.
+   */
+  images?: Array<{
+    data: string;
+    mimeType: string;
+  }>;
 }
 
 export interface AssistantToolCall {

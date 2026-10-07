@@ -212,11 +212,19 @@ function toInteractionsInput(input: TurnInput): { systemInstruction?: string; bl
   for (const result of input.pendingToolResults) {
     if (!seenFunctionResultCallIds.has(result.callId)) {
       seenFunctionResultCallIds.add(result.callId);
+      const resultBlocks: Array<{ type: string; text?: string; mime_type?: string; data?: string }> = [
+        { type: 'text', text: result.resultText },
+      ];
+      // Multimodal function response: viewed pixels ride the matching
+      // result alongside its text, never as a detached turn.
+      for (const image of result.images ?? []) {
+        resultBlocks.push({ type: 'image', mime_type: image.mimeType, data: image.data });
+      }
       blocks.push({
         type: 'function_result',
         name: result.name,
         call_id: result.callId,
-        result: [{ type: 'text', text: result.resultText }],
+        result: resultBlocks,
       });
     }
   }

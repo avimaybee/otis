@@ -21,11 +21,12 @@ import {
   validateSetFieldsArgs,
   validateToolCall,
   validateUndoArgs,
+  validateViewImageArgs,
 } from '../src/index.js';
 
 describe('006A: Tool Schemas and Argument Validation', () => {
-  it('defines all 21 agent tools and 1 control tool with additionalProperties: false', () => {
-    expect(ALL_AGENT_TOOLS.length).toBe(22);
+  it('defines all 22 agent tools and 1 control tool with additionalProperties: false', () => {
+    expect(ALL_AGENT_TOOLS.length).toBe(23);
     for (const tool of ALL_AGENT_TOOLS) {
       expect(tool.parameters.type).toBe('object');
       expect(tool.parameters.additionalProperties).toBe(false);
@@ -118,6 +119,25 @@ describe('006A: Tool Schemas and Argument Validation', () => {
     };
     const res = validateQueryArgs(sqlAttempt);
     expect(res.ok).toBe(false);
+  });
+
+  it('accepts the attachments resource with a text filter for image discovery', () => {
+    const res = validateQueryArgs({ resource: 'attachments', filters: { text: 'harbor' }, limit: 10 });
+    expect(res.ok).toBe(true);
+    if (res.ok) {
+      expect(res.data.resource).toBe('attachments');
+      expect(res.data.filters?.text).toBe('harbor');
+    }
+    expect(validateQueryArgs({ resource: 'photos' }).ok).toBe(false);
+  });
+
+  it('validates view_image media identity without accepting extras', () => {
+    const good = validateViewImageArgs({ media_id: 'med_abc123' });
+    expect(good.ok).toBe(true);
+    expect(validateViewImageArgs({}).ok).toBe(false);
+    expect(validateViewImageArgs({ media_id: '' }).ok).toBe(false);
+    expect(validateViewImageArgs({ media_id: 'med_abc123', detail: 'original' }).ok).toBe(false);
+    expect(validateToolCall('view_image', { media_id: 'med_abc123' }).ok).toBe(true);
   });
 
   it('validates task deadlines: missing deadline asks, explicit null accepted, date union preserved, invalid rejects', () => {

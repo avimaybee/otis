@@ -182,7 +182,7 @@ export interface MarkMessageSentToolArgs {
 }
 
 export interface QueryToolArgs {
-  resource: 'entities' | 'tasks' | 'events' | 'drafts';
+  resource: 'entities' | 'tasks' | 'events' | 'drafts' | 'attachments';
   filters?: {
     entity_id?: string;
     entity_status?: LeadStatus;
@@ -191,9 +191,15 @@ export interface QueryToolArgs {
     assignee_user_id?: string;
     due_before?: string;
     due_after?: string;
+    /** Substring match on the source message text (attachments only). */
+    text?: string;
   };
   limit?: number;
   cursor?: string;
+}
+
+export interface ViewImageToolArgs {
+  media_id: string;
 }
 
 export interface SearchMemoryToolArgs {
@@ -754,9 +760,9 @@ export function validateQueryArgs(raw: unknown): ValidationResult<QueryToolArgs>
   const unk = checkNoUnknownKeys(obj, new Set(['resource', 'filters', 'limit', 'cursor']), 'query');
   if (unk) return unk;
 
-  const validResources = new Set(['entities', 'tasks', 'events', 'drafts']);
+  const validResources = new Set(['entities', 'tasks', 'events', 'drafts', 'attachments']);
   if (typeof obj['resource'] !== 'string' || !validResources.has(obj['resource'])) {
-    return fail('invalid_argument', "Field 'resource' must be 'entities', 'tasks', 'events', or 'drafts'.");
+    return fail('invalid_argument', "Field 'resource' must be 'entities', 'tasks', 'events', 'drafts', or 'attachments'.");
   }
 
   let limit: number | undefined;
@@ -785,6 +791,7 @@ export function validateQueryArgs(raw: unknown): ValidationResult<QueryToolArgs>
         'assignee_user_id',
         'due_before',
         'due_after',
+        'text',
       ]),
       'query.filters',
     );
@@ -809,6 +816,7 @@ export function validateQueryArgs(raw: unknown): ValidationResult<QueryToolArgs>
       assignee_user_id: typeof fObj['assignee_user_id'] === 'string' ? fObj['assignee_user_id'].trim() : undefined,
       due_before: typeof fObj['due_before'] === 'string' ? fObj['due_before'].trim() : undefined,
       due_after: typeof fObj['due_after'] === 'string' ? fObj['due_after'].trim() : undefined,
+      text: typeof fObj['text'] === 'string' ? fObj['text'].trim() : undefined,
     };
   }
 
@@ -820,6 +828,27 @@ export function validateQueryArgs(raw: unknown): ValidationResult<QueryToolArgs>
       limit,
       cursor: typeof obj['cursor'] === 'string' ? obj['cursor'].trim() : undefined,
     },
+  };
+}
+
+export function validateViewImageArgs(raw: unknown): ValidationResult<ViewImageToolArgs> {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return fail('invalid_type', 'Expected object.');
+  const obj = raw as Record<string, unknown>;
+  const sec = checkNoForbiddenKeys(obj);
+  if (sec) return sec;
+  const unk = checkNoUnknownKeys(obj, new Set(['media_id']), 'view_image');
+  if (unk) return unk;
+
+  if (typeof obj['media_id'] !== 'string' || obj['media_id'].trim().length === 0) {
+    return fail('invalid_argument', "Field 'media_id' must be a non-empty string.");
+  }
+  if (obj['media_id'].trim().length > 128) {
+    return fail('invalid_argument', "Field 'media_id' must be at most 128 characters.");
+  }
+
+  return {
+    ok: true,
+    data: { media_id: obj['media_id'].trim() },
   };
 }
 
@@ -1144,6 +1173,8 @@ export function validateToolCall(
       return validateMarkMessageSentArgs(rawArgs);
     case 'query':
       return validateQueryArgs(rawArgs);
+    case 'view_image':
+      return validateViewImageArgs(rawArgs);
     case 'search_memory':
       return validateSearchMemoryArgs(rawArgs);
     case 'get_memory':
@@ -1380,11 +1411,11 @@ export const ALL_AGENT_TOOLS: ProviderToolDeclaration[] = [
   },
   {
     name: 'query',
-    description: 'Query structured records (entities, tasks, events, drafts) with whitelisted filters.',
+    description: 'Query structured records (entities, tasks, events, drafts, attachments) with whitelisted filters.',
     parameters: {
       type: 'object',
       properties: {
-        resource: { type: 'string', enum: ['entities', 'tasks', 'events', 'drafts'] },
+        resource: { type: 'string', enum: ['entities', 'tasks', 'events', 'drafts', 'attachments'] },
         filters: {
           type: 'object',
           properties: {
@@ -1395,6 +1426,7 @@ export const ALL_AGENT_TOOLS: ProviderToolDeclaration[] = [
             assignee_user_id: { type: 'string' },
             due_before: { type: 'string' },
             due_after: { type: 'string' },
+            text: { type: 'string' },
           },
           additionalProperties: false,
         },
@@ -1402,6 +1434,18 @@ export const ALL_AGENT_TOOLS: ProviderToolDeclaration[] = [
         cursor: { type: 'string' },
       },
       required: ['resource'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'view_image',
+    description: 'Load a retained conversation image into this turn’s visual context by media ID (from query attachments). The image appears alongside the result; never ask the user for internal IDs.',
+    parameters: {
+      type: 'object',
+      properties: {
+        media_id: { type: 'string' },
+      },
+      required: ['media_id'],
       additionalProperties: false,
     },
   },

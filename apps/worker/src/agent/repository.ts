@@ -32,6 +32,7 @@ import {
   type UpdatePreferenceToolArgs,
   type UpdateTaskToolArgs,
   type UpsertEntityToolArgs,
+  type ViewImageToolArgs,
   type ExecuteCommandToolArgs,
   PRODUCTION_REGISTRY,
 } from '@otis/agent';
@@ -417,7 +418,100 @@ export async function executeAgentTool(
         return { status: 'applied', action_id: actionId, data: rows };
       }
 
+      if (qArgs.resource === 'attachments') {
+        // Retained conversation images for this chat, newest first. Metadata
+        // only: media/source IDs plus a short source-text excerpt so the
+        // model can pick what to view. Bytes stay in R2 until view_image.
+        if (!chatId) {
+          return { status: 'rejected', action_id: actionId, error: { code: 'missing_chat', message: 'Attachments can only be listed inside a conversation.' } };
+        }
+        let sql = `SELECT a.media_id AS media_id, a.chat_message_id AS chat_message_id,
+            cm.sequence AS sequence, a.position AS position, m.format AS format,
+            m.created_at AS created_at, SUBSTR(cm.content_text, 1, 160) AS excerpt
+          FROM message_image_attachments a
+          JOIN chat_messages cm ON cm.id = a.chat_message_id
+          JOIN media_objects m ON m.id = a.media_id
+          WHERE a.workspace_id = ? AND cm.workspace_id = ? AND cm.chat_id = ?`;
+        const binds: unknown[] = [workspaceId, workspaceId, chatId];
+        if (qArgs.filters?.text) {
+          sql += ` AND cm.content_text LIKE ?`;
+          binds.push(`%${qArgs.filters.text}%`);
+        }
+        if (qArgs.cursor) {
+          const seq = Number(qArgs.cursor);
+          if (!Number.isNaN(seq)) {
+            sql += ` AND cm.sequence < ?`;
+            binds.push(seq);
+          }
+        }
+        sql += ` ORDER BY cm.sequence DESC, a.position ASC LIMIT ?`;
+        binds.push(limit);
+        const rows = (await db.prepare(sql).bind(...binds).all()).results || [];
+        return { status: 'applied', action_id: actionId, data: rows };
+      }
+
       return { status: 'rejected', action_id: actionId, error: { code: 'invalid_resource', message: `Unknown resource '${qArgs.resource}'.` } };
+    }
+
+    case 'view_image': {
+      // Read-only image load by durable receipt. Checks current membership
+      // scope (workspace), source chat ownership and retention state, then
+      // returns references only: the handler hydrates pixels ephemerally for
+      // the next provider request. No ledger event, no chat message.
+      const vArgs = args as ViewImageToolArgs;
+      if (!chatId) {
+        return { status: 'rejected', action_id: actionId, error: { code: 'missing_chat', message: 'Images can only be viewed inside a conversation.' } };
+      }
+      const imageRow = await db
+        .prepare(
+          `SELECT a.media_id AS media_id, a.chat_message_id AS chat_message_id,
+              cm.sequence AS sequence, m.format AS format, m.state AS state,
+              m.expires_at AS expires_at, SUBSTR(cm.content_text, 1, 160) AS excerpt
+           FROM message_image_attachments a
+           JOIN chat_messages cm ON cm.id = a.chat_message_id
+           JOIN media_objects m ON m.id = a.media_id
+           WHERE a.workspace_id = ? AND a.media_id = ? AND cm.workspace_id = ? AND cm.chat_id = ?
+           LIMIT 1`,
+        )
+        .bind(workspaceId, vArgs.media_id, workspaceId, chatId)
+        .first<{
+          media_id: string;
+          chat_message_id: string;
+          sequence: number;
+          format: string | null;
+          state: string;
+          expires_at: string;
+          excerpt: string | null;
+        }>();
+      if (!imageRow) {
+        return { status: 'rejected', action_id: actionId, error: { code: 'unknown_image', message: 'No such image in this conversation. List retained images with the attachments query first.' } };
+      }
+      const readable =
+        (imageRow.format === 'image/jpeg' || imageRow.format === 'image/png' || imageRow.format === 'image/webp') &&
+        imageRow.state === 'validated' &&
+        imageRow.expires_at > new Date().toISOString();
+      if (!readable) {
+        return {
+          status: 'rejected',
+          action_id: actionId,
+          error: {
+            code: 'image_unavailable',
+            message: `That image is no longer readable (state ${imageRow.state}). Say so plainly instead of describing it.`,
+          },
+        };
+      }
+      return {
+        status: 'applied',
+        action_id: actionId,
+        data: {
+          media_id: imageRow.media_id,
+          chat_message_id: imageRow.chat_message_id,
+          sequence: imageRow.sequence,
+          format: imageRow.format,
+          available: true,
+          excerpt: imageRow.excerpt ?? '',
+        },
+      };
     }
 
     case 'search_memory': {

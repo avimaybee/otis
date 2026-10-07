@@ -642,6 +642,10 @@ export class AgentHandler implements TurnHandler {
           text: assembledContext.systemPrompt,
         });
 
+        // Media already selected for this request (current + historical).
+        // Viewed reads below join this set so each image rides exactly once.
+        const activeMediaIds = new Set<string>();
+
         // Add historical chat messages from transcript (F05)
         const historicalProviderIndexByMessageId = new Map<string, number>();
         if (assembledContext.recentMessages && assembledContext.recentMessages.length > 0) {
@@ -675,6 +679,7 @@ export class AgentHandler implements TurnHandler {
             .find((msg) => msg.authorKind === 'member' && msg.attachments.length > 0);
           if (latestImageMessage) {
             const mediaIds = latestImageMessage.attachments.map((a) => a.mediaId).slice(0, IMAGE_BOUNDS.MAX_PER_MESSAGE);
+            for (const mediaId of mediaIds) activeMediaIds.add(mediaId);
             if (mediaIds.length > 0) {
               const placeholders = mediaIds.map(() => '?').join(', ');
               const historicalRows = (
@@ -800,6 +805,7 @@ export class AgentHandler implements TurnHandler {
               .all<ImageAttachmentRow>();
             const rows = attached.results ?? [];
             currentImageRefs = rows.length;
+            for (const row of rows) activeMediaIds.add(row.id);
             const hydrated = await hydrateImageAttachments({
               storage: this.options.storage,
               rows,
@@ -854,6 +860,83 @@ export class AgentHandler implements TurnHandler {
           ]);
         }
 
+        // Tool-viewed images (view_image): durable references live in the
+        // completed results; pixels hydrate here, ephemerally, keyed by tool
+        // call. Each viewed image rides once per request as attributed
+        // tool-supplied visual input right after its read (adapters already
+        // map user entries with images), plus ToolResultBlock.images for
+        // linked Gemini function results. Bytes never touch checkpoints,
+        // logs, or durable results; a restarted slice rebuilds from the IDs.
+        const viewedImagesByCallId = new Map<string, { images: Array<{ data: string; mimeType: string }>; excerpt: string }>();
+        let viewedImageCount = 0;
+        if (this.options?.storage && progress.completedRounds && progress.completedRounds.length > 0) {
+          const reads: Array<{ callId: string; mediaId: string; excerpt: string }> = [];
+          const seenMedia = new Set<string>();
+          for (const completed of progress.completedRounds) {
+            for (const res of completed.toolResults) {
+              if (res.name !== 'view_image' || res.result.status !== 'applied') continue;
+              const data = res.result.data as { media_id?: unknown; excerpt?: unknown } | null | undefined;
+              if (!data || typeof data.media_id !== 'string' || seenMedia.has(data.media_id)) continue;
+              seenMedia.add(data.media_id);
+              reads.push({
+                callId: res.callId,
+                mediaId: data.media_id,
+                excerpt: typeof data.excerpt === 'string' ? data.excerpt : '',
+              });
+            }
+          }
+          const fresh = reads.filter((read) => !activeMediaIds.has(read.mediaId));
+          if (fresh.length > 0) {
+            const ids = fresh.map((read) => read.mediaId);
+            const placeholders = ids.map(() => '?').join(', ');
+            const viewedRows = (
+              await ctx.db
+                .prepare(
+                  `SELECT m.id, m.object_key, m.format, m.content_type, m.state, m.expires_at
+                   FROM media_objects m
+                   WHERE m.workspace_id = ? AND m.id IN (${placeholders})`,
+                )
+                .bind(ctx.workspaceId, ...ids)
+                .all<ImageAttachmentRow>()
+            ).results ?? [];
+            const rowsById = new Map(viewedRows.map((row) => [row.id, row]));
+            const ordered = ids
+              .map((id) => rowsById.get(id))
+              .filter((row): row is ImageAttachmentRow => row !== undefined);
+            const hydrated = await hydrateImageAttachments({
+              storage: this.options.storage,
+              rows: ordered,
+              nowIso: this.nowIso(),
+              workspaceId: ctx.workspaceId,
+              runId: ctx.runId,
+              cache: imageContentCache,
+            });
+            const imageByMedia = new Map<string, { data: string; mimeType: string }>();
+            ordered.forEach((row, index) => {
+              const image = hydrated.images[index];
+              if (image) imageByMedia.set(row.id, image);
+            });
+            for (const read of fresh) {
+              const image = imageByMedia.get(read.mediaId);
+              if (!image) continue;
+              activeMediaIds.add(read.mediaId);
+              viewedImageCount += 1;
+              viewedImagesByCallId.set(read.callId, { images: [image], excerpt: read.excerpt });
+            }
+          }
+        }
+
+        const pushViewedImages = (callId: string, toolName: string): void => {
+          if (toolName !== 'view_image') return;
+          const viewed = viewedImagesByCallId.get(callId);
+          if (!viewed) return;
+          conversationMessages.push({
+            role: 'user',
+            text: `[Tool-supplied visual context: image viewed with view_image${viewed.excerpt ? ` from "${viewed.excerpt}"` : ''}]`,
+            images: viewed.images,
+          });
+        };
+
         // Add completed historical tool rounds with original names, arguments, and results (F04)
         if (progress.completedRounds && progress.completedRounds.length > 0) {
           const historicalRounds = progress.completedRounds.slice(0, -1);
@@ -875,6 +958,7 @@ export class AgentHandler implements TurnHandler {
                 name: res.name,
                 text: JSON.stringify(res.result),
               });
+              pushViewedImages(res.callId, res.name);
             }
           }
 
@@ -888,6 +972,11 @@ export class AgentHandler implements TurnHandler {
               arguments: typeof c.args === 'string' ? c.args : JSON.stringify(c.args ?? {}),
             })),
           });
+          // The latest round's results travel via pendingToolResults; their
+          // viewed pixels trail the assistant calls here, attributed by read.
+          for (const res of latestRound.toolResults) {
+            pushViewedImages(res.callId, res.name);
+          }
         }
 
         const lastCompletedRound =
@@ -954,6 +1043,11 @@ export class AgentHandler implements TurnHandler {
                 name: r.name,
                 arguments: typeof r.args === 'string' ? r.args : JSON.stringify(r.args ?? {}),
                 resultText: JSON.stringify(r.result),
+                // Ephemeral pixels for linked continuations only; the durable
+                // result carries references, never bytes.
+                ...(viewedImagesByCallId.get(r.callId)
+                  ? { images: viewedImagesByCallId.get(r.callId)!.images }
+                  : {}),
               }))
             : [],
           previousContinuation: lastCompletedRound?.continuation ?? null,
@@ -970,7 +1064,7 @@ export class AgentHandler implements TurnHandler {
         // chat's current model; the pin can change between acceptance and the
         // run, so the pinned entry is rechecked here. Fake-adapter turns
         // carry no pinned entry and skip this (scripts observe raw input).
-        if (userImages.length + historicalImages.length > 0 && effectiveEntry && effectiveEntry.capabilities.vision === 'unsupported') {
+        if (userImages.length + historicalImages.length + viewedImageCount > 0 && effectiveEntry && effectiveEntry.capabilities.vision === 'unsupported') {
           return {
             kind: 'failed',
             errorCode: 'model_unavailable',

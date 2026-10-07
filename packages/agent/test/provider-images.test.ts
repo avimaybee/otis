@@ -47,6 +47,40 @@ describe('provider image ingestion (Slice 2)', () => {
     });
   });
 
+  it('maps viewed pixels to Gemini function_result image blocks', async () => {
+    const fetchFn = mockFetch(() => errorResponse(500, { error: 'synthetic' }));
+    const adapter = new GeminiInteractionsAdapter({ fetchFn, apiKey: 'test-gemini-key' });
+    const input = baseInput(geminiModel(), {
+      messages: [{ role: 'user', text: 'What did the older photo show?' }],
+      pendingToolResults: [
+        {
+          callId: 'c_v1',
+          name: 'view_image',
+          arguments: JSON.stringify({ media_id: 'med_old' }),
+          resultText: JSON.stringify({ status: 'applied', data: { media_id: 'med_old' } }),
+          images: [{ data: 'AAA', mimeType: 'image/png' }],
+        },
+      ],
+    });
+    await drain(adapter.streamTurn(input));
+
+    expect(fetchFn.requests).toHaveLength(1);
+    const body = fetchFn.requests[0]!.body as Record<string, unknown>;
+    const blocks = body['input'] as Array<Record<string, unknown>>;
+    expect(blocks).toEqual([
+      { type: 'user_input', content: [{ type: 'text', text: 'What did the older photo show?' }] },
+      {
+        type: 'function_result',
+        name: 'view_image',
+        call_id: 'c_v1',
+        result: [
+          { type: 'text', text: JSON.stringify({ status: 'applied', data: { media_id: 'med_old' } }) },
+          { type: 'image', mime_type: 'image/png', data: 'AAA' },
+        ],
+      },
+    ]);
+  });
+
   it('maps images to chat image_url parts with data URLs', async () => {
     const fetchFn = mockFetch(() => errorResponse(500, { error: 'synthetic' }));
     const adapter = new OpenCodeGoAdapter({

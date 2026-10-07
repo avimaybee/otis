@@ -16,6 +16,7 @@ import {
   type ModelEntry,
 } from '@otis/agent';
 import { AgentHandler } from '../src/agent/handler.js';
+import { executeAgentTool } from '../src/agent/repository.js';
 import { sha256 } from '@otis/identity';
 import type { Env } from '../src/index.js';
 import { inspectImageBytes } from '../src/media/container.js';
@@ -543,6 +544,139 @@ describe('image attachments in the agent turn (workerd, Slice 3)', () => {
       .first<{ status: string; error_code: string | null }>();
     expect(run?.status).toBe('failed');
     expect(run?.error_code).toBe('image_unavailable');
+  });
+  it('discovers an older image through query and delivers its pixels after the read', async () => {
+    const png = pngBytes();
+    const olderMedia = await uploadImage('cm_s3_view_old', png, 'image/png');
+    await acceptWebMessage(E.DB, {
+      workspaceId: WS,
+      chatId: CHAT,
+      userId: AVI,
+      clientMessageId: 'cm_s3_view_msg_old',
+      text: 'File this older photo.',
+      imageMediaIds: [olderMedia],
+    });
+    const newerMedia = await uploadImage('cm_s3_view_new', jpegBytes(), 'image/jpeg');
+    await acceptWebMessage(E.DB, {
+      workspaceId: WS,
+      chatId: CHAT,
+      userId: AVI,
+      clientMessageId: 'cm_s3_view_msg_new',
+      text: 'And this newer photo.',
+      imageMediaIds: [newerMedia],
+    });
+    const followup = await acceptWebMessage(E.DB, {
+      workspaceId: WS,
+      chatId: CHAT,
+      userId: AVI,
+      clientMessageId: 'cm_s3_view_msg_q',
+      text: 'What did that older photo show?',
+    });
+    const viewAdapter = new FakeProviderAdapter({
+      provider: 'gemini',
+      scripts: [
+        { kind: 'tool_calls', calls: [{ callId: 'c_q1', name: 'query', args: { resource: 'attachments', limit: 10 } }] },
+        { kind: 'tool_calls', calls: [{ callId: 'c_v1', name: 'view_image', args: { media_id: olderMedia } }] },
+        { kind: 'text', text: 'The older photo shows harbor crates.' },
+      ],
+    });
+    const handler = new AgentHandler({
+      providerAdapter: viewAdapter,
+      storage: E.STORAGE,
+      limits: { maxDailyActions: 50, maxRoundsPerRun: 10 },
+    });
+    // Three provider rounds exceed one bounded slice: the second dispatch
+    // resumes from the checkpoint, which also proves restart reconstruction
+    // from durable read IDs rather than in-memory bytes.
+    await dispatchOutboxItem(E.DB, await outboxIdForRun(followup.run_id), WS, { handler });
+    const result = await dispatchOutboxItem(E.DB, await outboxIdForRun(followup.run_id), WS, { handler });
+    expect(result.status).toBe('completed');
+
+    const finalInput = viewAdapter.inputs[viewAdapter.inputs.length - 1]!;
+    const messages = finalInput.messages;
+    // The query result carries metadata with excerpts, never bytes or keys.
+    const queryIdx = messages.findIndex((m) => m.role === 'tool' && m.toolCallId === 'c_q1');
+    expect(queryIdx).toBeGreaterThan(-1);
+    const queryText = messages[queryIdx]!.text ?? '';
+    expect(queryText).toContain(olderMedia);
+    expect(queryText).toContain('File this older photo.');
+    expect(queryText).not.toContain('object_key');
+    // The older image rides right after its read with its original bytes,
+    // while the latest group stays on its own original entry. (The latest
+    // round's tool result travels via pendingToolResults; its pixels trail
+    // the assistant calls here and ride the pending result for linked runs.)
+    const visual = messages
+      .filter((m) => m.role === 'user' && m.images && m.images.length > 0)
+      .find((m) => (m.text ?? '').includes('Tool-supplied visual context'));
+    expect(visual).toBeTruthy();
+    expect(visual!.images).toHaveLength(1);
+    expect(visual!.images![0]).toEqual({ data: toBase64(png), mimeType: 'image/png' });
+    const pendingView = finalInput.pendingToolResults.find((r) => r.callId === 'c_v1');
+    expect(pendingView?.images).toHaveLength(1);
+    expect(pendingView!.images![0]).toEqual({ data: toBase64(png), mimeType: 'image/png' });
+    const latestEntry = messages.find((m) => m.role === 'user' && (m.text ?? '').includes('And this newer photo.'));
+    expect(latestEntry?.images).toHaveLength(1);
+
+    // Durable records keep references; pixels never reach them. Read-path
+    // results persist through the run checkpoint, not ledger receipts.
+    const progressRow = await E.DB.prepare(`SELECT agent_progress_json FROM agent_runs WHERE id = ?`)
+      .bind(followup.run_id)
+      .first<{ agent_progress_json: string | null }>();
+    expect(progressRow?.agent_progress_json).toBeTruthy();
+    expect(progressRow!.agent_progress_json!).toContain(olderMedia);
+    expect(progressRow!.agent_progress_json!).not.toContain(toBase64(png).slice(0, 64));
+  });
+
+  it('refuses cross-chat and unknown image reads at the tool boundary', async () => {
+    const png = pngBytes();
+    const mediaId = await uploadImage('cm_s3_scope_img', png, 'image/png');
+    await acceptWebMessage(E.DB, {
+      workspaceId: WS,
+      chatId: CHAT,
+      userId: AVI,
+      clientMessageId: 'cm_s3_scope_msg',
+      text: 'Scoped photo.',
+      imageMediaIds: [mediaId],
+    });
+    const now = new Date().toISOString();
+    await E.DB.prepare(
+      `INSERT OR IGNORE INTO chats (id, workspace_id, author_user_id, title, model_override, is_archived, activity_cursor, created_at, updated_at, last_activity_at)
+       VALUES (?, ?, ?, 'Image scope probe', NULL, 0, 0, ?, ?, ?)`,
+    )
+      .bind('chat_img_scope', WS, AVI, now, now, now)
+      .run();
+
+    const cross = await executeAgentTool({
+      db: E.DB,
+      workspaceId: WS,
+      actorUserId: AVI,
+      actionId: 'act_scope_cross',
+      chatId: 'chat_img_scope',
+      toolName: 'view_image',
+      toolArgs: { media_id: mediaId },
+    });
+    expect(cross.status).toBe('rejected');
+
+    const unknown = await executeAgentTool({
+      db: E.DB,
+      workspaceId: WS,
+      actorUserId: AVI,
+      actionId: 'act_scope_unknown',
+      chatId: CHAT,
+      toolName: 'view_image',
+      toolArgs: { media_id: 'med_no_such_image' },
+    });
+    expect(unknown.status).toBe('rejected');
+
+    const noChat = await executeAgentTool({
+      db: E.DB,
+      workspaceId: WS,
+      actorUserId: AVI,
+      actionId: 'act_scope_nochat',
+      toolName: 'query',
+      toolArgs: { resource: 'attachments', limit: 10 },
+    });
+    expect(noChat.status).toBe('rejected');
   });
   it('fails before spend when the pinned model cannot take images', async () => {
     // Acceptance resolves the production registry, where every entry is
