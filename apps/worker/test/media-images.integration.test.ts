@@ -399,7 +399,7 @@ describe('image attachments in the agent turn (workerd, Slice 3)', () => {
     ).rejects.toThrow(/running turn/);
   });
 
-  it('carries text plus images through a multi-round turn, once', async () => {
+  it('replays text plus images on every stateless round', async () => {
     const png = pngBytes();
     const jpeg = jpegBytes();
     const first = await uploadImage('cm_s3_turn1', png, 'image/png');
@@ -436,9 +436,15 @@ describe('image attachments in the agent turn (workerd, Slice 3)', () => {
     expect(opening.images![0]).toEqual({ data: toBase64(png), mimeType: 'image/png' });
     expect(opening.images![1]).toEqual({ data: toBase64(jpeg), mimeType: 'image/jpeg' });
 
-    // Later rounds never re-attach: the opening turn owns the bytes.
+    // Stateless replay re-attaches the opening bytes on every round: the
+    // opening turn owns the bytes and each replay carries them again.
     for (const later of fakeAdapter.inputs.slice(1)) {
-      expect(later.messages.some((m) => m.images && m.images.length > 0)).toBe(false);
+      const users = later.messages.filter((m) => m.role === 'user');
+      const current = users[users.length - 1]!;
+      expect(current.text).toContain('What do these show?');
+      expect(current.images).toHaveLength(2);
+      expect(current.images![0]).toEqual({ data: toBase64(png), mimeType: 'image/png' });
+      expect(current.images![1]).toEqual({ data: toBase64(jpeg), mimeType: 'image/jpeg' });
     }
 
     const reply = await E.DB.prepare(
@@ -449,6 +455,95 @@ describe('image attachments in the agent turn (workerd, Slice 3)', () => {
     expect(reply?.content_text).toContain('inventory labels');
   });
 
+  it('carries the original image on a separate same-chat follow-up, once in D1', async () => {
+    const png = pngBytes();
+    const mediaId = await uploadImage('cm_s3_follow_img', png, 'image/png');
+    const first = await acceptWebMessage(E.DB, {
+      workspaceId: WS,
+      chatId: CHAT,
+      userId: AVI,
+      clientMessageId: 'cm_s3_follow_msg1',
+      text: 'Describe this photo.',
+      imageMediaIds: [mediaId],
+    });
+    const firstAdapter = new FakeProviderAdapter({
+      provider: 'gemini',
+      scripts: [{ kind: 'text', text: 'A harbor at dusk.' }],
+    });
+    const firstHandler = new AgentHandler({
+      providerAdapter: firstAdapter,
+      storage: E.STORAGE,
+      limits: { maxDailyActions: 50, maxRoundsPerRun: 10 },
+    });
+    expect(await dispatchOutboxItem(E.DB, await outboxIdForRun(first.run_id), WS, { handler: firstHandler })).toMatchObject({ status: 'completed' });
+
+    const second = await acceptWebMessage(E.DB, {
+      workspaceId: WS,
+      chatId: CHAT,
+      userId: AVI,
+      clientMessageId: 'cm_s3_follow_msg2',
+      text: 'What color is the water?',
+    });
+    const followAdapter = new FakeProviderAdapter({
+      provider: 'gemini',
+      scripts: [{ kind: 'text', text: 'Deep blue.' }],
+    });
+    const followHandler = new AgentHandler({
+      providerAdapter: followAdapter,
+      storage: E.STORAGE,
+      limits: { maxDailyActions: 50, maxRoundsPerRun: 10 },
+    });
+    expect(await dispatchOutboxItem(E.DB, await outboxIdForRun(second.run_id), WS, { handler: followHandler })).toMatchObject({ status: 'completed' });
+
+    // The original member message replays with its pixels on the follow-up's
+    // first request; original text is preserved alongside.
+    const opening = followAdapter.inputs[0]!;
+    const original = opening.messages.find((m) => m.role === 'user' && (m.text ?? '').includes('Describe this photo.'));
+    expect(original).toBeTruthy();
+    expect(original!.images).toHaveLength(1);
+    expect(original!.images![0]).toEqual({ data: toBase64(png), mimeType: 'image/png' });
+
+    // The follow-up created no duplicate receipt: one link row per media.
+    const receiptCount = await E.DB.prepare(
+      `SELECT COUNT(*) AS n FROM message_image_attachments WHERE media_id = ?`,
+    )
+      .bind(mediaId)
+      .first<{ n: number }>();
+    expect(receiptCount?.n).toBe(1);
+  });
+
+  it('refuses before spend when a newly submitted image cannot be loaded', async () => {
+    const mediaId = await uploadImage('cm_s3_missing_img', pngBytes(), 'image/png');
+    const accepted = await acceptWebMessage(E.DB, {
+      workspaceId: WS,
+      chatId: CHAT,
+      userId: AVI,
+      clientMessageId: 'cm_s3_missing_msg',
+      text: 'Look at this.',
+      imageMediaIds: [mediaId],
+    });
+    const row = await E.DB.prepare(`SELECT object_key FROM media_objects WHERE id = ?`)
+      .bind(mediaId)
+      .first<{ object_key: string }>();
+    await E.STORAGE.delete(row!.object_key);
+    const fakeAdapter = new FakeProviderAdapter({
+      provider: 'gemini',
+      scripts: [{ kind: 'text', text: 'unreached' }],
+    });
+    const handler = new AgentHandler({
+      providerAdapter: fakeAdapter,
+      storage: E.STORAGE,
+      limits: { maxDailyActions: 50, maxRoundsPerRun: 10 },
+    });
+    const result = await dispatchOutboxItem(E.DB, await outboxIdForRun(accepted.run_id), WS, { handler });
+    expect(result.status).toBe('failed');
+    expect(fakeAdapter.inputs.length).toBe(0);
+    const run = await E.DB.prepare(`SELECT status, error_code FROM agent_runs WHERE id = ?`)
+      .bind(accepted.run_id)
+      .first<{ status: string; error_code: string | null }>();
+    expect(run?.status).toBe('failed');
+    expect(run?.error_code).toBe('image_unavailable');
+  });
   it('fails before spend when the pinned model cannot take images', async () => {
     // Acceptance resolves the production registry, where every entry is
     // vision-unverified, so this send queues normally; the run pins the

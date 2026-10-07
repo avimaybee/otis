@@ -57,6 +57,12 @@ export interface AssembledTurnContext {
     text: string;
     sequence: number;
     createdAt: string;
+    /**
+     * Durable image references for this message, in upload order. Metadata
+     * only — no bytes or object keys. Older material beyond this window
+     * stays discoverable through the attachment query/read tools.
+     */
+    attachments: Array<{ mediaId: string; position: number }>;
   }>;
   activeNotes: ActiveNoteExcerpt[];
   currentSummary: {
@@ -196,8 +202,39 @@ export async function getTurnContext(
       text: String(r['content_text']),
       sequence: Number(r['sequence']),
       createdAt: String(r['created_at']),
+      attachments: [] as Array<{ mediaId: string; position: number }>,
     }))
     .reverse();
+
+  // 3b. Attachment manifest for the included messages: one bounded query
+  // over the same window (≤50 ids, far under the 100-parameter D1 limit).
+  // Availability is rechecked at hydration time; this never gates text.
+  {
+    const messageIds = recentMessages.map((m) => m.id).slice(0, 50);
+    if (chatId && messageIds.length > 0) {
+      const placeholders = messageIds.map(() => '?').join(', ');
+      const attachmentRows = (
+        await db
+          .prepare(
+            `SELECT a.chat_message_id AS message_id, a.media_id AS media_id, a.position AS position
+             FROM message_image_attachments a
+             WHERE a.workspace_id = ? AND a.chat_message_id IN (${placeholders})
+             ORDER BY a.position ASC`,
+          )
+          .bind(workspaceId, ...messageIds)
+          .all<{ message_id: string; media_id: string; position: number }>()
+      ).results ?? [];
+      const byMessage = new Map<string, Array<{ mediaId: string; position: number }>>();
+      for (const row of attachmentRows) {
+        const list = byMessage.get(row.message_id) ?? [];
+        list.push({ mediaId: row.media_id, position: Number(row.position) });
+        byMessage.set(row.message_id, list);
+      }
+      for (const m of recentMessages) {
+        m.attachments = byMessage.get(m.id) ?? [];
+      }
+    }
+  }
 
   // 4. Active Memory Notes. Suppression tombstones already filter inside
   // each note query, so no standalone suppression-ID pull is needed.

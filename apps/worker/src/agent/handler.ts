@@ -72,6 +72,72 @@ async function r2ObjectToBase64(obj: R2ObjectBody): Promise<string> {
   return btoa(binary);
 }
 
+interface ImageAttachmentRow {
+  id: string;
+  object_key: string;
+  format: string | null;
+  content_type: string | null;
+  state: string;
+  expires_at: string;
+}
+
+/**
+ * Hydrates selected image attachments to provider-ready bytes. Reads are
+ * concurrent over the already-bounded selection and reused through the
+ * per-slice cache; nothing here persists base64 or survives a restart.
+ * Unloadable references are logged and skipped by the caller, which decides
+ * between honest omission (history) and refusal (newly submitted input).
+ */
+async function hydrateImageAttachments(args: {
+  storage: R2Bucket;
+  rows: ImageAttachmentRow[];
+  nowIso: string;
+  workspaceId: string;
+  runId: string;
+  cache: Map<string, { data: string; mimeType: string }>;
+}): Promise<{ images: Array<{ data: string; mimeType: string }>; referenced: number }> {
+  const slots: Array<{ data: string; mimeType: string } | null> = args.rows.map(() => null);
+  await Promise.all(
+    args.rows.map(async (row, index) => {
+      const consumable =
+        (row.format === 'image/jpeg' || row.format === 'image/png' || row.format === 'image/webp') &&
+        row.state === 'validated' &&
+        row.expires_at > args.nowIso;
+      if (!consumable) {
+        workerFailure('agent', 'skipping unconsumable image attachment', {
+          workspaceId: args.workspaceId,
+          runId: args.runId,
+          mediaId: row.id,
+          state: row.state,
+        });
+        return;
+      }
+      const cached = args.cache.get(row.id);
+      if (cached) {
+        slots[index] = cached;
+        return;
+      }
+      const obj = await args.storage.get(row.object_key);
+      if (!obj) {
+        workerFailure('agent', 'image bytes missing from storage', {
+          workspaceId: args.workspaceId,
+          runId: args.runId,
+          mediaId: row.id,
+        });
+        return;
+      }
+      const loaded = {
+        data: await r2ObjectToBase64(obj),
+        mimeType: row.content_type || row.format || 'image/png',
+      };
+      args.cache.set(row.id, loaded);
+      slots[index] = loaded;
+    }),
+  );
+  const images = slots.filter((slot): slot is { data: string; mimeType: string } => slot !== null);
+  return { images, referenced: args.rows.length };
+}
+
 /**
  * F22 checkpoint compaction: replay always continues from the latest
  * completed round's provider continuation (or the current round's own), so
@@ -500,6 +566,11 @@ export class AgentHandler implements TurnHandler {
     // change memory, so either invalidates the cache. The embedded clock
     // string freezes on reuse, keeping one turn on one timestamp.
     let cachedContext: { sourceText: string; toolResults: number; value: AssembledTurnContext } | null = null;
+    // Per-slice image content reuse: R2 bytes are read and encoded once per
+    // execution slice, then replayed from memory on later rounds. Never
+    // checkpointed, never shared across restarts; a resumed slice rebuilds
+    // it from scoped D1/R2 reads below.
+    const imageContentCache = new Map<string, { data: string; mimeType: string }>();
     // Server-derived catalog inputs, fixed for the turn: platform key
     // presence (never values) plus the pinned model/effort markers.
     const platformKeyPresent = {
@@ -572,8 +643,10 @@ export class AgentHandler implements TurnHandler {
         });
 
         // Add historical chat messages from transcript (F05)
+        const historicalProviderIndexByMessageId = new Map<string, number>();
         if (assembledContext.recentMessages && assembledContext.recentMessages.length > 0) {
           for (const msg of assembledContext.recentMessages) {
+            historicalProviderIndexByMessageId.set(msg.id, conversationMessages.length);
             if (msg.authorKind === 'system') {
               conversationMessages.push({
                 role: 'assistant',
@@ -584,6 +657,59 @@ export class AgentHandler implements TurnHandler {
                 role: 'user',
                 text: msg.text,
               });
+            }
+          }
+        }
+
+        // Active visual set: the latest image-bearing historical message
+        // rides its original entry on every stateless replay, so immediate
+        // follow-ups ("rate it") and later tool rounds keep pixels without
+        // re-upload. Only the latest group hydrates here; older material is
+        // discovered through the attachment query/read tools. Selection is
+        // inherently bounded (one message, upload-capped count), never the
+        // whole history.
+        let historicalImages: NonNullable<ProviderMessage['images']> = [];
+        if (this.options?.storage) {
+          const latestImageMessage = [...assembledContext.recentMessages]
+            .reverse()
+            .find((msg) => msg.authorKind === 'member' && msg.attachments.length > 0);
+          if (latestImageMessage) {
+            const mediaIds = latestImageMessage.attachments.map((a) => a.mediaId).slice(0, IMAGE_BOUNDS.MAX_PER_MESSAGE);
+            if (mediaIds.length > 0) {
+              const placeholders = mediaIds.map(() => '?').join(', ');
+              const historicalRows = (
+                await ctx.db
+                  .prepare(
+                    `SELECT m.id, m.object_key, m.format, m.content_type, m.state, m.expires_at
+                     FROM media_objects m
+                     WHERE m.workspace_id = ? AND m.id IN (${placeholders})`,
+                  )
+                  .bind(ctx.workspaceId, ...mediaIds)
+                  .all<ImageAttachmentRow>()
+              ).results ?? [];
+              const byId = new Map(historicalRows.map((row) => [row.id, row]));
+              // Preserve manifest (upload) order, not storage return order.
+              const ordered = mediaIds
+                .map((id) => byId.get(id))
+                .filter((row): row is ImageAttachmentRow => row !== undefined);
+              const hydrated = await hydrateImageAttachments({
+                storage: this.options.storage,
+                rows: ordered,
+                nowIso: this.nowIso(),
+                workspaceId: ctx.workspaceId,
+                runId: ctx.runId,
+                cache: imageContentCache,
+              });
+              if (hydrated.images.length > 0) {
+                historicalImages = hydrated.images;
+                const target = conversationMessages[historicalProviderIndexByMessageId.get(latestImageMessage.id) ?? -1];
+                if (target && target.role === 'user') target.images = historicalImages;
+              } else if (hydrated.referenced > 0) {
+                // Honest omission: text stays, the model is told the pixels
+                // did not survive instead of reasoning from text alone.
+                const target = conversationMessages[historicalProviderIndexByMessageId.get(latestImageMessage.id) ?? -1];
+                if (target && target.role === 'user') target.text = `${target.text} [Attached image unavailable]`;
+              }
             }
           }
         }
@@ -648,13 +774,17 @@ export class AgentHandler implements TurnHandler {
         });
 
         // Attached still images ride the opening user turn alongside text,
-        // mirroring the native-audio flow above. One row per upload keeps
-        // bytes bounded; the adapter still enforces the per-message count,
-        // so a LIMIT tripwire here fails closed instead of trimming silently.
-        // No transcription side effects: images are prompt input, and an
-        // unreadable object degrades to text-only with a logged failure.
+        // mirroring the native-audio flow above — on every stateless replay,
+        // not just round zero, since each provider request carries full input
+        // (linked Gemini continuations exclude replay by lineage instead).
+        // One row per upload keeps bytes bounded; the adapter still enforces
+        // the per-message count, so a LIMIT tripwire here fails closed
+        // instead of trimming silently. No transcription side effects: images
+        // are prompt input, and a newly submitted required image that cannot
+        // be loaded fails recoverably before spend instead of running blind.
         let userImages: NonNullable<ProviderMessage['images']> = [];
-        if (progress.roundIndex === 0 && this.options?.storage) {
+        let currentImageRefs = 0;
+        if (this.options?.storage) {
           try {
             const attached = await ctx.db
               .prepare(
@@ -667,36 +797,18 @@ export class AgentHandler implements TurnHandler {
                  LIMIT ?`,
               )
               .bind(ctx.runId, ctx.sourceMessageId ?? '', ctx.workspaceId, ctx.workspaceId, IMAGE_BOUNDS.MAX_PER_MESSAGE + 1)
-              .all<{ id: string; object_key: string; format: string | null; content_type: string | null; state: string; expires_at: string }>();
-            const nowIso = this.nowIso();
-            for (const row of attached.results ?? []) {
-              const consumable =
-                (row.format === 'image/jpeg' || row.format === 'image/png' || row.format === 'image/webp') &&
-                row.state === 'validated' &&
-                row.expires_at > nowIso;
-              if (!consumable) {
-                workerFailure('agent', 'skipping unconsumable image attachment', {
-                  workspaceId: ctx.workspaceId,
-                  runId: ctx.runId,
-                  mediaId: row.id,
-                  state: row.state,
-                });
-                continue;
-              }
-              const obj = await this.options.storage.get(row.object_key);
-              if (!obj) {
-                workerFailure('agent', 'image bytes missing from storage', {
-                  workspaceId: ctx.workspaceId,
-                  runId: ctx.runId,
-                  mediaId: row.id,
-                });
-                continue;
-              }
-              userImages.push({
-                data: await r2ObjectToBase64(obj),
-                mimeType: row.content_type || row.format || 'image/png',
-              });
-            }
+              .all<ImageAttachmentRow>();
+            const rows = attached.results ?? [];
+            currentImageRefs = rows.length;
+            const hydrated = await hydrateImageAttachments({
+              storage: this.options.storage,
+              rows,
+              nowIso: this.nowIso(),
+              workspaceId: ctx.workspaceId,
+              runId: ctx.runId,
+              cache: imageContentCache,
+            });
+            userImages = hydrated.images;
           } catch (err) {
             workerFailure('agent', 'failed to load image attachments for native processing', {
               workspaceId: ctx.workspaceId,
@@ -705,6 +817,14 @@ export class AgentHandler implements TurnHandler {
             });
             userImages = [];
           }
+        }
+
+        if (currentImageRefs > 0 && userImages.length === 0) {
+          return {
+            kind: 'failed',
+            errorCode: 'image_unavailable',
+            errorMessage: 'The attached image could not be loaded. It is retained; try again.',
+          };
         }
 
         if (userImages.length > 0) {
@@ -850,7 +970,7 @@ export class AgentHandler implements TurnHandler {
         // chat's current model; the pin can change between acceptance and the
         // run, so the pinned entry is rechecked here. Fake-adapter turns
         // carry no pinned entry and skip this (scripts observe raw input).
-        if (userImages.length > 0 && effectiveEntry && effectiveEntry.capabilities.vision === 'unsupported') {
+        if (userImages.length + historicalImages.length > 0 && effectiveEntry && effectiveEntry.capabilities.vision === 'unsupported') {
           return {
             kind: 'failed',
             errorCode: 'model_unavailable',
