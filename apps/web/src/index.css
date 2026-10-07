@@ -35,19 +35,19 @@
 .otis-main { position: relative; display: flex; flex: 1; min-width: 0; min-height: 0; flex-direction: column; }
 .otis-chat { display: flex; flex: 1; min-height: 0; flex-direction: column; }
 
-/* Top bar: recipe flex h-[52px] items-center gap-2 border-b border-border px-4. */
-.otis-topbar { position: relative; z-index: 5; display: flex; flex: none; height: 52px; align-items: center; gap: 8px; padding: 0 16px; border-bottom: 1px solid var(--border); }
+/* Top bar: recipe flex h-12 items-center gap-2 border-b border-border px-4. */
+.otis-topbar { position: relative; z-index: 5; display: flex; flex: none; height: 48px; align-items: center; gap: 8px; padding: 0 16px; border-bottom: 1px solid var(--border); }
 .otis-topbar__identity { flex: 1; min-width: 0; }
 .otis-topbar__title { margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .otis-topbar__subtitle { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--subtle); }
 .otis-topbar__actions { display: flex; flex: none; align-items: center; gap: 4px; }
 
-/* 44px touch hit area around the 36px desktop visual. */
-.otis-iconbutton { position: relative; display: inline-flex; flex: none; width: 44px; height: 44px; align-items: center; justify-content: center; padding: 0; border: 0; border-radius: 8px; background: transparent; color: var(--muted-foreground); transition: background-color 150ms ease-out, color 150ms ease-out; }
+/* 32px desktop visual with extended reach; 36px elsewhere for coarse pointers. */
+.otis-iconbutton { position: relative; display: inline-flex; flex: none; width: 36px; height: 36px; align-items: center; justify-content: center; padding: 0; border: 0; border-radius: 8px; background: transparent; color: var(--muted-foreground); transition: background-color 150ms ease-out, color 150ms ease-out; }
 .otis-iconbutton:hover { background: var(--accent); color: var(--foreground); }
 .otis-stop-square { display: block; width: 12px; height: 12px; background: currentColor; }
 @media (min-width: 56.25rem) and (pointer: fine) {
-  .otis-iconbutton { width: 36px; height: 36px; }
+  .otis-iconbutton { width: 32px; height: 32px; }
   .otis-iconbutton::after { content: ''; position: absolute; inset: -4px; }
 }
 
@@ -148,16 +148,13 @@
 .otis-readonly { flex: none; padding: 16px 16px calc(16px + env(safe-area-inset-bottom)); text-align: center; color: var(--muted-foreground); }
 
 /* Sidebar: full-bleed rows, no radius; selected row has the 2px highlight bar. */
-.otis-sidebar { display: none; width: 280px; flex: none; flex-direction: column; min-height: 0; padding: 8px 0; background: var(--sidebar); border-right: 1px solid var(--sidebar-border); }
+.otis-sidebar { display: none; width: 248px; flex: none; flex-direction: column; min-height: 0; padding: 8px 0; background: var(--sidebar); border-right: 1px solid var(--sidebar-border); }
 .otis-nav__brand { display: flex; height: 44px; align-items: center; justify-content: space-between; padding: 0 16px; }
 .otis-nav__brand span, .otis-wordmark { font-family: var(--font-wordmark); font-weight: 600; }
 .otis-nav__workspace-label { padding: 8px 16px; margin: 0 0 8px; }
 .otis-nav__action, .otis-nav__row { display: flex; flex: none; width: 100%; align-items: center; gap: 8px; padding: 8px 16px; border: 0; border-left: 2px solid transparent; background: transparent; text-align: left; color: var(--muted-foreground); transition: background-color 150ms ease-out, color 150ms ease-out; }
-.otis-nav__action { min-height: 44px; }
-.otis-nav__row { min-height: 40px; }
-@media (max-width: 600px), (pointer: coarse) {
-  .otis-nav__row { min-height: 44px; }
-}
+.otis-nav__action { min-height: 32px; }
+.otis-nav__row { min-height: 32px; }
 .otis-nav__action:hover, .otis-nav__row:hover { background: var(--sidebar-hover); color: var(--foreground); }
 .otis-nav__options-btn { display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; padding: 0; border: 0; border-radius: 8px; background: transparent; color: var(--muted-foreground); transition: background-color 150ms ease-out, color 150ms ease-out; }
 .otis-nav__options-btn:hover { background: var(--accent); color: var(--foreground); }
