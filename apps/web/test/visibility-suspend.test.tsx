@@ -163,4 +163,55 @@ describe('F12-SSE hidden-tab suspend', () => {
 
     await view.unmount();
   });
+
+  it('skips the transcript reload for already-filed acceptances', async () => {
+    mockChatApis();
+    vi.spyOn(api, 'listMessages').mockResolvedValue({
+      chat_id: 'chat_vis',
+      messages: [{
+        id: 'msg_own', workspace_id: WS, chat_id: 'chat_vis', author_user_id: USER,
+        author_display_name: 'Avi', author_kind: 'member', channel: 'web',
+        inbound_message_id: 'in_own', client_message_id: 'uuid-own', content_text: 'Filed already',
+        media_id: null, run_id: 'run_own', sequence: 1,
+        created_at: TIMESTAMP, updated_at: TIMESTAMP,
+      }],
+      next_before_sequence: null,
+    } as never);
+    vi.spyOn(api, 'runs').mockResolvedValue({ runs: [] });
+    const subscribe = vi.spyOn(stream, 'subscribeToActivity').mockReturnValue({ close: vi.fn() });
+
+    const view = await mount(<RouteShell />);
+    const listMessages = vi.mocked(api.listMessages);
+    expect(listMessages).toHaveBeenCalledTimes(1);
+    const onActivity = vi.mocked(subscribe).mock.calls[0]![1].onActivity;
+    const accepted = (clientMessageId: unknown, id: string) => ({
+      id, workspace_id: WS, chat_id: 'chat_vis', run_id: 'run_own', cursor: 100 + id.length,
+      type: 'message_accepted', payload: { client_message_id: clientMessageId },
+      created_at: TIMESTAMP,
+    } as never);
+
+    // Own send, already filed from the acceptance receipt: a resubscribe
+    // replaying the row must not re-download the transcript.
+    await React.act(async () => {
+      onActivity(accepted('uuid-own', 'act_own'));
+      await new Promise(resolve => setTimeout(resolve, 300));
+    });
+    expect(listMessages).toHaveBeenCalledTimes(1);
+
+    // Teammate/other-tab acceptance: not filed locally, still refreshes.
+    await React.act(async () => {
+      onActivity(accepted('uuid-other', 'act_other'));
+      await new Promise(resolve => setTimeout(resolve, 300));
+    });
+    expect(listMessages).toHaveBeenCalledTimes(2);
+
+    // Fail open: an acceptance without an identity always refreshes.
+    await React.act(async () => {
+      onActivity(accepted(undefined, 'act_noid'));
+      await new Promise(resolve => setTimeout(resolve, 300));
+    });
+    expect(listMessages).toHaveBeenCalledTimes(3);
+
+    await view.unmount();
+  });
 });

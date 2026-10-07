@@ -357,9 +357,20 @@ export function ConversationScreen({ workspaceId, chat: routeChat, chatParamPres
           case 'run_started':
             refreshRun(workspaceId, readyChatId, activity.run_id);
             break;
-          case 'message_accepted':
-            refreshMessages(workspaceId, readyChatId);
+          case 'message_accepted': {
+            // Own sends already filed locally from the acceptance receipt, so
+            // a resubscribe replaying the acceptance row must not re-download
+            // the transcript. Anything not yet filed (teammate, Telegram, or
+            // other-tab messages) still refreshes; an event racing the local
+            // patch also refreshes, and the patch merges by id afterwards.
+            const acceptedClientId = (activity.payload as { client_message_id?: unknown } | null)?.client_message_id;
+            const filed = typeof acceptedClientId === 'string' && acceptedClientId !== ''
+              && (queryClient.getQueryData<ChatSnapshot>(key)?.messages.some(
+                message => message.client_message_id === acceptedClientId,
+              ) ?? false);
+            if (!filed) refreshMessages(workspaceId, readyChatId);
             break;
+          }
           case 'answer_saved': {
             // The committed reply files locally from the event: no transcript
             // refetch. Older shapes or truncated text fall back to refetch.
