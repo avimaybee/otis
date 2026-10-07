@@ -233,11 +233,11 @@ export function App() {
 
   if (state.status === 'loading') {
     return (
-      <div className="otis-entry">
+      <main className="otis-entry">
         <div className="otis-entry__inner">
           <p className="text-sm text-muted-foreground">Loading…</p>
         </div>
-      </div>
+      </main>
     );
   }
 

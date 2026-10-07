@@ -81,6 +81,25 @@ describe('Signed-out entry', () => {
   });
 });
 
+describe('Loading entry', () => {
+  beforeEach(() => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation((() => new Promise(() => {})) as typeof fetch);
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('keeps the loading threshold inside the landmark', async () => {
+    const container = viewport(360);
+    const app = await render(container);
+
+    expect(container.querySelector('main.otis-entry')?.textContent).toContain('Loading');
+
+    await app.unmount();
+    document.body.removeChild(container);
+  });
+});
+
 describe('Conversation shell', () => {
   beforeEach(() => {
     mockApi({
