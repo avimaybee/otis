@@ -931,6 +931,65 @@ describe('End-to-End UI to Backend Flow Verification', () => {
 
     await view.unmount();
   });
+
+  // FLOW 11: Failed-run retry through the server owner
+  it('Flow 11: offers Retry run on failed runs and requeues through the server owner', async () => {
+    const myChat = makeChat('chat_retry_1', 'Retry Chat');
+    history.replaceState({}, '', `/?workspace=${WS}&chat=chat_retry_1`);
+
+    const failedRun: RunDetailResponse = {
+      run: { id: 'run_fail_1', status: 'failed', error_code: 'provider_stream_error' } as never,
+      status: 'failed',
+      steps: [],
+      actions: [],
+      activities: [
+        {
+          schema_version: 1,
+          id: 'act_fail_1',
+          cursor: 2,
+          workspace_id: WS,
+          chat_id: 'chat_retry_1',
+          run_id: 'run_fail_1',
+          created_at: TIMESTAMP,
+          type: 'partial_failure',
+          payload: { error_code: 'provider_stream_error', committed_actions: 1, unfinished_steps: ['draft_message'] },
+        } as never,
+      ],
+      pending_clarification: null,
+    };
+
+    vi.spyOn(api, 'listChats').mockResolvedValue({ chats: [myChat] });
+    vi.spyOn(api, 'commands').mockResolvedValue({ surface: 'web', commands: [] });
+    vi.spyOn(api, 'getChat').mockResolvedValue({ chat: myChat, is_author: true });
+    vi.spyOn(api, 'listMessages').mockResolvedValue({
+      chat_id: 'chat_retry_1',
+      messages: [{ ...makeMessage('m1', 'Do the thing', 'member', USER, 'run_fail_1'), chat_id: 'chat_retry_1' }],
+      next_before_sequence: null,
+    });
+    vi.spyOn(api, 'activity').mockResolvedValue({ activities: [], latest_cursor: 0 } as never);
+    vi.spyOn(api, 'clarifications').mockResolvedValue({ clarifications: [] });
+    vi.spyOn(api, 'models').mockResolvedValue({ models: DEFAULT_MODELS, current_command_key: 'mimo-25', default_command_key: 'mimo-25' });
+    vi.spyOn(api, 'runs').mockResolvedValue({ runs: [failedRun] });
+
+    const retrySpy = vi.spyOn(api, 'retryRun').mockResolvedValue({ retried: true, run_status: 'queued' });
+
+    const view = await mount(
+      <RouteShell />
+    );
+
+    expect(view.host.textContent).toContain('Saved 1 change');
+    const retryButton = Array.from(view.host.querySelectorAll('button')).find(b => b.textContent === 'Retry run') as HTMLButtonElement;
+    expect(retryButton).toBeTruthy();
+
+    await React.act(async () => retryButton.click());
+    expect(retrySpy).toHaveBeenCalledWith(WS, 'run_fail_1');
+    await React.act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 0));
+    });
+    expect(view.host.textContent).toContain('Run queued again');
+
+    await view.unmount();
+  });
 });
 
 describe('008B new-chat ordering and recovery (R8)', () => {

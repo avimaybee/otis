@@ -209,6 +209,12 @@ export const api = {
       { method: 'POST', body: JSON.stringify({}) },
     ),
 
+  retryRun: (workspaceId: string, runId: string) =>
+    request<{ retried: boolean; run_status: string }>(
+      `/api/workspaces/${workspaceId}/runs/${runId}/retry`,
+      { method: 'POST', body: JSON.stringify({}) },
+    ),
+
   action: (workspaceId: string, actionId: string) =>
     request<ActionDetailResponse>(`/api/workspaces/${workspaceId}/actions/${encodeURIComponent(actionId)}`),
   memorySource: (workspaceId: string, memoryId: string) => request<MemorySourceResponse>(`/api/workspaces/${workspaceId}/memory/${encodeURIComponent(memoryId)}/source`),

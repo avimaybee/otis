@@ -7,7 +7,7 @@
 import type { MemorySourceReference, PendingClarification, PublicActivity, RunActionSummary, RunBatchResponse, RunDetailResponse, RunStepSummary } from '@otis/contracts';
 import type { AgentRun } from '@otis/contracts';
 import { DOMAIN_BOUNDS } from '@otis/contracts';
-import { stopRun, ActorError } from '../actor/dispatch.js';
+import { retryRun, stopRun, ActorError } from '../actor/dispatch.js';
 import type { Env } from '../index.js';
 import { jsonError, jsonSuccess } from '../middleware/errors.js';
 import { publicActivityFromRow } from '../chat/activity.js';
@@ -509,6 +509,46 @@ export async function handleStopRun(
     });
     return jsonSuccess(
       { status: 'ok', stopped: result.stopped, run_status: result.status },
+      200,
+      { 'x-request-id': requestId },
+    );
+  } catch (err) {
+    if (err instanceof ActorError) {
+      if (err.code === 'run_not_found') {
+        return jsonError(404, err.code, err.message, requestId);
+      }
+      return jsonError(403, err.code, err.message, requestId);
+    }
+    throw err;
+  }
+}
+
+/**
+ * POST /api/workspaces/:workspaceId/runs/:runId/retry
+ *
+ * Requeues a terminally failed (or partial) run for a fresh attempt.
+ * Completed receipts and steps survive, so the continuation resumes work
+ * instead of repeating it. Only the chat author may retry; live, queued,
+ * succeeded and cancelled runs report back unretried.
+ */
+export async function handleRetryRun(
+  request: Request,
+  env: Env,
+  workspaceId: string,
+  runId: string,
+  requestId: string,
+): Promise<Response> {
+  const scope = await requireWorkspaceScope(request, env.DB, workspaceId, requestId, { csrf: true });
+  if (scope instanceof Response) return scope;
+
+  try {
+    const result = await retryRun(env.DB, {
+      workspaceId,
+      runId,
+      actorUserId: scope.user.id,
+    });
+    return jsonSuccess(
+      { status: 'ok', retried: result.retried, run_status: result.status },
       200,
       { 'x-request-id': requestId },
     );

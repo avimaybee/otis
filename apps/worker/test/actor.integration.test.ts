@@ -42,6 +42,7 @@ import {
   recoverWorkspace,
   requeueAsHolder,
   resumeRun,
+  retryRun,
   stopRun,
   type LoadedRun,
   type TurnHandler,
@@ -1648,6 +1649,95 @@ describe('Worker Actor Dispatch & Recovery Integration (workerd)', () => {
     expect(payload.error_code).toBe('provider_stream_error');
     expect(payload.committed_actions).toBe(1);
     expect(payload.unfinished_steps).toEqual(['draft_message']);
+  });
+
+  it('retries a failed run through the owner without repeating committed effects', async () => {
+    const msg = await accept(chatAvi, aviId, 'act-msg-retry-resume', 'remember then break, then resume');
+    const outboxId = await outboxIdForRun(msg.run_id);
+    const failing = new FakeProviderAdapter({
+      provider: 'gemini',
+      scripts: [
+        {
+          kind: 'tool_calls',
+          calls: [{
+            callId: 'c1',
+            name: 'remember_context',
+            args: { scope: 'workspace', category: 'other_context', content: 'Retry survival note.' },
+          }],
+        },
+        { kind: 'fail', code: 'transient', message: 'Upstream went away.' },
+      ],
+    });
+    const failingHandler = new AgentHandler({
+      providerAdapter: failing,
+      limits: { maxDailyActions: 50, maxRoundsPerRun: 10 },
+    });
+    const first = await dispatchOutboxItem(env.DB, outboxId, ws, { handler: failingHandler });
+    expect(first.status).toBe('failed');
+    expect(await runStatus(msg.run_id)).toBe('partial');
+    const receiptsBefore = await env.DB.prepare(
+      `SELECT COUNT(*) AS n FROM action_receipts WHERE workspace_id = ? AND run_id = ? AND result_status = 'applied'`,
+    ).bind(ws, msg.run_id).first<{ n: number }>();
+    expect(Number(receiptsBefore?.n ?? 0)).toBe(1);
+
+    const retried = await retryRun(env.DB, { workspaceId: ws, runId: msg.run_id, actorUserId: aviId });
+    expect(retried).toEqual({ retried: true, status: 'queued' });
+    expect(await runStatus(msg.run_id)).toBe('queued');
+    // Exactly one live wake carries the run: no duplicate redelivery.
+    const wakes = await env.DB.prepare(
+      `SELECT COUNT(*) AS n FROM outbox WHERE workspace_id = ? AND status IN ('pending', 'sending') AND json_extract(payload_json, '$.run_id') = ?`,
+    ).bind(ws, msg.run_id).first<{ n: number }>();
+    expect(Number(wakes?.n ?? 0)).toBe(1);
+
+    const succeeding = new FakeProviderAdapter({
+      provider: 'gemini',
+      scripts: [{ kind: 'text', text: 'Recovered and done.' }],
+    });
+    const succeedingHandler = new AgentHandler({
+      providerAdapter: succeeding,
+      limits: { maxDailyActions: 50, maxRoundsPerRun: 10 },
+    });
+    const second = await dispatchWorkspace(env.DB, ws, { handler: succeedingHandler });
+    expect(second.results.some((r) => r.run_id === msg.run_id && r.status === 'completed')).toBe(true);
+    expect(await runStatus(msg.run_id)).toBe('succeeded');
+    // The remembered note committed once: the resumed attempt never repeated it.
+    const receiptsAfter = await env.DB.prepare(
+      `SELECT COUNT(*) AS n FROM action_receipts WHERE workspace_id = ? AND run_id = ? AND result_status = 'applied'`,
+    ).bind(ws, msg.run_id).first<{ n: number }>();
+    expect(Number(receiptsAfter?.n ?? 0)).toBe(1);
+    expect(await replyCount(msg.run_id)).toBe(1);
+  });
+
+  it('refuses retry for strangers, live runs and settled runs', async () => {
+    const msg = await accept(chatAvi, aviId, 'act-msg-retry-guard', 'guard me');
+    const outboxId = await outboxIdForRun(msg.run_id);
+    const failing = new FakeProviderAdapter({
+      provider: 'gemini',
+      scripts: [{ kind: 'fail', code: 'blocked', message: 'No.' }],
+    });
+    const handler = new AgentHandler({
+      providerAdapter: failing,
+      limits: { maxDailyActions: 50, maxRoundsPerRun: 10 },
+    });
+    await dispatchOutboxItem(env.DB, outboxId, ws, { handler });
+    expect(await runStatus(msg.run_id)).toBe('failed');
+
+    // A teammate who is not the chat author cannot retry.
+    await expect(retryRun(env.DB, { workspaceId: ws, runId: msg.run_id, actorUserId: hunorId }))
+      .rejects.toThrow('Only the chat author can retry this run.');
+    // Unknown runs report not found.
+    await expect(retryRun(env.DB, { workspaceId: ws, runId: 'run_missing', actorUserId: aviId }))
+      .rejects.toThrow("Run 'run_missing' not found.");
+    // A second retry after the first requeue reports the live state.
+    const first = await retryRun(env.DB, { workspaceId: ws, runId: msg.run_id, actorUserId: aviId });
+    expect(first).toEqual({ retried: true, status: 'queued' });
+    const second = await retryRun(env.DB, { workspaceId: ws, runId: msg.run_id, actorUserId: aviId });
+    expect(second).toEqual({ retried: false, status: 'queued' });
+    // Settled runs are never forked.
+    await dispatchWorkspace(env.DB, ws);
+    expect(await runStatus(msg.run_id)).toBe('succeeded');
+    const settled = await retryRun(env.DB, { workspaceId: ws, runId: msg.run_id, actorUserId: aviId });
+    expect(settled).toEqual({ retried: false, status: 'succeeded' });
   });
 
   it('F08: stop aborts the in-flight provider stream and the run stays cancelled', async () => {    const msg = await accept(chatAvi, aviId, 'act-msg-f08-stop', 'take your time');

@@ -825,6 +825,27 @@ export function ConversationScreen({ workspaceId, chat: routeChat, chatParamPres
     requestFlush('retry');
   }, []);
 
+  // Terminal failed/partial run retry through the server owner: receipts
+  // and steps survive server-side, so the fresh attempt resumes instead of
+  // repeating. Authorship is enforced server-side; a teammate sees the
+  // server's verdict instead of a dead button.
+  const retryRun = useCallback(async (runId: string): Promise<void> => {
+    try {
+      const result = await api.retryRun(workspaceId, runId);
+      if (!result.retried) {
+        toast('That run is already finished or running again.');
+        return;
+      }
+      toast('Run queued again. Previous progress is kept.');
+      if (activeChatId) {
+        refreshRun(workspaceId, activeChatId, runId);
+        void resyncChat(activeChatId);
+      }
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Could not retry this run. Try again.');
+    }
+  }, [workspaceId, activeChatId, refreshRun, resyncChat]);
+
   /**
    * Photo attachments (Slice 4): the composer hands over local files with
    * previews; uploads need a real chat first, so a first message ensures the
@@ -1086,7 +1107,7 @@ export function ConversationScreen({ workspaceId, chat: routeChat, chatParamPres
       <div className="otis-access"><h2 className="text-xl font-medium">Could not load conversation</h2><p className="text-sm text-muted-foreground">{error ?? 'A network or server error occurred.'}</p><div className="flex gap-2"><Button variant="outline" type="button" onClick={() => { setError(null); void snapshotQuery.refetch(); void resyncChat(activeChatId!); }}>Try again</Button><Button variant="ghost" type="button" onClick={() => navigate(workspaceId, null)}>Start new conversation</Button></div></div>
     ) : <div className="otis-chat">
       {streamStatus === 'resyncing' && <p className="otis-connection text-xs" role="status">Reconnecting to activity… Your conversation is retained.</p>}
-      <Transcript key={`${workspaceId}:${activeChatId ?? 'new'}`} messages={derived.messages} members={members} currentUserId={userId} runs={snapshot?.runs ?? {}} activities={snapshot?.activities ?? []} steps={[]} transients={transients} delivery={derived.delivery} onRetryMessage={(clientId) => void retryMessage(clientId)} onDiscardMessage={discardMessage} onInspectSource={setSourceId} onInspectAction={setDetailActionId} onReply={readOnly ? undefined : (id) => openQuestionPanel(id, true)} onEditMessage={readOnly ? undefined : setDraftValue} loading={loading} hasOlder={Boolean(fullSnapshot?.older)} loadingOlder={loadingOlder} olderError={olderError} followSignal={followSignal} positionKey={`${userId}:${workspaceId}:${activeChatId ?? 'new'}`} onLoadOlder={() => void loadOlder()}/>
+      <Transcript key={`${workspaceId}:${activeChatId ?? 'new'}`} messages={derived.messages} members={members} currentUserId={userId} runs={snapshot?.runs ?? {}} activities={snapshot?.activities ?? []} steps={[]} transients={transients} delivery={derived.delivery} onRetryMessage={(clientId) => void retryMessage(clientId)} onRetryRun={readOnly ? undefined : (runId) => void retryRun(runId)} onDiscardMessage={discardMessage} onInspectSource={setSourceId} onInspectAction={setDetailActionId} onReply={readOnly ? undefined : (id) => openQuestionPanel(id, true)} onEditMessage={readOnly ? undefined : setDraftValue} loading={loading} hasOlder={Boolean(fullSnapshot?.older)} loadingOlder={loadingOlder} olderError={olderError} followSignal={followSignal} positionKey={`${userId}:${workspaceId}:${activeChatId ?? 'new'}`} onLoadOlder={() => void loadOlder()}/>
       {error && <div className="otis-chat-error text-sm" role="alert"><p>{error}</p>{activeChatId && !loading && <Button variant="ghost" size="sm" type="button" onClick={() => { setError(null); void resyncChat(activeChatId); }}>Reload conversation</Button>}</div>}
       {readOnly ? <div className="otis-readonly text-sm"><p>This is {currentDetail!.chat.author_display_name ?? members[currentDetail!.chat.author_user_id] ?? 'a teammate'}’s conversation.</p><Button variant="ghost" size="sm" type="button" onClick={() => navigate(workspaceId, ownChats[0]?.id ?? null)}>Continue in your own chat</Button></div> : <div ref={composerRef} className="otis-composer-slot"><div className="flex flex-col gap-2">{panelQuestion && activeChatId && <div className="mx-auto w-full max-w-[760px] px-4"><QuestionPanel key={panelQuestion.id} question={panelQuestion} draftKey={`otis:draft:${userId}:${workspaceId}:${activeChatId}:${panelQuestion.id}`} focusSignal={panelFocusId === panelQuestion.id ? panelFocusSignal : 0} onSubmit={(questionId, text) => answerQuestion(questionId, text)} onSkip={dismissQuestion} onClose={dismissQuestion}/></div>}<Composer key={`${workspaceId}:${userId}:${activeChatId ?? 'new'}`} draftKey={`otis:draft:${userId}:${workspaceId}:${activeChatId ?? 'new'}`} draftValue={draftValue} disabled={Boolean(activeChatId && !snapshot)} disabledReason={error ? 'Conversation unavailable' : 'Opening conversation…'} running={Boolean(running)} commands={commands} models={models} workspaces={workspaces} controlPending={controlPending} modelReady={models.some(model => model.is_current && model.available)} modelsLoading={modelsQuery.isLoading} modelsError={modelsQuery.isError ? (modelsQuery.error instanceof Error ? modelsQuery.error.message : 'Could not load models.') : undefined} onRetryModels={() => void modelsQuery.refetch()} voice={{ available: voiceAvailable, adapter: voiceAdapter, scope: { userId, workspaceId, chatId: activeChatId }, onSent: voiceSend }} images={{ available: !readOnly && !accessLost, workspaceId, chatId: activeChatId, onEnsureChat: ensureChatForImages, upload: request => uploadImageFile(imageTransport, request) }} onCommand={applyCommand} onStop={running ? async () => { await api.stopRun(workspaceId, running.run.id); if (activeChatId) refreshRun(workspaceId, activeChatId, running.run.id); } : undefined} onSend={send}/></div></div>}
     </div>}</main>

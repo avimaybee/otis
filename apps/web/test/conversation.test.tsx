@@ -331,8 +331,7 @@ describe('Clarification dismissal', () => {
     expect(host.textContent).toContain('Partial response — Otis could not finish.');
     await React.act(async () => root.unmount()); host.remove();
   });
-  it('names committed work and unfinished steps from the partial_failure receipt', async () => {
-    const doneStep = { id: 's1', label: 'Saving follow-up', state: 'succeeded' } as never;
+  it('names committed work and unfinished steps from the partial_failure receipt', async () => {    const doneStep = { id: 's1', label: 'Saving follow-up', state: 'succeeded' } as never;
     const failedActivity = activity('a9', 9, 'partial_failure', {
       error_code: 'provider_stream_error',
       committed_actions: 2,
@@ -340,15 +339,21 @@ describe('Clarification dismissal', () => {
     });
     const host = document.createElement('div'); document.body.appendChild(host);
     const root = createRoot(host);
+    const onRetryRun = vi.fn();
     const base = {
       messages: [], members: {}, currentUserId: 'usr_1', steps: [doneStep],
       activities: [failedActivity],
       onInspectAction: vi.fn(),
+      onRetryRun,
     };
     const partial = { run: { id: 'run_1' }, status: 'partial', steps: [], actions: [], activities: [] } as never;
     await React.act(async () => root.render(<Transcript {...base} run={partial} />));
     expect(host.textContent).toContain('Saved 2 changes; couldn\'t finish draft message, mark message sent.');
     expect(host.textContent).toContain('Inspect the completed changes above.');
+    const retryButton = Array.from(host.querySelectorAll('button')).find((button) => button.textContent === 'Retry run') as HTMLButtonElement;
+    expect(retryButton).toBeTruthy();
+    await React.act(async () => retryButton.click());
+    expect(onRetryRun).toHaveBeenCalledWith('run_1');
     const failed = { run: { id: 'run_1', error_code: 'provider_stream_error' }, status: 'failed', steps: [], actions: [], activities: [] } as never;
     await React.act(async () => root.render(<Transcript {...base} run={failed} />));
     expect(host.textContent).toContain('Saved 2 changes; couldn\'t finish draft message, mark message sent before it stopped.');

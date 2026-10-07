@@ -665,8 +665,57 @@ describe('Chat API: transcript, activity and run status', () => {
     }
   });
 
-  it('batches run details in request order, omitting unknown ids', async () => {
-    const first = await acceptWebMessage(env.DB, {
+  it('retries a terminal failed run for its author, refuses strangers and unknown runs', async () => {
+    const now = new Date().toISOString();
+    await env.DB.prepare(
+      `INSERT INTO messages_in (id, workspace_id, chat_id, user_id, channel, external_id, payload_fingerprint, status, created_at, updated_at)
+       VALUES ('min_retry_route', ?, ?, ?, 'web', 'ext_retry_route', 'fp_retry_route', 'failed', ?, ?)`,
+    ).bind(WS, aviChat, AVI, now, now).run();
+    await env.DB.prepare(
+      `INSERT INTO agent_runs (id, workspace_id, chat_id, source_message_id, source_job_id, executor_kind, status, error_code, error_message, attempt_id, lease_fence, created_at, updated_at)
+       VALUES ('run_retry_route', ?, ?, 'min_retry_route', NULL, 'agent', 'failed', 'provider_stream_error', 'Gone.', 'att_old', 1, ?, ?)`,
+    ).bind(WS, aviChat, now, now).run();
+
+    const retry = await call(`/api/workspaces/${WS}/runs/run_retry_route/retry`, {
+      method: 'POST',
+      cookie: aviCookie,
+      headers: CSRF,
+      body: JSON.stringify({}),
+    });
+    expect(retry.status).toBe(200);
+    expect(await retry.json()).toEqual({ status: 'ok', retried: true, run_status: 'queued' });
+    const row = await env.DB.prepare(`SELECT status, error_code FROM agent_runs WHERE id = 'run_retry_route'`)
+      .first<{ status: string; error_code: string | null }>();
+    expect(row?.status).toBe('queued');
+    expect(row?.error_code).toBeNull();
+
+    // Already queued: truthful no-op, still 200.
+    const again = await callJson<{ status: string; retried: boolean; run_status: string }>(
+      `/api/workspaces/${WS}/runs/run_retry_route/retry`,
+      { method: 'POST', cookie: aviCookie, headers: CSRF, body: JSON.stringify({}) },
+    );
+    expect(again).toEqual({ status: 'ok', retried: false, run_status: 'queued' });
+
+    // A teammate who is not the chat author is refused.
+    const denied = await call(`/api/workspaces/${WS}/runs/run_retry_route/retry`, {
+      method: 'POST',
+      cookie: hunorCookie,
+      headers: CSRF,
+      body: JSON.stringify({}),
+    });
+    expect(denied.status).toBe(403);
+
+    // Unknown runs 404, even for members.
+    const missing = await call(`/api/workspaces/${WS}/runs/run_missing/retry`, {
+      method: 'POST',
+      cookie: aviCookie,
+      headers: CSRF,
+      body: JSON.stringify({}),
+    });
+    expect(missing.status).toBe(404);
+  });
+
+  it('batches run details in request order, omitting unknown ids', async () => {    const first = await acceptWebMessage(env.DB, {
       workspaceId: WS,
       chatId: aviChat,
       userId: AVI,

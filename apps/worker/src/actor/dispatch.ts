@@ -1206,7 +1206,15 @@ export async function dispatchOutboxItem(
     });
     let recorded: TurnOutcome | null = null;
     if (persisted.replay && persisted.step.status === 'succeeded' && persisted.step.result_json) {
-      recorded = JSON.parse(persisted.step.result_json) as TurnOutcome;
+      // Attempt-owned turn receipts: only the attempt that recorded an
+      // outcome may replay it, so duplicate deliveries never re-run the
+      // handler for the same source. A successor attempt (retry, recovery,
+      // resumed answer) always re-executes: replaying a predecessor's
+      // recorded failure would loop a retried run on its old outcome, and
+      // tool-level receipts already keep the re-execution side-effect free.
+      if (persisted.step.attempt_id === null || persisted.step.attempt_id === attemptId) {
+        recorded = JSON.parse(persisted.step.result_json) as TurnOutcome;
+      }
     }
     // A recorded continuation always re-executes: progress lives in the
     // checkpoint steps, and replaying the receipt would loop forever.
@@ -1846,10 +1854,105 @@ export async function resumeRun(
 }
 
 /**
- * Stops a run: cancels future steps and continuations, preserves already
- * committed actions. 'Stop' is not undo. Only the chat author may stop
- * their run (enforced by callers passing the requesting user).
+ * Retries a terminally failed run: requeues it for a fresh attempt while
+ * preserving every completed receipt and step, so the continuation resumes
+ * without repeating business effects. Only the chat author may retry their
+ * run; terminal success, cancellation, and live runs are refused
+ * truthfully instead of forked. The wake reuses the existing outbox owner
+ * (same execute_run shape as clarification resume), so no new dispatch
+ * loop is implied.
  */
+export async function retryRun(
+  db: D1Database,
+  params: { workspaceId: string; runId: string; actorUserId: string; nowIso?: string },
+): Promise<{ retried: boolean; status: string }> {
+  const nowIso = params.nowIso ?? new Date().toISOString();
+  const run = await loadRun(db, params.workspaceId, params.runId);
+  if (!run) {
+    throw new ActorError('run_not_found', `Run '${params.runId}' not found.`);
+  }
+  const chat = await db
+    .prepare(`SELECT author_user_id FROM chats WHERE id = ? AND workspace_id = ?`)
+    .bind(run.chat_id, params.workspaceId)
+    .first<{ author_user_id: string }>();
+  if (!chat || chat.author_user_id !== params.actorUserId) {
+    throw new ActorError('run_inactive', 'Only the chat author can retry this run.');
+  }
+  if (run.status !== 'failed' && run.status !== 'partial') {
+    return { retried: false, status: run.status };
+  }
+
+  // One atomic batch: the guard pins the observed terminal status, so a
+  // concurrent transition wins cleanly instead of double-queueing. Receipts
+  // and steps are deliberately untouched: pin adoption and action-id
+  // idempotency make the fresh attempt resume, never repeat. The lease
+  // release is scoped to this run's own stale attempt so a live holder
+  // elsewhere in the workspace is never disturbed.
+  const guard = `(SELECT 1 FROM agent_runs WHERE id = ? AND status IN ('failed', 'partial'))`;
+  try {
+    await db.batch([
+      db
+        .prepare(`INSERT INTO acceptance_guards (id, guard_ok) VALUES (?, ${guard}) ON CONFLICT(id) DO UPDATE SET guard_ok = excluded.guard_ok`)
+        .bind(`guard_retry_${run.workspace_id}`, run.id),
+      db
+        .prepare(
+          `UPDATE agent_runs SET status = 'queued', attempt_id = NULL, error_code = NULL, error_message = NULL, updated_at = ?
+           WHERE id = ? AND status IN ('failed', 'partial')`,
+        )
+        .bind(nowIso, run.id),
+      db
+        .prepare(`UPDATE messages_in SET status = 'queued', error_message = NULL, updated_at = ? WHERE id = ?`)
+        .bind(nowIso, run.source_message_id),
+      db
+        .prepare(
+          `UPDATE workspaces SET lease_owner = NULL, lease_attempt_id = NULL, lease_expires_at = NULL
+           WHERE id = ? AND lease_owner = ? AND lease_attempt_id = ?`,
+        )
+        .bind(params.workspaceId, run.attempt_id, run.attempt_id),
+    ]);
+  } catch (err) {
+    if (isGuardFailure(err)) {
+      const current = await loadRun(db, params.workspaceId, params.runId);
+      return { retried: false, status: current?.status ?? run.status };
+    }
+    throw err;
+  }
+  // Durable wake through the existing owner: revive this run's outbox row,
+  // or insert a fresh wake only when no live row carries this run (mirrors
+  // clarification resume; the NOT EXISTS keeps late duplicates singular).
+  // Stale 'sending' rows belong to the settled attempt by definition — the
+  // run is terminal, so no live dispatch owns them — and the claim resets
+  // so redispatch can claim cleanly.
+  const revived = await db
+    .prepare(
+      `UPDATE outbox SET status = 'pending', claimed_by = NULL, attempt_count = 0, last_error = NULL, updated_at = ?
+       WHERE workspace_id = ? AND status IN ('sending', 'failed_known') AND json_extract(payload_json, '$.run_id') = ?`,
+    )
+    .bind(nowIso, params.workspaceId, run.id)
+    .run();
+  if ((revived.meta.changes ?? 0) === 0) {
+    await db
+      .prepare(
+        `INSERT INTO outbox (id, workspace_id, destination, topic, payload_json, status, created_at, updated_at)
+         SELECT ?, ?, 'workspace_actor', 'execute_run', ?, 'pending', ?, ?
+         WHERE NOT EXISTS (
+           SELECT 1 FROM outbox WHERE workspace_id = ? AND status IN ('pending', 'sending')
+             AND json_extract(payload_json, '$.run_id') = ?
+         )`,
+      )
+      .bind(
+        `out_${crypto.randomUUID()}`,
+        params.workspaceId,
+        JSON.stringify({ run_id: run.id, retried: true }),
+        nowIso,
+        nowIso,
+        params.workspaceId,
+        run.id,
+      )
+      .run();
+  }
+  return { retried: true, status: 'queued' };
+}
 export async function stopRun(
   db: D1Database,
   params: { workspaceId: string; runId: string; actorUserId: string; nowIso?: string },

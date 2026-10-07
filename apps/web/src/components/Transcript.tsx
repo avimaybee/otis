@@ -187,7 +187,7 @@ export function WorkingDisclosure({ steps, finished, expanded, onToggle, onInspe
     </section>
   );
 }
-function RunWork({ run, steps, activities, onInspectAction, onReply, hasAgentMessage = false }: { run?: RunDetailResponse; steps: WorkingStep[]; activities: PublicActivity[]; onInspectAction: (id: string) => void; onReply?: (id: string) => void; hasAgentMessage?: boolean }) {
+function RunWork({ run, steps, activities, onInspectAction, onReply, onRetryRun, hasAgentMessage = false }: { run?: RunDetailResponse; steps: WorkingStep[]; activities: PublicActivity[]; onInspectAction: (id: string) => void; onReply?: (id: string) => void; onRetryRun?: (runId: string) => void; hasAgentMessage?: boolean }) {
   const [manual, setManual] = useState<boolean | null>(null);
   const finished = Boolean(run && ['succeeded', 'partial', 'failed', 'cancelled'].includes(run.status));
   const isWaiting = Boolean(run && (run.status === 'waiting_for_input' || Boolean(run.pending_clarification)));
@@ -237,15 +237,15 @@ function RunWork({ run, steps, activities, onInspectAction, onReply, hasAgentMes
     )}
     {run?.status === 'partial' && (() => {
       const outcome = partialOutcome(activities, run?.run.id);
-      return <p className="otis-run__status otis-run__status--error text-sm" role="status">{
+      return <div><p className="otis-run__status otis-run__status--error text-sm" role="status">{
         outcome && outcome.committed > 0
           ? `${formatFailureOutcome(outcome.committed, outcome.unfinished)}. Inspect the completed changes above.`
           : 'Some changes were saved. The run could not finish; inspect the completed changes above.'
-      }</p>;
+      }</p>{onRetryRun && <Button variant="outline" size="sm" type="button" onClick={() => onRetryRun(run!.run.id)}>Retry run</Button>}</div>;
     })()}
     {run?.status === 'failed' && (() => {
       const outcome = partialOutcome(activities, run?.run.id);
-      return <div><p className="otis-run__status otis-run__status--error flex items-start gap-2 text-sm" role="status"><AlertCircleIcon /><span>{failureMessage(run.run.error_code)}</span></p>{outcome && outcome.committed > 0 && <p className="otis-run__status text-sm" role="status">{formatFailureOutcome(outcome.committed, outcome.unfinished)} before it stopped.</p>}{run.run.error_code && <details className="otis-provider-summary text-xs"><summary>Error details</summary><p>{run.run.error_code}{run.run.error_message ? `: ${run.run.error_message}` : ''}</p></details>}</div>;
+      return <div><p className="otis-run__status otis-run__status--error flex items-start gap-2 text-sm" role="status"><AlertCircleIcon /><span>{failureMessage(run.run.error_code)}</span></p>{outcome && outcome.committed > 0 && <p className="otis-run__status text-sm" role="status">{formatFailureOutcome(outcome.committed, outcome.unfinished)} before it stopped.</p>}{onRetryRun && <Button variant="outline" size="sm" type="button" onClick={() => onRetryRun(run!.run.id)}>Retry run</Button>}{run.run.error_code && <details className="otis-provider-summary text-xs"><summary>Error details</summary><p>{run.run.error_code}{run.run.error_message ? `: ${run.run.error_message}` : ''}</p></details>}</div>;
     })()}
     {run?.status === 'cancelled' && <p className="otis-run__status text-sm">Stopped. Saved changes remain available to inspect or undo.</p>}
   </div>;
@@ -363,6 +363,8 @@ export interface TranscriptProps {
   /** Local delivery state by client UUID. Saved means durable acceptance, not a reply. */
   delivery?: Record<string, { state: 'sending' | 'saved' | 'failed'; error?: string; durable: boolean }>;
   onRetryMessage?: (clientId: string) => void;
+  /** Retries a terminal failed/partial run through the server owner. Offered only on failed/partial run blocks. */
+  onRetryRun?: (runId: string) => void;
   /** Removes one unsent local entry. Never offered for accepted rows. */
   onDiscardMessage?: (clientId: string) => void;
   /** In-place older-page failure; retry reuses the same cursor. */
@@ -372,7 +374,7 @@ export interface TranscriptProps {
   /** Scope key for saved reading position (user/workspace/chat). */
   positionKey?: string;
 }
-export function Transcript({ messages, members, currentUserId, steps, run, runs = {}, activities = [], transients = {}, pendingUnread = 0, onJumpToLatest, onInspectAction, onReply, onInspectSource, onEditMessage, loading, hasOlder, loadingOlder, onLoadOlder, delivery = {}, onRetryMessage, onDiscardMessage, olderError = null, followSignal = 0, positionKey = '' }: TranscriptProps) {
+export function Transcript({ messages, members, currentUserId, steps, run, runs = {}, activities = [], transients = {}, pendingUnread = 0, onJumpToLatest, onInspectAction, onReply, onRetryRun, onInspectSource, onEditMessage, loading, hasOlder, loadingOlder, onLoadOlder, delivery = {}, onRetryMessage, onDiscardMessage, olderError = null, followSignal = 0, positionKey = '' }: TranscriptProps) {
   // Sole follow/release/Jump owner. Instant adjustments only: no animated
   // token-driven scrolling, so reduced motion is honored by construction.
   // Native overflow-anchor (default) owns prepend/in-place anchoring; no
@@ -494,7 +496,7 @@ export function Transcript({ messages, members, currentUserId, steps, run, runs 
           const localDelivery = message.client_message_id ? delivery[message.client_message_id] : undefined;
           return <div key={message.client_message_id ?? message.id} className="otis-message-group" aria-live={historyFloor !== null && message.sequence < historyFloor ? 'off' : undefined}>
             {(index > 0 && dayKey(message.created_at) !== dayKey(messages[index - 1]!.created_at)) && <div className="otis-dayseparator text-xs"><span>{formatDay(message.created_at)}</span></div>}
-            {firstAgent && <RunWork run={runData} steps={runSteps} activities={runActivities} onInspectAction={onInspectAction} onReply={onReply} hasAgentMessage={Boolean(message.content_text?.trim())}/>}
+            {firstAgent && <RunWork run={runData} steps={runSteps} activities={runActivities} onInspectAction={onInspectAction} onReply={onReply} onRetryRun={onRetryRun} hasAgentMessage={Boolean(message.content_text?.trim())}/>}
             <article className={`otis-turn group otis-turn--${isMember ? 'member' : 'agent'}`} data-author-kind={message.author_kind}>
               {isMember && message.author_user_id !== currentUserId && <div className="otis-turn__meta text-xs text-subtle">{author}</div>}
               <MessageBody message={message} />
@@ -553,7 +555,7 @@ export function Transcript({ messages, members, currentUserId, steps, run, runs 
                 ) : null}
               </div>
             </article>
-            {noAnswerYet && <><RunWork run={runData} steps={runSteps} activities={runActivities} onInspectAction={onInspectAction} onReply={onReply} hasAgentMessage={false}/>{(() => {
+            {noAnswerYet && <><RunWork run={runData} steps={runSteps} activities={runActivities} onInspectAction={onInspectAction} onReply={onReply} onRetryRun={onRetryRun} hasAgentMessage={false}/>{(() => {
               // Durable chunks plus live transient preview for rounds not yet
               // persisted. Transient frames carry each round's full text, so
               // joining is order-safe; durable coverage drops preview rounds.
@@ -572,7 +574,7 @@ export function Transcript({ messages, members, currentUserId, steps, run, runs 
             ));})()}</>}
           </div>;
         })}
-        {!messages.length && steps.length > 0 && <RunWork run={run ?? undefined} steps={steps} activities={activities} onInspectAction={onInspectAction} hasAgentMessage={false}/>}
+        {!messages.length && steps.length > 0 && <RunWork run={run ?? undefined} steps={steps} activities={activities} onInspectAction={onInspectAction} onRetryRun={onRetryRun} hasAgentMessage={false}/>}
       </div>
     </div>
     {(messages.length > 0 && (pendingUnread > 0 || !isAtBottom)) && (

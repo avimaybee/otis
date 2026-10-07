@@ -79,7 +79,7 @@ import {
   handleUpdateMemberSettings,
   handleUpdateWorkspaceSettings,
 } from './routes/settings.js';
-import { handleStopRun, handleGetRun, handleListRuns } from './routes/runs.js';
+import { handleRetryRun, handleStopRun, handleGetRun, handleListRuns } from './routes/runs.js';
 import { extractPlatformKeys } from './providers/service.js';
 import { jsonError, jsonSuccess } from './middleware/errors.js';
 import { workerDebug } from './observability.js';
@@ -745,6 +745,15 @@ export default {
         const runId = stopMatch[2];
         if (request.method === 'POST' && workspaceId && runId) {
           return await handleStopRun(request, env, workspaceId, runId, requestId);
+        }
+        return jsonError(405, 'method_not_allowed', 'Method not allowed.', requestId);
+      }
+      const retryMatch = url.pathname.match(/^\/api\/workspaces\/([^/]+)\/runs\/([^/]+)\/retry$/);
+      if (retryMatch) {
+        const workspaceId = retryMatch[1];
+        const runId = retryMatch[2];
+        if (request.method === 'POST' && workspaceId && runId) {
+          return await handleRetryRun(request, env, workspaceId, runId, requestId);
         }
         return jsonError(405, 'method_not_allowed', 'Method not allowed.', requestId);
       }
