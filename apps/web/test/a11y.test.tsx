@@ -9,6 +9,7 @@ import { Transcript } from '../src/components/Transcript.js';
 import { WorkingDisclosure } from '../src/components/Transcript.js';
 import { StatusPill } from '../src/components/StatusPill.js';
 import { SignInView } from '../src/components/SignInView.js';
+import { UnavailableScreen } from '../src/components/UnavailableScreen.js';
 import { storyCommands, storyMembers, storyMessage, storyModels, storyRun } from '../src/stories/fixtures.js';
 
 expect.extend(matchers);
@@ -148,6 +149,15 @@ describe('008A settled-state accessibility', () => {
     const view = await mount(<SignInView onSignedIn={() => {}} />);
     expect(view.host.querySelector('h1')?.textContent).toBe('Sign in to Otis');
     expect(view.host.querySelector('main.otis-entry')).toBeTruthy();
+    expect(await axe(view.host, RULES)).toHaveNoViolations();
+    await view.unmount();
+  });
+
+  it('unavailable screen keeps the retry action inside the landmark', async () => {
+    const view = await mount(<UnavailableScreen offline onRetry={() => {}} />);
+    expect(view.host.querySelector('h1')?.textContent).toBe('Otis is unavailable');
+    expect(view.host.querySelector('main.otis-entry')).toBeTruthy();
+    expect(view.host.querySelector('main.otis-entry button')?.textContent).toBe('Try again');
     expect(await axe(view.host, RULES)).toHaveNoViolations();
     await view.unmount();
   });

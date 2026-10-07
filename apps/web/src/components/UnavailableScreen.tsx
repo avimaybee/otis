@@ -7,7 +7,7 @@ import { Button } from './ui/button.js';
  */
 export function UnavailableScreen({ offline, onRetry }: { offline: boolean; onRetry: () => void }) {
   return (
-    <div className="otis-entry">
+    <main className="otis-entry">
       <div className="otis-entry__inner">
         <h1 className="otis-entry__title text-xl font-medium">Otis is unavailable</h1>
         <p className="text-sm text-muted-foreground">
@@ -19,6 +19,6 @@ export function UnavailableScreen({ offline, onRetry }: { offline: boolean; onRe
           Try again
         </Button>
       </div>
-    </div>
+    </main>
   );
 }
