@@ -14,6 +14,8 @@ import {
   transientTextForRun,
 } from '../src/hooks/useActivityStream.js';
 import { applyAcceptedMessage, applyAnswerSaved, type ChatSnapshot } from '../src/api/snapshot.js';
+import { readFileSync } from 'fs';
+import { resolve } from 'path';
 
 // @ts-expect-error React act flag
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
@@ -117,6 +119,23 @@ describe('Composer', () => {
     const view = await mount(<Composer running={false} queuedCount={0} commands={COMMANDS} onSend={vi.fn()}/>);
     expect(view.host.querySelector('[aria-label="Record voice note"]')).toBeNull();
     expect(view.host.querySelector('[aria-label="Chat tools"]')).toBeNull(); expect(view.host.querySelector('[aria-label="Send"]')).toBeTruthy(); await view.unmount();
+  });
+  it('photo remove keeps the expanded touch target hook', async () => {
+    const view = await mount(<Composer running={false} commands={COMMANDS} onSend={vi.fn()} images={{
+      available: true, workspaceId: 'ws_1', chatId: 'chat_1',
+      onEnsureChat: async () => 'chat_1',
+      upload: async () => ({ mediaId: 'med_1', format: 'image/png' as const }),
+      controller: {
+        attachments: [{ id: 'a1', file: new File(['x'], 'photo.png', { type: 'image/png' }), previewUrl: 'blob:preview-1', status: 'ready' }],
+        addFiles: () => {}, remove: () => {}, clear: () => {},
+      },
+    }} />);
+    const remove = view.host.querySelector('[aria-label="Remove photo"]');
+    expect(remove?.className).toContain('otis-attach-remove');
+    const css = readFileSync(resolve(__dirname, '../src/index.css'), 'utf-8');
+    expect(css).toContain('.otis-attach-remove::after');
+    expect(css).toContain('inset: -10px');
+    await view.unmount();
   });
   it('synchronizes an explicitly selected prior message into the draft', async () => {
     const view = await mount(<Composer running={false} queuedCount={0} commands={COMMANDS} draftValue="Prior note" onSend={vi.fn()}/>);

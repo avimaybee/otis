@@ -349,7 +349,7 @@ export function Composer({ disabled, disabledReason, running, commands, models =
               )}
               <button
                 type="button"
-                className="absolute -right-2 -top-2 grid size-6 place-items-center rounded-full border border-border bg-card text-muted-foreground hover:text-foreground"
+                className="otis-attach-remove absolute -right-2 -top-2 grid size-6 place-items-center rounded-full border border-border bg-card text-muted-foreground hover:text-foreground"
                 aria-label="Remove photo"
                 disabled={sending}
                 onClick={() => imageController.remove(attachment.id)}

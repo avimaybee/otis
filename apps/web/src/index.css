@@ -102,6 +102,12 @@
   .otis-msg-action::after { content: ''; position: absolute; inset: -6px; }
 }
 
+/* Photo remove keeps its 24px visual; touch expands the hit area to 44px. */
+.otis-attach-remove { position: relative; }
+@media (hover: none) {
+  .otis-attach-remove::after { content: ''; position: absolute; inset: -10px; }
+}
+
 /* Run status lines stay in place; failures pair destructive text with a label. */
 .otis-run { margin: 0 0 8px; }
 .otis-run:empty { display: none; }
