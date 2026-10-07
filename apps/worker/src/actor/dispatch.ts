@@ -396,7 +396,7 @@ export async function pinRun(
 }
 
 /** Guard fragment verifying the holder still owns the lease, fence, run, and membership. */
-function holderGuardSql(): string {
+export function holderGuardSql(): string {
   return `(
     SELECT 1
     FROM agent_runs r
