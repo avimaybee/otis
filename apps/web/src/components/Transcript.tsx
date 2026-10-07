@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useStickToBottom } from 'use-stick-to-bottom';
 import type { ChatMessage, PublicActivity, RunDetailResponse } from '@otis/contracts';
 import Markdown from 'react-markdown';
@@ -232,6 +232,89 @@ export function saveScrollPosition(key: string, anchor: SavedAnchor): void {
 export function clearScrollPositionsForTests(): void {
   savedAnchors.clear();
 }
+
+/**
+ * F12 grouping: one pass over activities builds the per-run lists, so the
+ * message map below does lookups instead of scanning every activity for
+ * every message. Order within each run is preserved.
+ */
+export function groupActivitiesByRun(activities: PublicActivity[]): Map<string, PublicActivity[]> {
+  const byRun = new Map<string, PublicActivity[]>();
+  for (const activity of activities) {
+    const list = byRun.get(activity.run_id);
+    if (list) list.push(activity);
+    else byRun.set(activity.run_id, [activity]);
+  }
+  return byRun;
+}
+
+/** Joins one run's durable text chunks; non-string payloads contribute nothing. */
+export function joinRunTextChunks(runActivities: PublicActivity[]): string {
+  let text = '';
+  for (const item of runActivities) {
+    if (item.type !== 'text_chunk') continue;
+    const chunk = (item.payload as { text?: unknown }).text;
+    text += typeof chunk === 'string' ? chunk : '';
+  }
+  return text;
+}
+
+export interface RunAnswerState {
+  hasAgentAnswer: boolean;
+  lastMemberMessageId: string | null;
+  firstAgentMessageId: string | null;
+}
+
+/**
+ * One pass over messages records, per run, whether an agent answer exists,
+ * the latest member message, and the first agent message — replacing the
+ * per-message list scans previously done inside the render map.
+ */
+export function describeRunAnswers(messages: ChatMessage[]): Map<string, RunAnswerState> {
+  const byRun = new Map<string, RunAnswerState>();
+  for (const message of messages) {
+    if (!message.run_id) continue;
+    let state = byRun.get(message.run_id);
+    if (!state) {
+      state = { hasAgentAnswer: false, lastMemberMessageId: null, firstAgentMessageId: null };
+      byRun.set(message.run_id, state);
+    }
+    if (message.author_kind === 'member') {
+      state.lastMemberMessageId = message.id;
+    } else {
+      if (state.firstAgentMessageId === null) state.firstAgentMessageId = message.id;
+      state.hasAgentAnswer = true;
+    }
+  }
+  return byRun;
+}
+
+/**
+ * Message content renders through Markdown once per message object.
+ * Transient preview ticks re-render the parent, but historical bodies keep
+ * their output while their message reference is unchanged.
+ */
+const MessageBody = memo(function MessageBody({ message }: { message: ChatMessage }) {
+  if (message.author_kind === 'member') {
+    return (
+      <div className="otis-turn__bubble ml-auto w-fit max-w-[85%] rounded-2xl bg-card px-4 py-2 text-base text-card-foreground nav:max-w-[80%] whitespace-pre-wrap break-words">
+        {(message.image_media_ids?.length ?? 0) > 0 && (
+          <MessageImages workspaceId={message.workspace_id} mediaIds={message.image_media_ids ?? []} />
+        )}
+        {message.media_id ? (
+          <VoiceMessagePlayer
+            workspaceId={message.workspace_id}
+            mediaId={message.media_id}
+            text={message.content_text}
+          />
+        ) : (
+          message.content_text
+        )}
+      </div>
+    );
+  }
+  return <div className="otis-turn__body text-base text-foreground [&>p+p]:mt-3"><Markdown remarkPlugins={[remarkGfm]} skipHtml disallowedElements={['img']}>{message.content_text}</Markdown></div>;
+});
 export interface TranscriptProps {
   messages: ChatMessage[]; members: Record<string, string>; currentUserId: string; run?: RunDetailResponse | null; runs?: Record<string, RunDetailResponse>;
   activities?: PublicActivity[]; steps: WorkingStep[]; pendingUnread?: number; onJumpToLatest?: () => void; onInspectAction: (id: string) => void;
@@ -262,7 +345,30 @@ export function Transcript({ messages, members, currentUserId, steps, run, runs 
   }, [isAtBottom]);
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const allRuns = run?.run?.id ? { ...runs, [run.run.id]: run } : runs;
-  const used = new Set<string>();
+  // F12: grouped once per input change; the message map below only looks up.
+  const activitiesByRun = useMemo(() => groupActivitiesByRun(activities), [activities]);
+  const runTextByRun = useMemo(() => {
+    const joined = new Map<string, string>();
+    for (const [runId, runActivities] of activitiesByRun) joined.set(runId, joinRunTextChunks(runActivities));
+    return joined;
+  }, [activitiesByRun]);
+  const answerStateByRun = useMemo(() => describeRunAnswers(messages), [messages]);
+  const stepsByRun = useMemo(() => {
+    const merged: Record<string, RunDetailResponse | undefined> = { ...runs };
+    if (run?.run?.id) merged[run.run.id] = run;
+    const computed = new Map<string, WorkingStep[]>();
+    for (const [runId, runActivities] of activitiesByRun) {
+      const runData = merged[runId];
+      computed.set(runId, runData ? stepsFromRun(runData, runActivities) : activityToSteps(runActivities, []));
+    }
+    for (const message of messages) {
+      if (message.run_id && !computed.has(message.run_id)) {
+        const runData = merged[message.run_id];
+        computed.set(message.run_id, runData ? stepsFromRun(runData, []) : []);
+      }
+    }
+    return computed;
+  }, [activitiesByRun, messages, run, runs]);
   const restoredRef = useRef(false);
 
   const handleCopy = async (id: string, text: string) => {
@@ -334,12 +440,14 @@ export function Transcript({ messages, members, currentUserId, steps, run, runs 
         {loading && !messages.length ? <p className="otis-run__status text-sm">Opening conversation…</p> : !messages.length && !steps.length && <div className="otis-empty"><h2 className="otis-empty__title text-xl">What’s happening?</h2><p className="otis-empty__subtitle text-sm text-subtle mt-1">Keep track of visits, promises, and follow-ups.</p></div>}
         {messages.map((message, index) => {
           const isMember = message.author_kind === 'member'; const author = message.author_user_id ? message.author_display_name ?? members[message.author_user_id] ?? 'Teammate' : 'Otis';
-          const runId = message.run_id; const firstAgent = !isMember && runId && !used.has(runId); if (firstAgent && runId) used.add(runId);
-          const runActivities = activities.filter(item => item.run_id === runId);
+          const runId = message.run_id;
+          const answerState = runId ? answerStateByRun.get(runId) : undefined;
+          const firstAgent = !isMember && !!runId && answerState?.firstAgentMessageId === message.id;
+          const runActivities = runId ? activitiesByRun.get(runId) ?? [] : [];
           const runData = runId ? allRuns[runId] : undefined;
-          const runSteps = runData ? stepsFromRun(runData, runActivities) : activityToSteps(runActivities, []);
-          const noAnswerYet = isMember && runId && !messages.some(item => item.run_id === runId && item.author_kind !== 'member') && messages.filter(item => item.run_id === runId && item.author_kind === 'member').at(-1)?.id === message.id;
-          const chunks = runActivities.filter(item => item.type === 'text_chunk').map(item => (item.payload as { text?: string }).text ?? '').join('');
+          const runSteps = runId ? stepsByRun.get(runId) ?? [] : [];
+          const noAnswerYet = Boolean(isMember && runId && answerState && !answerState.hasAgentAnswer && answerState.lastMemberMessageId === message.id);
+          const chunks = runId ? runTextByRun.get(runId) ?? '' : '';
           // A terminal run with no persisted answer keeps its streamed text as
           // an explicitly unfinished draft: never presented as a completed
           // reply beneath the terminal notice.
@@ -350,22 +458,7 @@ export function Transcript({ messages, members, currentUserId, steps, run, runs 
             {firstAgent && <RunWork run={runData} steps={runSteps} activities={runActivities} onInspectAction={onInspectAction} onReply={onReply} hasAgentMessage={Boolean(message.content_text?.trim())}/>}
             <article className={`otis-turn group otis-turn--${isMember ? 'member' : 'agent'}`} data-author-kind={message.author_kind}>
               {isMember && message.author_user_id !== currentUserId && <div className="otis-turn__meta text-xs text-subtle">{author}</div>}
-              {isMember
-                ? <div className="otis-turn__bubble ml-auto w-fit max-w-[85%] rounded-2xl bg-card px-4 py-2 text-base text-card-foreground nav:max-w-[80%] whitespace-pre-wrap break-words">
-                    {(message.image_media_ids?.length ?? 0) > 0 && (
-                      <MessageImages workspaceId={message.workspace_id} mediaIds={message.image_media_ids ?? []} />
-                    )}
-                    {message.media_id ? (
-                      <VoiceMessagePlayer
-                        workspaceId={message.workspace_id}
-                        mediaId={message.media_id}
-                        text={message.content_text}
-                      />
-                    ) : (
-                      message.content_text
-                    )}
-                  </div>
-                : <div className="otis-turn__body text-base text-foreground [&>p+p]:mt-3"><Markdown remarkPlugins={[remarkGfm]} skipHtml disallowedElements={['img']}>{message.content_text}</Markdown></div>}
+              <MessageBody message={message} />
               {!isMember && runData?.sources?.length && onInspectSource ? <div className="otis-sources" aria-label="Sources">{runData.sources.map(source => <Button variant="ghost" size="sm" type="button" key={source.memory_id} className="otis-source-link" onClick={() => onInspectSource(source.memory_id)}>{source.label}{source.provenance === 'inferred' ? ' · inferred' : ''}</Button>)}</div> : null}
               {!isMember && runData?.actions?.length ? (
                 <div className="otis-outcome mt-2 flex items-center gap-2 text-xs text-subtle" role="status">
