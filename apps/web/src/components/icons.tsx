@@ -1,7 +1,7 @@
 import { Menu, SquarePen, ArrowUp, X, Search, Settings2, ChevronDown, Undo2, Terminal, FileText, Check, Pencil, Copy, ArrowDown, AlertCircle, SlidersHorizontal, Mic, Play, Pause, MoreVertical, Trash2, Plus } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 function icon(Component: LucideIcon, defaultSize = 18) {
-  return function Icon({ size = defaultSize }: { size?: number }) { return <Component size={size} strokeWidth={2} aria-hidden="true" focusable="false"/>; };
+  return function Icon({ size = defaultSize, className }: { size?: number; className?: string }) { return <Component size={size} strokeWidth={2} aria-hidden="true" focusable="false" className={className}/> };
 }
 export const MenuIcon = icon(Menu);
 export const ComposeIcon = icon(SquarePen);

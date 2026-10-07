@@ -317,7 +317,7 @@ export function Composer({ disabled, disabledReason, running, commands, models =
         {suggestions.map((row, rowIndex) => <CommandItem key={row.name} id={`${id}-option-${rowIndex}`} value={row.insert} disabled={controlPending} onSelect={() => void select(rowIndex)}><span>{row.label}</span>{row.summary && <small className="text-xs">{row.summary}</small>}</CommandItem>)}
       </CommandList>
     </Command>}
-    <div className="otis-composer__field flex flex-col min-h-[52px] rounded-2xl bg-card p-3 gap-2">
+    <div className="otis-composer__field flex flex-col gap-2">
       {imageController.attachments.length > 0 && (
         <div className="otis-composer__attachments flex gap-2 overflow-x-auto" role="list" aria-label="Attached photos">
           {imageController.attachments.map(attachment => (
@@ -351,16 +351,18 @@ export function Composer({ disabled, disabledReason, running, commands, models =
         </div>
       )}
       {voiceActive ? (
-        <VoiceCapturePanel
-          controller={voiceController}
-          canSend={Boolean(voice?.adapter) && Boolean(voice?.scope?.workspaceId)}
-          onCancel={() => voiceController.cancel()}
-          onSend={() => void voiceController.send()}
-        />
+        <div className="flex min-h-[76px] items-center gap-1 rounded-2xl bg-card px-3 py-2 nav:min-h-[56px]">
+          <VoiceCapturePanel
+            controller={voiceController}
+            canSend={Boolean(voice?.adapter) && Boolean(voice?.scope?.workspaceId)}
+            onCancel={() => voiceController.cancel()}
+            onSend={() => void voiceController.send()}
+          />
+        </div>
       ) : (
-        <>
+        <div className="grid min-h-[76px] grid-cols-[minmax(0,1fr)_auto] items-center gap-1 rounded-2xl bg-card py-2 pr-2 pl-3 nav:flex nav:min-h-[56px]">
           <label className="otis-visually-hidden" htmlFor={id}>{placeholder}</label>
-          <TextareaAutosize id={id} ref={input} name="message" minRows={1} maxRows={6} className="otis-composer__input max-h-36 min-h-6 w-full resize-none bg-transparent text-base leading-6 outline-none placeholder:text-muted-foreground" placeholder={disabled ? disabledReason ?? placeholder : placeholder} autoComplete="off" value={value} disabled={disabled}
+          <TextareaAutosize id={id} ref={input} name="message" minRows={1} maxRows={6} className="otis-composer__input col-start-1 max-h-36 min-h-6 w-full min-w-0 flex-1 resize-none bg-transparent text-base leading-6 outline-none placeholder:text-muted-foreground nav:order-1" placeholder={disabled ? disabledReason ?? placeholder : placeholder} autoComplete="off" value={value} disabled={disabled}
             aria-describedby={`${id}-status`} aria-haspopup="listbox" aria-expanded={pickerOpen ? 'true' : undefined} aria-controls={pickerOpen ? `${id}-picker` : undefined} aria-activedescendant={pickerOpen && suggestions[activeIndex] ? `${id}-option-${activeIndex}` : undefined} aria-autocomplete="list"
             onChange={event => { commitDraft(event.target.value); setDismissed(false); setIndex(0); }}
             onKeyDown={event => {
@@ -372,30 +374,28 @@ export function Composer({ disabled, disabledReason, running, commands, models =
               }
               if (event.key === 'Enter' && desktop && !event.shiftKey) { event.preventDefault(); void submit(); }
             }} />
-          <div className="flex items-center justify-between gap-2 pt-1">
-            <div className="flex items-center gap-2 flex-wrap">
-              {modelsError && (
-                <div className="flex items-center gap-2 text-xs text-destructive" role="alert">
-                  <span>{modelsError}</span>
+          <div className="col-span-2 col-start-1 flex h-5 min-w-0 items-center nav:order-2 nav:h-auto">
+              {modelsError ? (
+                <div className="flex min-w-0 items-center gap-2 text-xs text-destructive" role="alert">
+                  <span className="truncate">{modelsError}</span>
                   {onRetryModels && (
-                    <button type="button" className="underline hover:text-foreground" onClick={onRetryModels}>
+                    <button type="button" className="shrink-0 underline hover:text-foreground" onClick={onRetryModels}>
                       Retry
                     </button>
                   )}
                 </div>
-              )}
-              {models.length > 0 && current && (
+              ) : models.length > 0 && current ? (
                 <DropdownMenu modal={false}>
                   <DropdownMenuTrigger asChild>
                     <button
                       type="button"
-                      className="flex items-center gap-1 rounded-full border border-border bg-card/70 px-2 py-1 text-xs text-muted-foreground hover:bg-accent hover:text-foreground transition-colors cursor-pointer select-none"
+                      className="flex min-w-0 max-w-36 items-center gap-1 truncate rounded-full px-2 py-1 text-nav text-muted-foreground transition-colors hover:bg-accent hover:text-foreground cursor-pointer select-none"
                       disabled={controlPending}
                       aria-label="Select model and thinking effort"
                     >
-                      <span className="font-medium text-foreground">{currentModelLabel}</span>
+                      <span className="truncate font-medium">{currentModelLabel}</span>
                       {currentThinking?.state === 'supported' && currentThinkingLabel !== 'Provider default' && (
-                        <span className="text-subtle">· {currentThinkingLabel}</span>
+                        <span className="shrink-0 text-subtle">· {currentThinkingLabel}</span>
                       )}
                       <ChevronDownIcon />
                     </button>
@@ -440,10 +440,10 @@ export function Composer({ disabled, disabledReason, running, commands, models =
                     )}
                   </DropdownMenuContent>
                 </DropdownMenu>
-              )}
+              ) : null}
             </div>
 
-            <div className="flex items-center gap-2 shrink-0">
+            <div className="col-start-2 row-start-1 flex items-center gap-1 shrink-0 nav:order-3">
               <input
                 ref={fileInput}
                 type="file"
@@ -462,7 +462,7 @@ export function Composer({ disabled, disabledReason, running, commands, models =
               {attachVisible && (
                 <button
                   type="button"
-                  className="otis-composer__action grid size-9 shrink-0 place-items-center rounded-full text-muted-foreground hover:bg-accent hover:text-foreground"
+                  className="otis-composer__action grid size-9 shrink-0 place-items-center rounded-full text-muted-foreground hover:bg-accent hover:text-foreground nav:size-8"
                   aria-label="Attach photos"
                   disabled={disabled || sending}
                   onClick={() => fileInput.current?.click()}
@@ -473,19 +473,19 @@ export function Composer({ disabled, disabledReason, running, commands, models =
               {micVisible && (
                 <button
                   type="button"
-                  className="otis-composer__action grid size-9 shrink-0 place-items-center rounded-full text-muted-foreground hover:bg-accent hover:text-foreground"
+                  className="otis-composer__action grid size-9 shrink-0 place-items-center rounded-full text-muted-foreground hover:bg-accent hover:text-foreground nav:size-8"
                   aria-label={voiceController.phase === 'requesting' ? 'Starting recording' : 'Record voice note'}
                   aria-busy={voiceController.phase === 'requesting'}
                   disabled={disabled || voiceController.phase === 'requesting'}
                   onClick={() => void voiceController.start()}
                 >
-                  {voiceController.phase === 'requesting' ? <span className="otis-spinner" aria-hidden="true"/> : <MicIcon/>}
+                  {voiceController.phase === 'requesting' ? <span className="otis-spinner" aria-hidden="true"/> : <MicIcon className="nav:size-4"/>}
                 </button>
               )}
               {running && onStop && !value.trim() && imageController.attachments.length === 0 ? (
                 <button
                   type="button"
-                  className="otis-composer__action otis-composer__send grid size-9 shrink-0 place-items-center rounded-full bg-primary text-primary-foreground"
+                  className="otis-composer__action otis-composer__send grid size-9 shrink-0 place-items-center rounded-full bg-primary text-primary-foreground nav:size-8"
                   aria-label="Stop Otis"
                   disabled={stopping}
                   onClick={() => void stop()}
@@ -495,7 +495,7 @@ export function Composer({ disabled, disabledReason, running, commands, models =
               ) : (
                 <button
                   type="button"
-                  className={`otis-composer__action otis-composer__send grid size-9 shrink-0 place-items-center rounded-full ${
+                  className={`otis-composer__action otis-composer__send grid size-9 shrink-0 place-items-center rounded-full nav:size-8 ${
                     (value.trim() || imageController.attachments.length > 0) && !disabled
                       ? 'bg-highlight text-highlight-foreground hover:bg-highlight-hover active:bg-highlight-pressed'
                       : 'bg-accent text-subtle'
@@ -505,12 +505,11 @@ export function Composer({ disabled, disabledReason, running, commands, models =
                   disabled={disabled || tooLong || (value.trim() === '' && imageController.attachments.length === 0) || controlPending || (!modelReady && !(value.trim().startsWith('/') && !value.trim().startsWith('//')))}
                   onClick={() => void submit()}
                 >
-                  {sending ? <span className="otis-spinner" aria-hidden="true"/> : <SendIcon/>}
+                  {sending ? <span className="otis-spinner" aria-hidden="true"/> : <SendIcon className="nav:size-4"/>}
                 </button>
               )}
             </div>
           </div>
-        </>
       )}
     </div>
     <div id={`${id}-status`} className={`otis-composer__status text-xs${tooLong || voiceError || error ? ' otis-composer__status--error' : ''}`} role="status">{tooLong ? `Keep the message under ${DOMAIN_BOUNDS.MAX_INPUT_CHARS.toLocaleString()} characters.` : voiceError || error || (modelsLoading ? 'Checking available model…' : !modelReady ? 'Choose a model to start. Connections are in Settings.' : voiceStorageWarning || 'Otis can make mistakes. Verify important business info.')}<span className="otis-visually-hidden">{sending ? 'Sending your message.' : ''}</span></div>

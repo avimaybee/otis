@@ -55,6 +55,9 @@ const ARBITRARY_ALLOW = new Set([
   'w-[min(320px,86vw)]', // token 7: mobile drawer width
   'h-[22px]', // token 8.8: status pill height
   'max-h-[min(320px,45dvh)]', // token 8.12: question panel scroll bound
+  'grid-cols-[minmax(0,1fr)_auto]', // token 8.9: composer surface columns
+  'min-h-[76px]', // token 8.9: idle composer surface on narrow mobile
+  'min-h-[56px]', // token 8.9: idle composer surface on desktop
   'max-w-[85%]', // token 8.6: user message width
   'nav:max-w-[80%]', // token 8.6: user message width at nav breakpoint
   'h-[calc(100%-1px)]', // generated tabs trigger fill (behavioral, no visual value)
