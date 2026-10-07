@@ -120,8 +120,17 @@ describe('Composer', () => {
     expect(view.host.querySelector('[aria-label="Record voice note"]')).toBeNull();
     expect(view.host.querySelector('[aria-label="Chat tools"]')).toBeNull(); expect(view.host.querySelector('[aria-label="Send"]')).toBeTruthy(); await view.unmount();
   });
-  it('photo remove keeps the expanded touch target hook', async () => {
+  it('exposes a single attach action, hiding the file transport', async () => {
     const view = await mount(<Composer running={false} commands={COMMANDS} onSend={vi.fn()} images={{
+      available: true, workspaceId: 'ws_1', chatId: 'chat_1',
+      onEnsureChat: async () => 'chat_1',
+      upload: async () => ({ mediaId: 'med_1', format: 'image/png' as const }),
+    }} />);
+    expect(Array.from(view.host.querySelectorAll('[aria-label="Attach photos"]'))).toHaveLength(1);
+    expect(view.host.querySelector('input[type="file"]')?.getAttribute('aria-hidden')).toBe('true');
+    await view.unmount();
+  });
+  it('photo remove keeps the expanded touch target hook', async () => {    const view = await mount(<Composer running={false} commands={COMMANDS} onSend={vi.fn()} images={{
       available: true, workspaceId: 'ws_1', chatId: 'chat_1',
       onEnsureChat: async () => 'chat_1',
       upload: async () => ({ mediaId: 'med_1', format: 'image/png' as const }),

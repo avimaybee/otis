@@ -460,7 +460,8 @@ export function Composer({ disabled, disabledReason, running, commands, models =
                 accept="image/jpeg,image/png,image/webp"
                 multiple
                 className="otis-visually-hidden"
-                aria-label="Attach photos"
+                aria-hidden="true"
+                tabIndex={-1}
                 disabled={disabled || sending}
                 onChange={event => {
                   const files = [...(event.target.files ?? [])];
