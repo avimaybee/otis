@@ -12,7 +12,8 @@ import type {
   PublicActivity,
   RunDetailResponse,
 } from '@otis/contracts';
-import { api } from './client.js';
+import { api, ApiError } from './client.js';
+import { debugLog } from './log.js';
 import { mergeActivity } from '../hooks/useActivityStream.js';
 import { qk } from './queries.js';
 
@@ -41,7 +42,18 @@ export async function fetchChatSnapshot(workspaceId: string, chatId: string): Pr
   const runIds = [...new Set(page.messages.flatMap(message => (message.run_id ? [message.run_id] : [])))];
   // One batched roundtrip instead of one request per run; unknown ids are
   // omitted server-side, mirroring the previous per-run settled behavior.
-  const runData = runIds.length > 0 ? (await api.runs(workspaceId, runIds)).runs : [];
+  // A batch failure must never sink the whole snapshot: render messages and
+  // activities without run details, and let live events repair active runs.
+  let runData: RunDetailResponse[] = [];
+  if (runIds.length > 0) {
+    try {
+      runData = (await api.runs(workspaceId, runIds)).runs;
+    } catch (err) {
+      debugLog('chat', 'batched run details unavailable; rendering without them', {
+        chatId, status: err instanceof ApiError ? err.status : null,
+      });
+    }
+  }
   const activities = [...new Map(
     [...firstActivity.activities, ...runData.flatMap(run => run.activities)].map(activity => [activity.id, activity]),
   ).values()].sort((left, right) => left.cursor - right.cursor);

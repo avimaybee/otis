@@ -111,4 +111,18 @@ describe('Latency audit: fixed behavior (reproductions now prove the cures)', ()
     expect([api.getChat, api.listMessages, api.activity, api.clarifications, api.runs]
       .reduce((count, method) => count + vi.mocked(method).mock.calls.length, 0)).toBe(5);
   });
+
+  it('a failed run batch still renders the transcript without run details', async () => {
+    vi.spyOn(api, 'getChat').mockResolvedValue({ chat: { id: 'audit-chat' } } as never);
+    vi.spyOn(api, 'listMessages').mockResolvedValue({
+      messages: [{ id: 'm0', run_id: 'r0', sequence: 0 }],
+      next_before_sequence: null,
+    } as never);
+    vi.spyOn(api, 'activity').mockResolvedValue({ activities: [], latest_cursor: 0 } as never);
+    vi.spyOn(api, 'clarifications').mockResolvedValue({ clarifications: [] } as never);
+    vi.spyOn(api, 'runs').mockRejectedValueOnce(new Error('batch unavailable'));
+    const snapshot = await fetchChatSnapshot('audit-ws', 'audit-chat');
+    expect(snapshot.messages.map(message => message.id)).toEqual(['m0']);
+    expect(snapshot.runs).toEqual({});
+  });
 });
