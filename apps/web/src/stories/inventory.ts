@@ -105,4 +105,11 @@ export const FIXTURE_IDS = [
   'voice/expired',
   'voice/recording-during-work',
   'voice/amount-confirmation',
+  'table/compare',
+  'table/timeline',
+  'table/action-plan',
+  'table/long-cells',
+  'table/missing-values',
+  'table/multiple',
+  'table/streaming',
 ];

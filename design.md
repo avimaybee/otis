@@ -214,6 +214,7 @@ Each ID is a story using production components, not a separately styled mock. Gr
 | offline/shell, offline/pending, offline/reconnect, offline/storage-unavailable | Offline recovery |
 | voice/permission, voice/recording, voice/interrupted, voice/review, voice/upload, voice/transcribing, voice/uncertain, voice/expired | Voice lifecycle |
 | voice/recording-during-work, voice/amount-confirmation | Screenshot composition, separate capture/run Stop, server-supplied clarification choices |
+| table/compare, table/timeline, table/action-plan, table/long-cells, table/missing-values, table/multiple, table/streaming | Model-composed tables for any subject, shared shell, scroll confinement, working copy |
 
 ## 14. Acceptance and process
 

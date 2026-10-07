@@ -18,6 +18,7 @@ import * as Settings from '../src/stories/Settings.stories.js';
 import * as Brief from '../src/stories/Brief.stories.js';
 import * as Offline from '../src/stories/Offline.stories.js';
 import * as Voice from '../src/stories/Voice.stories.js';
+import * as Table from '../src/stories/Table.stories.js';
 import * as Telegram from '../src/stories/Telegram.stories.js';
 
 function storyNames(module: Record<string, unknown>): string[] {
@@ -49,7 +50,7 @@ describe('008A story inventory', () => {
   });
 
   it('maps every design.md fixture ID to a production-component story', () => {
-    const modules = [Entry, Chat, Message, Stream, Work, Question, Undo, Scroll, Composer, Command, Nav, Settings, Brief, Offline, Voice, Telegram];
+    const modules = [Entry, Chat, Message, Stream, Work, Question, Undo, Scroll, Composer, Command, Nav, Settings, Brief, Offline, Voice, Telegram, Table];
     const actual = new Set(modules.flatMap(storyNames));
     const missing = FIXTURE_IDS.filter(id => !actual.has(id));
     expect(missing).toEqual([]);

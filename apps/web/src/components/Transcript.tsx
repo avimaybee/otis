@@ -3,6 +3,7 @@ import { useStickToBottom } from 'use-stick-to-bottom';
 import type { ChatMessage, PublicActivity, RunDetailResponse } from '@otis/contracts';
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import { markdownComponents } from './MarkdownTable.js';
 import { toast } from 'sonner';
 import { ChevronDownIcon, CheckIcon, AlertCircleIcon, UndoIcon, TerminalIcon, FileTextIcon, SearchDocIcon, CopyIcon, ArrowDownIcon, PencilIcon } from './icons.js';
 import { Button } from './ui/button.js';
@@ -316,7 +317,7 @@ const MessageBody = memo(function MessageBody({ message }: { message: ChatMessag
       </div>
     );
   }
-  return <div className="otis-turn__body text-base text-foreground [&>p+p]:mt-3"><Markdown remarkPlugins={[remarkGfm]} skipHtml disallowedElements={['img']}>{message.content_text}</Markdown></div>;
+  return <div className="otis-turn__body text-base text-foreground [&>p+p]:mt-3"><Markdown remarkPlugins={[remarkGfm]} components={markdownComponents} skipHtml disallowedElements={['img']}>{message.content_text}</Markdown></div>;
 });
 export interface TranscriptProps {
   messages: ChatMessage[]; members: Record<string, string>; currentUserId: string; run?: RunDetailResponse | null; runs?: Record<string, RunDetailResponse>;
@@ -529,10 +530,10 @@ export function Transcript({ messages, members, currentUserId, steps, run, runs 
                     ? 'Partial response — stopped.'
                     : 'Partial response — Otis could not finish.'}
                 </p>
-                <Markdown remarkPlugins={[remarkGfm]} skipHtml disallowedElements={['img']}>{streamText}</Markdown>
+                <Markdown remarkPlugins={[remarkGfm]} components={markdownComponents} skipHtml disallowedElements={['img']}>{streamText}</Markdown>
               </div>
             ) : (
-              <div className="otis-turn__body otis-streamed text-base text-foreground [&>p+p]:mt-3" aria-live="off"><Markdown remarkPlugins={[remarkGfm]} skipHtml disallowedElements={['img']}>{streamText}</Markdown></div>
+              <div className="otis-turn__body otis-streamed text-base text-foreground [&>p+p]:mt-3" aria-live="off"><Markdown remarkPlugins={[remarkGfm]} components={markdownComponents} skipHtml disallowedElements={['img']}>{streamText}</Markdown></div>
             ));})()}</>}
           </div>;
         })}
