@@ -1,5 +1,6 @@
 import type { Meta, StoryObj } from '@storybook/react-vite';
 import { Transcript } from '../components/Transcript.js';
+import { ContractOnly } from './ContractOnly.js';
 import { storyClarification, storyMembers, storyMessage, storyRun } from './fixtures.js';
 
 const base = {
@@ -70,3 +71,49 @@ export const Multiple: Story = {
   },
   parameters: { docs: { description: { story: 'Each pending question stays attached to its own request context.' } } },
 };
+
+const panelContract = (fixtureId: string, expects: string): Story => ({
+  name: fixtureId,
+  args: {} as never,
+  render: () => (
+    <ContractOnly fixtureId={fixtureId} expects={expects} owner="question panel plan 2026-10-07-codex-style-questions-plan" />
+  ),
+});
+
+/**
+ * Contract-only question-panel states (design.md section 6, token 8.12).
+ * The production QuestionPanel does not exist yet; these record the
+ * expected content contract for review and authorize no shipped control.
+ */
+export const FreeText: Story = panelContract(
+  'question/free-text',
+  'Separate answer field; typed text overrides the selected suggestion on Send.',
+);
+export const Skipped: Story = panelContract(
+  'question/skipped',
+  'Skip defers without resolving; the pending callout stays reopenable.',
+);
+export const Reopened: Story = panelContract(
+  'question/reopened',
+  'Answer question opens that exact question and restores its scoped draft.',
+);
+export const Pending: Story = panelContract(
+  'question/pending',
+  'Local answer echo within 100 ms; panel owns its submission state.',
+);
+export const Failed: Story = panelContract(
+  'question/failed',
+  'Failed answer stays attached with same-payload Retry and editable recovery.',
+);
+export const Stale: Story = panelContract(
+  'question/stale',
+  'Resolved or superseded question refuses stale submission with recovery.',
+);
+export const LateAcceptance: Story = panelContract(
+  'question/late-acceptance',
+  'Late acknowledgement clears only its matching submission, never a newer draft.',
+);
+export const ChatIndependent: Story = panelContract(
+  'question/chat-independent',
+  'Ordinary chat, commands and voice stay sendable while a question waits.',
+);

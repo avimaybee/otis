@@ -24,7 +24,7 @@ const SCAN_ROOTS = ['apps/web/src', 'packages/design/src'];
 const DEFINITION_STORE = 'apps/web/src/globals.css';
 const TOKEN_FILE = 'design-tokens.md';
 /** Pinned at import; a token update is explicit and must re-pin here. */
-const TOKEN_SHA256 = '00493EE66067E966AB4E97ED9313D581671C3BE78D9F2B83BBD2F2C2B1FF04A9';
+const TOKEN_SHA256 = '69BADBF7E4F23A2BCFF18ADBA1280EADDA92570091135D250C33399C197923A2';
 const SELF_TEST = process.argv.includes('--self-test');
 
 const failures = [];
@@ -82,15 +82,15 @@ function checkFile(file) {
     if (!isStore && /#[0-9a-fA-F]{3,8}\b|rgba?\s*\(|hsla?\s*\(/.test(line)) {
       fail(file, 'hex/rgb/hsl literal outside globals.css', `${at} ${line}`);
     }
-    // 2. Type scale: four sizes, weights 400/500 only.
+    // 2. Type scale: five sizes, weights 400/500 only.
     if (/text-(lg|2xl|3xl|4xl|5xl|6xl|7xl|8xl|9xl)\b|text-\[/.test(line)) {
-      fail(file, 'banned text size (only text-xs/sm/base/xl)', `${at} ${line}`);
+      fail(file, 'banned text size (only text-xs/nav/sm/base/xl)', `${at} ${line}`);
     }
     if (/font-(semibold|bold|extrabold|black|thin|light)\b/.test(line)) {
       fail(file, 'banned font weight utility (400/500 only)', `${at} ${line}`);
     }
     if (isCss && !isStore && /font-size\s*:/.test(line) && !/font-size\s*:\s*inherit/.test(line)) {
-      fail(file, 'font-size in CSS (use text-xs/sm/base/xl utilities)', `${at} ${line}`);
+      fail(file, 'font-size in CSS (use text-xs/nav/sm/base/xl utilities)', `${at} ${line}`);
     }
     if (isCss && !isStore && /font-weight\s*:\s*(200|300|600|700|800|900)\b/.test(line)) {
       const isAllowed600 = /font-weight\s*:\s*600\b/.test(line) &&

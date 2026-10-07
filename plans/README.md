@@ -2,6 +2,17 @@
 
 Revised 2026-10-03. UI documentation was inspected against commit `663f0b3`; earlier gate baselines are historical evidence. [roadmap.md](../roadmap.md) is the full delivery guide; [architecture.md](../architecture.md) and [contracts](../docs/contracts.md) are the technical agreements. Earlier pre-build document hashes and fixed migration numbers are retired. Inspect current Git state and dependencies before implementing.
 
+## Independent UI and responsiveness audit — 2026-10-07
+
+The [running audit](2026-10-07-ui-and-reply-audit.md) independently inspects current source/rendered behavior and distinguishes concurrent repairs from unresolved work. The user selected Codex's question panel as the reply interaction; generic quoted-message replies are not requested. These are advisory specifications, not completed implementation or deployment gates.
+
+| Order | Work | Status / dependency |
+|---|---|---|
+| 1 | [Explicit Codex-style question panel](2026-10-07-codex-style-questions-plan.md) | SPECIFIED; text uses existing clarification/outbox contracts; voice requires targeted transport evidence |
+| 2 | [Compact conversation UI](2026-10-07-compact-ui-plan.md) | SPECIFIED; sidebar/transcript density can proceed independently; final dock depends on question ownership |
+
+[Interactive visual study](qa/otis-compact-question-preview.html) and [native-browser geometry](qa/2026-10-07-study-geometry.json) are proposal evidence only. Audit baseline `2d2c0c1`; concurrent fixes reviewed through `06ee63c`. Full implementation and release verification remain required.
+
 ## Order and current status
 
 **2026-10-04 runtime repair:** fresh-chat readiness, Gemini stateful tool continuation, clarification answer identity, unfinished preview labeling and implicit-chat Undo retry are locally reviewed. Final implementation suite645/45; reviewer targeted adapter24, transcript24 and chat API53 passed. See [QA adjudication](qa/2026-10-04-antigravity-review.md) for exact evidence and prior failures. No release performed. Next acceptance step is the [identified-build browser retest](qa/runtime-repair-browser-retest.md); production remains unaccepted until save→confirmation→retrieval→reload works on the released repair. Preserve the queued008C and unrelated dirty tree; do not infer authority to deploy or start another feature from this note.

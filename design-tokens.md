@@ -1,9 +1,11 @@
 # Otis design tokens
 
-Status: approved baseline. Owner: Avi.
+Status: approved visual baseline, revised for Avi's compact UI and Codex-style question direction on 2026-10-07. Owner: Avi. These recipes are the implementation target, not evidence of production completion.
 Visual direction: calm and precise, charcoal canvas, one muted yellow "Highlighter" accent.
 
 This file is the single source of truth for how Otis looks. It replaces the color table (section 5), the radius and spacing values, and any conflicting visual rule in `design.md`. `design.md` still owns behavior, layout logic, states and acceptance review. `product.md` owns behavior. If two documents disagree on a visual value, this file wins.
+
+Migration note, 2026-10-07: apply these values to their existing CSS/component owners and update enforcement/stories together. `text-xs` now means 12 / 16 px metadata; use the new `text-nav` token for 13 / 18 px navigation and technical detail. Remove duplicate gap owners and invisible action-row space rather than layering overrides. These documentation changes do not modify runtime CSS or claim the UI migration complete.
 
 ---
 
@@ -29,29 +31,11 @@ This file is the single source of truth for how Otis looks. It replaces the colo
 
 ---
 
-## 2. Reference mockup and scale rule
+## 2. References and compact production scale
 
-The approved mockup was a miniature at a 12 px body size. Production uses a 16 px body size, so values were scaled by about 1.33 and snapped to the 4 px grid. Proportions are preserved. When in doubt, the proportions below win.
+The original [approved reference](docs/design/approved-reference.png) remains the charcoal/Highlighter composition reference. Avi's 2026-10-07 direction supersedes its former density scaling: compact, structured controls and conversation spacing, with readable body text. Use sections 5–8 for production dimensions; do not scale the miniature or restore the old 24 px turn gaps, 280 px sidebar or inflated control rows.
 
-| Element | Mockup (miniature) | Production |
-|---|---|---|
-| Body and sidebar row text | 12 px | 16 px / 24 px |
-| Working line, pill text | 11 px | 13 px / 18 px |
-| Sidebar row padding | 5 / 12 px | 8 px vertical, 16 px horizontal (row height 40 px) |
-| Selected row accent bar | 2 px | 2 px |
-| Sidebar bottom separator | 0.5 px | 1 px |
-| Message area padding | 12 px | 16 px |
-| Working dot | 6 px | 8 px |
-| Working line gap, bottom margin | 6 px | 8 px |
-| Status pill | 0 6 px padding, 0.5 px border, radius 8 | height 22 px, 8 px horizontal padding, 1 px border, fully round |
-| User bubble padding | 5 / 11 px | 8 px vertical, 16 px horizontal |
-| User bubble radius | 14 px | 20 px |
-| Composer padding | 8 / 8 / 8 / 12 px | 8 px top, right, bottom, 16 px left |
-| Composer radius | 14 px | 20 px |
-| Send button | 24 px circle, 14 px icon | 36 px circle, 18 px icon |
-| Gap between message groups | 10 px (compressed for the mock) | 24 px |
-
-Layout of the reference, top to bottom: sidebar block with a selected row, a hairline, a Working line with yellow dot, assistant text with an inline pill, a right-aligned user bubble, the composer with a yellow send button.
+The [Codex question reference](plans/qa/2026-10-07-codex-question-reference.png) owns the question-panel composition: numbered suggestions, a separate answer field with Send/Skip, and ordinary chat underneath. The [interactive Otis study](plans/qa/otis-compact-question-preview.html) and its [recorded geometry](plans/qa/2026-10-07-study-geometry.json) make the compact direction concrete. They are proposal evidence, not production components or backend verification. Existing colors, fonts and highlight rules remain authoritative here.
 
 ---
 
@@ -123,13 +107,13 @@ Do not use `--subtle` for anything the person needs to read to act. Use `--muted
 1. The 2 px left bar on the selected sidebar row.
 2. The 8 px dot on a Working line.
 3. The lead status pill for `warm` and `hot` (1 px border and text in highlight, transparent fill).
-4. The send button (36 px circle, highlight fill, dark icon).
+4. The main-chat send button (32 px desktop / 36 px mobile circle, highlight fill, dark icon).
 5. Links (highlight text with a permanent 1 px underline, 2 px offset).
 
 Never use highlight for: focus rings, large fills, backgrounds behind text, headings, icons other than the send arrow, charts, gradients, glows, selection color, or hover washes.
 
 Rules that follow:
-- A default (white) `Button` is allowed alongside the send button. At most one highlight-filled control is visible at a time.
+- A default (white) `Button` is allowed alongside the send button. At most one highlight-filled control is visible at a time. Question Send uses the neutral primary Button recipe; choices and question framing use no highlight.
 - Status pills for other states are neutral: `new`, `cold`, `lost`, `deprioritized` use a 1 px `border` pill with `text-muted-foreground`. `won` uses `text-success`. `hot` is the `warm` pill plus a 6 px leading highlight dot.
 - Send button states: empty composer uses `bg-accent text-subtle` (neutral, not yellow). With valid content it becomes highlight. While a run is active the same slot becomes Stop (section 8.9).
 
@@ -140,21 +124,22 @@ Rules that follow:
 Three approved families (maximum three faces across the product):
 1. **UI and prose**: Instrument Sans, self-hosted variable font (`@fontsource-variable/instrument-sans`, include the `latin` and `latin-ext` subsets). Fallback: `system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif`. Used at weights 400 and 500 only.
 2. **Wordmark and empty-state title**: Bricolage Grotesque, self-hosted variable font (`@fontsource-variable/bricolage-grotesque`, include the `latin` and `latin-ext` subsets). Fallback: `system-ui, sans-serif`. Used strictly at weight 600 in these two places only.
-3. **Technical detail only**: Geist Mono, self-hosted variable font (`@fontsource-variable/geist-mono`, include the `latin` and `latin-ext` subsets) at 13 px (`text-xs font-mono`). Fallback: `ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace`. Used for inspectable tool output and raw IDs; never business prose.
+3. **Technical detail only**: Geist Mono, self-hosted variable font (`@fontsource-variable/geist-mono`, include the `latin` and `latin-ext` subsets) at 13 px (`text-nav font-mono`). Fallback: `ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace`. Used for inspectable tool output and raw IDs; never business prose.
 
 Latin-ext is required for Romanian `ș ț` (comma-below `U+0219`/`U+021B`) and Hungarian `ő ű` (double acute `U+0151`/`U+0171`). Verify them in the rendered UI.
 
 | Role | Size / line height | Weight | Tailwind class | Use |
 |---|---|---|---|---|
-| Body | 16 / 24 | 400 | `text-base` | Messages, composer, sidebar rows, headers |
+| Body | 16 / 24 | 400 | `text-base` | Messages, chat and answer inputs |
 | UI | 14 / 20 | 500 | `text-sm` | Buttons, menu items, form labels, settings rows |
-| Meta | 13 / 18 | 400 | `text-xs` | Working line, pills, timestamps, section labels |
+| Navigation | 13 / 18 | 400 | `text-nav` | Sidebar rows, quiet model controls |
+| Meta | 12 / 16 | 400 | `text-xs` | Working line, pills, timestamps, section labels |
 | Title | 20 / 26 | 500 (600 empty title only) | `text-xl` | Sign-in title, empty state, rare screen titles |
-| Detail | 13 / 18 | 400 | `text-xs font-mono` | Technical tool inspectables, raw IDs |
+| Detail | 13 / 18 | 400 | `text-nav font-mono` | Technical tool inspectables, raw IDs |
 
 Rules:
 - Weights are 400 and 500 in general UI and prose. Weight 600 is permitted strictly on the wordmark and the empty-state title. No other 600, no 700, no `font-bold`.
-- The only sizes allowed in the app are the four above. No `text-lg`, `text-2xl` or larger, no arbitrary `text-[Npx]`.
+- The only sizes allowed in the app are the five above. No `text-lg`, `text-2xl` or larger, no arbitrary `text-[Npx]`.
 - Sentence case everywhere. No all-caps, no tracked uppercase labels. Body letter-spacing stays 0; use -0.01em on the 20 px titles only.
 - Prose measure at 16 px in the 760 px column is closer to ~90 characters. Short replies don't hit it, and Otis keeps answers short so replies stay readable without narrowing the column.
 - Use `tabular-nums` for money, counts and times (`font-variant-numeric: tabular-nums`).
@@ -167,34 +152,39 @@ Rules:
 
 ### 6.1 Spacing
 
-4 px grid. Allowed steps: 4, 8, 12, 16, 24, 32, 48 (Tailwind `1, 2, 3, 4, 6, 8, 12`). Not allowed: 5, 6, 10, 14, 18, 20 and arbitrary values, except the two documented in the recipes (`pl-[14px]` on the selected sidebar row, `my-1.5` on the composer textarea).
+4 px spacing grid. Allowed steps: 4, 8, 12, 16, 24, 32, 48 (Tailwind `1, 2, 3, 4, 6, 8, 12`). Other spacing values require a documented recipe. Selected-row `pl-[14px]` compensates for its 2 px border; icon sizes, typography and radii have their own tables. No textarea margin that silently inflates the composer.
 
 | Where | Value |
 |---|---|
 | Transcript side gutter (mobile) | 16 |
 | Author to content | 4 to 8 |
 | Paragraph gap inside a message | 12 |
-| Gap between message groups | 24 |
+| Gap between message groups | 16 |
 | Section gap | 32 |
 | Working line to the answer | 8 |
+| Question panel to ordinary composer | 8 |
+| Question panel internal groups | 8 |
 | Composer to bottom edge | 16 plus safe-area inset |
 
-One parent owns each gap. Use `gap-*` on the parent, not margins on children.
+One parent owns each gap. Use `gap-*` on the parent, not margins on children. A run group owns the 8 px Working-to-answer gap; the transcript owns the 16 px between-turn gap. Hidden message actions reserve no row height or extra turn gap.
 
 ### 6.2 Sizes
 
 | Thing | Value |
 |---|---|
-| Top bar height | 52 px |
-| Sidebar width | 280 px (260 to 300 allowed) |
-| Sidebar row height | 40 px |
+| Top bar height | 48 px |
+| Sidebar width | 248 px |
+| Sidebar row / action height | 32 px |
 | Transcript and composer column | max 760 px, centered |
 | Detail panel | 384 px (360 to 440), only when opened |
-| Icon button (desktop) | 36 px visual |
-| Touch hit area | 44 x 44 px minimum (pad the hit area, keep the visual size) |
-| Small action icon button (copy, edit) | 32 px, 16 px icon |
-| Composer min height | 52 px, grows to 6 lines then scrolls |
-| Send, mic, stop | 36 px circle, 18 px icon |
+| Icon button (desktop) | 32 px visual |
+| Pointer target | At least 24 x 24 px; coarse-pointer controls at least 32 x 32 px, with larger nonoverlapping reach where space permits |
+| Small action icon button (copy, edit) | 28 px, 16 px icon |
+| Idle composer surface | 56 px desktop; 76 px narrow mobile with integrated controls wrapping; grows to 6 input lines then scrolls |
+| Send, mic, stop | 32 px desktop / 36 px mobile circle; 16 / 18 px icon respectively |
+| Working disclosure row | 24 px |
+| Question choice row | 32 px desktop / 36 px mobile; grows for wrapped text |
+| Question panel | Content-sized; common short question about 220 px; long content scrolls within a max-height of min(320px, 45dvh) |
 | Icons | Lucide, 18 px (16 px in 32 px buttons), stroke 2, `currentColor` |
 
 ### 6.3 Radius
@@ -234,14 +224,14 @@ Keyboard focus is `outline: 2px solid var(--ring); outline-offset: 2px` on every
 | Name | Width | Behavior |
 |---|---|---|
 | base | 360 and up | Full-screen chat, 16 px gutters, history in a drawer |
-| `nav` | 900 and up | Persistent 280 px sidebar, drawer removed |
+| `nav` | 900 and up | Persistent 248 px sidebar, drawer removed |
 | `detail` | 1280 and up | Detail panel may sit beside the chat if the chat keeps at least 600 px |
 
 Sidebar width is not a breakpoint. Collapse the sidebar before squeezing the chat.
 
 Mobile drawer: width `min(320px, 86vw)`, dimmed backdrop, focus trapped while open, closes by backdrop, Close, Escape and Back.
 
-Use `h-dvh` for the shell. Never `h-screen` or `100vh`. The transcript is the only vertical scroller. The composer sits in layout above the safe area and the keyboard.
+Use `h-dvh` for the shell. Never `h-screen` or `100vh`. The transcript is the main conversation scroller. History and bounded long-question content may scroll inside their regions. The complete composer dock, including an open question panel, sits in layout above the safe area and keyboard and has one measured height owner.
 
 ---
 
@@ -256,24 +246,25 @@ h-dvh bg-background text-foreground flex
 
 ### 8.2 Sidebar
 ```
-Container: w-[280px] shrink-0 flex-col border-r border-sidebar-border bg-sidebar py-2
+Container: w-[248px] shrink-0 flex-col border-r border-sidebar-border bg-sidebar py-2
 Section label: px-4 py-2 text-xs text-subtle
-Row: flex h-10 w-full items-center truncate px-4 text-base text-muted-foreground hover:bg-sidebar-hover
+Row: flex h-8 w-full items-center truncate px-4 text-nav text-muted-foreground hover:bg-sidebar-hover
 Selected row: border-l-2 border-highlight bg-sidebar-accent pl-[14px] text-sidebar-accent-foreground
 ```
 Rows are full-bleed with no radius, no card, no border. Long titles truncate. The header block (workspace name and New chat) sits above the rows and is separated from the chat list by a 1 px `border-sidebar-border` line.
 
 ### 8.3 Top bar
 ```
-flex h-[52px] items-center gap-2 border-b border-border px-4
-Title: truncate text-base font-medium
+flex h-12 items-center gap-2 border-b border-border px-4
+Title: truncate text-sm font-medium
 Workspace subtitle: text-xs text-subtle
 ```
 
 ### 8.4 Transcript column
 ```
 Scroller: flex-1 overflow-y-auto
-Column: mx-auto flex w-full max-w-[760px] flex-col gap-6 px-4 py-6
+Column: mx-auto flex w-full max-w-[760px] flex-col gap-4 px-4 py-4
+Run group (Working + answer): flex flex-col gap-2
 ```
 
 ### 8.5 Assistant message (no container)
@@ -284,13 +275,13 @@ Sits directly on the canvas. No bubble, no avatar per paragraph, no border.
 
 ### 8.6 User message
 ```
-ml-auto w-fit max-w-[85%] rounded-2xl bg-card px-4 py-2 text-base text-card-foreground nav:max-w-[80%]
+ml-auto w-fit max-w-[85%] rounded-2xl bg-card px-3 py-2 text-base text-card-foreground nav:max-w-[80%]
 ```
 A single-line message renders as a pill. A multi-line message keeps the 20 px radius.
 
 ### 8.7 Working line
 ```
-Row: mb-2 flex items-center gap-2 text-xs text-muted-foreground
+Row: flex min-h-6 items-center gap-2 text-xs text-muted-foreground
 Dot: size-2 shrink-0 rounded-full bg-highlight
 Chevron (disclosure): size-4 text-subtle
 ```
@@ -305,28 +296,29 @@ Neutral variant: `border-border text-muted-foreground`. Won: `border-border text
 ### 8.9 Composer
 ```
 Wrapper: mx-auto w-full max-w-[760px] px-4 pb-4
-Surface: flex min-h-[52px] items-end gap-1 rounded-2xl bg-card py-2 pr-2 pl-4
-Textarea: my-1.5 max-h-36 min-h-6 flex-1 resize-none bg-transparent text-base leading-6 outline-none placeholder:text-muted-foreground
+Surface: grid min-h-[76px] grid-cols-[minmax(0,1fr)_auto] items-center gap-1 rounded-2xl bg-card py-2 pr-2 pl-3 nav:flex nav:min-h-[56px]
+Textarea: max-h-36 min-h-6 min-w-0 flex-1 resize-none bg-transparent text-base leading-6 outline-none placeholder:text-muted-foreground
 Placeholder text: Message Otis
-Mic: grid size-9 shrink-0 place-items-center rounded-full text-muted-foreground hover:bg-accent hover:text-foreground
-Send (has content): grid size-9 shrink-0 place-items-center rounded-full bg-highlight text-highlight-foreground hover:bg-highlight-hover active:bg-highlight-pressed
-Send (empty): grid size-9 shrink-0 place-items-center rounded-full bg-accent text-subtle
-Stop (run active): grid size-9 shrink-0 place-items-center rounded-full bg-primary text-primary-foreground
+Mic: grid size-9 shrink-0 place-items-center rounded-full text-muted-foreground hover:bg-accent hover:text-foreground nav:size-8
+Send (has content): grid size-9 shrink-0 place-items-center rounded-full bg-highlight text-highlight-foreground hover:bg-highlight-hover active:bg-highlight-pressed nav:size-8
+Send (empty): grid size-9 shrink-0 place-items-center rounded-full bg-accent text-subtle nav:size-8
+Stop (run active, no valid follow-up): grid size-9 shrink-0 place-items-center rounded-full bg-primary text-primary-foreground nav:size-8
+Quiet model/effort control: min-w-0 truncate text-nav text-muted-foreground; inline on desktop, one integrated 20 px row on narrow mobile
 ```
-Send icon is Lucide `ArrowUp`, 18 px, stroke 2. Stop icon is a 12 px filled square. Give Send and Stop different `aria-label`s ("Send", "Stop"). No border on the composer. No toolbar row inside it. No model dropdowns or chips in it. The model lives behind `/model` and a quiet overflow option. No Plus button until a working attachment action exists. Optional footer line below the composer: `text-xs text-subtle`, centered, one sentence at most.
+Send icon is Lucide `ArrowUp`, 16 px desktop / 18 px mobile, stroke 2. Stop icon is a 12 px filled square. Give Send and Stop different `aria-label`s ("Send", "Stop"). No border on the composer. Keep the actual model/effort controls quiet, bounded and server-confirmed; `/model`, `/thinking` and overflow remain available. No separate toolbar strip or chip collection. A mobile wrap is part of the same surface, not an extra panel. Valid follow-ups use Send while work runs, with Stop still reachable in overflow. Hide unavailable controls. Optional footer: `text-xs text-subtle`, centered, one sentence at most; it must not appear/disappear on send and move the input.
 
 ### 8.10 Message actions (copy, edit)
 ```
-Button: grid size-8 place-items-center rounded-md text-subtle hover:bg-accent hover:text-foreground
+Button: grid size-7 place-items-center rounded-md text-subtle hover:bg-accent hover:text-foreground
 Icon: size-4
 Visibility: opacity-0 group-hover:opacity-100 focus-within:opacity-100 [@media(hover:none)]:opacity-100
 ```
-Timestamps and actions show on hover or focus, and always on touch. Persistent timestamps under every message are not allowed. Date separators mark real date changes (`text-xs text-subtle`, centered).
+Timestamps and actions show on hover or focus, with a reachable touch/menu equivalent. An invisible toolbar is out of flow and reserves no 32 px action row. Position it without overlapping message text; preserve keyboard access and stable layout. Persistent timestamps under every message are not allowed. Date separators mark real date changes (`text-xs text-subtle`, centered).
 
 ### 8.11 shadcn overrides
 | Component | Rule |
 |---|---|
-| Button default | `h-9 px-4 text-sm font-medium rounded-md`, white fill |
+| Button default | `h-8 px-3 text-sm font-medium rounded-md`, white fill; mobile primary action may use `h-9` |
 | Button secondary | `bg-secondary`, no border |
 | Button ghost | transparent, `hover:bg-accent` |
 | Button outline | 1 px `border-border`, transparent |
@@ -337,6 +329,26 @@ Timestamps and actions show on hover or focus, and always on touch. Persistent t
 | Tooltip | `rounded-lg bg-popover text-xs` |
 | Sheet (mobile drawer) | `bg-sidebar`, `w-[min(320px,86vw)]` |
 | Toast | Not used for business mutations. Copy confirmations only. |
+
+### 8.12 Question panel
+
+Use one production shadcn-based panel above the ordinary composer, in the same 760 px column and measured dock. This is the specific exception to the old ban on question framing; assistant messages remain unboxed.
+
+```
+Dock: flex flex-col gap-2
+Panel: flex max-h-[min(320px,45dvh)] flex-col gap-2 overflow-y-auto overscroll-contain rounded-xl border border-border bg-card p-3
+Header: flex items-center justify-between gap-2 text-xs text-muted-foreground
+Question: text-base text-foreground
+Choices: flex flex-col gap-1
+Choice: flex min-h-9 items-center gap-2 rounded-md px-2 py-1 text-sm hover:bg-accent nav:min-h-8
+Choice number: grid size-6 shrink-0 place-items-center rounded-sm bg-accent text-xs text-muted-foreground
+Answer surface: flex items-end gap-2 rounded-lg border border-input bg-transparent p-2
+Answer textarea: min-h-6 min-w-0 flex-1 resize-none bg-transparent text-base leading-6 outline-none placeholder:text-muted-foreground
+Skip: existing ghost Button, h-8
+Send answer: existing neutral primary Button, h-8; mobile h-9
+```
+
+Use sentence-case “Question”, close, server-supplied numbered choices and an editable answer. Selected choices use a neutral accent fill and an explicit selected indicator/accessible state. Free text takes precedence. Question Send submits only this panel's immutable question target; the ordinary composer never inherits it. Skip defers, close hides, and the original pending question remains reopenable. Keep the answer mic absent until voice carries the same target through transcription and resume. Long questions/options wrap without truncating their meaning; the bounded panel scroll must leave ordinary chat reachable. See [design section 6](design.md#6-streaming-working-and-questions) for state and recovery behavior.
 
 Do not add shadcn Card, Badge or Alert wrappers around transcript content. Do not use shadcn `Card` for messages.
 
@@ -439,8 +451,10 @@ Do not add shadcn Card, Badge or Alert wrappers around transcript content. Do no
   --radius-xl: 16px;
   --radius-2xl: 20px;
 
-  --text-xs: 0.8125rem;
-  --text-xs--line-height: 1.125rem;
+  --text-xs: 0.75rem;
+  --text-xs--line-height: 1rem;
+  --text-nav: 0.8125rem;
+  --text-nav--line-height: 1.125rem;
   --text-sm: 0.875rem;
   --text-sm--line-height: 1.25rem;
   --text-base: 1rem;
@@ -541,17 +555,19 @@ Check the rendered screen, not the code, at 360 x 800, 390 x 844, about 900, 128
 
 1. The transcript column is at most 760 px wide and centered. Composer and transcript share the same left and right edges.
 2. Body text is 16 px Instrument Sans, not a system fallback. `ș ț ő ű` render correctly.
-3. Assistant text has no container. User messages are right-aligned, one `#242424` fill, 20 px radius, 8 / 16 px padding.
-4. Gap between message groups is 24 px. Paragraph gap is 12 px.
-5. The empty composer is 52 px tall, one line, no toolbar row, placeholder "Message Otis".
-6. Send is a 36 px circle. Highlight fill when there is content, neutral when empty.
+3. Assistant text has no container. User messages are right-aligned, one `#242424` fill, 20 px radius, 8 / 12 px padding.
+4. Gap between message groups is 16 px, Working-to-answer 8 px, paragraph gap 12 px. Hidden actions reserve no row height.
+5. Idle composer surface is 56 px desktop / 76 px narrow mobile, placeholder "Message Otis"; quiet controls wrap inside the same surface when necessary. Growth follows actual input content.
+6. Main Send is a 32 px desktop / 36 px mobile circle. Highlight fill when there is content, neutral when empty; question Send is neutral.
 7. Selected sidebar row is a full-bleed `#242424` row with a 2 px yellow bar. Unselected rows have no fill, border or radius.
 8. Yellow appears only in the five places in section 4.
-9. Timestamps and copy/edit icons appear on hover or focus only (always on touch).
+9. Timestamps and copy/edit icons appear on hover or focus, with a usable touch/menu equivalent, without invisible layout inflation.
 10. No page-level horizontal scroll. Focus rings visible and neutral. Reduced motion honored.
 11. `scripts/check-design.sh` exits 0.
+12. Desktop sidebar is 248 px, rows 32 px, header 48 px. Navigation is 13 / 18 px; metadata 12 / 16 px.
+13. Question panel and main composer align. Closing/Skip does not rotate through older questions; main chat remains independent. Long question text wraps and stays keyboard-accessible.
 
-Reject and fix any screen that reads like a scaffold: a health badge above a centered card, a technical welcome panel, a stretched empty transcript, a dashboard grid, bordered message cards, or a toolbar inside the composer.
+Reject and fix any screen that reads like a scaffold: a health badge above a centered card, a technical welcome panel, a stretched empty transcript, a dashboard grid, bordered ordinary message cards, or a separate toolbar strip. The explicit question panel and integrated quiet model/effort controls follow sections 8.12 and 8.9.
 
 ---
 
@@ -584,9 +600,9 @@ Reference lines:
 
 - Hex colors or palette objects in components
 - Any accent other than `highlight`, or highlight outside the five places
-- Font weights 600 or 700 (outside the wordmark and empty-state title at 600), sizes outside the four in section 5, all-caps labels
+- Font weights 600 or 700 (outside the wordmark and empty-state title at 600), sizes outside the five in section 5, all-caps labels
 - Cards, borders or shadows around messages, rows or the composer
-- A toolbar, model chips or dropdowns inside the composer
+- A separate composer toolbar strip or model chip collection; quiet integrated model/effort controls follow section 8.9
 - Persistent timestamps and action icons under every message
 - Gradients, glow, glass, blur, bounce, shimmer, typewriter effects
 - `100vh`, `h-screen`

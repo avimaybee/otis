@@ -1,14 +1,16 @@
 # Design Otis
 
-Revised 2026-10-04. This is the required web interaction, layout and state contract. It describes the approved target, not proof that the live app meets it.
+Revised 2026-10-07 for Avi's compact UI direction and Codex-style question reference. This is the required web interaction, layout and state contract. It describes the approved target, not proof that the live app meets it.
 
 ## 1. Authority and approved reference
 
-Read [design-tokens.md](design-tokens.md) in full before changing any visible UI. Avi supplied that baseline and [the approved image](docs/design/approved-reference.png). The token file is preserved verbatim. It owns **all visual values, recipes, color placement, typography and voice-copy constraints**. It replaces this document's old token table, monochrome Send rule, composer toolbar and conflicting examples. Do not duplicate its values here.
+Read [design-tokens.md](design-tokens.md) in full before changing any visible UI. Avi supplied the original baseline and [approved image](docs/design/approved-reference.png), then explicitly requested compact density and the Codex question interaction on 2026-10-07. The revised token file owns **all visual values, recipes, color placement, typography and voice-copy constraints**. Its compact recipes supersede older inflated dimensions and conflicting examples. Keep token numbers there; this document owns their composition and behavior.
 
 ![Approved Otis composition](docs/design/approved-reference.png)
 
-The image is a miniature. Apply the production scale in token section 2, not screenshot pixels. Its outer frame is the illustration boundary, not a production chat card. Its history block illustrates row treatment; mobile history still opens in a drawer. Desktop still uses sidebar, chat and optional detail. Do not add an accent or border by sampling the image.
+The image is a miniature. Apply the revised production recipes in token sections 5–8, not screenshot pixels or the old scale multiplier. Its outer frame is the illustration boundary, not a production chat card. Its history block illustrates row treatment; mobile history still opens in a drawer. Desktop still uses sidebar, chat and optional detail. Preserve the charcoal/Highlighter palette and installed Instrument Sans, Bricolage Grotesque and Geist Mono roles.
+
+The [user's Codex question screenshot](plans/qa/2026-10-07-codex-question-reference.png) is the question interaction reference. The [interactive Otis study](plans/qa/otis-compact-question-preview.html) demonstrates the compact composition with fictional content. Its measured geometry and screenshots are proposal evidence, not an implemented production component. Implementation details and unresolved verification are recorded in the [question plan](plans/2026-10-07-codex-style-questions-plan.md) and [compact UI plan](plans/2026-10-07-compact-ui-plan.md).
 
 The supplementary [Working/Undo reference](docs/design/working-undo-reference.png) and [voice-capture reference](docs/design/voice-capture-reference.png), supplied 2026-10-04, define the compact mobile flow: a small title/workspace header, sparse transcript, expandable activity, ordinary clarification and bottom composer or action sheet. They do not replace the approved visual tokens or authorize their miniature dimensions as production values. Reuse shadcn primitives throughout, with the approved overrides; no parallel custom control system.
 
@@ -35,7 +37,7 @@ The field-use loop is capture, memory, resurfacing, action. Capture must feel sa
 | Surface | Job |
 |---|---|
 | Sign-in / invite | One Google action, useful local errors, team-history visibility disclosed before joining |
-| Own conversation | Transcript, actual Working, ordinary reply composer |
+| Own conversation | Transcript, actual Working, ordinary chat composer and an explicit question panel when needed |
 | Teammate conversation | Author visible, full authorized history, no editable composer; return to own chat |
 | History | Own/team chats and search; selected row uses the token recipe |
 | Detail | Inspect source/action/draft; Close restores transcript position |
@@ -50,9 +52,9 @@ Use token sections 7–8 exactly. Mobile is full-screen chat with summoned histo
 
 Workspace/chat are explicit route state. Refresh, Back and deep links restore that view. Switching workspace cannot briefly show another workspace's draft, optimistic bubbles, cached settings or results. History search finds chats; conversational business search retrieves business facts. Distinguish them.
 
-The transcript is the conversation's only vertical scroller. History and a long sheet may scroll within their regions without chaining to the page. Drawer closes by backdrop, Close, Escape and appropriate Back, traps focus and returns it. Detail returns to the prior reading position.
+The transcript is the main conversation scroller. History, a long sheet and bounded long-question content may scroll within their regions without chaining to the page. Drawer closes by backdrop, Close, Escape and appropriate Back, traps focus and returns it. Detail returns to the prior reading position. The transcript owns between-turn spacing; a run group owns Working-to-answer spacing. Hidden message actions must not reserve an invisible row or introduce another gap.
 
-Add overscroll containment to transcript/drawer scrollers, touch-action manipulation to controls and transparent tap highlight. Recipe-sized visual controls still need at least 44 px hit areas, extended with an ::after pseudo-element where appropriate. Targets cannot overlap neighbors or prevent text selection. Keyboard focus uses the neutral visible ring; pointer clicks do not acquire decorative borders.
+Add overscroll containment to regional scrollers, touch-action manipulation to controls and transparent tap highlight. Follow token section 6.2 for compact visuals and pointer targets. Larger coarse-pointer reach is useful where it fits; do not enforce a universal 44 px visual square or inflate every row. Extended hit areas cannot overlap neighbors or prevent text selection. Keyboard focus uses the neutral visible ring; pointer clicks do not acquire decorative borders.
 
 ## 4. Feedback and speed
 
@@ -96,7 +98,17 @@ Do not render an empty Thinking disclosure when no displayable content arrived. 
 
 On disconnect/reload, restore the received content from the existing authorized activity snapshot/cursor, without duplicate text or another model request. Preserve useful received content on Stop/failure, clearly marked interrupted where applicable. A bounded display limit must explicitly say when more provider output was omitted; silently dropping everything after a few deltas is unacceptable. Retained Thinking follows the chat's existing workspace-history access rules. Render text safely without raw HTML, automatic embeds or per-token screen-reader announcements. The additive stream contract and implementation sequence are in [contracts section 8](docs/contracts.md#8-activity-envelope) and the [008B handoff](plans/008-ui-implementation-handoff.md#thinking-inside-working).
 
-A clarification is Otis's ordinary question, answered through the normal composer. No Alert card, uppercase Question badge or replacement task form. If several questions exist, identify the selected reply context without duplicating the question. Candidate shortcuts exist only when supplied by the server; never invent a date or consent. Waiting for a person releases the workspace execution slot so teammates can proceed.
+### Question panel
+
+A clarification uses the Codex-style panel in token section 8.12, above the ordinary composer. Show a sentence-case Question header, close action, full meaningful question, numbered server-supplied choices, a separate free-text answer field, Skip and Send. Reuse shadcn primitives and one production component in both application and stories. This grouped panel is the explicit exception to the old ban on question framing; ordinary Otis messages remain on the canvas.
+
+Selecting a suggestion selects an answer without submitting it. Free text overrides the selected suggestion. Never invent a date, consent, entity or choice. Only the panel's Send attaches its immutable question ID to the answer; normal chat, commands and normal voice notes never inherit a pending question. Capture target, answer and stable delivery UUID at submission and reuse the same payload on retry. Main chat remains available while the question waits, and waiting for a person releases the workspace execution slot.
+
+Keep one visible panel with answer drafts scoped by user/workspace/chat/question, independently of the main chat draft. Closing hides it; Skip defers the operation without resolving it or guessing a business write. Neither action automatically rotates through older questions. The original transcript callout keeps an Answer question action that opens that exact question and focuses its field. Switching questions restores the matching draft. Escape closes the panel when focus belongs to it and returns focus to its originating control or the main composer.
+
+Pending/error state belongs to the affected panel. Give local answer feedback within 100 ms and retain same-payload Retry on delivery failure. A late acknowledgement clears only its matching submission, never a newer panel or draft. A resolved/superseded question cannot accept a stale answer or silently reroute it. Revalidate on resume under the existing server contract. Expose the panel mic only when the recorded-note path carries the exact question through upload, transcription and resumption; keep it absent while that path is unavailable.
+
+Long questions and suggestions wrap instead of losing meaningful endings. Bounded panel scrolling preserves access to the answer controls and normal composer. Use labeled choice selection and accessible selected state; optional number shortcuts must not intercept typing or IME in editable fields. Apply the same Enter/Shift+Enter policy as chat. Do not announce each streamed token or force focus away from ongoing typing when a new question arrives.
 
 ## 7. Scroll, viewport and keyboard
 
@@ -110,7 +122,7 @@ Desktop Enter sends, Shift+Enter adds a line, except during IME composition. Mob
 
 ## 8. Composer and commands
 
-Copy token section 8.9. One textarea, one soft surface, an actually working mic when available, and the Send/Stop slot. No toolbar row, model/thinking chips, Plus placeholder or live-call icon. Model/thinking access lives in /model, /thinking and quiet chat overflow **outside** the composer. Hide unimplemented controls.
+Copy token section 8.9 for ordinary chat. One textarea, one soft surface, an actually working mic when available, and the Send/Stop slot. Quiet, bounded model/effort controls may sit inline and wrap within the same surface on narrow screens; retain /model, /thinking and chat overflow access. Their values stay server-confirmed. No separate toolbar strip, chip collection, Plus placeholder or live-call icon. Hide unimplemented controls. The question panel has its own answer field and submission; it does not replace or repurpose the chat input.
 
 Commands are real scoped operations. Choosing a complete model/thinking/workspace option applies it directly through the deterministic command endpoint. It does not submit chat bubbles, produce an assistant acknowledgment turn or run an LLM. Keep its attributed durable audit/idempotency receipt outside normal conversation context.
 
@@ -120,7 +132,7 @@ Show full readable model names and actual current/default state. Capability labe
 
 Output commands such as /today, /help and /sheet need a readable predictable result, not a stream of configuration acknowledgments. Reuse shared server behavior. Do not list pretend commands or unsupported features.
 
-While working, keep typing available and accept follow-ups/corrections via the existing server steering/ordering contract. Bind the send to the actual run/clarification and preserve its immutable accepted configuration. Do not automatically stop or restart a run merely because a second message arrives. Apply the explicit slot clarification in section 1.
+While working, keep typing available and accept follow-ups/corrections via the existing server steering/ordering contract. Preserve immutable accepted configuration and bind steering to the actual active run. A clarification target is supplied only by its question panel, never inferred for ordinary sends. Do not automatically stop or restart a run merely because a second message arrives. Apply the explicit slot clarification in section 1.
 
 ## 9. Undo and correction
 
@@ -155,11 +167,11 @@ Native/Groq routing follows verified provider evidence; no per-note route choice
 
 Publish the validated transcript as soon as it exists, before business filing finishes. Echo materially resolved names, amount plus currency and deadline date concisely in the answer. Flag uncertain excerpts narrowly; do not put a full Heard receipt on every recording. Stop still enters Review: auto-send with a cancel window is a proposal, not approved behavior.
 
-Match the voice-capture reference's compact composition: retained audio appears as the user's playable note with real duration; actual acceptance/processing metadata sits quietly with it; an uncertain amount is a short ordinary question. Yes/Change shortcuts appear only for server-supplied choices and submit the same attributed clarification operation as typed replies. Saved · filing now is valid only after durable acceptance and while actual filing is underway; an idle queued item cannot claim that stage. Keep the main composer available to capture the next note while earlier work continues. The recording Stop stops capture into Review, distinct from cancelling Otis's active run; its accessible name and behavior must make that distinction explicit. No extra live-call control, record auto-send or inferred amount confirmation.
+Match the voice-capture reference's compact composition: retained audio appears as the user's playable note with real duration; actual acceptance/processing metadata sits quietly with it; an uncertain amount opens the explicit question panel. Yes/Change choices appear only when supplied by the server, select the panel's answer and require its Send action, using the same attributed clarification operation as typed answers. Saved · filing now is valid only after durable acceptance and while actual filing is underway; an idle queued item cannot claim that stage. Keep the main composer available to capture the next note while earlier work continues. The recording Stop stops capture into Review, distinct from cancelling Otis's active run; its accessible name and behavior must make that distinction explicit. No extra live-call control, record auto-send or inferred amount confirmation.
 
 ## 11. Language and accessibility
 
-Self-host Inter variable including latin-ext. Known message language sets per-message lang to ro, hu or en based on source metadata/preferences. Mixed-language text needs honest fallback; do not label every message English. UI language and lead-draft language are distinct.
+Self-host the font families and latin-ext subsets specified in token section 5. Instrument Sans owns UI/prose; Bricolage Grotesque owns only wordmark/empty title; Geist Mono owns technical inspection. Known message language sets per-message lang to ro, hu or en based on source metadata/preferences. Mixed-language text needs honest fallback; do not label every message English. UI language and lead-draft language are distinct.
 
 Assistant paragraphs use text-wrap pretty; titles balance; long names/URLs overflow-wrap anywhere. Use Intl formatting with explicit currency. Romanian RON uses ro-RO. Display times/date separators in the viewer's locale and workspace timezone consistently. Relative deadline interpretation still uses the source member's timezone under the server contract. Store instants UTC.
 
@@ -189,7 +201,8 @@ Each ID is a story using production components, not a separately styled mock. Gr
 | stream/live, stream/unfinished-markdown, stream/replay, stream/disconnected | Stable streaming and reconnect |
 | work/running, work/finished, work/expanded, work/failed, work/partial, work/stopped | Real activity and terminal states |
 | work/thinking-live, work/thinking-finished, work/thinking-absent, work/thinking-only, work/thinking-with-tools, work/thinking-interrupted, work/thinking-replay, work/thinking-truncated | One nested provider-attributed stream, honest absence, stable replay, bounded display and no fake step counts |
-| question/deadline, question/status, question/entity, question/dispute, question/multiple | Conversational clarification |
+| question/deadline, question/status, question/entity, question/dispute, question/multiple | Explicit question panel, meaningful wrapped context and exact target selection |
+| question/free-text, question/skipped, question/reopened, question/pending, question/failed, question/stale, question/late-acceptance, question/chat-independent | Separate drafts, Skip/reopen, retry, stale/late recovery and ordinary chat while waiting; contract-only until implemented |
 | undo/single, undo/from-here, undo/dependency, undo/teammate-preserved | Effects and attribution |
 | undo/mobile-scope-sheet | Screenshot composition, exact preview, primary suffix undo and secondary single-action choice |
 | scroll/follow, scroll/released, scroll/prepend, scroll/prepend-while-streaming | Reading position and Jump to latest |
@@ -208,6 +221,6 @@ Follow [token section 12](design-tokens.md#12-visual-review-checklist) at **360�
 
 Every UI increment needs production-component stories, token enforcement, targeted behavior/a11y checks, browser comparison to the reference, and evidence with commit, browser/OS, viewport, story IDs, screenshots, defects and disposition. Use native Codex/Antigravity browser controls, no Playwright. Screenshots and happy-dom geometry do not replace interaction/device evidence.
 
-The required check-design script/portable runner and Storybook are **planned, not present at this documentation baseline**. The supplied script scans src, which is not the root monorepo UI directory. Implement the path-correct fail-closed checker in the 008 handoff. A zero-file scan or utility-only checker does not establish fidelity.
+The current repository has `pnpm check:design`, `pnpm check:stories` and Storybook tooling. The audit's passing inventory/checker runs do not establish this revised target's implementation. Extend actual enforcement and production-component stories for the new recipes; do not loosen checks to excuse mismatches or count a zero-file scan as evidence. Newly required question stories remain explicitly contract-only until implemented. Run the full applicable implementation checks and record identified-build browser comparisons before claiming completion.
 
-Reject toolbars, rounded sidebar cards, bordered message/question cards, dead controls, duplicate composer/message variants, persistent desktop timestamps, decorative motion, arbitrary visual values and false success states. Passing a build does not excuse them. Agents do not improve/reinterpret the design. Unknown recipes ask; known mismatches get fixed.
+Reject separate toolbar strips, rounded sidebar cards, bordered ordinary messages, dead controls, duplicate composer/message variants, persistent desktop timestamps, hidden action-row inflation, decorative motion, arbitrary visual values and false success states. The specified question panel is allowed. Passing a build does not excuse mismatches. Apply this explicit revised direction rather than restoring superseded density rules. Unknown recipes ask; known mismatches get fixed.

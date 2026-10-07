@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Otis · compact question study</title>
+<style>
+@font-face{font-family:OtisStudy;src:url('/study-font.woff2') format('woff2');font-weight:100 900;font-display:swap}
+:root{color-scheme:dark;--bg:#181818;--side:#141414;--card:#242424;--hover:#2c2c2c;--text:#f3f3f3;--muted:#a8a8a8;--line:#383838;--highlight:#e2d86b;font-family:OtisStudy,system-ui,sans-serif;font-size:14px;color:var(--text);background:var(--bg)}
+*{box-sizing:border-box}body{margin:0}button,textarea{font:inherit;color:inherit}button{cursor:pointer;border:0;background:none}button:focus-visible,textarea:focus-visible{outline:2px solid #d8d8d8;outline-offset:2px}button:hover{background:var(--hover)}button:disabled{opacity:.45;cursor:default}.study{height:28px;display:flex;align-items:center;justify-content:center;gap:12px;background:#111;color:var(--muted);font-size:11px}.study button{font-size:11px;text-decoration:underline}.app{display:flex;height:calc(100dvh - 28px);overflow:hidden}.sidebar{width:244px;flex:none;background:var(--side);border-right:1px solid var(--line);display:flex;flex-direction:column;padding:12px 8px;gap:4px}.brand{font-size:19px;font-weight:550;letter-spacing:-.6px;padding:0 10px 8px}.workspace{height:32px;display:flex;align-items:center;justify-content:space-between;padding:0 10px;color:var(--muted);font-size:12px}.nav-row{min-height:32px;display:flex;align-items:center;padding:6px 10px;gap:8px;border-radius:6px;text-align:left;font-size:13px;color:var(--muted)}.nav-row.active{background:var(--card);color:var(--text);box-shadow:inset 2px 0 var(--highlight)}.nav-label{padding:16px 10px 4px;font-size:11px;color:#8c8c8c}.sidebar-bottom{margin-top:auto;padding-top:12px}.main{flex:1;min-width:0;display:flex;flex-direction:column}.header{height:48px;flex:none;border-bottom:1px solid var(--line);display:flex;align-items:center;justify-content:space-between;padding:0 16px}.header-title{font-size:13px;font-weight:500}.header-subtitle{font-size:11px;color:#8c8c8c;margin-left:8px}.icon{width:28px;height:28px;display:inline-flex;align-items:center;justify-content:center;border-radius:6px;color:var(--muted)}.mobile-brand{display:none}.transcript{flex:1;min-height:0;overflow:auto;padding:24px 20px 16px}.column{max-width:760px;margin:0 auto}.turn{font-size:16px;line-height:1.45;margin:0 0 16px;position:relative}.member{display:flex;justify-content:flex-end}.bubble{max-width:82%;padding:8px 12px;border-radius:16px;background:var(--card)}.work{font-size:12px;line-height:20px;color:var(--muted);margin-bottom:8px}.answer p{margin:0 0 8px}.answer p:last-child{margin:0}.dock{flex:none;padding:0 20px 12px}.question{background:var(--card);border:1px solid var(--line);border-radius:14px;margin-bottom:8px;padding:12px}.question-head{display:flex;justify-content:space-between;align-items:center;color:var(--muted);font-size:12px;margin-bottom:8px}.question-title{font-weight:500;font-size:14px;line-height:1.5;margin:0 0 8px}.choices{display:grid;gap:4px}.choice{width:100%;display:flex;align-items:center;gap:8px;text-align:left;min-height:36px;padding:6px 8px;border-radius:8px;font-size:13px}.choice[aria-pressed=true]{background:var(--hover)}.number{width:22px;height:22px;display:flex;align-items:center;justify-content:center;background:#383838;border-radius:5px;color:var(--muted);font-size:12px}.arrow{margin-left:auto;color:var(--muted);visibility:hidden}.choice[aria-pressed=true] .arrow{visibility:visible}.answer-field{display:flex;align-items:flex-end;gap:8px;border:1px solid #585858;border-radius:10px;margin-top:8px;padding:6px 8px}.answer-field:focus-within{border-color:#a8a8a8}.pencil{align-self:center;color:var(--muted);font-size:16px}.answer-field textarea{background:none;border:0;outline:none;resize:none;min-height:32px;max-height:112px;flex:1;min-width:0;padding:6px 0;line-height:20px;font-size:14px}.answer-field textarea:focus-visible{outline:none}.pill{height:32px;padding:0 12px;border:1px solid var(--line);border-radius:999px;font-size:12px;flex:none}.send{background:var(--text);color:var(--bg);border:0;font-weight:500}.send:hover{background:#ddd}.composer{display:flex;align-items:flex-end;gap:8px;background:var(--card);border-radius:14px;padding:10px 12px;min-height:56px}.composer textarea{flex:1;min-width:0;height:32px;padding:6px 0;background:none;border:0;resize:none;line-height:20px;font-size:15px}.composer textarea:focus-visible{outline:none}.composer-meta{display:flex;gap:8px;align-items:center;flex:none}.model{height:28px;color:var(--muted);font-size:12px;padding:0 4px}.main-send{width:32px;height:32px;border-radius:50%;background:#303030;color:var(--muted);font-size:18px}.caption{font-size:11px;text-align:center;color:#8c8c8c;margin-top:6px;line-height:16px}.parked{display:flex;align-items:center;justify-content:space-between;padding:4px 0 8px;color:var(--muted);font-size:12px}.parked button{height:28px;text-decoration:underline}.hidden{display:none!important}
+@media(max-width:899px){.sidebar{display:none}.mobile-brand{display:inline}.header{padding:0 12px}.transcript{padding:20px 16px 12px}.dock{padding:0 16px 8px}.question{padding:10px}.header-subtitle{display:none}.composer{flex-wrap:wrap;padding:8px 10px;gap:4px}.composer textarea{flex-basis:100%;height:24px;padding:2px 0}.composer-meta{width:100%;justify-content:space-between}.answer-field{gap:6px}.answer-field .pill{padding:0 10px}.bubble{max-width:88%}.question-title{font-size:14px}.study{justify-content:space-between;padding:0 12px}}
+</style>
+<div class="study"><span id="study-status">Visual and interaction study · fictional content · no API calls</span><button id="reset" type="button">Reset</button></div>
+<div class="app">
+ <aside class="sidebar" aria-label="Example chat history">
+  <div class="brand">Otis</div><div class="workspace"><span>Your workspace</span><span>⌄</span></div>
+  <button class="nav-row" type="button" id="new-chat">＋ New chat</button>
+  <div class="nav-label">Your chats</div>
+  <div class="nav-row active">Bakery quote</div>
+  <div class="nav-row">Today's follow-ups</div>
+  <div class="nav-row">Website scope</div>
+  <div class="sidebar-bottom"><span class="nav-row">Settings</span></div>
+ </aside>
+ <main class="main">
+  <header class="header"><div><span class="mobile-brand">Otis · </span><span class="header-title">Bakery quote</span><span class="header-subtitle">Your workspace</span></div><span class="icon" aria-hidden="true">···</span></header>
+  <div class="transcript"><div class="column" id="messages">
+   <div class="turn member"><div class="bubble">Back from the bakery visit.</div></div>
+   <div class="turn answer"><p>What came out of it?</p></div>
+   <div class="turn member"><div class="bubble">They already have a website. They want us to customize it.</div></div>
+   <div class="turn answer"><p>Got it. What's the agreed price?</p></div>
+   <div class="turn member"><div class="bubble">The bakery agreed to 4,000 RON. Add the website update to the quote.</div></div>
+   <div class="turn answer"><div class="work">Paused · Needs your answer</div><p>I need one detail before I save the quote.</p></div>
+  </div></div>
+  <div class="dock"><div class="column">
+   <section class="question" id="question" aria-labelledby="question-title">
+    <div class="question-head"><span>ⓘ Question</span><button class="icon" type="button" id="close" aria-label="Close question">×</button></div>
+    <p class="question-title" id="question-title">Which bakery is this quote for?</p>
+    <div class="choices" role="group" aria-label="Suggested answers">
+     <button class="choice" type="button" aria-pressed="false" data-choice="North Street Bakery"><span class="number">1</span><span>North Street Bakery</span><span class="arrow">→</span></button>
+     <button class="choice" type="button" aria-pressed="false" data-choice="Market Bakery"><span class="number">2</span><span>Market Bakery</span><span class="arrow">→</span></button>
+    </div>
+    <div class="answer-field"><span class="pencil" aria-hidden="true">↳</span><textarea id="answer" rows="1" aria-label="Your answer" placeholder="Or write your answer…"></textarea><button class="pill" id="skip" type="button">Skip</button><button class="pill send" id="answer-send" type="button" disabled>Send</button></div>
+   </section>
+   <div class="parked hidden" id="parked"><span>Question paused</span><button id="resume" type="button">Answer question</button></div>
+   <form class="composer" id="chat-form"><textarea id="chat-text" aria-label="Message Otis" placeholder="Message Otis" rows="1"></textarea><div class="composer-meta"><span class="model">Gemini 3.5 Flash-Lite ⌄</span><button class="main-send" type="submit" aria-label="Send normal message">↑</button></div></form>
+   <div class="caption">Otis can make mistakes. Verify important business info.</div>
+  </div></div>
+ </main>
+</div>
+<script>
+const answer=document.querySelector('#answer'),question=document.querySelector('#question'),parked=document.querySelector('#parked'),answerSend=document.querySelector('#answer-send'),studyStatus=document.querySelector('#study-status');
+let selection='';
+function update(){answerSend.disabled=!answer.value.trim()&&!selection}
+function park(){question.classList.add('hidden');parked.classList.remove('hidden')}
+function resume(){question.classList.remove('hidden');parked.classList.add('hidden');answer.focus()}
+function scrollLatest(){const transcript=document.querySelector('.transcript');transcript.scrollTop=transcript.scrollHeight}
+function echo(text){const turn=document.createElement('div');turn.className='turn member demo-echo';const bubble=document.createElement('div');bubble.className='bubble';bubble.textContent=text;turn.append(bubble);document.querySelector('#messages').append(turn);turn.scrollIntoView({block:'nearest'})}
+document.querySelectorAll('.choice').forEach(button=>button.addEventListener('click',()=>{selection=button.dataset.choice;document.querySelectorAll('.choice').forEach(other=>other.setAttribute('aria-pressed',String(other===button)));update()}));
+answer.addEventListener('input',()=>{if(answer.value.trim()){selection='';document.querySelectorAll('.choice').forEach(button=>button.setAttribute('aria-pressed','false'))}update()});
+document.querySelector('#close').addEventListener('click',park);document.querySelector('#skip').addEventListener('click',park);document.querySelector('#resume').addEventListener('click',resume);
+answerSend.addEventListener('click',()=>{const text=answer.value.trim()||selection;if(!text)return;echo(text);question.classList.add('hidden');parked.classList.add('hidden');studyStatus.textContent='Demo answer submitted to this question only · no request sent'});
+question.addEventListener('keydown',event=>{if(event.key==='Enter'&&!event.shiftKey&&event.target===answer){event.preventDefault();answerSend.click()}});
+document.querySelector('#chat-form').addEventListener('submit',event=>{event.preventDefault();const input=document.querySelector('#chat-text');if(!input.value.trim())return;echo(input.value.trim());input.value='';studyStatus.textContent='Demo normal message · question remains separate · no request sent'});
+document.querySelector('#reset').addEventListener('click',()=>{document.querySelectorAll('.demo-echo').forEach(e=>e.remove());answer.value='';selection='';document.querySelectorAll('.choice').forEach(button=>button.setAttribute('aria-pressed','false'));update();resume();scrollLatest();studyStatus.textContent='Visual and interaction study · fictional content · no API calls'});
+document.querySelector('#new-chat').addEventListener('click',()=>{document.querySelector('#chat-text').focus();studyStatus.textContent='Layout study: use Reset to return to the example question'});
+document.fonts.ready.then(scrollLatest);
+</script>
+</html>

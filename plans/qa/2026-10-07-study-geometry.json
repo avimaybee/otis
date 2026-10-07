@@ -1,0 +1,57 @@
+[
+  {
+    "body": 800,
+    "composer": 76,
+    "fieldWidth": 167.4250030517578,
+    "overflow": false,
+    "question": 216.1999969482422,
+    "viewport": [
+      360,
+      800
+    ]
+  },
+  {
+    "body": 844,
+    "composer": 76,
+    "fieldWidth": 197.8249969482422,
+    "overflow": false,
+    "question": 216.1999969482422,
+    "viewport": [
+      390,
+      844
+    ]
+  },
+  {
+    "body": 800,
+    "composer": 56,
+    "fieldWidth": 437.4250183105469,
+    "overflow": false,
+    "question": 220.1999969482422,
+    "viewport": [
+      900,
+      800
+    ]
+  },
+  {
+    "body": 800,
+    "composer": 56,
+    "fieldWidth": 581.4249877929688,
+    "overflow": false,
+    "question": 220.1999969482422,
+    "viewport": [
+      1280,
+      800
+    ]
+  },
+  {
+    "body": 900,
+    "composer": 56,
+    "fieldWidth": 581.4249877929688,
+    "overflow": false,
+    "question": 220.1999969482422,
+    "viewport": [
+      1440,
+      900
+    ]
+  }
+]
