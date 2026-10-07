@@ -181,6 +181,15 @@ export interface MarkMessageSentToolArgs {
   draft_id: string;
 }
 
+export interface ReadChatHistoryToolArgs {
+  /** Defaults to the current chat when omitted. Must belong to the workspace. */
+  chat_id?: string | null;
+  /** Page backwards from below this sequence; omit for the latest window. */
+  before_sequence?: number | null;
+  /** Rows per page, 1–50. Defaults to 20. */
+  limit?: number;
+}
+
 export interface QueryToolArgs {
   resource: 'entities' | 'tasks' | 'events' | 'drafts' | 'attachments' | 'lead_overview';
   filters?: {
@@ -764,6 +773,44 @@ export function validateMarkMessageSentArgs(raw: unknown): ValidationResult<Mark
   return { ok: true, data: { draft_id: obj['draft_id'].trim() } };
 }
 
+export function validateReadChatHistoryArgs(raw: unknown): ValidationResult<ReadChatHistoryToolArgs> {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return fail('invalid_type', 'Expected object.');
+  const obj = raw as Record<string, unknown>;
+  const sec = checkNoForbiddenKeys(obj);
+  if (sec) return sec;
+  const unk = checkNoUnknownKeys(obj, new Set(['chat_id', 'before_sequence', 'limit']), 'read_chat_history');
+  if (unk) return unk;
+
+  const chat_id =
+    obj['chat_id'] === undefined || obj['chat_id'] === null
+      ? null
+      : typeof obj['chat_id'] === 'string' && obj['chat_id'].trim()
+        ? obj['chat_id'].trim()
+        : null;
+  if (obj['chat_id'] !== undefined && obj['chat_id'] !== null && chat_id === null) {
+    return fail('invalid_argument', "Field 'chat_id' must be a non-empty string when provided.");
+  }
+  const before_sequence =
+    obj['before_sequence'] === undefined || obj['before_sequence'] === null
+      ? null
+      : typeof obj['before_sequence'] === 'number' && Number.isInteger(obj['before_sequence']) && obj['before_sequence'] > 0
+        ? obj['before_sequence']
+        : null;
+  if (obj['before_sequence'] !== undefined && obj['before_sequence'] !== null && before_sequence === null) {
+    return fail('invalid_argument', "Field 'before_sequence' must be a positive integer when provided.");
+  }
+  const limit =
+    obj['limit'] === undefined || obj['limit'] === null
+      ? 20
+      : typeof obj['limit'] === 'number' && Number.isInteger(obj['limit']) && obj['limit'] >= 1 && obj['limit'] <= 50
+        ? obj['limit']
+        : null;
+  if (limit === null) {
+    return fail('invalid_argument', "Field 'limit' must be an integer between 1 and 50 when provided.");
+  }
+  return { ok: true, data: { chat_id, before_sequence, limit } };
+}
+
 export function validateQueryArgs(raw: unknown): ValidationResult<QueryToolArgs> {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return fail('invalid_type', 'Expected object.');
   const obj = raw as Record<string, unknown>;
@@ -1267,6 +1314,8 @@ export function validateToolCall(
       return validateUpdateDraftArgs(rawArgs);
     case 'mark_message_sent':
       return validateMarkMessageSentArgs(rawArgs);
+    case 'read_chat_history':
+      return validateReadChatHistoryArgs(rawArgs);
     case 'query':
       return validateQueryArgs(rawArgs);
     case 'view_image':
@@ -1578,6 +1627,20 @@ export const ALL_AGENT_TOOLS: ProviderToolDeclaration[] = [
         memory_id: { type: 'string' },
       },
       required: ['memory_id'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'read_chat_history',
+    description: 'Read older chat messages beyond the current turn window. Defaults to the current chat; page backwards with before_sequence.',
+    parameters: {
+      type: 'object',
+      properties: {
+        chat_id: { type: 'string', description: 'Chat to read; defaults to the current chat. Must belong to the workspace.' },
+        before_sequence: { type: 'integer', description: 'Return messages below this sequence number.' },
+        limit: { type: 'integer', description: 'Rows per page, 1-50. Defaults to 20.' },
+      },
+      required: [],
       additionalProperties: false,
     },
   },

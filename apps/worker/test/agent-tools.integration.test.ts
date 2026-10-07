@@ -1103,6 +1103,64 @@ describe('Worker Agent Tools & Guarded Repositories D1 Integration (006A workerd
     expect(released?.snooze_until).toBeNull();
   });
 
+  it('pages older chat history within the workspace, never across it', async () => {
+    const now = new Date().toISOString();
+    // High sequences avoid colliding with messages other cases stored.
+    for (let seq = 1001; seq <= 1025; seq++) {
+      await env.DB.prepare(
+        `INSERT INTO chat_messages (id, workspace_id, chat_id, author_user_id, author_kind, channel, client_message_id, content_text, run_id, sequence, created_at, updated_at)
+         VALUES (?, ?, ?, ?, 'member', 'web', NULL, ?, NULL, ?, ?, ?)`
+      ).bind(`msg_hist_${seq}`, ws1, chat1, aviId, `history note ${seq}`, seq, now, now).run();
+    }
+
+    const read = (actionId: string, toolArgs: unknown, chatId?: string) =>
+      executeAgentTool({
+        db: env.DB,
+        workspaceId: ws1,
+        actorUserId: aviId,
+        runId: run1Id,
+        stepId: step1Id,
+        fence: fence1,
+        actionId,
+        sourceMessageId: 'msg_tools_1',
+        ...(chatId !== undefined ? { chatId } : {}),
+        toolName: 'read_chat_history',
+        toolArgs,
+      });
+
+    // Default window: latest 20, ascending, with an older cursor.
+    const latest = await read('act_hist_latest', {}, chat1);
+    expect(latest.status).toBe('applied');
+    const latestData = latest.data as { chat_id: string; messages: { sequence: number; content_text: string }[]; older: number | null };
+    expect(latestData.chat_id).toBe(chat1);
+    expect(latestData.messages).toHaveLength(20);
+    expect(latestData.messages[0]!.sequence).toBe(1006);
+    expect(latestData.messages[19]!.sequence).toBe(1025);
+    expect(latestData.messages[19]!.content_text).toBe('history note 1025');
+    expect(latestData.older).toBe(1006);
+
+    // Explicit chat defaults the same; paging backwards reaches the start.
+    const first = await read('act_hist_first', { chat_id: chat1, before_sequence: 1006, limit: 20 });
+    expect(first.status).toBe('applied');
+    const firstData = first.data as { messages: { sequence: number }[]; older: number | null };
+    expect(firstData.messages.map((m) => m.sequence)).toEqual([1001, 1002, 1003, 1004, 1005]);
+    expect(firstData.older).toBe(1001);
+    const empty = await read('act_hist_empty', { chat_id: chat1, before_sequence: 1001 });
+    expect(empty.status).toBe('applied');
+    expect((empty.data as { messages: unknown[] }).messages).toHaveLength(0);
+    expect((empty.data as { older: number | null }).older).toBeNull();
+
+    // Unknown chats and other workspaces resolve to not_found, never rows.
+    const missing = await read('act_hist_missing', { chat_id: 'chat_nope' });
+    expect(missing.status).toBe('rejected');
+    const foreign = await read('act_hist_foreign', { chat_id: 'chat_ws2_foreign' });
+    expect(foreign.status).toBe('rejected');
+
+    // Invalid paging never reaches the database.
+    const badLimit = await read('act_hist_bad', { limit: 500 });
+    expect(badLimit.status).toBe('rejected');
+  });
+
   it('updates member preferences with live run/fence guard and action receipt; rolls back on stale fence', async () => {
     const rev = (await getWorkspaceRevision(env.DB, ws1))?.business_revision ?? 0;
 

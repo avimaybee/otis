@@ -14,6 +14,7 @@ import {
   isExplicitStatusIntent,
   sentConfirmationMatchesTarget,
   validateCreateTaskArgs,
+  validateReadChatHistoryArgs,
   validateUpdateTaskArgs,
   validateDraftMessageArgs,
   validateFindEntitiesArgs,
@@ -27,8 +28,8 @@ import {
 } from '../src/index.js';
 
 describe('006A: Tool Schemas and Argument Validation', () => {
-  it('defines all 22 agent tools and 1 control tool with additionalProperties: false', () => {
-    expect(ALL_AGENT_TOOLS.length).toBe(23);
+  it('defines all 23 agent tools and 1 control tool with additionalProperties: false', () => {
+    expect(ALL_AGENT_TOOLS.length).toBe(24);
     for (const tool of ALL_AGENT_TOOLS) {
       expect(tool.parameters.type).toBe('object');
       expect(tool.parameters.additionalProperties).toBe(false);
@@ -46,6 +47,7 @@ describe('006A: Tool Schemas and Argument Validation', () => {
     expect(toolNames).toContain('draft_message');
     expect(toolNames).toContain('update_draft');
     expect(toolNames).toContain('mark_message_sent');
+    expect(toolNames).toContain('read_chat_history');
     expect(toolNames).toContain('query');
     expect(toolNames).toContain('search_memory');
     expect(toolNames).toContain('get_memory');
@@ -238,6 +240,35 @@ describe('006A: Tool Schemas and Argument Validation', () => {
     const coerced = validateUpdateTaskArgs({ ...base, title: 'New title', snooze_until: 123 });
     expect(coerced.ok).toBe(true);
     if (coerced.ok) expect(coerced.data.snooze_until).toBeUndefined();
+  });
+
+  it('validates chat history paging: defaults, bounds, and routing', () => {
+    // Empty args read the default latest window of the current chat.
+    const def = validateReadChatHistoryArgs({});
+    expect(def.ok).toBe(true);
+    if (def.ok) {
+      expect(def.data.chat_id).toBeNull();
+      expect(def.data.before_sequence).toBeNull();
+      expect(def.data.limit).toBe(20);
+    }
+
+    const page = validateReadChatHistoryArgs({ chat_id: 'chat_1', before_sequence: 41, limit: 50 });
+    expect(page.ok).toBe(true);
+    if (page.ok) {
+      expect(page.data.chat_id).toBe('chat_1');
+      expect(page.data.before_sequence).toBe(41);
+      expect(page.data.limit).toBe(50);
+    }
+
+    expect(validateReadChatHistoryArgs({ limit: 0 }).ok).toBe(false);
+    expect(validateReadChatHistoryArgs({ limit: 51 }).ok).toBe(false);
+    expect(validateReadChatHistoryArgs({ limit: 2.5 }).ok).toBe(false);
+    expect(validateReadChatHistoryArgs({ before_sequence: -3 }).ok).toBe(false);
+    expect(validateReadChatHistoryArgs({ before_sequence: '41' }).ok).toBe(false);
+    expect(validateReadChatHistoryArgs({ chat_id: '  ' }).ok).toBe(false);
+    expect(validateReadChatHistoryArgs({ chat_id: 'chat_1', unknown_key: 1 }).ok).toBe(false);
+    expect(validateToolCall('read_chat_history', { limit: 5 }).ok).toBe(true);
+    expect(validateToolCall('read_chat_history', { limit: 500 }).ok).toBe(false);
   });
 
   it('validates money in integer minor units and distinguishes offered vs expected roles', () => {

@@ -20,6 +20,7 @@ import {
   type LogEventToolArgs,
   type MarkMessageSentToolArgs,
   type QueryToolArgs,
+  type ReadChatHistoryToolArgs,
   type RememberContextToolArgs,
   type RenameEntityToolArgs,
   type RequestClarificationToolArgs,
@@ -659,6 +660,65 @@ export async function executeAgentTool(
         };
       }
       return { status: 'applied', action_id: actionId, data: row };
+    }
+
+    case 'read_chat_history': {
+      const rhArgs = args as ReadChatHistoryToolArgs;
+      const targetChatId = rhArgs.chat_id ?? chatId ?? null;
+      if (!targetChatId) {
+        return {
+          status: 'rejected',
+          action_id: actionId,
+          error: { code: 'missing_chat', message: 'No current chat: pass an explicit chat_id.' },
+        };
+      }
+      // Workspace-scoped existence: chats are member-visible, but a chat
+      // from another workspace (or a deleted one) resolves to not_found,
+      // never to leaked rows.
+      const chatRow = await db
+        .prepare(`SELECT id FROM chats WHERE workspace_id = ? AND id = ?`)
+        .bind(workspaceId, targetChatId)
+        .first();
+      if (!chatRow) {
+        return {
+          status: 'rejected',
+          action_id: actionId,
+          error: { code: 'not_found', message: `Chat '${targetChatId}' not found in this workspace.` },
+        };
+      }
+      const limit = rhArgs.limit ?? 20;
+      const rows = (await db
+        .prepare(
+          `SELECT id, author_kind, author_user_id, content_text, run_id, sequence, created_at
+           FROM chat_messages
+           WHERE workspace_id = ? AND chat_id = ? ${rhArgs.before_sequence ? 'AND sequence < ?' : ''}
+           ORDER BY sequence DESC LIMIT ?`
+        )
+        .bind(
+          ...(rhArgs.before_sequence
+            ? [workspaceId, targetChatId, rhArgs.before_sequence, limit] as unknown[]
+            : [workspaceId, targetChatId, limit] as unknown[]),
+        )
+        .all<Record<string, unknown>>()).results || [];
+      const messages = [...rows].reverse();
+      const oldest = messages.length > 0 ? Number(messages[0]!['sequence']) : null;
+      return {
+        status: 'applied',
+        action_id: actionId,
+        data: {
+          chat_id: targetChatId,
+          messages: messages.map((m) => ({
+            id: String(m['id']),
+            author_kind: m['author_kind'],
+            author_user_id: m['author_user_id'] ? String(m['author_user_id']) : null,
+            content_text: String(m['content_text']),
+            run_id: m['run_id'] ? String(m['run_id']) : null,
+            sequence: Number(m['sequence']),
+            created_at: String(m['created_at']),
+          })),
+          older: oldest !== null && oldest > 1 ? oldest : null,
+        },
+      };
     }
 
     // --- Preference Tool ---
