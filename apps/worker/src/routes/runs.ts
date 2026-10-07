@@ -346,12 +346,17 @@ export async function handleListRuns(
     }
   }
 
+  // The most-recent-200 window per run is enforced in SQL: without it a
+  // full page of verbose runs would download unbounded history before the
+  // per-run slice below. D1's SQLite supports the window function.
   const activityRows = (
     await env.DB
       .prepare(
-        `SELECT id, workspace_id, chat_id, run_id, cursor, type, payload_json, created_at
-         FROM run_activity WHERE workspace_id = ? AND run_id IN (${foundPlaceholders})
-         ORDER BY run_id ASC, cursor DESC`,
+        `SELECT id, workspace_id, chat_id, run_id, cursor, type, payload_json, created_at FROM (
+           SELECT id, workspace_id, chat_id, run_id, cursor, type, payload_json, created_at,
+                  ROW_NUMBER() OVER (PARTITION BY run_id ORDER BY cursor DESC) AS rn
+           FROM run_activity WHERE workspace_id = ? AND run_id IN (${foundPlaceholders})
+         ) WHERE rn <= 200`,
       )
       .bind(workspaceId, ...found)
       .all<Record<string, unknown>>()
@@ -360,11 +365,19 @@ export async function handleListRuns(
   for (const row of activityRows) {
     const runId = String(row['run_id']);
     const list = activitiesByRun.get(runId) ?? [];
-    // Mirror the single-run most-recent-200 window per run.
-    if (list.length < 200) list.push(publicActivityFromRow(row));
+    list.push(publicActivityFromRow(row));
     activitiesByRun.set(runId, list);
   }
-  for (const list of activitiesByRun.values()) list.reverse();
+  // SQL returns the most-recent-200 window per run in arbitrary order;
+  // restore newest-first, re-enforce the window, then chronological output
+  // exactly like the single-run route.
+  for (const [runId, list] of activitiesByRun) {
+    list.sort((left, right) => right.cursor - left.cursor);
+    activitiesByRun.set(
+      runId,
+      list.slice(0, 200).reverse(),
+    );
+  }
 
   const clarificationRows = (
     await env.DB

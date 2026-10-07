@@ -758,6 +758,34 @@ describe('Chat API: transcript, activity and run status', () => {
     expect(actionsOf(second.run_id)).toEqual(['act_batch_b', 'act_batch_c']);
   });
 
+  it('caps batched activity at the most recent 200 rows per run', async () => {
+    const accepted = await acceptWebMessage(env.DB, {
+      workspaceId: WS,
+      chatId: aviChat,
+      userId: AVI,
+      clientMessageId: 'cm-run-cap-1',
+      text: 'A very chatty run?',
+    });
+    const now = new Date().toISOString();
+    await env.DB.batch(
+      Array.from({ length: 205 }, (_, index) =>
+        env.DB.prepare(
+          `INSERT INTO run_activity (id, workspace_id, chat_id, run_id, cursor, type, payload_json, created_at)
+           VALUES (?, ?, ?, ?, ?, 'text_chunk', '{}', ?)`,
+        ).bind(`act_cap_${index + 1}`, WS, aviChat, accepted.run_id, 1000 + index + 1, now),
+      ),
+    );
+
+    const batch = await callJson<RunBatchResponse>(
+      `/api/workspaces/${WS}/runs?ids=${accepted.run_id}`,
+      { cookie: aviCookie },
+    );
+    const activities = batch.runs[0]!.activities;
+    expect(activities).toHaveLength(200);
+    expect(activities[0]!.cursor).toBe(1006);
+    expect(activities[199]!.cursor).toBe(1205);
+  });
+
   it('reports a pending clarification and refuses an answer from another member', async () => {
     const chatId = (await createChat(env.DB, { workspaceId: WS, authorUserId: AVI, title: 'Clar chat' })).id;
     const accepted = await acceptWebMessage(env.DB, {
