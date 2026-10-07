@@ -54,6 +54,7 @@ const ARBITRARY_ALLOW = new Set([
   'w-[280px]', // token 8.2: sidebar width
   'w-[min(320px,86vw)]', // token 7: mobile drawer width
   'h-[22px]', // token 8.8: status pill height
+  'max-h-[min(320px,45dvh)]', // token 8.12: question panel scroll bound
   'max-w-[85%]', // token 8.6: user message width
   'nav:max-w-[80%]', // token 8.6: user message width at nav breakpoint
   'h-[calc(100%-1px)]', // generated tabs trigger fill (behavioral, no visual value)
@@ -229,8 +230,12 @@ function checkFile(file) {
       fail(file, 'Card wrapper around conversation content', `${at} ${line}`);
     }
     // 17. Focus stays visible and neutral; outline removal needs its recipe.
+    // otis-composer__input and otis-question__answer are the documented
+    // borderless answer fields (tokens 8.9, 8.12); both keep keyboard focus
+    // honest through their surfaces.
     if (/outline-none|outline-hidden/.test(line)
       && !/otis-composer__input/.test(line)
+      && !/otis-question__answer/.test(line)
       && !/:focus:not\(\s*:focus-visible\s*\)/.test(line)
       && !/SelectPrimitive|DropdownMenuPrimitive|focus:bg-accent/.test(line)) {
       fail(file, 'removed keyboard focus without the documented recipe', `${at} ${line}`);

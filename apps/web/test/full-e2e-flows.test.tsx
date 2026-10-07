@@ -531,19 +531,31 @@ describe('End-to-End UI to Backend Flow Verification', () => {
     expect(region).toBeTruthy();
     expect(region.textContent).toContain('What time on Friday should I call them?');
 
-    // Click "Answer below"
+    // The question panel opens explicitly above the ordinary composer.
+    const panel = view.host.querySelector('[aria-label="Question from Otis"]') as HTMLElement;
+    expect(panel).toBeTruthy();
+    expect(panel.textContent).toContain('What time on Friday should I call them?');
+
+    // "Answer question" focuses the panel's own field, not the main composer.
     const replyBtn = view.host.querySelector('.otis-question__reply-btn') as HTMLButtonElement;
     expect(replyBtn).toBeTruthy();
+    expect(replyBtn.textContent).toContain('Answer question');
     await React.act(async () => replyBtn.click());
 
-    // Composer shows "Replying to Otis"
-    expect(view.host.textContent).toContain('Replying to Otis');
+    // Ordinary chat stays independently sendable while the panel is open and
+    // never inherits the question identity.
+    const composerTextarea = view.host.querySelector('.otis-composer textarea') as HTMLTextAreaElement;
+    expect(composerTextarea).toBeTruthy();
+    expect(composerTextarea.value).toBe('');
+    await fill(composerTextarea, 'Just a note');
+    await React.act(async () => (view.host.querySelector('[aria-label="Send"]') as HTMLButtonElement).click());
+    expect(sendSpy).toHaveBeenCalledWith(WS, 'chat_clarify_1', expect.any(String), 'Just a note', undefined, undefined, expect.anything());
 
-    // Fill answer and send
-    const textarea = view.host.querySelector('textarea') as HTMLTextAreaElement;
-    await fill(textarea, 'At 2:00 PM');
-    const sendButton = view.host.querySelector('[aria-label="Send"]') as HTMLButtonElement;
-    await React.act(async () => sendButton.click());
+    // The panel answers with its own field and Send, carrying the question id.
+    const panelTextarea = panel.querySelector('textarea') as HTMLTextAreaElement;
+    await fill(panelTextarea, 'At 2:00 PM');
+    const panelSend = Array.from(panel.querySelectorAll('button')).find(button => button.textContent === 'Send') as HTMLButtonElement;
+    await React.act(async () => panelSend.click());
 
     // Verify clarification_id was passed to sendMessage
     expect(sendSpy).toHaveBeenCalledWith(WS, 'chat_clarify_1', expect.any(String), 'At 2:00 PM', 'clarification_123', undefined, expect.anything());

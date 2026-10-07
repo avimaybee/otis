@@ -18,6 +18,7 @@ import { Composer } from './components/Composer.js';
 import { ChatOverflow } from './components/ChatOverflow.js';
 import { DetailPane } from './components/DetailPane.js';
 import { HistoryNav } from './components/HistoryNav.js';
+import { QuestionPanel } from './components/QuestionPanel.js';
 import { SourcePane } from './components/SourcePane.js';
 import { SettingsPane } from './components/SettingsPane.js';
 import { Transcript } from './components/Transcript.js';
@@ -64,7 +65,6 @@ import {
   applyOlderMessages,
   applyQuestions,
   applyRunSnapshot,
-  selectPendingQuestion,
   useChatSnapshot,
   type ChatSnapshot,
 } from './api/snapshot.js';
@@ -411,10 +411,56 @@ export function ConversationScreen({ workspaceId, chat: routeChat, chatParamPres
   const workspaceName = workspaces.find(workspace => workspace.id === workspaceId)?.name ?? 'Workspace';
   const activeRuns = Object.values(snapshot?.runs ?? {}).filter(run => ['queued', 'running'].includes(run.status));
   const running = activeRuns.find(run => run.status === 'running') ?? activeRuns[0];
-  const pendingQuestion = selectPendingQuestion(snapshot?.questions ?? [], null, dismissedClarificationIds);
-  const activeClarification = replyId
-    ? selectPendingQuestion(snapshot?.questions ?? [], replyId, dismissedClarificationIds)
-    : pendingQuestion;
+  // Answer intent lives in the explicit question panel; the ordinary
+  // composer never inherits it. replyId opens a panel (explicit action or
+  // a fresh arrival); no selection ever flows into main send.
+  const openQuestion = replyId
+    ? snapshot?.questions.find(question => question.id === replyId)
+    : undefined;
+  const panelQuestion = openQuestion && openQuestion.status === 'pending' && openQuestion.answerable_by_caller
+    ? openQuestion
+    : undefined;
+  // Explicit "Answer question" requests focus; arrival alone never steals it.
+  const [panelFocusId, setPanelFocusId] = useState<string | null>(null);
+  const [panelFocusSignal, setPanelFocusSignal] = useState(0);
+  const openQuestionPanel = useCallback((questionId: string, focus: boolean) => {
+    setReplyId(questionId);
+    if (focus) {
+      setPanelFocusId(questionId);
+      setPanelFocusSignal(signal => signal + 1);
+    }
+  }, []);
+
+  // Skip defers and close hides: neither resolves the question, cancels a
+  // run, guesses a business field, or opens another question. No backend
+  // Skip command is needed for deferral; the pending callout stays reachable.
+  const dismissQuestion = useCallback((questionId: string) => {
+    setDismissedClarificationIds(ids => (ids.includes(questionId) ? ids : [...ids, questionId]));
+    setReplyId(current => (current === questionId ? null : current));
+  }, []);
+
+  // Fresh arrivals may open the panel once; closing or Skip never rotates
+  // through older questions, and an open panel never switches underneath.
+  const knownQuestionIds = useRef<{ chat: string | null; ids: Set<string> }>({ chat: null, ids: new Set() });
+  useEffect(() => {
+    const chatKey = activeChatId ?? 'new';
+    if (knownQuestionIds.current.chat !== chatKey) knownQuestionIds.current = { chat: chatKey, ids: new Set() };
+    const known = knownQuestionIds.current.ids;
+    const fresh = (snapshot?.questions ?? []).filter(question =>
+      question.status === 'pending' && question.answerable_by_caller
+      && !dismissedClarificationIds.includes(question.id) && !known.has(question.id));
+    for (const question of fresh) known.add(question.id);
+    const latest = fresh.length > 0 ? fresh[fresh.length - 1] : undefined;
+    if (replyId === null && latest) setReplyId(latest.id);
+  }, [snapshot, replyId, dismissedClarificationIds, activeChatId]);
+
+  // A resolved or superseded question closes its panel instead of accepting
+  // a stale answer; the payload guard below is the backstop, not the router.
+  useEffect(() => {
+    if (replyId !== null && snapshot && !snapshot.questions.some(question => question.id === replyId && question.status === 'pending' && question.answerable_by_caller)) {
+      setReplyId(null);
+    }
+  }, [snapshot, replyId]);
 
   // Last live data event per chat: the fallback poll below only fires when
   // the stream has gone quiet, never while events are flowing.
@@ -528,7 +574,15 @@ export function ConversationScreen({ workspaceId, chat: routeChat, chatParamPres
       debugLog('send', 'accepted; run queued server-side', { chatId, message_id: accepted.message_id, run_id: accepted.run_id, sequence: accepted.acceptance_sequence });
       markOutboxSaved(entry.clientId, { messageId: accepted.message_id, runId: accepted.run_id, sequence: accepted.acceptance_sequence });
       if (!sameView(chatId)) return true;
-      setError(null); setReplyId(null); setDismissedClarificationIds([]); setDraftValue(null);
+      setError(null);
+      // Late acceptance reconciles only its own submission: an answered
+      // question closes its panel, while ordinary chat never disturbs an
+      // open panel, its dismissals, or another question's draft.
+      if (entry.clarificationId) {
+        if (entry.clarificationId === replyId) setReplyId(null);
+      } else {
+        setDraftValue(null);
+      }
       // Late acceptance only reconciles: follow was already taken at the
       // local send moment, and a released reader must never be yanked back.
       // The accepted message files locally from the receipt (same client
@@ -613,13 +667,14 @@ export function ConversationScreen({ workspaceId, chat: routeChat, chatParamPres
 
   const send = useCallback(async (text: string, imageMediaIds?: string[]): Promise<boolean> => {
     if (readOnly || accessLost) return false;
+    // Ordinary chat never carries a question identity, even with a panel
+    // open: only the panel's explicit submit may attach clarificationId.
     createOutboxEntry({
       userId,
       workspaceId,
       chatId: activeChatId,
       text,
       ...(imageMediaIds && imageMediaIds.length > 0 ? { imageMediaIds } : {}),
-      ...(activeClarification ? { clarificationId: activeClarification.id } : {}),
     });
     // Explicit send-triggered return to the newly sent message, taken at the
     // local acceptance moment. Delayed HTTP acceptance, retries and
@@ -631,7 +686,31 @@ export function ConversationScreen({ workspaceId, chat: routeChat, chatParamPres
     // unacknowledged first POST, and the flush runs promptly when uncontended.
     requestFlush('send');
     return true;
-  }, [readOnly, accessLost, userId, workspaceId, activeChatId, activeClarification]);
+  }, [readOnly, accessLost, userId, workspaceId, activeChatId]);
+
+  /**
+   * Explicit question answer (question plan step 1): the sole path that may
+   * attach a clarificationId. Target, text and delivery UUID are captured
+   * before any state clears; retry reuses the same outbox payload. Returns
+   * false without sending when the question is no longer answerable.
+   */
+  const answerQuestion = useCallback((questionId: string, text: string): boolean => {
+    if (readOnly || accessLost || !activeChatId) return false;
+    const current = queryClient.getQueryData<ChatSnapshot>(qk.chat(userId, workspaceId, activeChatId));
+    if (current && !current.questions.some(question => question.id === questionId && question.status === 'pending' && question.answerable_by_caller)) {
+      return false;
+    }
+    createOutboxEntry({
+      userId,
+      workspaceId,
+      chatId: activeChatId,
+      text,
+      clarificationId: questionId,
+    });
+    setFollowSignal(value => value + 1);
+    requestFlush('send');
+    return true;
+  }, [readOnly, accessLost, activeChatId, queryClient, userId, workspaceId]);
 
   /**
    * Voice send owner (010): the recorder hands over the finalized media with
@@ -939,9 +1018,9 @@ export function ConversationScreen({ workspaceId, chat: routeChat, chatParamPres
       <div className="otis-access"><h2 className="text-xl font-medium">Could not load conversation</h2><p className="text-sm text-muted-foreground">{error ?? 'A network or server error occurred.'}</p><div className="flex gap-2"><Button variant="outline" type="button" onClick={() => { setError(null); void snapshotQuery.refetch(); void resyncChat(activeChatId!); }}>Try again</Button><Button variant="ghost" type="button" onClick={() => navigate(workspaceId, null)}>Start new conversation</Button></div></div>
     ) : <div className="otis-chat">
       {streamStatus === 'resyncing' && <p className="otis-connection text-xs" role="status">Reconnecting to activity… Your conversation is retained.</p>}
-      <Transcript key={`${workspaceId}:${activeChatId ?? 'new'}`} messages={derived.messages} members={members} currentUserId={userId} runs={snapshot?.runs ?? {}} activities={snapshot?.activities ?? []} steps={[]} transients={transients} delivery={derived.delivery} onRetryMessage={(clientId) => void retryMessage(clientId)} onDiscardMessage={discardMessage} onInspectSource={setSourceId} onInspectAction={setDetailActionId} onReply={readOnly ? undefined : setReplyId} onEditMessage={readOnly ? undefined : setDraftValue} loading={loading} hasOlder={Boolean(snapshot?.older)} loadingOlder={loadingOlder} olderError={olderError} followSignal={followSignal} positionKey={`${userId}:${workspaceId}:${activeChatId ?? 'new'}`} onLoadOlder={() => void loadOlder()}/>
+      <Transcript key={`${workspaceId}:${activeChatId ?? 'new'}`} messages={derived.messages} members={members} currentUserId={userId} runs={snapshot?.runs ?? {}} activities={snapshot?.activities ?? []} steps={[]} transients={transients} delivery={derived.delivery} onRetryMessage={(clientId) => void retryMessage(clientId)} onDiscardMessage={discardMessage} onInspectSource={setSourceId} onInspectAction={setDetailActionId} onReply={readOnly ? undefined : (id) => openQuestionPanel(id, true)} onEditMessage={readOnly ? undefined : setDraftValue} loading={loading} hasOlder={Boolean(snapshot?.older)} loadingOlder={loadingOlder} olderError={olderError} followSignal={followSignal} positionKey={`${userId}:${workspaceId}:${activeChatId ?? 'new'}`} onLoadOlder={() => void loadOlder()}/>
       {error && <div className="otis-chat-error text-sm" role="alert"><p>{error}</p>{activeChatId && !loading && <Button variant="ghost" size="sm" type="button" onClick={() => { setError(null); void resyncChat(activeChatId); }}>Reload conversation</Button>}</div>}
-      {readOnly ? <div className="otis-readonly text-sm"><p>This is {currentDetail!.chat.author_display_name ?? members[currentDetail!.chat.author_user_id] ?? 'a teammate'}’s conversation.</p><Button variant="ghost" size="sm" type="button" onClick={() => navigate(workspaceId, ownChats[0]?.id ?? null)}>Continue in your own chat</Button></div> : <div ref={composerRef} className="otis-composer-slot"><Composer key={`${workspaceId}:${userId}:${activeChatId ?? 'new'}`} draftKey={`otis:draft:${userId}:${workspaceId}:${activeChatId ?? 'new'}`} draftValue={draftValue} disabled={Boolean(activeChatId && !snapshot)} disabledReason={error ? 'Conversation unavailable' : 'Opening conversation…'} running={Boolean(running)} commands={commands} models={models} workspaces={workspaces} controlPending={controlPending} modelReady={models.some(model => model.is_current && model.available)} modelsLoading={modelsQuery.isLoading} modelsError={modelsQuery.isError ? (modelsQuery.error instanceof Error ? modelsQuery.error.message : 'Could not load models.') : undefined} onRetryModels={() => void modelsQuery.refetch()} voice={{ available: voiceAvailable, adapter: voiceAdapter, scope: { userId, workspaceId, chatId: activeChatId }, onSent: voiceSend }} images={{ available: !readOnly && !accessLost, workspaceId, chatId: activeChatId, onEnsureChat: ensureChatForImages, upload: request => uploadImageFile(imageTransport, request) }} onCommand={applyCommand} onStop={running ? async () => { await api.stopRun(workspaceId, running.run.id); if (activeChatId) refreshRun(workspaceId, activeChatId, running.run.id); } : undefined} replyTo={activeClarification ? { id: activeClarification.id, question: activeClarification.question, candidates: activeClarification.candidates, missing_fields: activeClarification.missing_fields, intended_operation: activeClarification.intended_operation, onCancel: () => { setDismissedClarificationIds(ids => ids.includes(activeClarification.id) ? ids : [...ids, activeClarification.id]); setReplyId(null); } } : undefined} onSend={send}/></div>}
+      {readOnly ? <div className="otis-readonly text-sm"><p>This is {currentDetail!.chat.author_display_name ?? members[currentDetail!.chat.author_user_id] ?? 'a teammate'}’s conversation.</p><Button variant="ghost" size="sm" type="button" onClick={() => navigate(workspaceId, ownChats[0]?.id ?? null)}>Continue in your own chat</Button></div> : <div ref={composerRef} className="otis-composer-slot"><div className="flex flex-col gap-2">{panelQuestion && activeChatId && <QuestionPanel key={panelQuestion.id} question={panelQuestion} draftKey={`otis:draft:${userId}:${workspaceId}:${activeChatId}:${panelQuestion.id}`} focusSignal={panelFocusId === panelQuestion.id ? panelFocusSignal : 0} onSubmit={(questionId, text) => answerQuestion(questionId, text)} onSkip={dismissQuestion} onClose={dismissQuestion}/>}<Composer key={`${workspaceId}:${userId}:${activeChatId ?? 'new'}`} draftKey={`otis:draft:${userId}:${workspaceId}:${activeChatId ?? 'new'}`} draftValue={draftValue} disabled={Boolean(activeChatId && !snapshot)} disabledReason={error ? 'Conversation unavailable' : 'Opening conversation…'} running={Boolean(running)} commands={commands} models={models} workspaces={workspaces} controlPending={controlPending} modelReady={models.some(model => model.is_current && model.available)} modelsLoading={modelsQuery.isLoading} modelsError={modelsQuery.isError ? (modelsQuery.error instanceof Error ? modelsQuery.error.message : 'Could not load models.') : undefined} onRetryModels={() => void modelsQuery.refetch()} voice={{ available: voiceAvailable, adapter: voiceAdapter, scope: { userId, workspaceId, chatId: activeChatId }, onSent: voiceSend }} images={{ available: !readOnly && !accessLost, workspaceId, chatId: activeChatId, onEnsureChat: ensureChatForImages, upload: request => uploadImageFile(imageTransport, request) }} onCommand={applyCommand} onStop={running ? async () => { await api.stopRun(workspaceId, running.run.id); if (activeChatId) refreshRun(workspaceId, activeChatId, running.run.id); } : undefined} onSend={send}/></div></div>}
     </div>}</main>
     {controlResult && <Overlay label="Command result" className="otis-overlay--settings" onClose={() => setControlResult(null)}><section className="otis-settings"><header className="otis-pane-header"><h2 className="text-base font-medium">Result</h2><Button variant="outline" size="sm" type="button" onClick={() => setControlResult(null)}>Close</Button></header><div className="otis-settings__content text-sm"><Markdown skipHtml disallowedElements={['img']}>{controlResult}</Markdown></div></section></Overlay>}
     {sourceId && <SourcePane workspaceId={workspaceId} memoryId={sourceId} onClose={() => setSourceId(null)} onAccessLost={loseAccess} onOpenChat={id => navigate(workspaceId, id)}/>} {detailActionId && <DetailPane onAccessLost={loseAccess} workspaceId={workspaceId} chatId={readOnly ? '' : activeChatId ?? ''} actionId={detailActionId} onClose={() => setDetailActionId(null)} onUndone={() => { if (activeChatId) void resyncChat(activeChatId); }}/>} {settingsOpen && <SettingsPane onAccessLost={loseAccess} workspaceId={workspaceId} workspaceName={workspaceName} members={members} models={models} currentUserId={userId} currentUserRole={workspaces.find(w => w.id === workspaceId)?.role as ('owner' | 'member') | undefined ?? 'member'} onUpdated={() => setModelRevision(value => value + 1)} onClose={() => setSettingsOpen(false)} onSignOut={onSignOut} onWorkspaceRenamed={handleWorkspaceRenamed} onWorkspaceDeleted={handleWorkspaceDeleted} onWorkspaceCreated={handleWorkspaceCreated}/>}

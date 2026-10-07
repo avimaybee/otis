@@ -74,15 +74,11 @@ export const FollowUp: Story = {
     running: true,
     draftValue: 'actually make it Friday morning',
     onStop: async () => {},
-    replyTo: {
-      question: 'Which Friday should I use?',
-      onCancel: () => {},
-    },
   },
   parameters: {
     docs: {
       description: {
-        story: 'A valid follow-up draft shows Send in the shared slot while Stop stays reachable through chat overflow.',
+        story: 'A valid follow-up draft shows Send in the shared slot while Stop stays reachable through chat overflow. Answers to Otis questions live in the question panel, never in this field.',
       },
     },
   },

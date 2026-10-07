@@ -1,4 +1,6 @@
 import type { Meta, StoryObj } from '@storybook/react-vite';
+import type { ClarificationSummary } from '@otis/contracts';
+import { QuestionPanel } from '../components/QuestionPanel.js';
 import { Transcript } from '../components/Transcript.js';
 import { ContractOnly } from './ContractOnly.js';
 import { storyClarification, storyMembers, storyMessage, storyRun } from './fixtures.js';
@@ -85,10 +87,34 @@ const panelContract = (fixtureId: string, expects: string): Story => ({
  * The production QuestionPanel does not exist yet; these record the
  * expected content contract for review and authorize no shipped control.
  */
-export const FreeText: Story = panelContract(
-  'question/free-text',
-  'Separate answer field; typed text overrides the selected suggestion on Send.',
-);
+export const FreeText: Story = {
+  name: 'question/free-text',
+  args: {} as never,
+  render: () => {
+    const question: ClarificationSummary = {
+      id: 'q-story-free-1',
+      chat_id: 'chat-storybook',
+      run_id: 'run-story-1',
+      question: 'Which Friday should I use for the Thai Shop offer?',
+      intended_operation: 'create_task',
+      missing_fields: ['due'],
+      candidates: ['This Friday', 'Next Friday'],
+      status: 'pending',
+      created_at: new Date(Date.UTC(2026, 9, 4, 9, 30, 0)).toISOString(),
+      answerable_by_caller: true,
+    };
+    return (
+      <QuestionPanel
+        question={question}
+        draftKey="storybook:question:free-text"
+        onSubmit={() => {}}
+        onSkip={() => {}}
+        onClose={() => {}}
+      />
+    );
+  },
+  parameters: { docs: { description: { story: 'Production answer panel: numbered suggestions fill the field, typed text wins, Send carries the question identity.' } } },
+};
 export const Skipped: Story = panelContract(
   'question/skipped',
   'Skip defers without resolving; the pending callout stays reopenable.',

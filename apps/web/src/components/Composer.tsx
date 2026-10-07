@@ -9,7 +9,6 @@ import { useMediaQuery } from '../hooks/useMediaQuery.js';
 import { useVoiceRecorder, type VoiceController, type VoiceRecorderEnvironment, type VoiceRecorderScope } from '../hooks/useVoiceRecorder.js';
 import { ChevronDownIcon, CloseIcon, MicIcon, PlusIcon, SendIcon, StopIcon } from './icons.js';
 import { VoiceCapturePanel } from './VoiceCapturePanel.js';
-import { Button } from './ui/button.js';
 import { Command, CommandItem, CommandList } from './ui/command.js';
 import {
   DropdownMenu,
@@ -21,10 +20,6 @@ import {
   DropdownMenuTrigger,
 } from './ui/dropdown-menu.js';
 
-export interface ClarificationContext {
-  id?: string; question: string; candidates?: string[] | null; missing_fields?: string[];
-  intended_operation?: string; onCancel: () => void;
-}
 export interface VoiceComposerConfig {
   /** True only when the server reports a usable route and an adapter is confirmed. */
   available: boolean;
@@ -65,7 +60,7 @@ export interface ImageAttachmentController {
 export interface ComposerProps {
   disabled?: boolean; disabledReason?: string; running: boolean;
   commands: CommandDescriptor[]; models?: ModelOption[]; workspaces?: { id: string; name: string }[];
-  placeholder?: string; draftKey?: string; draftValue?: string | null; replyTo?: ClarificationContext;
+  placeholder?: string; draftKey?: string; draftValue?: string | null;
   controlPending?: boolean; modelReady?: boolean; modelsLoading?: boolean; voice?: VoiceComposerConfig;
   images?: ImageComposerConfig;
   modelsError?: string; onRetryModels?: () => void;
@@ -73,11 +68,8 @@ export interface ComposerProps {
   onStop?: () => Promise<void>; onSend: (text: string, imageMediaIds?: string[]) => void | boolean | Promise<boolean>;
 }
 export interface SuggestionItem { name: string; label?: string; summary: string; insert: string; hasSubmenu?: boolean; }
-// Only offer choices the server actually supplied. Never invent a due date or consent.
-export function deriveCandidates(_question: string, candidates?: string[] | null, _missingFields?: string[], _intendedOp?: string): string[] { return candidates ?? []; }
-
 export function Composer({ disabled, disabledReason, running, commands, models = [], workspaces = [],
-  placeholder = 'Message Otis', draftKey, draftValue, replyTo, controlPending, modelReady = true, modelsLoading = false, voice, images, modelsError, onRetryModels, onCommand, onStop, onSend }: ComposerProps) {
+  placeholder = 'Message Otis', draftKey, draftValue, controlPending, modelReady = true, modelsLoading = false, voice, images, modelsError, onRetryModels, onCommand, onStop, onSend }: ComposerProps) {
   const id = useId();
   const input = useRef<HTMLTextAreaElement>(null);
   const sendingRef = useRef(false);
@@ -176,13 +168,11 @@ export function Composer({ disabled, disabledReason, running, commands, models =
   const voiceActive = voiceController.phase === 'recording'
     || voiceController.phase === 'finalizing'
     || voiceController.phase === 'review';
-  // Answers to Otis questions travel as text only for now (the clarification
-  // endpoint takes text, and a spoken answer cannot carry the question link
-  // yet), so photos and the mic hide while replying or while a recording
-  // takes over the field. Showing them would silently start a separate run
-  // instead of answering the indicated question.
-  const attachVisible = Boolean(images?.available) && !voiceActive && !replyTo;
-  const micVisible = Boolean(voice?.available) && !voiceActive && !replyTo;
+  // The composer is ordinary chat only: answers travel through the explicit
+  // question panel, so photos and the mic stay visible here. Voice notes
+  // never carry a question identity.
+  const attachVisible = Boolean(images?.available) && !voiceActive;
+  const micVisible = Boolean(voice?.available) && !voiceActive;
   const voiceError = voiceActive ? null : voiceController.error;
   const voiceStorageWarning = voiceController.phase === 'recording' && !voiceController.durable
     ? 'This recording is not saved in the browser. Keep this tab open.'
@@ -251,7 +241,7 @@ export function Composer({ disabled, disabledReason, running, commands, models =
     const hasImages = images && pending.length > 0;
     if ((!text && !hasImages) || disabled || sendingRef.current || tooLong || controlPending) return;
     // A double slash is literal text (product command escape), never a command.
-    if (text.startsWith('/') && !text.startsWith('//') && !replyTo && !hasImages) { await command(text, true); return; }
+    if (text.startsWith('/') && !text.startsWith('//') && !hasImages) { await command(text, true); return; }
     if (!modelReady) return;
     // Attached photos upload first: acceptance only takes finalized media,
     // so the message send below carries server identities, never local
@@ -322,8 +312,6 @@ export function Composer({ disabled, disabledReason, running, commands, models =
   const followsDefault = !models.some(m => m.is_current && !m.is_default);
 
   return <div className="otis-composer"><div className="otis-composer__inner">
-    {replyTo && <div className="otis-reply-context text-xs flex items-center justify-between"><span className="truncate">Replying to Otis: {replyTo.question}</span><Button variant="ghost" size="icon-xs" type="button" aria-label="Dismiss question" onClick={replyTo.onCancel}><CloseIcon/></Button></div>}
-    {replyTo?.candidates?.length ? <div className="otis-reply-choices" aria-label="Suggested responses">{replyTo.candidates.map(choice => <Button key={choice} variant="outline" size="sm" type="button" onClick={() => { commitDraft(choice); input.current?.focus(); }}>{choice}</Button>)}</div> : null}
     {pickerOpen && <Command label={modelQuery ? 'Models' : thinkingQuery ? 'Thinking effort options' : 'Commands'} value={suggestions[activeIndex]?.insert ?? ''} onValueChange={next => { const found = suggestions.findIndex(row => row.insert === next); if (found >= 0) setIndex(found); }} shouldFilter={false} loop>
       <CommandList id={`${id}-picker`}>
         {suggestions.map((row, rowIndex) => <CommandItem key={row.name} id={`${id}-option-${rowIndex}`} value={row.insert} disabled={controlPending} onSelect={() => void select(rowIndex)}><span>{row.label}</span>{row.summary && <small className="text-xs">{row.summary}</small>}</CommandItem>)}

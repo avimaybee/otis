@@ -202,7 +202,7 @@ Each ID is a story using production components, not a separately styled mock. Gr
 | work/running, work/finished, work/expanded, work/failed, work/partial, work/stopped | Real activity and terminal states |
 | work/thinking-live, work/thinking-finished, work/thinking-absent, work/thinking-only, work/thinking-with-tools, work/thinking-interrupted, work/thinking-replay, work/thinking-truncated | One nested provider-attributed stream, honest absence, stable replay, bounded display and no fake step counts |
 | question/deadline, question/status, question/entity, question/dispute, question/multiple | Explicit question panel, meaningful wrapped context and exact target selection |
-| question/free-text, question/skipped, question/reopened, question/pending, question/failed, question/stale, question/late-acceptance, question/chat-independent | Separate drafts, Skip/reopen, retry, stale/late recovery and ordinary chat while waiting; contract-only until implemented |
+| question/free-text, question/skipped, question/reopened, question/pending, question/failed, question/stale, question/late-acceptance, question/chat-independent | Explicit question panel, meaningful wrapped context and exact target selection; free-text renders the production panel while Skip/reopen, retry, stale/late recovery and ordinary chat while waiting stay contract-only until implemented |
 | undo/single, undo/from-here, undo/dependency, undo/teammate-preserved | Effects and attribution |
 | undo/mobile-scope-sheet | Screenshot composition, exact preview, primary suffix undo and secondary single-action choice |
 | scroll/follow, scroll/released, scroll/prepend, scroll/prepend-while-streaming | Reading position and Jump to latest |

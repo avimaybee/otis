@@ -198,7 +198,7 @@ function RunWork({ run, steps, activities, onInspectAction, onReply, hasAgentMes
         )}
         {onReply && (
           <Button variant="ghost" size="sm" type="button" className="otis-question__reply-btn self-start" onClick={() => onReply(run.pending_clarification!.id)}>
-            Answer below
+            Answer question
           </Button>
         )}
       </div>

@@ -4,6 +4,8 @@ import * as React from 'react';
 import { createRoot } from 'react-dom/client';
 import type { ChatMessage, PublicActivity, RunDetailResponse } from '@otis/contracts';
 import { Composer } from '../src/components/Composer.js';
+import { QuestionPanel } from '../src/components/QuestionPanel.js';
+import type { ClarificationSummary } from '@otis/contracts';
 import { Transcript, activityToSteps, stepsFromRun } from '../src/components/Transcript.js';
 import { HistoryNav } from '../src/components/HistoryNav.js';
 import { mergeActivity } from '../src/hooks/useActivityStream.js';
@@ -104,16 +106,62 @@ describe('Composer', () => {
     expect(onStop).toHaveBeenCalledOnce(); expect(view.host.querySelector('textarea')).toBeTruthy();
     expect(view.host.textContent).not.toContain('queued'); expect(view.host.textContent).not.toContain('Steer'); await view.unmount();
   });
-  it('answers clarification conversationally without guessing dates or confirmation choices', async () => {
-    const onSend = vi.fn().mockResolvedValue(true); const onCancel = vi.fn();
-    const view = await mount(<Composer running={false} queuedCount={0} commands={COMMANDS} replyTo={{ question: 'When should the offer be ready?', onCancel }} onSend={onSend}/>);
-    expect(view.host.textContent).not.toContain('Tomorrow'); expect(view.host.textContent).not.toContain('No deadline needed');
+  it('routes answers through the explicit question panel, never the ordinary composer', async () => {
+    const panelQuestion: ClarificationSummary = {
+      id: 'q_panel_1', chat_id: 'chat_1', run_id: 'run_1',
+      question: 'When should the offer be ready?',
+      intended_operation: 'create_task', missing_fields: ['due'],
+      candidates: ['Friday at 4pm', 'No deadline needed'],
+      status: 'pending', created_at: '2026-10-02T10:00:00.000Z', answerable_by_caller: true,
+    };
+    const onSubmit = vi.fn().mockReturnValue(true); const onSkip = vi.fn(); const onClose = vi.fn();
+    const view = await mount(<QuestionPanel question={panelQuestion} draftKey="otis:draft:test-panel-1" onSubmit={onSubmit} onSkip={onSkip} onClose={onClose}/>);
+    // No invented content: only the server-supplied question and choices.
+    expect(view.host.textContent).not.toContain('Tomorrow');
     expect(view.host.querySelector('.otis-question-card')).toBeNull();
-    await fill(view.host.querySelector('textarea')!, 'Friday at 4pm');
-    await React.act(async () => (view.host.querySelector('[aria-label="Send"]') as HTMLElement).click());
-    expect(onSend).toHaveBeenCalledWith('Friday at 4pm');
-    await React.act(async () => (view.host.querySelector('[aria-label="Dismiss question"]') as HTMLElement).click());
-    expect(onCancel).toHaveBeenCalledOnce(); await view.unmount();
+    // Choosing a suggestion fills the field without submitting it.
+    const choices = Array.from(view.host.querySelectorAll('[aria-pressed]')) as HTMLButtonElement[];
+    expect(choices).toHaveLength(2);
+    await React.act(async () => choices[0]!.click());
+    expect(view.host.querySelector('textarea')!.value).toBe('Friday at 4pm');
+    expect(onSubmit).not.toHaveBeenCalled();
+    expect(choices[0]!.getAttribute('aria-pressed')).toBe('true');
+    // Free text overrides the selected suggestion on Send.
+    await fill(view.host.querySelector('textarea')!, 'Friday at 6pm');
+    expect(choices[0]!.getAttribute('aria-pressed')).toBe('false');
+    await React.act(async () => (Array.from(view.host.querySelectorAll('button')).find(button => button.textContent === 'Send') as HTMLElement).click());
+    expect(onSubmit).toHaveBeenCalledWith('q_panel_1', 'Friday at 6pm');
+    expect(view.host.querySelector('textarea')!.value).toBe('');
+    await view.unmount();
+  });
+  it('skips and closes without submitting, and keeps a stale answer on refusal', async () => {
+    const panelQuestion: ClarificationSummary = {
+      id: 'q_panel_2', chat_id: 'chat_1', run_id: 'run_1',
+      question: 'Should I mark it warm?',
+      intended_operation: 'update_status', missing_fields: [],
+      candidates: null, status: 'pending',
+      created_at: '2026-10-02T10:00:00.000Z', answerable_by_caller: true,
+    };
+    const onSkip = vi.fn(); const onClose = vi.fn();
+    const skipped = await mount(<QuestionPanel question={panelQuestion} draftKey="otis:draft:test-panel-2" onSubmit={vi.fn()} onSkip={onSkip} onClose={onClose}/>);
+    await React.act(async () => (Array.from(skipped.host.querySelectorAll('button')).find(button => button.textContent === 'Skip') as HTMLElement).click());
+    expect(onSkip).toHaveBeenCalledWith('q_panel_2');
+    await skipped.unmount();
+    const refused = await mount(<QuestionPanel question={panelQuestion} draftKey="otis:draft:test-panel-3" onSubmit={() => false} onSkip={vi.fn()} onClose={onClose}/>);
+    await fill(refused.host.querySelector('textarea')!, 'Yes, warm');
+    await React.act(async () => (Array.from(refused.host.querySelectorAll('button')).find(button => button.textContent === 'Send') as HTMLElement).click());
+    expect(refused.host.querySelector('textarea')!.value).toBe('Yes, warm');
+    await React.act(async () => refused.host.querySelector('textarea')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })));
+    expect(onClose).toHaveBeenCalledWith('q_panel_2');
+    await refused.unmount();
+  });
+  it('keeps the ordinary composer free of question framing and controls', async () => {
+    const voice = { available: true };
+    const view = await mount(<Composer running={false} commands={COMMANDS} onSend={vi.fn()} voice={voice} />);
+    expect(view.host.querySelector('[aria-label="Record voice note"]')).toBeTruthy();
+    expect(view.host.textContent).not.toContain('Replying to Otis');
+    expect(view.host.textContent).not.toContain('Question');
+    await view.unmount();
   });
   it('hides unimplemented voice and attachment actions', async () => {
     const view = await mount(<Composer running={false} queuedCount={0} commands={COMMANDS} onSend={vi.fn()}/>);
@@ -129,17 +177,6 @@ describe('Composer', () => {
     expect(Array.from(view.host.querySelectorAll('[aria-label="Attach photos"]'))).toHaveLength(1);
     expect(view.host.querySelector('input[type="file"]')?.getAttribute('aria-hidden')).toBe('true');
     await view.unmount();
-  });
-  it('hides voice and attachment actions while replying to a question', async () => {
-    const voice = { available: true };
-    const replyTo = { question: 'When should the offer be ready?', onCancel: () => {} };
-    const plain = await mount(<Composer running={false} commands={COMMANDS} onSend={vi.fn()} voice={voice} />);
-    expect(plain.host.querySelector('[aria-label="Record voice note"]')).toBeTruthy();
-    await plain.unmount();
-    const replying = await mount(<Composer running={false} commands={COMMANDS} onSend={vi.fn()} voice={voice} replyTo={replyTo} />);
-    expect(replying.host.querySelector('[aria-label="Record voice note"]')).toBeNull();
-    expect(replying.host.textContent).toContain('Replying to Otis');
-    await replying.unmount();
   });
   it('photo remove keeps the expanded touch target hook', async () => {    const view = await mount(<Composer running={false} commands={COMMANDS} onSend={vi.fn()} images={{
       available: true, workspaceId: 'ws_1', chatId: 'chat_1',
