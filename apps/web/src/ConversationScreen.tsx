@@ -224,7 +224,16 @@ export function ConversationScreen({ workspaceId, chat: routeChat, chatParamPres
   }, [mineQuery.error, teamQuery.error, accessLost, loseAccess]);
 
   const snapshotQuery = useChatSnapshot(userId, workspaceId, activeChatId, accessLost);
-  const snapshot = snapshotQuery.data ?? null;
+  // Staged paint: the primary transcript (detail + messages) renders as soon
+  // as its two reads resolve; runs, activities and questions fill when the
+  // full snapshot lands. The staged value is local state merged here at read
+  // time, never a cache write, so live patches cannot be clobbered by it.
+  const snapshot = snapshotQuery.data ?? snapshotQuery.primarySnapshot ?? null;
+  // Cache-mutating consumers (live stream cursor, older pagination) wait for
+  // the committed full snapshot: paginating or subscribing off an
+  // uncommitted primary would fetch against, then be overwritten by, state
+  // the cache never held.
+  const fullSnapshot = snapshotQuery.data ?? null;
   const chatNotFound = Boolean(activeChatId && snapshotQuery.error && isNotFoundError(snapshotQuery.error));
   useEffect(() => {
     if (!snapshotQuery.error || accessLost) return;
@@ -314,7 +323,7 @@ export function ConversationScreen({ workspaceId, chat: routeChat, chatParamPres
     }
   }, [queryClient, userId, workspaceId]);
 
-  const readyChatId = snapshot && !accessLost ? snapshot.detail.chat.id : null;
+  const readyChatId = fullSnapshot && !accessLost ? fullSnapshot.detail.chat.id : null;
   useEffect(() => {
     if (!readyChatId || accessLost || !isVisible) {
       // Hidden tabs keep no live stream: the teardown below already closed
@@ -857,12 +866,12 @@ export function ConversationScreen({ workspaceId, chat: routeChat, chatParamPres
 
   const loadingOlderRef = useRef(false);
   const loadOlder = useCallback(async () => {
-    if (!snapshot?.older || !activeChatId || loadingOlderRef.current) return;
+    if (!fullSnapshot?.older || !activeChatId || loadingOlderRef.current) return;
     loadingOlderRef.current = true;
     setOlderError(null);
     setLoadingOlder(true); const generation = epoch.current;
     try {
-      const page = await api.listMessages(workspaceId, activeChatId, snapshot.older);
+      const page = await api.listMessages(workspaceId, activeChatId, fullSnapshot.older);
       const ids = [...new Set(page.messages.flatMap(message => message.run_id ? [message.run_id] : []))];
       const runs = ids.length > 0 ? (await api.runs(workspaceId, ids)).runs : [];
       if (generation !== epoch.current || selected.current.chat !== activeChatId) return;
@@ -875,7 +884,7 @@ export function ConversationScreen({ workspaceId, chat: routeChat, chatParamPres
       // In-place retry: the same cursor is kept, nothing is discarded.
       if (generation === epoch.current) setOlderError('Could not load earlier messages. Try again.');
     } finally { loadingOlderRef.current = false; setLoadingOlder(false); }
-  }, [snapshot, activeChatId, workspaceId, userId, queryClient]);
+  }, [fullSnapshot, activeChatId, workspaceId, userId, queryClient]);
   const loadMoreChats = useCallback(async () => {
     const generation = epoch.current;
     try {
@@ -1018,7 +1027,7 @@ export function ConversationScreen({ workspaceId, chat: routeChat, chatParamPres
       <div className="otis-access"><h2 className="text-xl font-medium">Could not load conversation</h2><p className="text-sm text-muted-foreground">{error ?? 'A network or server error occurred.'}</p><div className="flex gap-2"><Button variant="outline" type="button" onClick={() => { setError(null); void snapshotQuery.refetch(); void resyncChat(activeChatId!); }}>Try again</Button><Button variant="ghost" type="button" onClick={() => navigate(workspaceId, null)}>Start new conversation</Button></div></div>
     ) : <div className="otis-chat">
       {streamStatus === 'resyncing' && <p className="otis-connection text-xs" role="status">Reconnecting to activity… Your conversation is retained.</p>}
-      <Transcript key={`${workspaceId}:${activeChatId ?? 'new'}`} messages={derived.messages} members={members} currentUserId={userId} runs={snapshot?.runs ?? {}} activities={snapshot?.activities ?? []} steps={[]} transients={transients} delivery={derived.delivery} onRetryMessage={(clientId) => void retryMessage(clientId)} onDiscardMessage={discardMessage} onInspectSource={setSourceId} onInspectAction={setDetailActionId} onReply={readOnly ? undefined : (id) => openQuestionPanel(id, true)} onEditMessage={readOnly ? undefined : setDraftValue} loading={loading} hasOlder={Boolean(snapshot?.older)} loadingOlder={loadingOlder} olderError={olderError} followSignal={followSignal} positionKey={`${userId}:${workspaceId}:${activeChatId ?? 'new'}`} onLoadOlder={() => void loadOlder()}/>
+      <Transcript key={`${workspaceId}:${activeChatId ?? 'new'}`} messages={derived.messages} members={members} currentUserId={userId} runs={snapshot?.runs ?? {}} activities={snapshot?.activities ?? []} steps={[]} transients={transients} delivery={derived.delivery} onRetryMessage={(clientId) => void retryMessage(clientId)} onDiscardMessage={discardMessage} onInspectSource={setSourceId} onInspectAction={setDetailActionId} onReply={readOnly ? undefined : (id) => openQuestionPanel(id, true)} onEditMessage={readOnly ? undefined : setDraftValue} loading={loading} hasOlder={Boolean(fullSnapshot?.older)} loadingOlder={loadingOlder} olderError={olderError} followSignal={followSignal} positionKey={`${userId}:${workspaceId}:${activeChatId ?? 'new'}`} onLoadOlder={() => void loadOlder()}/>
       {error && <div className="otis-chat-error text-sm" role="alert"><p>{error}</p>{activeChatId && !loading && <Button variant="ghost" size="sm" type="button" onClick={() => { setError(null); void resyncChat(activeChatId); }}>Reload conversation</Button>}</div>}
       {readOnly ? <div className="otis-readonly text-sm"><p>This is {currentDetail!.chat.author_display_name ?? members[currentDetail!.chat.author_user_id] ?? 'a teammate'}’s conversation.</p><Button variant="ghost" size="sm" type="button" onClick={() => navigate(workspaceId, ownChats[0]?.id ?? null)}>Continue in your own chat</Button></div> : <div ref={composerRef} className="otis-composer-slot"><div className="flex flex-col gap-2">{panelQuestion && activeChatId && <div className="mx-auto w-full max-w-[760px] px-4"><QuestionPanel key={panelQuestion.id} question={panelQuestion} draftKey={`otis:draft:${userId}:${workspaceId}:${activeChatId}:${panelQuestion.id}`} focusSignal={panelFocusId === panelQuestion.id ? panelFocusSignal : 0} onSubmit={(questionId, text) => answerQuestion(questionId, text)} onSkip={dismissQuestion} onClose={dismissQuestion}/></div>}<Composer key={`${workspaceId}:${userId}:${activeChatId ?? 'new'}`} draftKey={`otis:draft:${userId}:${workspaceId}:${activeChatId ?? 'new'}`} draftValue={draftValue} disabled={Boolean(activeChatId && !snapshot)} disabledReason={error ? 'Conversation unavailable' : 'Opening conversation…'} running={Boolean(running)} commands={commands} models={models} workspaces={workspaces} controlPending={controlPending} modelReady={models.some(model => model.is_current && model.available)} modelsLoading={modelsQuery.isLoading} modelsError={modelsQuery.isError ? (modelsQuery.error instanceof Error ? modelsQuery.error.message : 'Could not load models.') : undefined} onRetryModels={() => void modelsQuery.refetch()} voice={{ available: voiceAvailable, adapter: voiceAdapter, scope: { userId, workspaceId, chatId: activeChatId }, onSent: voiceSend }} images={{ available: !readOnly && !accessLost, workspaceId, chatId: activeChatId, onEnsureChat: ensureChatForImages, upload: request => uploadImageFile(imageTransport, request) }} onCommand={applyCommand} onStop={running ? async () => { await api.stopRun(workspaceId, running.run.id); if (activeChatId) refreshRun(workspaceId, activeChatId, running.run.id); } : undefined} onSend={send}/></div></div>}
     </div>}</main>

@@ -4,6 +4,7 @@
  * `setQueryData`; only resync and targeted run/message refreshes refetch.
  */
 
+import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import type {
   ChatDetailResponse,
@@ -32,14 +33,77 @@ export function mergeMessages(previous: ChatMessage[], next: ChatMessage[]): Cha
     .sort((left, right) => left.sequence - right.sequence);
 }
 
-export async function fetchChatSnapshot(workspaceId: string, chatId: string, signal?: AbortSignal): Promise<ChatSnapshot> {
-  const [detail, page, firstActivity, questions] = await Promise.all([
+/** Primary transcript: detail + messages only. Enough to paint the
+ * conversation, unlock the composer and resolve read-only state. */
+export interface ChatPrimary {
+  detail: ChatDetailResponse;
+  messages: ChatMessage[];
+  older: number | null;
+}
+
+/**
+ * Reads the primary transcript. Either read may abort on navigation; both
+ * must succeed or there is nothing truthful to paint.
+ */
+export async function fetchChatPrimary(
+  workspaceId: string,
+  chatId: string,
+  signal?: AbortSignal,
+): Promise<ChatPrimary> {
+  const [detail, page] = await Promise.all([
     api.getChat(workspaceId, chatId, signal),
     api.listMessages(workspaceId, chatId, null, signal),
+  ]);
+  return {
+    detail,
+    messages: mergeMessages([], page.messages),
+    older: page.next_before_sequence,
+  };
+}
+
+export async function fetchChatSnapshot(
+  workspaceId: string,
+  chatId: string,
+  signal?: AbortSignal,
+  onPrimary?: (primary: ChatPrimary) => void,
+): Promise<ChatSnapshot> {
+  // The primary transcript paints through the caller's local state as soon
+  // as its two reads resolve, without waiting for secondary run metadata.
+  // It never touches the query cache: cache writes stay exclusively with the
+  // single TanStack return below plus the existing live updaters
+  // (acceptance, activity, refresh), so a late or aborted primary can never
+  // overwrite live-patched cache state the way a seeded write could.
+  const primary = await fetchChatPrimary(workspaceId, chatId, signal);
+  // Navigation wins before secondary work starts: an abort landing in the
+  // gap between primary and secondary must propagate without issuing doomed
+  // reads, and must never paint a chat the user already left.
+  if (signal?.aborted) throw signal.reason;
+  onPrimary?.(primary);
+  // Secondary metadata degrades truthfully: activity, questions and run
+  // details fill when available, and a failure leaves the transcript with
+  // empty metadata instead of sinking the whole snapshot. Live events and
+  // targeted refreshes repair the gaps. Only the primary is load-bearing.
+  const [activitySettled, questionsSettled] = await Promise.allSettled([
     api.activity(workspaceId, chatId, 0, signal),
     api.clarifications(workspaceId, chatId, signal),
   ]);
-  const runIds = [...new Set(page.messages.flatMap(message => (message.run_id ? [message.run_id] : [])))];
+  // Navigation wins over degradation: an aborted fetch propagates so
+  // TanStack keeps whatever the cache already holds.
+  if (signal?.aborted) throw signal.reason;
+  const firstActivity = activitySettled.status === 'fulfilled'
+    ? activitySettled.value
+    : { activities: [] as PublicActivity[], latest_cursor: 0 };
+  const questions = questionsSettled.status === 'fulfilled'
+    ? questionsSettled.value
+    : { clarifications: [] as ClarificationSummary[] };
+  if (activitySettled.status === 'rejected' || questionsSettled.status === 'rejected') {
+    debugLog('chat', 'secondary snapshot metadata unavailable; rendering transcript without it', {
+      chatId,
+      activity: activitySettled.status,
+      questions: questionsSettled.status,
+    });
+  }
+  const runIds = [...new Set(primary.messages.flatMap(message => (message.run_id ? [message.run_id] : [])))];
   // One batched roundtrip instead of one request per run; unknown ids are
   // omitted server-side, mirroring the previous per-run settled behavior.
   // A batch failure must never sink the whole snapshot: render messages and
@@ -59,9 +123,9 @@ export async function fetchChatSnapshot(workspaceId: string, chatId: string, sig
     [...firstActivity.activities, ...runData.flatMap(run => run.activities)].map(activity => [activity.id, activity]),
   ).values()].sort((left, right) => left.cursor - right.cursor);
   return {
-    detail,
-    messages: mergeMessages([], page.messages),
-    older: page.next_before_sequence,
+    detail: primary.detail,
+    messages: primary.messages,
+    older: primary.older,
     runs: Object.fromEntries(runData.map(run => [run.run.id, run])),
     activities,
     questions: questions.clarifications,
@@ -70,11 +134,33 @@ export async function fetchChatSnapshot(workspaceId: string, chatId: string, sig
 }
 
 export function useChatSnapshot(userId: string, workspaceId: string, chatId: string | null, disabled: boolean) {
-  return useQuery({
+  // Staged primary paint lives in local state, keyed to its scope, and is
+  // merged at read time by the caller (`data ?? primarySnapshot`). It is
+  // never written to the query cache, so it cannot clobber the acceptance
+  // patch, activity events or targeted refreshes that land mid-fetch.
+  const scopeKey = `${userId}:${workspaceId}:${chatId ?? 'none'}`;
+  const [staged, setStaged] = useState<{ scopeKey: string; snapshot: ChatSnapshot } | null>(null);
+  const query = useQuery({
     queryKey: chatId ? qk.chat(userId, workspaceId, chatId) : ['otis', userId, workspaceId, 'chat', 'none'],
-    queryFn: ({ signal }) => fetchChatSnapshot(workspaceId, chatId!, signal),
+    queryFn: ({ signal }) => fetchChatSnapshot(workspaceId, chatId!, signal, (primary) => {
+      if (signal.aborted) return;
+      setStaged({
+        scopeKey,
+        snapshot: {
+          detail: primary.detail,
+          messages: primary.messages,
+          older: primary.older,
+          runs: {},
+          activities: [],
+          questions: [],
+          cursor: 0,
+        },
+      });
+    }),
     enabled: chatId !== null && !disabled,
   });
+  const primarySnapshot = !disabled && staged?.scopeKey === scopeKey ? staged.snapshot : undefined;
+  return { ...query, primarySnapshot };
 }
 
 export function applyActivitySnapshot(snapshot: ChatSnapshot, activity: PublicActivity): ChatSnapshot {

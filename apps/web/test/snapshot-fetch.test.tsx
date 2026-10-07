@@ -1,7 +1,39 @@
 /** @vitest-environment happy-dom */
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { fetchChatSnapshot } from '../src/api/snapshot.js';
+import * as React from 'react';
+import { fetchChatSnapshot, type ChatPrimary } from '../src/api/snapshot.js';
 import { api } from '../src/api/client.js';
+import * as stream from '../src/hooks/useActivityStream.js';
+import { mountRoute } from './route.js';
+import type { Chat, ChatMessage } from '@otis/contracts';
+
+vi.mock('idb-keyval', () => {
+  const store = new Map<string, unknown>();
+  return {
+    get: vi.fn(async (key: string) => store.get(key)),
+    set: vi.fn(async (key: string, value: unknown) => {
+      store.set(key, value);
+    }),
+    update: vi.fn(async (key: string, updater: (old: unknown) => unknown) => {
+      store.set(key, updater(store.get(key)));
+    }),
+    del: vi.fn(async (key: string) => {
+      store.delete(key);
+    }),
+    __store: store,
+  };
+});
+
+vi.mock('virtual:pwa-register/react', () => ({
+  useRegisterSW: vi.fn(() => ({
+    needRefresh: [false, vi.fn()],
+    offlineReady: [false, vi.fn()],
+    updateServiceWorker: vi.fn(),
+  })),
+}));
+
+// @ts-expect-error React act flag
+globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -63,5 +95,152 @@ describe('fetchChatSnapshot cancellation', () => {
     expect(full.messages.map((m) => m.id)).toEqual(['m1', 'm2']);
     expect(full.runs).toEqual({});
     expect(full.cursor).toBe(3);
+  });
+});
+
+describe('fetchChatSnapshot staged primary', () => {
+  it('calls onPrimary with the primary transcript before secondary metadata resolves', async () => {
+    primary();
+    let releaseSecondary!: () => void;
+    const gate = new Promise<void>((resolve) => { releaseSecondary = resolve; });
+    vi.spyOn(api, 'activity').mockImplementation(() => gate.then(() => ({ activities: [], latest_cursor: 3 } as never)));
+    vi.spyOn(api, 'clarifications').mockResolvedValue({ clarifications: [] });
+    vi.spyOn(api, 'runs').mockResolvedValue({ runs: [] });
+
+    const seen: ChatPrimary[] = [];
+    const pending = fetchChatSnapshot(WS, CHAT, undefined, (staged) => { seen.push(staged); });
+    await vi.waitFor(() => expect(seen.length).toBe(1));
+    expect(seen[0]!.messages.map((m) => m.id)).toEqual(['m1', 'm2']);
+    expect(seen[0]!.detail).toEqual({ chat: { id: CHAT, title: 'Snap' } });
+    releaseSecondary();
+    const full = await pending;
+    expect(full.messages.map((m) => m.id)).toEqual(['m1', 'm2']);
+    expect(full.cursor).toBe(3);
+  });
+
+  it('degrades secondary metadata failure to the primary transcript instead of sinking the snapshot', async () => {
+    primary();
+    vi.spyOn(api, 'activity').mockRejectedValue(new Error('boom'));
+    vi.spyOn(api, 'clarifications').mockResolvedValue({ clarifications: [{ id: 'q1' }] as never });
+    vi.spyOn(api, 'runs').mockResolvedValue({ runs: [] });
+
+    const seen: ChatPrimary[] = [];
+    const full = await fetchChatSnapshot(WS, CHAT, undefined, (staged) => { seen.push(staged); });
+    expect(seen.length).toBe(1);
+    expect(full.messages.map((m) => m.id)).toEqual(['m1', 'm2']);
+    expect(full.activities).toEqual([]);
+    expect(full.questions.map((question) => question.id)).toEqual(['q1']);
+    expect(full.cursor).toBe(0);
+  });
+
+  it('still rejects when the primary transcript itself fails, without calling onPrimary', async () => {
+    vi.spyOn(api, 'getChat').mockRejectedValue(new Error('nope'));
+    vi.spyOn(api, 'listMessages').mockResolvedValue({
+      chat_id: CHAT,
+      messages: [],
+      next_before_sequence: null,
+    } as never);
+    const onPrimary = vi.fn();
+    await expect(fetchChatSnapshot(WS, CHAT, undefined, onPrimary)).rejects.toThrow('nope');
+    expect(onPrimary).not.toHaveBeenCalled();
+  });
+
+  it('never calls onPrimary after abort', async () => {
+    const controller = new AbortController();
+    vi.spyOn(api, 'getChat').mockImplementation(
+      () => new Promise((_, reject) => controller.signal.addEventListener('abort', () => reject(controller.signal.reason))),
+    );
+    vi.spyOn(api, 'listMessages').mockResolvedValue({
+      chat_id: CHAT,
+      messages: [],
+      next_before_sequence: null,
+    } as never);
+    const onPrimary = vi.fn();
+    const pending = fetchChatSnapshot(WS, CHAT, controller.signal, onPrimary);
+    controller.abort();
+    await expect(pending).rejects.toBe(controller.signal.reason);
+    expect(onPrimary).not.toHaveBeenCalled();
+  });
+});
+
+describe('staged primary paint', () => {
+  const STAGE_WS = 'ws_stage';
+  const STAGE_USER = 'usr_stage';
+
+  function stageMocks(releaseSecondary: () => void, gate: Promise<void>) {
+    const chat = {
+      id: 'chat_A',
+      workspace_id: STAGE_WS,
+      title: 'Alpha',
+      author_user_id: STAGE_USER,
+      author_display_name: 'Avi',
+      model_override: null,
+      is_archived: false,
+      activity_cursor: 1,
+      created_at: '2026-10-03T12:00:00.000Z',
+      updated_at: '2026-10-03T12:00:00.000Z',
+      last_activity_at: '2026-10-03T12:00:00.000Z',
+    } as Chat;
+    const note = {
+      id: 'm1',
+      workspace_id: STAGE_WS,
+      chat_id: 'chat_A',
+      author_user_id: STAGE_USER,
+      author_display_name: 'Avi',
+      author_kind: 'member',
+      channel: 'web',
+      inbound_message_id: 'in_m1',
+      client_message_id: null,
+      content_text: 'Alpha note',
+      media_id: null,
+      run_id: null,
+      sequence: 1,
+      created_at: '2026-10-03T12:00:00.000Z',
+      updated_at: '2026-10-03T12:00:00.000Z',
+    } as ChatMessage;
+    vi.spyOn(api, 'listChats').mockImplementation(async () => ({ chats: [chat] }));
+    vi.spyOn(api, 'commands').mockResolvedValue({ surface: 'web', commands: [] });
+    vi.spyOn(api, 'models').mockResolvedValue({
+      models: [],
+      current_command_key: 'mimo-25',
+      default_command_key: 'mimo-25',
+    } as never);
+    vi.spyOn(api, 'getChat').mockImplementation(async () => ({ chat, is_author: true }));
+    vi.spyOn(api, 'listMessages').mockImplementation(async () => ({
+      chat_id: 'chat_A',
+      messages: [note],
+      next_before_sequence: null,
+    }));
+    // Secondary metadata stays in flight while the primary paints.
+    vi.spyOn(api, 'activity').mockImplementation(() => gate.then(() => ({ activities: [], latest_cursor: 0 } as never)));
+    vi.spyOn(api, 'clarifications').mockResolvedValue({ clarifications: [] });
+    vi.spyOn(stream, 'subscribeToActivity').mockReturnValue({ close: vi.fn() });
+    return { releaseSecondary };
+  }
+
+  it('paints the transcript from the primary before secondary metadata resolves', async () => {
+    let releaseSecondary!: () => void;
+    const gate = new Promise<void>((resolve) => { releaseSecondary = resolve; });
+    stageMocks(releaseSecondary, gate);
+    const view = await mountRoute(`/?workspace=${STAGE_WS}&chat=chat_A`, {
+      userId: STAGE_USER,
+      workspaces: [{ id: STAGE_WS, name: 'Kerning' }],
+      members: { [STAGE_USER]: 'Avi' },
+    });
+    try {
+      // The secondary batch is still gated, yet the primary transcript is
+      // already painted: no endless opening spinner for the slow tail.
+      const bubbles = () => Array.from(view.host.querySelectorAll('.otis-turn__bubble'));
+      expect(bubbles().filter((node) => node.textContent === 'Alpha note')).toHaveLength(1);
+      expect(view.host.textContent).not.toContain('Opening conversation…');
+      releaseSecondary();
+      await React.act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
+      expect(bubbles().filter((node) => node.textContent === 'Alpha note')).toHaveLength(1);
+    } finally {
+      releaseSecondary();
+      await view.unmount();
+    }
   });
 });
