@@ -109,7 +109,10 @@ function checkFile(file) {
     if (/blur-|backdrop-|backdrop-filter/.test(line)) {
       fail(file, 'banned blur (no gradients/glass/blur/glow)', `${at} ${line}`);
     }
-    if (/bg-gradient|linear-gradient|radial-gradient|background-clip\s*:\s*text|-webkit-text-fill-color|to-[a-z]+-[0-9]/.test(line)) {
+    // The trailing color-stop alternative is anchored out of identifiers:
+    // fixture ids like 'photo-ready-1' contain "to-ready-1" but are not
+    // gradient utilities; real stops always follow a class boundary.
+    if (/bg-gradient|linear-gradient|radial-gradient|background-clip\s*:\s*text|-webkit-text-fill-color|(?<![\w-])to-[a-z]+-[0-9]/.test(line)) {
       fail(file, 'banned gradient construction', `${at} ${line}`);
     }
     // 4. Off-system palette classes (the approved store has no red/blue/… scale).
@@ -410,6 +413,16 @@ function runSelfTest() {
       {
         name: 'ok.tsx',
         text: '<div className="min-h-[52px] pl-[14px] my-1.5 size-1.5 p-4 gap-2" />',
+        expect: [],
+      },
+      {
+        name: 'gradient.tsx',
+        text: '<div className="to-red-500" />',
+        expect: ['banned gradient construction'],
+      },
+      {
+        name: 'fixture-id.ts',
+        text: `storyPhoto('photo-ready-1', 'ready')`,
         expect: [],
       },
     ];

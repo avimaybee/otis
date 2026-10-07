@@ -343,7 +343,7 @@ export function Composer({ disabled, disabledReason, running, commands, models =
                 </span>
               )}
               {attachment.status === 'error' && (
-                <span className="absolute inset-x-0 bottom-0 rounded-b-xl bg-destructive/90 px-1 py-0.5 text-[10px] text-destructive-foreground" role="alert">
+                <span className="absolute inset-x-0 bottom-0 rounded-b-xl bg-destructive/90 px-1 text-xs text-destructive-foreground" role="alert">
                   Failed
                 </span>
               )}
