@@ -707,6 +707,57 @@ describe('Chat API: transcript, activity and run status', () => {
     expect([401, 403, 404]).toContain(outsider.status);
   });
 
+  it('attributes receipts across both linkages in timestamp order', async () => {
+    const first = await acceptWebMessage(env.DB, {
+      workspaceId: WS,
+      chatId: aviChat,
+      userId: AVI,
+      clientMessageId: 'cm-run-link-1',
+      text: 'First linked question?',
+    });
+    const second = await acceptWebMessage(env.DB, {
+      workspaceId: WS,
+      chatId: aviChat,
+      userId: AVI,
+      clientMessageId: 'cm-run-link-2',
+      text: 'Second linked question?',
+    });
+    const inbound = (
+      await env.DB
+        .prepare(`SELECT id FROM messages_in WHERE channel = 'web' AND external_id IN ('cm-run-link-1', 'cm-run-link-2') ORDER BY external_id ASC`)
+        .all<{ id: string }>()
+    ).results || [];
+    expect(inbound).toHaveLength(2);
+    const sourceOfSecond = inbound[1]!.id;
+    // A: direct run link. B: source-message link with an earlier timestamp,
+    // exercising the cross-query sort. C: both linkages across the two runs.
+    await env.DB.batch([
+      env.DB.prepare(
+        `INSERT INTO action_receipts (id, workspace_id, action_id, payload_hash, command_name, result_status, result_json, actor_kind, source_message_id, run_id, committed_revision, created_at)
+         VALUES (?, ?, ?, 'test', 'create_task', 'applied', '{}', 'member', NULL, ?, 1, '2026-10-07T00:00:02.000Z')`,
+      ).bind('row_batch_a', WS, 'act_batch_a', first.run_id),
+      env.DB.prepare(
+        `INSERT INTO action_receipts (id, workspace_id, action_id, payload_hash, command_name, result_status, result_json, actor_kind, source_message_id, run_id, committed_revision, created_at)
+         VALUES (?, ?, ?, 'test', 'create_task', 'applied', '{}', 'member', ?, NULL, 1, '2026-10-07T00:00:01.000Z')`,
+      ).bind('row_batch_b', WS, 'act_batch_b', sourceOfSecond),
+      env.DB.prepare(
+        `INSERT INTO action_receipts (id, workspace_id, action_id, payload_hash, command_name, result_status, result_json, actor_kind, source_message_id, run_id, committed_revision, created_at)
+         VALUES (?, ?, ?, 'test', 'create_task', 'applied', '{}', 'member', ?, ?, 1, '2026-10-07T00:00:03.000Z')`,
+      ).bind('row_batch_c', WS, 'act_batch_c', sourceOfSecond, first.run_id),
+    ]);
+
+    const batch = await callJson<RunBatchResponse>(
+      `/api/workspaces/${WS}/runs?ids=${first.run_id},${second.run_id}`,
+      { cookie: aviCookie },
+    );
+    const actionsOf = (runId: string) =>
+      batch.runs.find((run) => run.run.id === runId)!.actions.map((action) => action.action_id);
+    expect(actionsOf(first.run_id)).toEqual(['act_batch_a', 'act_batch_c']);
+    // The source-linked receipt sorts first by timestamp, and the
+    // cross-linked receipt appears here too, as in the single-run view.
+    expect(actionsOf(second.run_id)).toEqual(['act_batch_b', 'act_batch_c']);
+  });
+
   it('reports a pending clarification and refuses an answer from another member', async () => {
     const chatId = (await createChat(env.DB, { workspaceId: WS, authorUserId: AVI, title: 'Clar chat' })).id;
     const accepted = await acceptWebMessage(env.DB, {

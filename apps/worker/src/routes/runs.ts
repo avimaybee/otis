@@ -283,18 +283,44 @@ export async function handleListRuns(
   const sourceMessageIds = [...new Set(
     [...runsById.values()].map((run) => run.source_message_id).filter((id): id is string => Boolean(id)),
   )];
-  const actionRows = (
+  // Two single-predicate reads instead of one OR query: each binds at most
+  // one transcript page plus the workspace (well under D1's 100-parameter
+  // limit), and the merged rows sort exactly as the single-run query orders
+  // them. Receipts linked only by an unknown source message stay invisible,
+  // exactly as before.
+  const actionSelect = `SELECT run_id, source_message_id, action_id, command_name, result_status, committed_revision, result_json, created_at
+           FROM action_receipts WHERE workspace_id = ? AND `;
+  const directRows = (
     await env.DB
-      .prepare(
-        `SELECT run_id, source_message_id, action_id, command_name, result_status, committed_revision, result_json, created_at
-         FROM action_receipts WHERE workspace_id = ? AND (run_id IN (${foundPlaceholders})${
-           sourceMessageIds.length > 0 ? ` OR source_message_id IN (${sourceMessageIds.map(() => '?').join(',')})` : ''
-         })
-         ORDER BY created_at ASC, action_id ASC`,
-      )
-      .bind(workspaceId, ...found, ...sourceMessageIds)
+      .prepare(`${actionSelect}run_id IN (${foundPlaceholders})`)
+      .bind(workspaceId, ...found)
       .all<Record<string, unknown>>()
   ).results || [];
+  const viaSourceRows = sourceMessageIds.length > 0
+    ? (
+      await env.DB
+        .prepare(`${actionSelect}source_message_id IN (${sourceMessageIds.map(() => '?').join(',')})`)
+        .bind(workspaceId, ...sourceMessageIds)
+        .all<Record<string, unknown>>()
+    ).results || []
+    : [];
+  const actionRows: Record<string, unknown>[] = [];
+  const seenActions = new Set<string>();
+  for (const row of [...directRows, ...viaSourceRows].sort((left, right) => {
+    const leftAt = String(left['created_at']);
+    const rightAt = String(right['created_at']);
+    if (leftAt !== rightAt) return leftAt < rightAt ? -1 : 1;
+    const leftId = String(left['action_id']);
+    const rightId = String(right['action_id']);
+    return leftId === rightId ? 0 : leftId < rightId ? -1 : 1;
+  })) {
+    // One query per linkage can return the same receipt twice; each run's
+    // detail independently includes it, exactly like the single-run query.
+    const id = String(row['action_id']);
+    if (seenActions.has(id)) continue;
+    seenActions.add(id);
+    actionRows.push(row);
+  }
   // Attribute each receipt to its run: direct run linkage first, falling back
   // to the run that produced the same source message.
   const sourceToRun = new Map<string, string>();
@@ -303,13 +329,21 @@ export async function handleListRuns(
   }
   const actionsByRun = new Map<string, RunActionSummary[]>();
   for (const row of actionRows) {
+    // A receipt belongs to every requested run it links: its own run first,
+    // plus the run that produced the same source message when different.
+    // Either linkage alone is enough; unknown linkages stay invisible.
+    const targets = new Set<string>();
     const direct = row['run_id'] ? String(row['run_id']) : null;
+    if (direct && runsById.has(direct)) targets.add(direct);
     const viaSource = row['source_message_id'] ? sourceToRun.get(String(row['source_message_id'])) : undefined;
-    const runId = (direct && runsById.has(direct) ? direct : viaSource) ?? null;
-    if (!runId) continue;
-    const list = actionsByRun.get(runId) ?? [];
-    list.push(mapActionRow(row));
-    actionsByRun.set(runId, list);
+    if (viaSource) targets.add(viaSource);
+    if (targets.size === 0) continue;
+    const summary = mapActionRow(row);
+    for (const runId of targets) {
+      const list = actionsByRun.get(runId) ?? [];
+      list.push(summary);
+      actionsByRun.set(runId, list);
+    }
   }
 
   const activityRows = (
@@ -358,8 +392,13 @@ export async function handleListRuns(
     for (const id of collected) memoryIds.add(id);
   }
   const sourceById = new Map<string, MemorySourceReference>();
-  if (memoryIds.size > 0) {
-    const sourcePlaceholders = [...memoryIds].map(() => '?').join(',');
+  // The cross-run id union can exceed D1's 100-parameter limit on a full
+  // page, so read it in bounded groups; per-run order comes from the
+  // collected id lists, never from row order.
+  const memoryIdList = [...memoryIds];
+  for (let offset = 0; offset < memoryIdList.length; offset += 98) {
+    const group = memoryIdList.slice(offset, offset + 98);
+    const sourcePlaceholders = group.map(() => '?').join(',');
     const sourceRows = (
       await env.DB
         .prepare(
@@ -368,7 +407,7 @@ export async function handleListRuns(
            LEFT JOIN users u ON u.id = m.author_user_id
            WHERE m.workspace_id = ? AND m.id IN (${sourcePlaceholders})`,
         )
-        .bind(workspaceId, ...memoryIds)
+        .bind(workspaceId, ...group)
         .all<{ id: string; provenance: 'stated' | 'inferred'; observed_at: string; display_name: string | null }>()
     ).results || [];
     for (const row of sourceRows) sourceById.set(row.id, mapSourceRow(row));
