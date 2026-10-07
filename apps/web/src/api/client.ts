@@ -92,7 +92,11 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   try {
     response = await fetch(path, { ...init, headers, credentials: 'same-origin', signal: controller.signal });
   } catch (err) {
-    failureLog('api', 'network failure before HTTP', { method, path, ms: Date.now() - started, error: String(err) });
+    // Intended navigation cancellation is not a network failure: the query
+    // owner aborted a disposable read, so it stays out of the failure log.
+    if (!(err instanceof DOMException && err.name === 'AbortError')) {
+      failureLog('api', 'network failure before HTTP', { method, path, ms: Date.now() - started, error: String(err) });
+    }
     clearTimeout(timeoutId);
     init.signal?.removeEventListener('abort', onAbort);
     throw err;
@@ -148,14 +152,18 @@ export const api = {
       body: JSON.stringify({ client_chat_id: clientChatId }),
     }),
 
-  getChat: (workspaceId: string, chatId: string) =>
-    request<ChatDetailResponse>(`/api/workspaces/${workspaceId}/chats/${chatId}`),
+  getChat: (workspaceId: string, chatId: string, signal?: AbortSignal) =>
+    request<ChatDetailResponse>(
+      `/api/workspaces/${workspaceId}/chats/${chatId}`,
+      signal ? { signal } : undefined,
+    ),
 
-  listMessages: (workspaceId: string, chatId: string, beforeSequence?: number | null) => {
+  listMessages: (workspaceId: string, chatId: string, beforeSequence?: number | null, signal?: AbortSignal) => {
     const params = new URLSearchParams({ limit: String(DOMAIN_BOUNDS.MAX_TRANSCRIPT_PAGE) });
     if (beforeSequence) params.set('before_sequence', String(beforeSequence));
     return request<MessageListResponse>(
       `/api/workspaces/${workspaceId}/chats/${chatId}/messages?${params.toString()}`,
+      signal ? { signal } : undefined,
     );
   },
 
@@ -179,17 +187,19 @@ export const api = {
       body: JSON.stringify({ client_message_id: clientMessageId, text, presentation: 'control' }),
     }),
 
-  activity: (workspaceId: string, chatId: string, after: number) =>
+  activity: (workspaceId: string, chatId: string, after: number, signal?: AbortSignal) =>
     request<ActivityPageResponse>(
       `/api/workspaces/${workspaceId}/chats/${chatId}/activity?after=${after}`,
+      signal ? { signal } : undefined,
     ),
 
   run: (workspaceId: string, runId: string) =>
     request<RunDetailResponse>(`/api/workspaces/${workspaceId}/runs/${runId}`),
 
-  runs: (workspaceId: string, runIds: string[]) =>
+  runs: (workspaceId: string, runIds: string[], signal?: AbortSignal) =>
     request<RunBatchResponse>(
       `/api/workspaces/${workspaceId}/runs?ids=${encodeURIComponent(runIds.join(','))}`,
+      signal ? { signal } : undefined,
     ),
 
   stopRun: (workspaceId: string, runId: string) =>
@@ -227,9 +237,10 @@ export const api = {
     );
   },
 
-  clarifications: (workspaceId: string, chatId: string) =>
+  clarifications: (workspaceId: string, chatId: string, signal?: AbortSignal) =>
     request<{ clarifications: ClarificationSummary[] }>(
       `/api/workspaces/${workspaceId}/chats/${chatId}/clarifications`,
+      signal ? { signal } : undefined,
     ),
 
   replyToClarification: (

@@ -32,12 +32,12 @@ export function mergeMessages(previous: ChatMessage[], next: ChatMessage[]): Cha
     .sort((left, right) => left.sequence - right.sequence);
 }
 
-export async function fetchChatSnapshot(workspaceId: string, chatId: string): Promise<ChatSnapshot> {
+export async function fetchChatSnapshot(workspaceId: string, chatId: string, signal?: AbortSignal): Promise<ChatSnapshot> {
   const [detail, page, firstActivity, questions] = await Promise.all([
-    api.getChat(workspaceId, chatId),
-    api.listMessages(workspaceId, chatId),
-    api.activity(workspaceId, chatId, 0),
-    api.clarifications(workspaceId, chatId),
+    api.getChat(workspaceId, chatId, signal),
+    api.listMessages(workspaceId, chatId, null, signal),
+    api.activity(workspaceId, chatId, 0, signal),
+    api.clarifications(workspaceId, chatId, signal),
   ]);
   const runIds = [...new Set(page.messages.flatMap(message => (message.run_id ? [message.run_id] : [])))];
   // One batched roundtrip instead of one request per run; unknown ids are
@@ -47,8 +47,9 @@ export async function fetchChatSnapshot(workspaceId: string, chatId: string): Pr
   let runData: RunDetailResponse[] = [];
   if (runIds.length > 0) {
     try {
-      runData = (await api.runs(workspaceId, runIds)).runs;
+      runData = (await api.runs(workspaceId, runIds, signal)).runs;
     } catch (err) {
+      if (signal?.aborted) throw err;
       debugLog('chat', 'batched run details unavailable; rendering without them', {
         chatId, status: err instanceof ApiError ? err.status : null,
       });
@@ -71,7 +72,7 @@ export async function fetchChatSnapshot(workspaceId: string, chatId: string): Pr
 export function useChatSnapshot(userId: string, workspaceId: string, chatId: string | null, disabled: boolean) {
   return useQuery({
     queryKey: chatId ? qk.chat(userId, workspaceId, chatId) : ['otis', userId, workspaceId, 'chat', 'none'],
-    queryFn: () => fetchChatSnapshot(workspaceId, chatId!),
+    queryFn: ({ signal }) => fetchChatSnapshot(workspaceId, chatId!, signal),
     enabled: chatId !== null && !disabled,
   });
 }
