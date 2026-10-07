@@ -126,6 +126,22 @@ export function handleUpdateTask(
   // Handle status transitions
   const hasOtherFields = args.title !== undefined || args.due !== undefined || args.snooze_until !== undefined;
 
+  // Redundant terminal transitions are already applied, not new writes:
+  // completing a done task (or cancelling a cancelled one) with nothing
+  // else changed must not emit another event or bump the revision.
+  if (!hasOtherFields && args.status !== undefined && args.status === task.status) {
+    return {
+      result: {
+        status: 'already_applied',
+        action_id: context.action_id,
+        affected_resource_ids: [task.id],
+        summary: `Task '${task.title}' is already ${task.status}.`,
+        data: { task_id: task.id },
+      },
+      events: [],
+    };
+  }
+
   if (!hasOtherFields && args.status === 'done' && task.status !== 'done') {
     const event = createLedgerEvent(context, nextSequence, {
       entity_id: task.entity_id,

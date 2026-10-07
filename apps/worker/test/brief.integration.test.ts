@@ -22,6 +22,7 @@ import {
 } from '../src/brief/service.js';
 import { setMemberSettings } from '@otis/identity';
 import { executeAgentTool } from '../src/agent/repository.js';
+import { getTurnContext } from '../src/agent/context.js';
 import { getWorkspaceEvents } from '@otis/ledger';
 import { rebuildProjections } from '@otis/ledger';
 import { readBriefCandidates } from '../src/brief/read.js';
@@ -546,6 +547,48 @@ describe('011B daily brief', () => {
     ]);
     expect(selected[0]?.reason).toBe('Promise due 2026-10-06');
     expect(selected[2]?.reason).toBe('Next action with no deadline');
+  });
+
+  it('resolves ordinal references against the newest saved brief in exact saved order', async () => {
+    const ws = 'ws-brf-ordinals';
+    const user = 'usr_brf_ord';
+    await seedUser(user, 'fb_brf_ord', 'ord@brief.test', 'Ord');
+    await seedWorkspace(ws, 'Ordinals', user);
+    await seedMembership(ws, user, 'owner');
+    await seedChat('chat-brf-ord', ws, user, 'Ord chat');
+    const now = NOW;
+
+    // Older brief whose second item differs from the newest brief's second.
+    // Distinct creation stamps: recency decides, never a timestamp tie.
+    await env.DB.prepare(
+      `INSERT INTO briefs (id, workspace_id, user_id, local_date, kind, status, body_text, item_count, created_at, updated_at)
+       VALUES ('brf-ord-old', ?, ?, '2026-10-04', 'scheduled_daily', 'ready', 'Old.', 2, '2026-10-04T12:00:00.000Z', '2026-10-04T12:00:00.000Z')`,
+    ).bind(ws, user).run();
+    await env.DB.prepare(
+      `INSERT INTO brief_items (brief_id, position, kind, task_id, entity_id, title, reason, source_event_id, due_label)
+       VALUES ('brf-ord-old', 1, 'task_due', NULL, NULL, 'Old first', 'Task due', '', NULL),
+              ('brf-ord-old', 2, 'task_due', NULL, NULL, 'Old second', 'Task due', '', NULL)`,
+    ).run();
+    await env.DB.prepare(
+      `INSERT INTO briefs (id, workspace_id, user_id, local_date, kind, status, body_text, item_count, created_at, updated_at)
+       VALUES ('brf-ord-new', ?, ?, '2026-10-06', 'scheduled_daily', 'ready', 'New.', 2, ?, ?)`,
+    ).bind(ws, user, now, now).run();
+    await env.DB.prepare(
+      `INSERT INTO brief_items (brief_id, position, kind, task_id, entity_id, title, reason, source_event_id, due_label)
+       VALUES ('brf-ord-new', 1, 'task_due', NULL, NULL, 'New first', 'Task due', '', NULL),
+              ('brf-ord-new', 2, 'task_due', NULL, NULL, 'New second', 'Task due', '', NULL)`,
+    ).run();
+
+    const context = await getTurnContext(env.DB, {
+      workspaceId: ws,
+      actorUserId: user,
+      chatId: 'chat-brf-ord',
+      sourceText: 'Mark the second one done.',
+    });
+    // Newest brief wins in exact saved order: "the second one" is stable
+    // and distinct from the older brief's second item.
+    expect(context.systemPrompt).toContain('#2: "New second"');
+    expect(context.systemPrompt).not.toContain('Old second');
   });
 
   it('dedupes concurrent ticks to one canonical brief', async () => {

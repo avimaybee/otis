@@ -953,6 +953,88 @@ describe('Worker Agent Tools & Guarded Repositories D1 Integration (006A workerd
     expect((sent!.payload as { confirmed_by_user_id?: string }).confirmed_by_user_id).toBe(aviId);
   });
 
+  it('revalidates task mutation by revision and treats redundant terminal states as applied', async () => {
+    let rev = (await getWorkspaceRevision(env.DB, ws1))?.business_revision ?? 0;
+    const created = await executeAgentTool({
+      db: env.DB,
+      workspaceId: ws1,
+      actorUserId: aviId,
+      runId: run1Id,
+      stepId: step1Id,
+      fence: fence1,
+      expectedBusinessRevision: rev,
+      actionId: 'act_rev_task',
+      sourceMessageId: 'msg_tools_1',
+      chatId: chat1,
+      sourceText: 'Finish the quarterly report with no deadline.',
+      toolName: 'create_task',
+      toolArgs: { title: 'Quarterly report', explicit_no_deadline: true },
+    });
+    expect(created.status).toBe('applied');
+    const taskId = created.affected_resource_ids?.[0];
+    expect(taskId).toBeDefined();
+    rev = created.committed_revision!;
+
+    const done = await executeAgentTool({
+      db: env.DB,
+      workspaceId: ws1,
+      actorUserId: aviId,
+      runId: run1Id,
+      stepId: step1Id,
+      fence: fence1,
+      expectedBusinessRevision: rev,
+      actionId: 'act_rev_done',
+      sourceMessageId: 'msg_tools_1',
+      chatId: chat1,
+      toolName: 'update_task',
+      toolArgs: { task_id: taskId, expected_revision: 1, status: 'done' },
+    });
+    expect(done.status).toBe('applied');
+    rev = done.committed_revision!;
+
+    // Stale revision conflicts instead of overwriting.
+    const stale = await executeAgentTool({
+      db: env.DB,
+      workspaceId: ws1,
+      actorUserId: aviId,
+      runId: run1Id,
+      stepId: step1Id,
+      fence: fence1,
+      expectedBusinessRevision: rev,
+      actionId: 'act_rev_stale',
+      sourceMessageId: 'msg_tools_1',
+      chatId: chat1,
+      toolName: 'update_task',
+      toolArgs: { task_id: taskId, expected_revision: 1, status: 'cancelled' },
+    });
+    expect(stale.status).toBe('conflict');
+
+    // Redundant terminal transition is already applied, not a new event.
+    const eventsBefore = await countEvents();
+    const redundant = await executeAgentTool({
+      db: env.DB,
+      workspaceId: ws1,
+      actorUserId: aviId,
+      runId: run1Id,
+      stepId: step1Id,
+      fence: fence1,
+      expectedBusinessRevision: rev,
+      actionId: 'act_rev_redundant',
+      sourceMessageId: 'msg_tools_1',
+      chatId: chat1,
+      toolName: 'update_task',
+      toolArgs: { task_id: taskId, expected_revision: 2, status: 'done' },
+    });
+    expect(redundant.status).toBe('already_applied');
+    expect(await countEvents()).toBe(eventsBefore);
+
+    async function countEvents(): Promise<number> {
+      const row = await env.DB.prepare(`SELECT COUNT(*) AS n FROM events WHERE workspace_id = ?`)
+        .bind(ws1).first<{ n: number }>();
+      return Number(row?.n ?? 0);
+    }
+  });
+
   it('scopes memory search to visible notes: own member notes, never teammates, never forgotten', async () => {
     let rev = (await getWorkspaceRevision(env.DB, ws1))?.business_revision ?? 0;
     const remember = (actionId: string, actor: string, toolArgs: unknown) =>
