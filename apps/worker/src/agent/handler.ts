@@ -3,7 +3,7 @@
  * Real agent turn executor implementing TurnHandler.
  * Bounded agent loop, model pinning, durable progress checkpointing,
  * multi-round tool execution, and crash recovery.
- * In accordance with plans/006-implementation-handoff.md Section 4, 7, 8.
+ * In accordance with docs/archive/plans/006-implementation-handoff.md Section 4, 7, 8.
  */
 
 import type { CommandResult, ProviderName } from '@otis/contracts';
@@ -445,7 +445,12 @@ export class AgentHandler implements TurnHandler {
     }
 
     if (progress.phase === 'completed' && progress.finalAnswer !== undefined) {
-      return { kind: 'completed', replyText: progress.finalAnswer ?? '' };
+      // Legacy rows may hold an empty reply from before the empty-answer
+      // guard: never present one as the completed answer.
+      if (typeof progress.finalAnswer === 'string' && progress.finalAnswer.trim()) {
+        return { kind: 'completed', replyText: progress.finalAnswer ?? '' };
+      }
+      return { kind: 'failed', errorCode: 'empty_response', errorMessage: 'The model returned an empty reply. Nothing was saved.' };
     }
 
     // If turn resumes a clarification answer, reconcile the committed action receipt
@@ -1335,6 +1340,12 @@ export class AgentHandler implements TurnHandler {
 
         // Case 1: Final text answer with no tool calls
         if (collectedRound.toolCalls.length === 0) {
+          // An empty reply is never a completed answer: persisting it would
+          // file an empty message and mark the run succeeded. Fail honestly
+          // instead so the run reports failed and the member can retry.
+          if (!collectedRound.text.trim()) {
+            return { kind: 'failed', errorCode: 'empty_response', errorMessage: 'The model returned an empty reply. Nothing was saved.' };
+          }
           progress.phase = 'completed';
           progress.finalAnswer = collectedRound.text;
           if (!(await this.saveProgress(ctx, progress))) {

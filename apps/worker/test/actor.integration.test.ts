@@ -1584,8 +1584,33 @@ describe('Worker Actor Dispatch & Recovery Integration (workerd)', () => {
     expect(inbox?.status).toBe('cancelled');
   });
 
-  it('F08: stop aborts the in-flight provider stream and the run stays cancelled', async () => {
-    const msg = await accept(chatAvi, aviId, 'act-msg-f08-stop', 'take your time');
+  it('empty model reply fails honestly without persisting an empty answer', async () => {
+    const msg = await accept(chatAvi, aviId, 'act-msg-empty-reply', 'say nothing useful');
+    const outboxId = await outboxIdForRun(msg.run_id);
+    const fake = new FakeProviderAdapter({
+      provider: 'gemini',
+      scripts: [{ kind: 'text', text: '   ' }],
+    });
+    const handler = new AgentHandler({
+      providerAdapter: fake,
+      limits: { maxDailyActions: 50, maxRoundsPerRun: 10 },
+    });
+    const result = await dispatchOutboxItem(env.DB, outboxId, ws, { handler });
+    expect(result.status).toBe('failed');
+    expect(await runStatus(msg.run_id)).toBe('failed');
+    const runRow = await env.DB.prepare(`SELECT error_code, error_message FROM agent_runs WHERE id = ?`)
+      .bind(msg.run_id)
+      .first<{ error_code: string | null; error_message: string | null }>();
+    expect(runRow?.error_code).toBe('empty_response');
+    // No reply message, no answer activity: nothing was saved.
+    expect(await replyCount(msg.run_id)).toBe(0);
+    const answers = await env.DB.prepare(
+      `SELECT COUNT(*) AS n FROM run_activity WHERE run_id = ? AND type = 'answer_saved'`,
+    ).bind(msg.run_id).first<{ n: number }>();
+    expect(Number(answers?.n ?? 0)).toBe(0);
+  });
+
+  it('F08: stop aborts the in-flight provider stream and the run stays cancelled', async () => {    const msg = await accept(chatAvi, aviId, 'act-msg-f08-stop', 'take your time');
     const outboxId = await outboxIdForRun(msg.run_id);
     const fake = new FakeProviderAdapter({
       provider: 'gemini',
