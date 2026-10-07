@@ -2,7 +2,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import * as React from 'react';
 import { fetchChatSnapshot, type ChatPrimary } from '../src/api/snapshot.js';
-import { api } from '../src/api/client.js';
+import { ApiError, api } from '../src/api/client.js';
 import * as stream from '../src/hooks/useActivityStream.js';
 import { mountRoute } from './route.js';
 import type { Chat, ChatMessage } from '@otis/contracts';
@@ -95,6 +95,48 @@ describe('fetchChatSnapshot cancellation', () => {
     expect(full.messages.map((m) => m.id)).toEqual(['m1', 'm2']);
     expect(full.runs).toEqual({});
     expect(full.cursor).toBe(3);
+  });
+});
+
+describe('fetchChatSnapshot authorization failures', () => {
+  it('rejects when activity fails with 401 instead of reporting an empty transcript', async () => {
+    primary();
+    const auth = new ApiError(401, 'unauthorized', 'Session expired.');
+    vi.spyOn(api, 'activity').mockRejectedValue(auth);
+    vi.spyOn(api, 'clarifications').mockResolvedValue({ clarifications: [] });
+    const onPrimary = vi.fn();
+    await expect(fetchChatSnapshot(WS, CHAT, undefined, onPrimary)).rejects.toBe(auth);
+    // The primary still painted before the failure surfaced.
+    expect(onPrimary).toHaveBeenCalledTimes(1);
+  });
+
+  it('rejects when clarifications fail with 403 instead of hiding the denial', async () => {
+    primary();
+    const forbidden = new ApiError(403, 'forbidden', 'No longer a member.');
+    vi.spyOn(api, 'activity').mockResolvedValue({ activities: [], latest_cursor: 0 } as never);
+    vi.spyOn(api, 'clarifications').mockRejectedValue(forbidden);
+    await expect(fetchChatSnapshot(WS, CHAT)).rejects.toBe(forbidden);
+  });
+
+  it('rejects when the runs batch fails with 401 instead of silently dropping run state', async () => {
+    primary();
+    const auth = new ApiError(401, 'unauthorized', 'Session expired.');
+    vi.spyOn(api, 'activity').mockResolvedValue({ activities: [], latest_cursor: 3 } as never);
+    vi.spyOn(api, 'clarifications').mockResolvedValue({ clarifications: [] });
+    vi.spyOn(api, 'runs').mockRejectedValue(auth);
+    await expect(fetchChatSnapshot(WS, CHAT)).rejects.toBe(auth);
+  });
+
+  it('still degrades ordinary metadata outages: 503 runs and 500 activity stay non-fatal', async () => {
+    primary();
+    vi.spyOn(api, 'activity').mockRejectedValue(new ApiError(500, 'internal_server_error', 'Outage.'));
+    vi.spyOn(api, 'clarifications').mockResolvedValue({ clarifications: [] });
+    vi.spyOn(api, 'runs').mockRejectedValue(new ApiError(503, 'unavailable', 'Passing outage.'));
+
+    const full = await fetchChatSnapshot(WS, CHAT);
+    expect(full.messages.map((m) => m.id)).toEqual(['m1', 'm2']);
+    expect(full.activities).toEqual([]);
+    expect(full.runs).toEqual({});
   });
 });
 
@@ -240,6 +282,29 @@ describe('staged primary paint', () => {
       expect(bubbles().filter((node) => node.textContent === 'Alpha note')).toHaveLength(1);
     } finally {
       releaseSecondary();
+      await view.unmount();
+    }
+  });
+
+  it('parks only the workspace when secondary metadata is forbidden (403)', async () => {
+    let releaseSecondary!: () => void;
+    const gate = new Promise<void>((resolve) => { releaseSecondary = resolve; });
+    stageMocks(releaseSecondary, gate);
+    // Membership revoked mid-view: the question read denies the workspace.
+    vi.spyOn(api, 'clarifications').mockRejectedValue(new ApiError(403, 'forbidden', 'No longer a member.'));
+    const view = await mountRoute(`/?workspace=${STAGE_WS}&chat=chat_A`, {
+      userId: STAGE_USER,
+      workspaces: [{ id: STAGE_WS, name: 'Kerning' }],
+      members: { [STAGE_USER]: 'Avi' },
+    });
+    try {
+      releaseSecondary();
+      // Workspace-scoped loss parks this workspace with its unsent work kept;
+      // it never becomes a user-wide sign-out.
+      await vi.waitFor(() => expect(view.host.textContent).toContain('Workspace unavailable'));
+      expect(view.host.textContent).toContain('unsent work are kept');
+      expect(view.host.textContent).not.toContain('Alpha note');
+    } finally {
       await view.unmount();
     }
   });

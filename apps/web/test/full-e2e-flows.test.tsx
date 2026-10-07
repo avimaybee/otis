@@ -264,6 +264,86 @@ describe('End-to-End UI to Backend Flow Verification', () => {
     await view.unmount();
   });
 
+  // FLOW 1f: an older snapshot read in flight during acceptance never hides the accepted bubble
+  it('Flow 1f: stale snapshot return landing after acceptance keeps the accepted message', async () => {
+    history.replaceState({}, '', `/?workspace=${WS}&chat=chat_1f`);
+    const existingChat = makeChat('chat_1f', 'Existing');
+    vi.spyOn(api, 'listChats').mockResolvedValue({ chats: [existingChat] });
+    vi.spyOn(api, 'commands').mockResolvedValue({ surface: 'web', commands: [] });
+    vi.spyOn(api, 'models').mockResolvedValue({ models: DEFAULT_MODELS, current_command_key: 'mimo-25', default_command_key: 'mimo-25' });
+    vi.spyOn(api, 'clarifications').mockResolvedValue({ clarifications: [] });
+    vi.spyOn(api, 'activity').mockResolvedValue({ activities: [], latest_cursor: 0 } as never);
+    vi.spyOn(api, 'getChat').mockResolvedValue({ chat: existingChat, is_author: true });
+    const oldMessage = { ...makeMessage('msg_old_1f', 'Earlier message', 'member'), chat_id: 'chat_1f', sequence: 1 };
+    let listCalls = 0;
+    let releaseStale!: (page: { chat_id: string; messages: ChatMessage[]; next_before_sequence: null }) => void;
+    vi.spyOn(api, 'listMessages').mockImplementation((_workspaceId, _chatId, _before, signal) => {
+      listCalls += 1;
+      if (listCalls === 1) {
+        return Promise.resolve({ chat_id: 'chat_1f', messages: [oldMessage], next_before_sequence: null });
+      }
+      // The resync read started before acceptance: it stays in flight while
+      // the send completes, then returns the pre-acceptance payload.
+      return new Promise((resolve, reject) => {
+        releaseStale = resolve;
+        signal?.addEventListener('abort', () => reject(signal.reason), { once: true });
+      });
+    });
+    vi.spyOn(api, 'sendMessage').mockResolvedValue({
+      status: 'accepted',
+      message_id: 'msg_accepted_1f',
+      run_id: 'run_1f',
+      acceptance_sequence: 2,
+    });
+    vi.spyOn(api, 'run').mockResolvedValue({
+      run: { id: 'run_1f', status: 'queued' } as never,
+      status: 'queued',
+      steps: [],
+      actions: [],
+      activities: [],
+      pending_clarification: null,
+    });
+    let streamHandlers: stream.StreamHandlers | undefined;
+    const subscribeSpy = vi.spyOn(stream, 'subscribeToActivity').mockImplementation((_url, handlers) => {
+      streamHandlers = handlers;
+      return { close: vi.fn() };
+    });
+
+    const view = await mount(<RouteShell />);
+    // The full snapshot (not just the staged primary) is committed: only it
+    // opens the live stream the resync arrives on.
+    await React.act(async () => {
+      await vi.waitFor(() => expect(subscribeSpy).toHaveBeenCalled());
+    });
+
+    // A resync starts a snapshot read that stays in flight…
+    await React.act(async () => {
+      streamHandlers?.onResyncRequired();
+      await vi.waitFor(() => expect(listCalls).toBe(2));
+    });
+
+    // …then the member sends while it is still outstanding.
+    const textarea = view.host.querySelector('textarea') as HTMLTextAreaElement;
+    await fill(textarea, 'Race bubble');
+    await React.act(async () => (view.host.querySelector('[aria-label="Send"]') as HTMLButtonElement).click());
+    await React.act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 350));
+    });
+    expect(view.host.textContent).toContain('Race bubble');
+
+    // The stale read finally lands with pre-acceptance content…
+    await React.act(async () => {
+      releaseStale({ chat_id: 'chat_1f', messages: [oldMessage], next_before_sequence: null });
+      await new Promise(resolve => setTimeout(resolve, 0));
+    });
+
+    // …and the accepted message survives it: the in-flight read was
+    // cancelled before the acceptance patch instead of overwriting it.
+    expect(view.host.textContent).toContain('Race bubble');
+
+    await view.unmount();
+  });
+
   // FLOW 1b: Fresh chat loading state (disabled snapshot query)
   it('Flow 1b: fresh chat shows the approved empty state immediately with no snapshot request', async () => {
     history.replaceState({}, '', `/?workspace=${WS}&chat=new`);

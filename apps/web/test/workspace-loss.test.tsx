@@ -196,8 +196,10 @@ describe('workspace-scoped access loss', () => {
     try {
       await React.act(async () => { await tick(); });
       await React.act(async () => { await tick(); });
-      // Scoped error, not the session-wide access screen.
-      expect(view.host.textContent).toContain('Could not load conversation');
+      // The denial parks only workspace B with its unsent work kept: never
+      // the session-wide access screen, and never a retry loop.
+      expect(view.host.textContent).toContain('Workspace unavailable');
+      expect(view.host.textContent).toContain('unsent work are kept');
       expect(view.host.textContent).not.toContain('Reload access');
       // Workspace A's unsent entry and server cache survive untouched.
       expect(entriesForUser(USER).map((entry) => entry.clientId)).toEqual([kept.clientId]);

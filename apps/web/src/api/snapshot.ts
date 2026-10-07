@@ -28,6 +28,16 @@ export interface ChatSnapshot {
   cursor: number;
 }
 
+/**
+ * Authorization failures are never optional metadata: a 401 means the session
+ * is dead and a 403 means this workspace stopped serving the member, so both
+ * must reach the query-error recovery path. Every other secondary failure
+ * degrades to empty metadata that live events repair.
+ */
+function isAuthFailure(error: unknown): boolean {
+  return error instanceof ApiError && (error.status === 401 || error.status === 403);
+}
+
 export function mergeMessages(previous: ChatMessage[], next: ChatMessage[]): ChatMessage[] {
   return [...new Map([...previous, ...next].map(message => [message.id, message])).values()]
     .sort((left, right) => left.sequence - right.sequence);
@@ -90,6 +100,11 @@ export async function fetchChatSnapshot(
   // Navigation wins over degradation: an aborted fetch propagates so
   // TanStack keeps whatever the cache already holds.
   if (signal?.aborted) throw signal.reason;
+  // Authorization failures propagate to the session/workspace recovery path;
+  // ordinary metadata outages degrade to empty lists live events repair.
+  for (const settled of [activitySettled, questionsSettled]) {
+    if (settled.status === 'rejected' && isAuthFailure(settled.reason)) throw settled.reason;
+  }
   const firstActivity = activitySettled.status === 'fulfilled'
     ? activitySettled.value
     : { activities: [] as PublicActivity[], latest_cursor: 0 };
@@ -114,6 +129,7 @@ export async function fetchChatSnapshot(
       runData = (await api.runs(workspaceId, runIds, signal)).runs;
     } catch (err) {
       if (signal?.aborted) throw err;
+      if (isAuthFailure(err)) throw err;
       debugLog('chat', 'batched run details unavailable; rendering without them', {
         chatId, status: err instanceof ApiError ? err.status : null,
       });

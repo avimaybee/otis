@@ -102,6 +102,7 @@ function safeError(error: unknown, fallback: string) { if (error instanceof ApiE
  */
 function isSessionError(error: unknown): boolean { return error instanceof ApiError && error.status === 401; }
 function isNotFoundError(error: unknown): boolean { return error instanceof ApiError && error.status === 404; }
+function isForbiddenError(error: unknown): boolean { return error instanceof ApiError && error.status === 403; }
 
 export function ConversationScreen({ workspaceId, chat: routeChat, chatParamPresent, workspaces, userId, members, onSignOut, onNavigate, onRefreshSession }: ConversationScreenProps) {
   const activeChatId = routeChat;
@@ -279,9 +280,17 @@ export function ConversationScreen({ workspaceId, chat: routeChat, chatParamPres
   useEffect(() => {
     if (!snapshotQuery.error || accessLost) return;
     if (isSessionError(snapshotQuery.error)) loseAccess();
+    // A forbidden workspace read parks only that workspace: the session,
+    // sibling workspaces and their unsent work all survive. A 404 stays a
+    // per-conversation message because a deleted chat must not park a live
+    // workspace. The parked guard matters: clearing the scope refetches the
+    // read, and every retry 403s, so re-parking must not loop.
+    else if (isForbiddenError(snapshotQuery.error) && !workspaceLost.includes(workspaceId)) {
+      loseWorkspace(workspaceId, 'forbidden');
+    }
     else if (isNotFoundError(snapshotQuery.error)) setError('This conversation is unavailable or was deleted.');
     else setError(safeError(snapshotQuery.error, 'Could not open this conversation. Try again.'));
-  }, [snapshotQuery.error, accessLost, loseAccess]);
+  }, [snapshotQuery.error, accessLost, loseAccess, loseWorkspace, workspaceId, workspaceLost]);
 
   const readOnly = Boolean(snapshot && !snapshot.detail.is_author);
   // A fresh view has no snapshot yet; workspace-scoped models must still load
@@ -645,8 +654,14 @@ export function ConversationScreen({ workspaceId, chat: routeChat, chatParamPres
       // The accepted message files locally from the receipt (same client
       // UUID replaces the echo, no duplicate) instead of a full transcript
       // refetch; only the single run detail refreshes for Working state.
+      // An older snapshot read still in flight (initial load, resync,
+      // reconnect) is cancelled first: its stale payload must never land
+      // over this newer acceptance. Cancellation is scoped to this chat, so
+      // sibling snapshots keep loading.
       const acceptedAt = new Date().toISOString();
-      queryClient.setQueryData<ChatSnapshot>(qk.chat(entryUserId, entryWorkspaceId, chatId), previous =>
+      const acceptedKey = qk.chat(entryUserId, entryWorkspaceId, chatId);
+      await queryClient.cancelQueries({ queryKey: acceptedKey });
+      queryClient.setQueryData<ChatSnapshot>(acceptedKey, previous =>
         previous
           ? applyAcceptedMessage(previous, {
             id: accepted.message_id,
@@ -662,6 +677,12 @@ export function ConversationScreen({ workspaceId, chat: routeChat, chatParamPres
             created_at: acceptedAt,
           })
           : previous);
+      if (!queryClient.getQueryData<ChatSnapshot>(acceptedKey)) {
+        // The patch had no committed snapshot to land on and the fetch above
+        // was cancelled: refetch so the transcript the server already holds
+        // still arrives instead of hanging without data or fetch.
+        void queryClient.invalidateQueries({ queryKey: acceptedKey });
+      }
       refreshRun(entryWorkspaceId, chatId, accepted.run_id);
       void queryClient.invalidateQueries({ queryKey: qk.chats(entryUserId, entryWorkspaceId, 'mine') });
       if (accepted.selected_workspace_id && workspaces.some(workspace => workspace.id === accepted.selected_workspace_id)) { switchWorkspace(accepted.selected_workspace_id); return true; }
