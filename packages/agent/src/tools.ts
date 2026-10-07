@@ -190,6 +190,28 @@ export interface ReadChatHistoryToolArgs {
   limit?: number;
 }
 
+export interface CreateReminderToolArgs {
+  text: string;
+  /** Offset-bearing ISO instant to fire at. Must lie in the future. */
+  at: string;
+  /** IANA display zone for the confirmation copy. Optional. */
+  timezone?: string | null;
+  /** Delivery channel. Defaults to web. */
+  channel?: 'web' | 'telegram';
+}
+
+export interface UpdateReminderToolArgs {
+  reminder_id: string;
+  text?: string;
+  at?: string;
+  timezone?: string | null;
+  channel?: 'web' | 'telegram';
+}
+
+export interface CancelReminderToolArgs {
+  reminder_id: string;
+}
+
 export interface QueryToolArgs {
   resource: 'entities' | 'tasks' | 'events' | 'drafts' | 'attachments' | 'lead_overview';
   filters?: {
@@ -811,6 +833,116 @@ export function validateReadChatHistoryArgs(raw: unknown): ValidationResult<Read
   return { ok: true, data: { chat_id, before_sequence, limit } };
 }
 
+function validateReminderInstant(value: unknown): ValidationResult<string> {
+  if (typeof value !== 'string' || !ISO_INSTANT_REGEX.test(value) || isNaN(Date.parse(value))) {
+    return fail('invalid_instant', "Field 'at' must be a valid offset-bearing ISO instant.");
+  }
+  return { ok: true, data: value };
+}
+
+function validateReminderChannel(value: unknown): ValidationResult<'web' | 'telegram' | undefined> {
+  if (value === undefined) return { ok: true, data: undefined };
+  if (value === 'web' || value === 'telegram') return { ok: true, data: value };
+  return fail('invalid_channel', "Field 'channel' must be 'web' or 'telegram'.");
+}
+
+function validateReminderTimezone(value: unknown): ValidationResult<string | null | undefined> {
+  if (value === undefined) return { ok: true, data: undefined };
+  if (value === null) return { ok: true, data: null };
+  if (typeof value === 'string' && value.trim() && isValidIanaTimezone(value.trim())) {
+    return { ok: true, data: value.trim() };
+  }
+  return fail('invalid_timezone', "Field 'timezone' must be a valid IANA timezone or null.");
+}
+
+export function validateCreateReminderArgs(raw: unknown): ValidationResult<CreateReminderToolArgs> {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return fail('invalid_type', 'Expected object.');
+  const obj = raw as Record<string, unknown>;
+  const sec = checkNoForbiddenKeys(obj);
+  if (sec) return sec;
+  const unk = checkNoUnknownKeys(obj, new Set(['text', 'at', 'timezone', 'channel']), 'create_reminder');
+  if (unk) return unk;
+
+  if (typeof obj['text'] !== 'string' || !obj['text'].trim()) {
+    return fail('invalid_argument', "Field 'text' must be a non-empty string.");
+  }
+  const text = obj['text'].trim();
+  if (text.length > 500) return fail('invalid_argument', 'Reminder text exceeds maximum 500 characters.');
+  const atRes = validateReminderInstant(obj['at']);
+  if (!atRes.ok) return atRes;
+  const tzRes = validateReminderTimezone(obj['timezone']);
+  if (!tzRes.ok) return tzRes;
+  const channelRes = validateReminderChannel(obj['channel']);
+  if (!channelRes.ok) return channelRes;
+  return {
+    ok: true,
+    data: {
+      text,
+      at: atRes.data,
+      ...(tzRes.data !== undefined ? { timezone: tzRes.data } : {}),
+      ...(channelRes.data !== undefined ? { channel: channelRes.data } : {}),
+    },
+  };
+}
+
+export function validateUpdateReminderArgs(raw: unknown): ValidationResult<UpdateReminderToolArgs> {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return fail('invalid_type', 'Expected object.');
+  const obj = raw as Record<string, unknown>;
+  const sec = checkNoForbiddenKeys(obj);
+  if (sec) return sec;
+  const unk = checkNoUnknownKeys(obj, new Set(['reminder_id', 'text', 'at', 'timezone', 'channel']), 'update_reminder');
+  if (unk) return unk;
+
+  if (typeof obj['reminder_id'] !== 'string' || !obj['reminder_id'].trim()) {
+    return fail('invalid_argument', "Field 'reminder_id' must be a non-empty string.");
+  }
+  let text: string | undefined;
+  if (obj['text'] !== undefined) {
+    if (typeof obj['text'] !== 'string' || !obj['text'].trim()) {
+      return fail('invalid_argument', "Field 'text' must be a non-empty string when provided.");
+    }
+    text = obj['text'].trim();
+    if (text.length > 500) return fail('invalid_argument', 'Reminder text exceeds maximum 500 characters.');
+  }
+  let at: string | undefined;
+  if (obj['at'] !== undefined) {
+    const atRes = validateReminderInstant(obj['at']);
+    if (!atRes.ok) return atRes;
+    at = atRes.data;
+  }
+  const tzRes = validateReminderTimezone(obj['timezone']);
+  if (!tzRes.ok) return tzRes;
+  const channelRes = validateReminderChannel(obj['channel']);
+  if (!channelRes.ok) return channelRes;
+  if (text === undefined && at === undefined && tzRes.data === undefined && channelRes.data === undefined) {
+    return fail('missing_patch', 'Update reminder requires at least one field to update (text, at, timezone, channel).');
+  }
+  return {
+    ok: true,
+    data: {
+      reminder_id: (obj['reminder_id'] as string).trim(),
+      ...(text !== undefined ? { text } : {}),
+      ...(at !== undefined ? { at } : {}),
+      ...(tzRes.data !== undefined ? { timezone: tzRes.data } : {}),
+      ...(channelRes.data !== undefined ? { channel: channelRes.data } : {}),
+    },
+  };
+}
+
+export function validateCancelReminderArgs(raw: unknown): ValidationResult<CancelReminderToolArgs> {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return fail('invalid_type', 'Expected object.');
+  const obj = raw as Record<string, unknown>;
+  const sec = checkNoForbiddenKeys(obj);
+  if (sec) return sec;
+  const unk = checkNoUnknownKeys(obj, new Set(['reminder_id']), 'cancel_reminder');
+  if (unk) return unk;
+
+  if (typeof obj['reminder_id'] !== 'string' || !obj['reminder_id'].trim()) {
+    return fail('invalid_argument', "Field 'reminder_id' must be a non-empty string.");
+  }
+  return { ok: true, data: { reminder_id: obj['reminder_id'].trim() } };
+}
+
 export function validateQueryArgs(raw: unknown): ValidationResult<QueryToolArgs> {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return fail('invalid_type', 'Expected object.');
   const obj = raw as Record<string, unknown>;
@@ -1316,6 +1448,12 @@ export function validateToolCall(
       return validateMarkMessageSentArgs(rawArgs);
     case 'read_chat_history':
       return validateReadChatHistoryArgs(rawArgs);
+    case 'create_reminder':
+      return validateCreateReminderArgs(rawArgs);
+    case 'update_reminder':
+      return validateUpdateReminderArgs(rawArgs);
+    case 'cancel_reminder':
+      return validateCancelReminderArgs(rawArgs);
     case 'query':
       return validateQueryArgs(rawArgs);
     case 'view_image':
@@ -1641,6 +1779,49 @@ export const ALL_AGENT_TOOLS: ProviderToolDeclaration[] = [
         limit: { type: 'integer', description: 'Rows per page, 1-50. Defaults to 20.' },
       },
       required: [],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'create_reminder',
+    description: 'Set a one-off reminder delivered once at the given instant over the chosen channel.',
+    parameters: {
+      type: 'object',
+      properties: {
+        text: { type: 'string', description: 'Reminder text, up to 500 characters.' },
+        at: { type: 'string', description: 'Offset-bearing ISO instant to fire at. Must lie in the future.' },
+        timezone: { type: 'string', description: 'IANA display zone for the confirmation copy.' },
+        channel: { type: 'string', enum: ['web', 'telegram'], description: 'Delivery channel. Defaults to web.' },
+      },
+      required: ['text', 'at'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'update_reminder',
+    description: 'Change a pending reminder before it fires.',
+    parameters: {
+      type: 'object',
+      properties: {
+        reminder_id: { type: 'string' },
+        text: { type: 'string' },
+        at: { type: 'string', description: 'Offset-bearing ISO instant to fire at. Must lie in the future.' },
+        timezone: { type: 'string', description: 'IANA display zone for the confirmation copy.' },
+        channel: { type: 'string', enum: ['web', 'telegram'] },
+      },
+      required: ['reminder_id'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'cancel_reminder',
+    description: 'Cancel a pending reminder so it never fires.',
+    parameters: {
+      type: 'object',
+      properties: {
+        reminder_id: { type: 'string' },
+      },
+      required: ['reminder_id'],
       additionalProperties: false,
     },
   },

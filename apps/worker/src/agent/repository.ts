@@ -13,6 +13,8 @@ import {
   isExplicitStatusIntent,
   sentConfirmationMatchesTarget,
   validateToolCall,
+  type CancelReminderToolArgs,
+  type CreateReminderToolArgs,
   type CreateTaskToolArgs,
   type DraftMessageToolArgs,
   type FindEntitiesToolArgs,
@@ -23,6 +25,7 @@ import {
   type QueryToolArgs,
   type ReadChatHistoryToolArgs,
   type RememberContextToolArgs,
+  type UpdateReminderToolArgs,
   type RenameEntityToolArgs,
   type RequestClarificationToolArgs,
   type ResolveConflictToolArgs,
@@ -53,6 +56,11 @@ import { executeCommand, resolveModelAlias } from '../routes/commands.js';
 import { getChat } from '../inbox/repository.js';
 import { sanitizeFtsQuery } from './context.js';
 import { readLeadOverview, type LeadOverviewColumn } from './leadOverview.js';
+import {
+  cancelReminder,
+  createReminder,
+  updateReminder,
+} from '../reminders/service.js';
 
 export interface ExecuteAgentToolParams {
   db: D1Database;
@@ -722,9 +730,92 @@ export async function executeAgentTool(
       };
     }
 
+    // --- Reminder Tools: confirmed one-off delivery, not a task due date.
+    // Creation, change and cancellation all scope to the acting member's
+    // own pending rows; the sweep delivers through the existing chat and
+    // Telegram owners.
+    case 'create_reminder': {
+      const crArgs = args as CreateReminderToolArgs;
+      const created = await createReminder(db, {
+        workspaceId,
+        userId: actorUserId,
+        chatId: chatId ?? null,
+        actionId,
+        text: crArgs.text,
+        at: crArgs.at,
+        timezone: crArgs.timezone ?? null,
+        channel: crArgs.channel,
+        nowIso: new Date().toISOString(),
+      });
+      if (created.status === 'rejected') {
+        return {
+          status: 'rejected',
+          action_id: actionId,
+          error: { code: created.code, message: created.message },
+        };
+      }
+      return {
+        status: 'applied',
+        action_id: actionId,
+        data: { reminder_id: created.reminder.id, remind_at: created.reminder.remind_at },
+        summary: created.status === 'already'
+          ? 'Reminder already set for that time.'
+          : `Reminder set for ${created.reminder.remind_at}.`,
+      };
+    }
+
+    case 'update_reminder': {
+      const urArgs = args as UpdateReminderToolArgs;
+      const updated = await updateReminder(db, {
+        workspaceId,
+        userId: actorUserId,
+        reminderId: urArgs.reminder_id,
+        ...(urArgs.text !== undefined ? { text: urArgs.text } : {}),
+        ...(urArgs.at !== undefined ? { at: urArgs.at } : {}),
+        ...(urArgs.timezone !== undefined ? { timezone: urArgs.timezone } : {}),
+        ...(urArgs.channel !== undefined ? { channel: urArgs.channel } : {}),
+        nowIso: new Date().toISOString(),
+      });
+      if (updated.status === 'rejected') {
+        return {
+          status: 'rejected',
+          action_id: actionId,
+          error: { code: updated.code, message: updated.message },
+        };
+      }
+      return {
+        status: 'applied',
+        action_id: actionId,
+        data: { reminder_id: updated.reminder.id, remind_at: updated.reminder.remind_at },
+        summary: `Reminder updated for ${updated.reminder.remind_at}.`,
+      };
+    }
+
+    case 'cancel_reminder': {
+      const crArgs = args as CancelReminderToolArgs;
+      const cancelled = await cancelReminder(db, {
+        workspaceId,
+        userId: actorUserId,
+        reminderId: crArgs.reminder_id,
+        nowIso: new Date().toISOString(),
+      });
+      if (cancelled.status === 'rejected') {
+        return {
+          status: 'rejected',
+          action_id: actionId,
+          error: { code: cancelled.code, message: cancelled.message },
+        };
+      }
+      return {
+        status: 'applied',
+        action_id: actionId,
+        data: { reminder_id: cancelled.reminder.id },
+        summary: cancelled.status === 'already' ? 'Reminder was already cancelled.' : 'Reminder cancelled.',
+      };
+    }
+
     // --- Preference Tool ---
-    case 'update_preference': {
-      const upArgs = args as UpdatePreferenceToolArgs;
+    case 'update_preference': {      const upArgs = args as UpdatePreferenceToolArgs;
       try {
         const updated = await setMemberSettings(db, {
           workspaceId,

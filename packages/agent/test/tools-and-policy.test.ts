@@ -15,6 +15,9 @@ import {
   isExplicitStatusIntent,
   sentConfirmationMatchesTarget,
   validateCreateTaskArgs,
+  validateCancelReminderArgs,
+  validateCreateReminderArgs,
+  validateUpdateReminderArgs,
   validateReadChatHistoryArgs,
   validateUpdateTaskArgs,
   validateDraftMessageArgs,
@@ -29,8 +32,8 @@ import {
 } from '../src/index.js';
 
 describe('006A: Tool Schemas and Argument Validation', () => {
-  it('defines all 23 agent tools and 1 control tool with additionalProperties: false', () => {
-    expect(ALL_AGENT_TOOLS.length).toBe(24);
+  it('defines all 26 agent tools and 1 control tool with additionalProperties: false', () => {
+    expect(ALL_AGENT_TOOLS.length).toBe(27);
     for (const tool of ALL_AGENT_TOOLS) {
       expect(tool.parameters.type).toBe('object');
       expect(tool.parameters.additionalProperties).toBe(false);
@@ -49,6 +52,9 @@ describe('006A: Tool Schemas and Argument Validation', () => {
     expect(toolNames).toContain('update_draft');
     expect(toolNames).toContain('mark_message_sent');
     expect(toolNames).toContain('read_chat_history');
+    expect(toolNames).toContain('create_reminder');
+    expect(toolNames).toContain('update_reminder');
+    expect(toolNames).toContain('cancel_reminder');
     expect(toolNames).toContain('query');
     expect(toolNames).toContain('search_memory');
     expect(toolNames).toContain('get_memory');
@@ -270,6 +276,41 @@ describe('006A: Tool Schemas and Argument Validation', () => {
     expect(validateReadChatHistoryArgs({ chat_id: 'chat_1', unknown_key: 1 }).ok).toBe(false);
     expect(validateToolCall('read_chat_history', { limit: 5 }).ok).toBe(true);
     expect(validateToolCall('read_chat_history', { limit: 500 }).ok).toBe(false);
+  });
+
+  it('validates reminder create/change/cancel: shape, future instants, channels', () => {
+    const good = validateCreateReminderArgs({
+      text: 'Call the bakery',
+      at: '2026-10-06T15:00:00.000Z',
+      timezone: 'Europe/Bucharest',
+      channel: 'telegram',
+    });
+    expect(good.ok).toBe(true);
+    if (good.ok) {
+      expect(good.data.text).toBe('Call the bakery');
+      expect(good.data.channel).toBe('telegram');
+    }
+    // Channel defaults away from the required surface: omission is valid.
+    const minimal = validateCreateReminderArgs({ text: 'Nudge', at: '2026-10-06T15:00:00+03:00' });
+    expect(minimal.ok).toBe(true);
+
+    expect(validateCreateReminderArgs({ text: '', at: '2026-10-06T15:00:00.000Z' }).ok).toBe(false);
+    expect(validateCreateReminderArgs({ text: 'Nudge', at: 'tomorrow' }).ok).toBe(false);
+    expect(validateCreateReminderArgs({ text: 'Nudge', at: '2026-10-06T15:00:00' }).ok).toBe(false);
+    expect(validateCreateReminderArgs({ text: 'Nudge', at: '2026-10-06T15:00:00.000Z', channel: 'sms' }).ok).toBe(false);
+    expect(validateCreateReminderArgs({ text: 'Nudge', at: '2026-10-06T15:00:00.000Z', timezone: 'Mars/Olympus' }).ok).toBe(false);
+    expect(validateCreateReminderArgs({ text: 'Nudge', at: '2026-10-06T15:00:00.000Z', extra: 1 }).ok).toBe(false);
+    expect(validateToolCall('create_reminder', { text: 'Nudge', at: '2026-10-06T15:00:00.000Z' }).ok).toBe(true);
+
+    const change = validateUpdateReminderArgs({ reminder_id: 'rem_1', at: '2026-10-07T09:00:00.000Z' });
+    expect(change.ok).toBe(true);
+    expect(validateUpdateReminderArgs({ reminder_id: 'rem_1' }).ok).toBe(false);
+    expect(validateUpdateReminderArgs({ reminder_id: '  ' }).ok).toBe(false);
+    expect(validateUpdateReminderArgs({ reminder_id: 'rem_1', at: 'next Friday' }).ok).toBe(false);
+
+    expect(validateCancelReminderArgs({ reminder_id: 'rem_1' }).ok).toBe(true);
+    expect(validateCancelReminderArgs({}).ok).toBe(false);
+    expect(validateToolCall('cancel_reminder', {}).ok).toBe(false);
   });
 
   it('validates money in integer minor units and distinguishes offered vs expected roles', () => {

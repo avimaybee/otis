@@ -27,7 +27,7 @@ export const TELEGRAM_SEND_PACING_MS = 1000;
 export const TELEGRAM_DELIVERY_TOPIC = 'send_message';
 export const TELEGRAM_DELIVERY_PAYLOAD_VERSION = 1;
 
-export type TelegramDeliveryKind = 'final' | 'question' | 'command' | 'failure' | 'admin' | 'brief';
+export type TelegramDeliveryKind = 'final' | 'question' | 'command' | 'failure' | 'admin' | 'brief' | 'reminder';
 
 export interface TelegramDeliveryPayload {
   payload_version: 1;
@@ -55,6 +55,12 @@ export interface TelegramDeliveryPayload {
    * canonical brief row instead of a source update. Absent for reply kinds.
    */
   brief_id?: string | null;
+  /**
+   * One-off reminder reference (kind 'reminder' only). Same shape as the
+   * brief reference: the consumer revalidates the canonical reminder row
+   * (still pending, member intact) instead of a source update.
+   */
+  reminder_id?: string | null;
 }
 
 export interface TelegramDeliveryTarget {
@@ -130,6 +136,60 @@ export async function resolveTelegramTarget(
   return { botInstallationId: installationId, telegramUserId: String(link.telegram_user_id), telegramChatId: String(chatRawId) };
 }
 
+/**
+ * Revalidates a one-off reminder delivery row immediately before send.
+ * Like briefs, reminders carry no inbound source message: the canonical
+ * reminder row, current membership, the member's live Telegram binding and
+ * the bot installation are all rechecked. A cancelled (or otherwise
+ * non-sent) reminder, a removed member, or a changed binding cancels
+ * instead of sending. Returns the verified target or a bounded safe reason.
+ */
+export async function resolveReminderDeliveryTarget(
+  db: D1Database,
+  payload: TelegramDeliveryPayload,
+  installationId: string,
+): Promise<{ target: TelegramDeliveryTarget } | { error: string }> {
+  if (!payload.reminder_id) return { error: 'reminder reference missing' };
+  const reminder = await db
+    .prepare(`SELECT workspace_id, user_id, status FROM reminders WHERE id = ?`)
+    .bind(payload.reminder_id)
+    .first<{ workspace_id: string; user_id: string; status: string }>();
+  if (!reminder || reminder.workspace_id !== payload.workspace_id || reminder.status !== 'sent') {
+    return { error: 'reminder no longer available' };
+  }
+  // The delivery must name the reminder's own owner: a row retargeted to
+  // another member in the same workspace cancels here.
+  if (reminder.user_id !== payload.user_id) {
+    return { error: 'reminder delivery identity mismatch' };
+  }
+  const member = await db
+    .prepare(`SELECT 1 FROM workspace_users WHERE workspace_id = ? AND user_id = ?`)
+    .bind(payload.workspace_id, payload.user_id)
+    .first();
+  if (!member) return { error: 'membership no longer valid' };
+  const link = await db
+    .prepare(
+      `SELECT telegram_user_id FROM telegram_users
+       WHERE telegram_user_id = ? AND user_id = ? AND selected_workspace_id = ?`,
+    )
+    .bind(payload.telegram_user_id, payload.user_id, payload.workspace_id)
+    .first<{ telegram_user_id: string }>();
+  if (!link) return { error: 'Telegram binding changed since this delivery was queued' };
+  // Private-chat invariant: a reminder intent never addresses another chat.
+  if (payload.telegram_chat_id !== payload.telegram_user_id) {
+    return { error: 'reminder delivery target mismatch' };
+  }
+  if (payload.bot_installation_id !== installationId) {
+    return { error: 'bot installation changed since this delivery was queued' };
+  }
+  return {
+    target: {
+      botInstallationId: installationId,
+      telegramUserId: payload.telegram_user_id,
+      telegramChatId: payload.telegram_chat_id,
+    },
+  };
+}
 /**
  * Revalidates a scheduled-brief delivery row immediately before send.
  * Briefs have no inbound source message, so there is no source update to
@@ -209,6 +269,13 @@ export interface TelegramDeliveryInput {
    */
   briefId?: string | null;
   /**
+   * Canonical reminder reference (kind 'reminder' only): the consumer
+   * revalidates one-off delivery against this row instead of a source
+   * update. A reminded member who left, or a cancelled reminder, cancels
+   * the send instead of leaking it.
+   */
+  reminderId?: string | null;
+  /**
    * Explicit routing target, for rows created in the same batch (link
    * redemption confirmation): resolution reads would not see uncommitted
    * rows, so the caller — which already verified everything — supplies it.
@@ -250,6 +317,7 @@ export function buildTelegramDeliveryStatements(
       previous_part_id: previousPartId,
       clarification_id: input.clarificationId ?? null,
       brief_id: input.briefId ?? null,
+      reminder_id: input.reminderId ?? null,
       text,
       telegram_message_id: null,
     };
@@ -769,6 +837,20 @@ export async function deliverTelegramOutbox(
         await db
           .prepare(`UPDATE outbox SET status = 'cancelled', last_error = ?, updated_at = ? WHERE id = ? AND status = 'sending' AND claimed_by = ?`)
           .bind(`Brief delivery no longer valid: ${resolved.error}`, clock(), id, claimId)
+          .run();
+        continue;
+      }
+      sendChatId = resolved.target.telegramChatId;
+    } else if (payload.kind === 'reminder') {
+      // One-off reminders revalidate the canonical reminder row the same
+      // way: a cancelled reminder, removed member or changed binding
+      // cancels the send instead of leaking it.
+      const installationId = env.TELEGRAM_BOT_INSTALLATION_ID ?? 'otis_bot';
+      const resolved = await resolveReminderDeliveryTarget(db, payload, installationId);
+      if ('error' in resolved) {
+        await db
+          .prepare(`UPDATE outbox SET status = 'cancelled', last_error = ?, updated_at = ? WHERE id = ? AND status = 'sending' AND claimed_by = ?`)
+          .bind(`Reminder delivery no longer valid: ${resolved.error}`, clock(), id, claimId)
           .run();
         continue;
       }

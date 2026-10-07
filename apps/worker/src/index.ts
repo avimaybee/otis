@@ -56,6 +56,7 @@ import { requireWorkspaceScope } from './routes/scope.js';
 import { createActivityStream } from './chat/stream.js';
 import { processMemoryRefreshJobs } from './agent/memory.js';
 import { processScheduledDailyBriefs } from './brief/cron.js';
+import { processDueReminders } from './reminders/service.js';
 import { handleVoiceMediaRoute } from './media/routes.js';
 import { processTranscriptionJobs, scheduleNextTranscriptionWake, type TranscriptionProcessResult } from './media/transcription.js';
 import { cleanupExpiredMedia } from './media/cleanup.js';
@@ -1001,6 +1002,12 @@ export default {
       await processScheduledDailyBriefs(env.DB);
     } catch (err) {
       console.error('scheduled daily brief sweep failed:', err);
+    }
+
+    try {
+      await processDueReminders(env.DB, new Date().toISOString());
+    } catch (err) {
+      console.error('scheduled reminder sweep failed:', err);
     }
 
     // Housekeeping: bounded prune of legacy guard rows left by earlier migrations
