@@ -50,7 +50,7 @@ export function SignInView({ onSignedIn, inviteToken: propInviteToken }: { onSig
   };
 
   return (
-    <div className="otis-entry">
+    <main className="otis-entry">
       <div className="otis-entry__inner">
         <h1 className="otis-entry__title text-xl font-medium">Sign in to Otis</h1>
         <p className="otis-entry__proposition text-sm font-medium text-foreground mt-1">
@@ -97,6 +97,6 @@ export function SignInView({ onSignedIn, inviteToken: propInviteToken }: { onSig
           </p>
         )}
       </div>
-    </div>
+    </main>
   );
 }

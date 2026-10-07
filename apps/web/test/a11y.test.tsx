@@ -147,6 +147,7 @@ describe('008A settled-state accessibility', () => {
   it('sign-in keeps one named action with its disclosure', async () => {
     const view = await mount(<SignInView onSignedIn={() => {}} />);
     expect(view.host.querySelector('h1')?.textContent).toBe('Sign in to Otis');
+    expect(view.host.querySelector('main.otis-entry')).toBeTruthy();
     expect(await axe(view.host, RULES)).toHaveNoViolations();
     await view.unmount();
   });
