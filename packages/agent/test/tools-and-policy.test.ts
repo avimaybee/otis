@@ -131,6 +131,24 @@ describe('006A: Tool Schemas and Argument Validation', () => {
     expect(validateQueryArgs({ resource: 'photos' }).ok).toBe(false);
   });
 
+  it('validates lead_overview filters, columns and page bounds', () => {
+    const res = validateQueryArgs({
+      resource: 'lead_overview',
+      filters: { status: 'warm', overdue_only: true, columns: ['status', 'due'] },
+      limit: 25,
+    });
+    expect(res.ok).toBe(true);
+    if (res.ok) {
+      expect(res.data.resource).toBe('lead_overview');
+      expect(res.data.filters?.status).toBe('warm');
+      expect(res.data.filters?.columns).toEqual(['status', 'due']);
+    }
+    expect(validateQueryArgs({ resource: 'lead_overview', filters: { status: 'lukewarm' } }).ok).toBe(false);
+    expect(validateQueryArgs({ resource: 'lead_overview', filters: { columns: ['secret'] } }).ok).toBe(false);
+    expect(validateQueryArgs({ resource: 'lead_overview', limit: 100 }).ok).toBe(false);
+    expect(validateToolCall('query', { resource: 'lead_overview', limit: 10 }).ok).toBe(true);
+  });
+
   it('validates view_image media identity and detail without accepting extras', () => {
     const good = validateViewImageArgs({ media_id: 'med_abc123' });
     expect(good.ok).toBe(true);

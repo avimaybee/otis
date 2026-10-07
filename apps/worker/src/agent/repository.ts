@@ -49,6 +49,7 @@ import { setMemberSettings, SettingsError } from '@otis/identity';
 import { executeCommand, resolveModelAlias } from '../routes/commands.js';
 import { getChat } from '../inbox/repository.js';
 import { sanitizeFtsQuery } from './context.js';
+import { readLeadOverview, type LeadOverviewColumn } from './leadOverview.js';
 
 export interface ExecuteAgentToolParams {
   db: D1Database;
@@ -448,6 +449,25 @@ export async function executeAgentTool(
         binds.push(limit);
         const rows = (await db.prepare(sql).bind(...binds).all()).results || [];
         return { status: 'applied', action_id: actionId, data: rows };
+      }
+
+      if (qArgs.resource === 'lead_overview') {
+        // Purpose-built lead report read: full-set counts, deterministic
+        // overdue-first order, explicit page cursors. One shared function
+        // serves the tool and read-only pagination alike.
+        const page = await readLeadOverview(db, {
+          workspaceId,
+          actorUserId,
+          filters: {
+            ...(qArgs.filters?.status ? { status: qArgs.filters.status } : {}),
+            ...(qArgs.filters?.overdue_only ? { overdue_only: true } : {}),
+            ...(qArgs.filters?.without_next_step ? { without_next_step: true } : {}),
+          },
+          columns: qArgs.filters?.columns as LeadOverviewColumn[] | undefined,
+          limit: qArgs.limit,
+          cursor: qArgs.cursor,
+        });
+        return { status: 'applied', action_id: actionId, data: page };
       }
 
       return { status: 'rejected', action_id: actionId, error: { code: 'invalid_resource', message: `Unknown resource '${qArgs.resource}'.` } };

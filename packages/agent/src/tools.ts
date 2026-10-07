@@ -182,7 +182,7 @@ export interface MarkMessageSentToolArgs {
 }
 
 export interface QueryToolArgs {
-  resource: 'entities' | 'tasks' | 'events' | 'drafts' | 'attachments';
+  resource: 'entities' | 'tasks' | 'events' | 'drafts' | 'attachments' | 'lead_overview';
   filters?: {
     entity_id?: string;
     entity_status?: LeadStatus;
@@ -193,6 +193,14 @@ export interface QueryToolArgs {
     due_after?: string;
     /** Substring match on the source message text (attachments only). */
     text?: string;
+    /** Lead status filter (lead_overview only). */
+    status?: LeadStatus;
+    /** Only leads with overdue open work (lead_overview only). */
+    overdue_only?: boolean;
+    /** Only leads with no open next step (lead_overview only). */
+    without_next_step?: boolean;
+    /** Display column subset (lead_overview only). */
+    columns?: string[];
   };
   limit?: number;
   cursor?: string;
@@ -762,9 +770,9 @@ export function validateQueryArgs(raw: unknown): ValidationResult<QueryToolArgs>
   const unk = checkNoUnknownKeys(obj, new Set(['resource', 'filters', 'limit', 'cursor']), 'query');
   if (unk) return unk;
 
-  const validResources = new Set(['entities', 'tasks', 'events', 'drafts', 'attachments']);
+  const validResources = new Set(['entities', 'tasks', 'events', 'drafts', 'attachments', 'lead_overview']);
   if (typeof obj['resource'] !== 'string' || !validResources.has(obj['resource'])) {
-    return fail('invalid_argument', "Field 'resource' must be 'entities', 'tasks', 'events', 'drafts', or 'attachments'.");
+    return fail('invalid_argument', "Field 'resource' must be 'entities', 'tasks', 'events', 'drafts', 'attachments', or 'lead_overview'.");
   }
 
   let limit: number | undefined;
@@ -794,6 +802,10 @@ export function validateQueryArgs(raw: unknown): ValidationResult<QueryToolArgs>
         'due_before',
         'due_after',
         'text',
+        'status',
+        'overdue_only',
+        'without_next_step',
+        'columns',
       ]),
       'query.filters',
     );
@@ -822,6 +834,20 @@ export function validateQueryArgs(raw: unknown): ValidationResult<QueryToolArgs>
     };
   }
 
+  if (obj['resource'] === 'lead_overview') {
+    const overview = validateLeadOverviewArgs(obj['filters'], obj['limit'], obj['cursor']);
+    if (!overview.ok) return overview;
+    return {
+      ok: true,
+      data: {
+        resource: 'lead_overview',
+        filters: overview.data.filters,
+        limit: overview.data.limit,
+        cursor: overview.data.cursor,
+      },
+    };
+  }
+
   return {
     ok: true,
     data: {
@@ -829,6 +855,61 @@ export function validateQueryArgs(raw: unknown): ValidationResult<QueryToolArgs>
       filters,
       limit,
       cursor: typeof obj['cursor'] === 'string' ? obj['cursor'].trim() : undefined,
+    },
+  };
+}
+
+const LEAD_OVERVIEW_STATUSES: readonly string[] = ['new', 'cold', 'warm', 'hot', 'won', 'lost', 'deprioritized'];
+const LEAD_OVERVIEW_COLUMN_IDS: readonly string[] = ['status', 'next_step', 'due', 'owner', 'last_contact'];
+
+function validateLeadOverviewArgs(
+  filtersRaw: unknown,
+  limitRaw: unknown,
+  cursorRaw: unknown,
+): ValidationResult<{ filters?: QueryToolArgs['filters']; limit?: number; cursor?: string }> {
+  let filters: QueryToolArgs['filters'];
+  if (filtersRaw !== undefined) {
+    if (!filtersRaw || typeof filtersRaw !== 'object' || Array.isArray(filtersRaw)) {
+      return fail('invalid_argument', "Field 'filters' must be an object.");
+    }
+    const fObj = filtersRaw as Record<string, unknown>;
+    if (fObj['status'] !== undefined) {
+      if (typeof fObj['status'] !== 'string' || !LEAD_OVERVIEW_STATUSES.includes(fObj['status'])) {
+        return fail('invalid_argument', `Filter 'status' must be one of: ${LEAD_OVERVIEW_STATUSES.join(', ')}.`);
+      }
+    }
+    for (const flag of ['overdue_only', 'without_next_step'] as const) {
+      if (fObj[flag] !== undefined && typeof fObj[flag] !== 'boolean') {
+        return fail('invalid_argument', `Filter '${flag}' must be a boolean.`);
+      }
+    }
+    let columns: string[] | undefined;
+    if (fObj['columns'] !== undefined) {
+      if (!Array.isArray(fObj['columns']) || fObj['columns'].some((c) => typeof c !== 'string' || !LEAD_OVERVIEW_COLUMN_IDS.includes(c))) {
+        return fail('invalid_argument', `Filter 'columns' must be an array of: ${LEAD_OVERVIEW_COLUMN_IDS.join(', ')}.`);
+      }
+      columns = [...new Set(fObj['columns'] as string[])];
+    }
+    filters = {
+      ...(typeof fObj['status'] === 'string' ? { status: fObj['status'] as LeadStatus } : {}),
+      ...(fObj['overdue_only'] === true ? { overdue_only: true } : {}),
+      ...(fObj['without_next_step'] === true ? { without_next_step: true } : {}),
+      ...(columns ? { columns } : {}),
+    };
+  }
+  let limit: number | undefined;
+  if (limitRaw !== undefined) {
+    if (typeof limitRaw !== 'number' || !Number.isInteger(limitRaw) || limitRaw < 1 || limitRaw > 50) {
+      return fail('invalid_argument', "Field 'limit' must be an integer between 1 and 50 for lead_overview pages.");
+    }
+    limit = limitRaw;
+  }
+  return {
+    ok: true,
+    data: {
+      filters,
+      limit,
+      cursor: typeof cursorRaw === 'string' ? cursorRaw.trim() : undefined,
     },
   };
 }
@@ -1419,11 +1500,11 @@ export const ALL_AGENT_TOOLS: ProviderToolDeclaration[] = [
   },
   {
     name: 'query',
-    description: 'Query structured records (entities, tasks, events, drafts, attachments) with whitelisted filters.',
+    description: 'Query structured records (entities, tasks, events, drafts, attachments, lead_overview) with whitelisted filters.',
     parameters: {
       type: 'object',
       properties: {
-        resource: { type: 'string', enum: ['entities', 'tasks', 'events', 'drafts', 'attachments'] },
+        resource: { type: 'string', enum: ['entities', 'tasks', 'events', 'drafts', 'attachments', 'lead_overview'] },
         filters: {
           type: 'object',
           properties: {
@@ -1435,6 +1516,10 @@ export const ALL_AGENT_TOOLS: ProviderToolDeclaration[] = [
             due_before: { type: 'string' },
             due_after: { type: 'string' },
             text: { type: 'string' },
+            status: { type: 'string' },
+            overdue_only: { type: 'boolean' },
+            without_next_step: { type: 'boolean' },
+            columns: { type: 'array', items: { type: 'string', enum: ['status', 'next_step', 'due', 'owner', 'last_contact'] } },
           },
           additionalProperties: false,
         },
