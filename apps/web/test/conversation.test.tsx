@@ -130,6 +130,17 @@ describe('Composer', () => {
     expect(view.host.querySelector('input[type="file"]')?.getAttribute('aria-hidden')).toBe('true');
     await view.unmount();
   });
+  it('hides voice and attachment actions while replying to a question', async () => {
+    const voice = { available: true };
+    const replyTo = { question: 'When should the offer be ready?', onCancel: () => {} };
+    const plain = await mount(<Composer running={false} commands={COMMANDS} onSend={vi.fn()} voice={voice} />);
+    expect(plain.host.querySelector('[aria-label="Record voice note"]')).toBeTruthy();
+    await plain.unmount();
+    const replying = await mount(<Composer running={false} commands={COMMANDS} onSend={vi.fn()} voice={voice} replyTo={replyTo} />);
+    expect(replying.host.querySelector('[aria-label="Record voice note"]')).toBeNull();
+    expect(replying.host.textContent).toContain('Replying to Otis');
+    await replying.unmount();
+  });
   it('photo remove keeps the expanded touch target hook', async () => {    const view = await mount(<Composer running={false} commands={COMMANDS} onSend={vi.fn()} images={{
       available: true, workspaceId: 'ws_1', chatId: 'chat_1',
       onEnsureChat: async () => 'chat_1',

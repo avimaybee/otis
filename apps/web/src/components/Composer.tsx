@@ -176,11 +176,13 @@ export function Composer({ disabled, disabledReason, running, commands, models =
   const voiceActive = voiceController.phase === 'recording'
     || voiceController.phase === 'finalizing'
     || voiceController.phase === 'review';
-  const micVisible = Boolean(voice?.available) && !voiceActive;
-  // Answers to Otis questions cannot carry photos yet (the clarification
-  // endpoint takes text only), so the affordance hides while replying or
-  // while a recording takes over the field.
+  // Answers to Otis questions travel as text only for now (the clarification
+  // endpoint takes text, and a spoken answer cannot carry the question link
+  // yet), so photos and the mic hide while replying or while a recording
+  // takes over the field. Showing them would silently start a separate run
+  // instead of answering the indicated question.
   const attachVisible = Boolean(images?.available) && !voiceActive && !replyTo;
+  const micVisible = Boolean(voice?.available) && !voiceActive && !replyTo;
   const voiceError = voiceActive ? null : voiceController.error;
   const voiceStorageWarning = voiceController.phase === 'recording' && !voiceController.durable
     ? 'This recording is not saved in the browser. Keep this tab open.'
