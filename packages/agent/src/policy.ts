@@ -2,7 +2,7 @@
  * @otis/agent/policy
  * Pure policy rules for explicit intent, date/deadline resolution, bulk thresholds,
  * untrusted prompt injection defense, and contradiction handling.
- * In accordance with plans/006-implementation-handoff.md Section 6.
+ * In accordance with docs/archive/plans/006-implementation-handoff.md Section 6.
  */
 
 import type { LeadStatus } from '@otis/contracts';
@@ -133,8 +133,57 @@ export function isExplicitStatusIntent(
 }
 
 /**
- * Checks if the source text contains an explicit statement by a member that they sent a message.
- * Questions, quotes, conditionals, and negations are rejected.
+ * Phone-like sequences named inside a confirmation. Dates, ISO instants and
+ * clock times are stripped first: "sent it on 2026-10-07" names no
+ * recipient, while "sent it to +40 711 222 333" does.
+ */
+const DATE_LIKE_PATTERN = /\b\d{4}-\d{2}-\d{2}(?:[T ]\d{2}:\d{2}(?::\d{2})?(?:Z|[+-]\d{2}:?\d{2})?)?\b|\b\d{1,2}:\d{2}(?::\d{2})?\b/g;
+const PHONE_LIKE_PATTERN = /\+?\d[\d\s\-().]{5,}\d/g;
+
+function digitsOnly(value: string): string {
+  return value.replace(/\D/g, '');
+}
+
+/**
+ * Checks a send confirmation against the draft's recipient. A confirmation
+ * that names a phone-like number which matches neither the draft recipient
+ * nor its absence is about a different send: the draft must not be marked
+ * sent. Sources naming no number confirm this draft's send.
+ *
+ * Comparison is digit-exact after stripping separators and leading zeros.
+ * Variants that only differ by truncatable prefixes (country code present on
+ * one side, leading zero on the other) do not match and clarify instead:
+ * asking is always safer than recording the wrong send. Drafts without a
+ * comparable recipient (absent, or fewer than 7 digits) accept any
+ * confirmation, matching historical behavior.
+ */
+export function sentConfirmationMatchesTarget(
+  sourceText: string,
+  draftRecipient: string | null,
+): { matches: boolean; reason?: string } {
+  if (!draftRecipient || !draftRecipient.trim()) return { matches: true };
+  const draftDigits = digitsOnly(draftRecipient).replace(/^0+/, '');
+  if (draftDigits.length < 7) return { matches: true };
+  const scrubbed = sourceText.replace(DATE_LIKE_PATTERN, ' ');
+  const sourceNumbers = new Map<string, string>();
+  for (const match of scrubbed.matchAll(PHONE_LIKE_PATTERN)) {
+    const digits = digitsOnly(match[0]).replace(/^0+/, '');
+    if (digits.length >= 7 && !sourceNumbers.has(digits)) sourceNumbers.set(digits, match[0].trim());
+  }
+  if (sourceNumbers.size === 0) return { matches: true };
+  for (const candidate of sourceNumbers.keys()) {
+    if (candidate === draftDigits) return { matches: true };
+  }
+  return {
+    matches: false,
+    reason: `The confirmation names ${[...sourceNumbers.values()][0]} but the draft is addressed to ${draftRecipient.trim()}.`,
+  };
+}
+
+/**
+ * Checks if the source text contains an explicit statement by a member that
+ * they sent a message. Questions, quotes, conditionals, and negations are
+ * rejected; only an explicit member statement confirms.
  */
 export function isExplicitSentConfirmation(sourceText: string): { isConfirmed: boolean; reason?: string } {
   const unquoted = stripQuotes(sourceText).trim();

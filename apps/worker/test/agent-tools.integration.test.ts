@@ -24,6 +24,7 @@ import migration0016Sql from '../../../migrations/0016_brief_next_due.sql?raw';
 import { executeAgentTool } from '../src/agent/repository.js';
 import {
   executeLedgerCommand,
+  getWorkspaceEvents,
   getWorkspaceRevision,
   DEFAULT_COMMAND_HANDLERS,
   type LedgerCommandContext,
@@ -794,6 +795,7 @@ describe('Worker Agent Tools & Guarded Repositories D1 Integration (006A workerd
       actionId: 'act_mark_sent_1',
       sourceMessageId: 'msg_tools_1',
       chatId: chat1,
+      sourceText: 'I sent the offer to +40712345678.',
       toolName: 'mark_message_sent',
       toolArgs: {
         draft_id: draftId,
@@ -819,10 +821,173 @@ describe('Worker Agent Tools & Guarded Repositories D1 Integration (006A workerd
       actionId: 'act_mark_sent_repeat',
       sourceMessageId: 'msg_tools_1',
       chatId: chat1,
+      sourceText: 'I already sent it.',
       toolName: 'mark_message_sent',
       toolArgs: { draft_id: draftId },
     });
     expect(markSentRepeat.status).toBe('already_applied');
+  });
+
+  it('requires explicit source-backed send confirmation bound to the draft target and actor', async () => {
+    let rev = (await getWorkspaceRevision(env.DB, ws1))?.business_revision ?? 0;
+    const entRes = await executeAgentTool({
+      db: env.DB,
+      workspaceId: ws1,
+      actorUserId: aviId,
+      runId: run1Id,
+      stepId: step1Id,
+      fence: fence1,
+      actionId: 'act_auth_entity',
+      sourceMessageId: 'msg_tools_1',
+      chatId: chat1,
+      toolName: 'upsert_entity',
+      toolArgs: { name: 'Authority Bakery' },
+    });
+    expect(entRes.status).toBe('applied');
+    rev = entRes.committed_revision!;
+    const entityId = entRes.affected_resource_ids?.[0];
+    expect(entityId).toBeDefined();
+
+    const draftRes = await executeAgentTool({
+      db: env.DB,
+      workspaceId: ws1,
+      actorUserId: aviId,
+      runId: run1Id,
+      stepId: step1Id,
+      fence: fence1,
+      expectedBusinessRevision: rev,
+      actionId: 'act_auth_draft',
+      sourceMessageId: 'msg_tools_1',
+      chatId: chat1,
+      toolName: 'draft_message',
+      toolArgs: {
+        entity_id: entityId,
+        channel: 'whatsapp',
+        recipient: '+40711111111',
+        content: 'Authority check offer.',
+      },
+    });
+    expect(draftRes.status).toBe('applied');
+    rev = draftRes.committed_revision!;
+    const draftId = draftRes.affected_resource_ids?.[0];
+    expect(draftId).toBeDefined();
+
+    const mark = (actionId: string, toolArgs: unknown, sourceText?: string) =>
+      executeAgentTool({
+        db: env.DB,
+        workspaceId: ws1,
+        actorUserId: aviId,
+        runId: run1Id,
+        stepId: step1Id,
+        fence: fence1,
+        expectedBusinessRevision: rev,
+        actionId,
+        sourceMessageId: 'msg_tools_1',
+        chatId: chat1,
+        ...(sourceText !== undefined ? { sourceText } : {}),
+        toolName: 'mark_message_sent',
+        toolArgs,
+      });
+
+    // No member words: an absent source confirms nothing.
+    const empty = await mark('act_auth_empty', { draft_id: draftId });
+    expect(empty.status).toBe('needs_clarification');
+    if (empty.status === 'needs_clarification') {
+      expect(empty.clarification?.missing_fields).toEqual(['sent_confirmation']);
+    }
+
+    // Negated confirmation clarifies instead of marking.
+    const negated = await mark('act_auth_neg', { draft_id: draftId }, 'I have not sent it yet.');
+    expect(negated.status).toBe('needs_clarification');
+
+    // A confirmation naming another number is about a different send.
+    const otherTarget = await mark('act_auth_other', { draft_id: draftId }, 'I sent it to +40722222222.');
+    expect(otherTarget.status).toBe('needs_clarification');
+    if (otherTarget.status === 'needs_clarification') {
+      expect(otherTarget.clarification?.prompt).toContain('+40722222222');
+    }
+
+    // Attribution cannot be smuggled in: the tool schema takes draft_id
+    // only, so a model-supplied confirmer is rejected, not recorded.
+    const spoofed = await mark(
+      'act_auth_spoof',
+      { draft_id: draftId, confirmed_by_user_id: 'usr_outsider_tools' },
+      'I sent it.',
+    );
+    expect(spoofed.status).toBe('rejected');
+
+    // Matching target confirms: the event attributes the acting member.
+    const confirmed = await mark('act_auth_ok', { draft_id: draftId }, 'Am trimis oferta la +40711111111.');
+    expect(confirmed.status).toBe('applied');
+    const events = await getWorkspaceEvents(env.DB, ws1);
+    const sent = events.find(
+      (event) => event.kind === 'message_sent_by_member' && (event.payload as { draft_id?: string }).draft_id === draftId,
+    );
+    expect(sent).toBeDefined();
+    expect((sent!.payload as { confirmed_by_user_id?: string }).confirmed_by_user_id).toBe(aviId);
+  });
+
+  it('snoozes a task on a valid instant and clears it on explicit null', async () => {
+    const rev0 = (await getWorkspaceRevision(env.DB, ws1))?.business_revision ?? 0;
+    const created = await executeAgentTool({
+      db: env.DB,
+      workspaceId: ws1,
+      actorUserId: aviId,
+      runId: run1Id,
+      stepId: step1Id,
+      fence: fence1,
+      expectedBusinessRevision: rev0,
+      actionId: 'act_snooze_create',
+      sourceMessageId: 'msg_tools_1',
+      chatId: chat1,
+      sourceText: 'Remind me about this with no deadline.',
+      toolName: 'create_task',
+      toolArgs: { title: 'Snooze probe', explicit_no_deadline: true },
+    });
+    expect(created.status).toBe('applied');
+    const taskId = created.affected_resource_ids?.[0];
+    expect(taskId).toBeDefined();
+    let rev = created.committed_revision!;
+
+    const snoozed = await executeAgentTool({
+      db: env.DB,
+      workspaceId: ws1,
+      actorUserId: aviId,
+      runId: run1Id,
+      stepId: step1Id,
+      fence: fence1,
+      expectedBusinessRevision: rev,
+      actionId: 'act_snooze_set',
+      sourceMessageId: 'msg_tools_1',
+      chatId: chat1,
+      toolName: 'update_task',
+      toolArgs: { task_id: taskId, snooze_until: '2026-10-20T09:00:00.000Z' },
+    });
+    expect(snoozed.status).toBe('applied');
+    rev = snoozed.committed_revision!;
+    const held = await env.DB.prepare(`SELECT snooze_until FROM tasks WHERE id = ?`)
+      .bind(taskId).first<{ snooze_until: string | null }>();
+    expect(held?.snooze_until).toBe('2026-10-20T09:00:00.000Z');
+
+    // Explicit null unsnoozes; the projection clears instead of lingering.
+    const cleared = await executeAgentTool({
+      db: env.DB,
+      workspaceId: ws1,
+      actorUserId: aviId,
+      runId: run1Id,
+      stepId: step1Id,
+      fence: fence1,
+      expectedBusinessRevision: rev,
+      actionId: 'act_snooze_clear',
+      sourceMessageId: 'msg_tools_1',
+      chatId: chat1,
+      toolName: 'update_task',
+      toolArgs: { task_id: taskId, snooze_until: null },
+    });
+    expect(cleared.status).toBe('applied');
+    const released = await env.DB.prepare(`SELECT snooze_until FROM tasks WHERE id = ?`)
+      .bind(taskId).first<{ snooze_until: string | null }>();
+    expect(released?.snooze_until).toBeNull();
   });
 
   it('updates member preferences with live run/fence guard and action receipt; rolls back on stale fence', async () => {

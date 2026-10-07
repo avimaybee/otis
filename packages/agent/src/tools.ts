@@ -2,7 +2,7 @@
  * @otis/agent/tools
  * Versioned declarations, strict JSON schemas, and runtime argument/result validators
  * for all 18 agent tools and 1 control tool.
- * In accordance with plans/006-implementation-handoff.md Section 5.
+ * In accordance with docs/archive/plans/006-implementation-handoff.md Section 5.
  */
 
 import type {
@@ -1438,7 +1438,7 @@ export const ALL_AGENT_TOOLS: ProviderToolDeclaration[] = [
   },
   {
     name: 'update_task',
-    description: 'Update task title, status (open/done/cancelled), due date, or snooze.',
+    description: 'Update task title, status (open/done/cancelled), due date, or snooze (null clears the snooze).',
     parameters: {
       type: 'object',
       properties: {
@@ -1457,7 +1457,10 @@ export const ALL_AGENT_TOOLS: ProviderToolDeclaration[] = [
           required: ['kind', 'timezone'],
           additionalProperties: false,
         },
-        snooze_until: { type: 'string' },
+        snooze_until: {
+          type: 'string',
+          description: 'Offset-bearing ISO instant to snooze until, or null to clear the snooze.',
+        },
       },
       required: ['task_id'],
       additionalProperties: false,

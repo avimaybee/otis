@@ -1,7 +1,7 @@
 /**
  * @otis/agent/test/tools-and-policy.test.ts
  * Pure unit tests for tool schema validation, argument parsing, and policy rules.
- * In accordance with plans/006-implementation-handoff.md Section 11 (006A).
+ * In accordance with docs/archive/plans/006-implementation-handoff.md Section 11 (006A).
  */
 
 import { describe, expect, it } from 'vitest';
@@ -12,7 +12,9 @@ import {
   checkUntrustedContentPolicy,
   isExplicitSentConfirmation,
   isExplicitStatusIntent,
+  sentConfirmationMatchesTarget,
   validateCreateTaskArgs,
+  validateUpdateTaskArgs,
   validateDraftMessageArgs,
   validateFindEntitiesArgs,
   validateLogEventArgs,
@@ -210,6 +212,34 @@ describe('006A: Tool Schemas and Argument Validation', () => {
     expect(invalidDate.ok).toBe(false);
   });
 
+  it('validates task snooze: instant accepted, explicit null clears, garbage rejects', () => {
+    const base = { task_id: 'task_1' };
+
+    // Valid offset-bearing instant accepted as-is.
+    const set = validateUpdateTaskArgs({ ...base, snooze_until: '2026-10-15T14:30:00.000Z' });
+    expect(set.ok).toBe(true);
+    if (set.ok) expect(set.data.snooze_until).toBe('2026-10-15T14:30:00.000Z');
+
+    // Explicit null survives validation as null (unsnooze), not undefined:
+    // the ledger clears the snooze only on null.
+    const clear = validateUpdateTaskArgs({ ...base, snooze_until: null });
+    expect(clear.ok).toBe(true);
+    if (clear.ok) expect(clear.data.snooze_until).toBeNull();
+
+    // Omitted stays undefined (leave the snooze alone).
+    const omit = validateUpdateTaskArgs({ ...base, title: 'New title' });
+    expect(omit.ok).toBe(true);
+    if (omit.ok) expect(omit.data.snooze_until).toBeUndefined();
+
+    // Garbage rejected even though it parses as nothing useful.
+    expect(validateUpdateTaskArgs({ ...base, snooze_until: 'tomorrow' }).ok).toBe(false);
+    expect(validateUpdateTaskArgs({ ...base, snooze_until: '2026-13-45T99:99:99Z' }).ok).toBe(false);
+    // Non-string garbage coerces to "leave alone" rather than clearing.
+    const coerced = validateUpdateTaskArgs({ ...base, title: 'New title', snooze_until: 123 });
+    expect(coerced.ok).toBe(true);
+    if (coerced.ok) expect(coerced.data.snooze_until).toBeUndefined();
+  });
+
   it('validates money in integer minor units and distinguishes offered vs expected roles', () => {
     // 3,500 RON offered = 350,000 minor units
     const offeredQuote = validateLogEventArgs({
@@ -371,6 +401,36 @@ describe('006A: Pure Policy Rules', () => {
     expect(isExplicitSentConfirmation('Already sent the offer to Dan').isConfirmed).toBe(true);
     expect(isExplicitSentConfirmation('Am trimis oferta').isConfirmed).toBe(true);
     expect(isExplicitSentConfirmation('Elküldtem a fájlt').isConfirmed).toBe(true);
+  });
+
+  it('matches a send confirmation against the draft recipient by digits, in any language', () => {
+    const draft = '+40711111111';
+
+    // No number named: confirms this draft's send, in any language.
+    expect(sentConfirmationMatchesTarget('I sent it', draft).matches).toBe(true);
+    expect(sentConfirmationMatchesTarget('Am trimis oferta', draft).matches).toBe(true);
+    expect(sentConfirmationMatchesTarget('Elküldtem az ajánlatot', draft).matches).toBe(true);
+
+    // Same number in any written shape matches.
+    expect(sentConfirmationMatchesTarget('Sent it to +40711111111', draft).matches).toBe(true);
+    expect(sentConfirmationMatchesTarget('Am trimis la 0711 111 111', '+40711111111').matches).toBe(false);
+    expect(sentConfirmationMatchesTarget('Sent it to 0711-111-111', '0711-111-111').matches).toBe(true);
+    expect(sentConfirmationMatchesTarget('Elküldtem a 0711111111 számra', '0711111111').matches).toBe(true);
+
+    // A different number is about a different send.
+    expect(sentConfirmationMatchesTarget('Sent it to +40722222222', draft).matches).toBe(false);
+    expect(sentConfirmationMatchesTarget('Am trimis la +40722222222', draft).matches).toBe(false);
+    expect(sentConfirmationMatchesTarget('Elküldtem a +40722222222 számra', draft).matches).toBe(false);
+
+    // Dates, instants and times name no recipient.
+    expect(sentConfirmationMatchesTarget('Sent it on 2026-10-07', draft).matches).toBe(true);
+    expect(sentConfirmationMatchesTarget('Trimis ieri la 18:30', draft).matches).toBe(true);
+    expect(sentConfirmationMatchesTarget('Sent at 2026-10-07T18:30:00+03:00', draft).matches).toBe(true);
+
+    // Drafts without a comparable recipient accept any confirmation.
+    expect(sentConfirmationMatchesTarget('Sent it to +40722222222', null).matches).toBe(true);
+    expect(sentConfirmationMatchesTarget('Sent it to +40722222222', 'Dan').matches).toBe(true);
+    expect(sentConfirmationMatchesTarget('Sent it to +40722222222', '').matches).toBe(true);
   });
 
   it('enforces bulk scope policy: more than 3 distinct targets requires explicit confirmation', () => {

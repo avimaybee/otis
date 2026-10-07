@@ -2,7 +2,7 @@
  * @otis/worker/agent/repository
  * Guarded execution bridge mapping agent tools to ledger commands,
  * scoped database queries, and fenced settings mutations.
- * In accordance with plans/006-implementation-handoff.md Section 4 & 5.
+ * In accordance with docs/archive/plans/006-implementation-handoff.md Section 4 & 5.
  */
 
 import type { CommandResult, LeadStatus } from '@otis/contracts';
@@ -10,6 +10,7 @@ import {
   checkUntrustedContentPolicy,
   isExplicitSentConfirmation,
   isExplicitStatusIntent,
+  sentConfirmationMatchesTarget,
   validateToolCall,
   type CreateTaskToolArgs,
   type DraftMessageToolArgs,
@@ -1158,14 +1159,34 @@ export async function executeAgentTool(
 
     case 'mark_message_sent': {
       const mmsArgs = args as MarkMessageSentToolArgs;
-      if (sourceText) {
-        const sentCheck = isExplicitSentConfirmation(sourceText);
-        if (!sentCheck.isConfirmed) {
+      // An absent source confirms nothing: without member words, marking
+      // sent would fabricate a completion record. Clarify instead.
+      const sentCheck = isExplicitSentConfirmation(sourceText);
+      if (!sentCheck.isConfirmed) {
+        return {
+          status: 'needs_clarification',
+          action_id: actionId,
+          clarification: {
+            prompt: 'Did you already send this message to the recipient?',
+            missing_fields: ['sent_confirmation'],
+            candidates: ['confirmed_sent', 'not_sent'],
+          },
+        };
+      }
+      // The confirmation must not name a different recipient than the
+      // draft's: a mismatched target is about another send. A missing draft
+      // is left for the ledger command's own not_found rejection.
+      const draftTarget = await db.prepare(
+        `SELECT recipient_address FROM draft_projections WHERE workspace_id = ? AND id = ?`,
+      ).bind(workspaceId, mmsArgs.draft_id).first<{ recipient_address: string | null }>();
+      if (draftTarget) {
+        const targetCheck = sentConfirmationMatchesTarget(sourceText, draftTarget.recipient_address);
+        if (!targetCheck.matches) {
           return {
             status: 'needs_clarification',
             action_id: actionId,
             clarification: {
-              prompt: 'Did you already send this message to the recipient?',
+              prompt: `${targetCheck.reason} Which message did you send?`,
               missing_fields: ['sent_confirmation'],
               candidates: ['confirmed_sent', 'not_sent'],
             },
