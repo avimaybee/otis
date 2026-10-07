@@ -120,8 +120,16 @@ type State =
   | { status: 'no_workspace'; user: User }
   | { status: 'ready'; user: User; workspaces: WorkspaceSummary[] };
 
+/**
+ * Upper bound for the server session revoke during sign-out. Local cleanup
+ * never waits on the network longer than this; the sign-in screen reports a
+ * revoke that did not finish instead of passing silently.
+ */
+export const SIGN_OUT_SERVER_TIMEOUT_MS = 8_000;
+
 export function App() {
   const [state, setState] = useState<State>({ status: 'loading' });
+  const [signOutNotice, setSignOutNotice] = useState<string | null>(null);
   const [queryClient] = useState(() => createAppQueryClient());
   // One router for the session; route state owns workspace/chat selection.
   // Outbox rehydration is user-scoped, so it runs in ConversationScreen
@@ -246,6 +254,7 @@ export function App() {
   if (state.status === 'signed_out') {
     return (
       <SignInView
+        notice={signOutNotice}
         onSignedIn={() => {
           try {
             localStorage.setItem('otis_auth_event', JSON.stringify({ type: 'sign_in', timestamp: Date.now() }));
@@ -265,15 +274,29 @@ export function App() {
     sessionGeneration.current += 1;
     inflightSession.current = null;
     setState({ status: 'signed_out' });
+    // Bounded server revoke through the typed client (deadline + failure
+    // log): a hung or failed revoke must neither block local cleanup nor
+    // pass silently. The sign-in screen reports the outcome truthfully, so a
+    // surviving server session on a shared device is visible, not assumed.
+    const revoke = new AbortController();
+    const revokeTimer = setTimeout(
+      () => revoke.abort(new DOMException('Sign-out revoke timed out', 'TimeoutError')),
+      SIGN_OUT_SERVER_TIMEOUT_MS,
+    );
+    let serverRevoked = false;
     try {
-      await fetch('/api/auth/session', {
-        method: 'DELETE',
-        headers: { 'x-otis-csrf': '1' },
-        credentials: 'same-origin',
-      });
+      await api.signOut(revoke.signal);
+      serverRevoked = true;
     } catch {
-      /* Server session cleanup failure should not prevent client-side cleanup */
+      serverRevoked = false;
+    } finally {
+      clearTimeout(revokeTimer);
     }
+    setSignOutNotice(
+      serverRevoked
+        ? null
+        : 'Signed out on this device. The server session could not be revoked, so this browser may still hold it — sign in again if you need to switch accounts here.',
+    );
     await clientSignOut();
     try {
       localStorage.setItem('otis_auth_event', JSON.stringify({ type: 'sign_out', userId, timestamp: Date.now() }));

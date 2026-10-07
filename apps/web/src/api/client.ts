@@ -23,6 +23,7 @@ import type {
   UpdateMemberSettingsRequest,
   CredentialStatusResponse,
   ProviderName,
+  LogoutResponse,
   RunDetailResponse,
   RunBatchResponse,
   TelegramConnectionResponse,
@@ -308,6 +309,12 @@ export const api = {
   deleteWorkspace: (workspaceId: string) =>
     request<{ deleted: boolean }>(`/api/workspaces/${encodeURIComponent(workspaceId)}`, {
       method: 'DELETE',
+    }),
+
+  signOut: (signal?: AbortSignal) =>
+    request<LogoutResponse>(`/api/auth/session`, {
+      method: 'DELETE',
+      ...(signal ? { signal } : {}),
     }),
 
   listMembers: (workspaceId: string) =>

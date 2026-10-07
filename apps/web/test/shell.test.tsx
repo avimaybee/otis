@@ -4,7 +4,8 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import * as React from 'react';
 import { createRoot } from 'react-dom/client';
-import { App } from '../src/App.js';
+import { App, SIGN_OUT_SERVER_TIMEOUT_MS } from '../src/App.js';
+import { createOutboxEntry, entriesForUser, resetOutboxForTests } from '../src/api/outbox.js';
 import { readFileSync } from 'fs';
 import { resolve } from 'path';
 
@@ -156,6 +157,155 @@ describe('Conversation shell', () => {
 
     await app.unmount();
     document.body.removeChild(container);
+  });
+});
+
+describe('Sign-out session revoke', () => {
+  const ME = {
+    user: {
+      id: 'usr_1',
+      firebase_uid: 'fb',
+      email: null,
+      display_name: 'Avi',
+      created_at: '',
+      updated_at: '',
+    },
+    workspaces: [],
+  };
+
+  function mockSession(deleteImpl: () => Promise<Response>) {
+    const seen: { method: string; url: string }[] = [];
+    vi.spyOn(globalThis, 'fetch').mockImplementation((async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+      const method = init?.method ?? (typeof input === 'string' ? 'GET' : input.method);
+      if (url.includes('/api/auth/session') && method === 'DELETE') {
+        seen.push({ method, url });
+        return deleteImpl();
+      }
+      if (url.includes('/api/me')) {
+        return new Response(JSON.stringify(ME), { status: 200, headers: { 'Content-Type': 'application/json' } });
+      }
+      return new Response(JSON.stringify({}), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    }) as typeof fetch);
+    return seen;
+  }
+
+  function jsonOk(payload: unknown): Response {
+    return new Response(JSON.stringify(payload), { status: 200, headers: { 'Content-Type': 'application/json' } });
+  }
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.useRealTimers();
+    resetOutboxForTests();
+  });
+
+  async function signOutFromEmptyWorkspace(container: HTMLElement) {
+    const signOutBtn = Array.from(container.querySelectorAll('button')).find(
+      (button) => button.textContent === 'Sign out',
+    ) as HTMLButtonElement;
+    expect(signOutBtn).toBeTruthy();
+    await React.act(async () => {
+      signOutBtn.click();
+      await Promise.resolve();
+    });
+  }
+
+  it('revokes the server session with DELETE and cleans locally without a notice', async () => {
+    const seen = mockSession(async () => jsonOk({ status: 'ok' }));
+    const kept = createOutboxEntry({ userId: 'usr_1', workspaceId: 'ws_1', chatId: 'chat_1', text: 'pending' });
+    expect(entriesForUser('usr_1').map((entry) => entry.clientId)).toEqual([kept.clientId]);
+
+    const container = viewport(360);
+    const app = await render(container);
+    await React.act(async () => {
+      await Promise.resolve();
+    });
+    expect(container.textContent).toContain('Create your workspace');
+
+    await signOutFromEmptyWorkspace(container);
+    await React.act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    expect(seen).toHaveLength(1);
+    expect(entriesForUser('usr_1')).toHaveLength(0);
+    expect(container.textContent).toContain('Sign in to Otis');
+    expect(container.textContent).not.toContain('may still hold it');
+
+    await app.unmount();
+    document.body.removeChild(container);
+    resetOutboxForTests();
+  });
+
+  it('cleans locally and reports truthfully when the server revoke fails', async () => {
+    mockSession(async () => {
+      throw new TypeError('offline');
+    });
+    createOutboxEntry({ userId: 'usr_1', workspaceId: 'ws_1', chatId: 'chat_1', text: 'pending' });
+
+    const container = viewport(360);
+    const app = await render(container);
+    await React.act(async () => {
+      await Promise.resolve();
+    });
+
+    await signOutFromEmptyWorkspace(container);
+    await React.act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    expect(entriesForUser('usr_1')).toHaveLength(0);
+    expect(container.textContent).toContain('Sign in to Otis');
+    expect(container.textContent).toContain('may still hold it');
+
+    await app.unmount();
+    document.body.removeChild(container);
+    resetOutboxForTests();
+  });
+
+  it('bounds a hung server revoke instead of blocking local cleanup', async () => {
+    vi.useFakeTimers();
+    try {
+      // A hung connection still settles: like a real fetch, the mock
+      // rejects once the deadline aborts the signal.
+      vi.spyOn(globalThis, 'fetch').mockImplementation(((input: RequestInfo | URL, init?: RequestInit) => {
+        const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+        if (url.includes('/api/me')) {
+          return Promise.resolve(jsonOk(ME));
+        }
+        return new Promise<Response>((_resolve, reject) => {
+          if (init?.signal?.aborted) {
+            reject(init.signal.reason);
+            return;
+          }
+          init?.signal?.addEventListener('abort', () => reject(init.signal!.reason), { once: true });
+        });
+      }) as typeof fetch);
+      createOutboxEntry({ userId: 'usr_1', workspaceId: 'ws_1', chatId: 'chat_1', text: 'pending' });
+
+      const container = viewport(360);
+      const app = await render(container);
+      await React.act(async () => {
+        await Promise.resolve();
+      });
+
+      await signOutFromEmptyWorkspace(container);
+      await React.act(async () => {
+        await vi.advanceTimersByTimeAsync(SIGN_OUT_SERVER_TIMEOUT_MS);
+      });
+      await React.act(async () => {});
+
+      expect(entriesForUser('usr_1')).toHaveLength(0);
+      expect(container.textContent).toContain('Sign in to Otis');
+      expect(container.textContent).toContain('may still hold it');
+
+      await app.unmount();
+      document.body.removeChild(container);
+      resetOutboxForTests();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 

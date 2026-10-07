@@ -12,7 +12,7 @@ import { signInWithGoogle, getClientAuth } from '../firebase.js';
 import { Button } from './ui/button.js';
 import { Alert, AlertDescription } from './ui/alert.js';
 
-export function SignInView({ onSignedIn, inviteToken: propInviteToken }: { onSignedIn: () => void; inviteToken?: string | null }) {
+export function SignInView({ onSignedIn, notice, inviteToken: propInviteToken }: { onSignedIn: () => void; notice?: string | null; inviteToken?: string | null }) {
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const { isConfigured } = getClientAuth();
@@ -67,6 +67,12 @@ export function SignInView({ onSignedIn, inviteToken: propInviteToken }: { onSig
               Sign in with Google to accept your invitation and join the workspace.
             </p>
           </div>
+        )}
+
+        {notice && (
+          <p className="otis-entry__note text-sm text-muted-foreground mt-1" role="status">
+            {notice}
+          </p>
         )}
 
         {error && (
