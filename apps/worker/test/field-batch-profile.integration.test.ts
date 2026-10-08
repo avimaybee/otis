@@ -185,8 +185,8 @@ describe('field-batch cost profiles', () => {
     console.log(`FBPROFILE ${JSON.stringify(profile)}`);
     // Pinned structural record: targeted path constant across sizes and
     // narrower than the full-load baseline on the same workspace.
-    expect((profile['100'] as { preparesPerCall: number }).preparesPerCall).toBe(13);
-    expect((profile['1000'] as { preparesPerCall: number }).preparesPerCall).toBe(13);
+    expect((profile['100'] as { preparesPerCall: number }).preparesPerCall).toBe(12);
+    expect((profile['1000'] as { preparesPerCall: number }).preparesPerCall).toBe(12);
     expect((profile['100'] as { batchesPerCall: number }).batchesPerCall).toBe(2);
     expect((profile['1000'] as { batchesPerCall: number }).batchesPerCall).toBe(2);
     expect((profile['baseline_create_entity_1000'] as { prepares: number }).prepares).toBe(20);

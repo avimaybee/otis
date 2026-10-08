@@ -64,6 +64,7 @@ export {
   getActionReceipt,
   getActionReceiptsByIds,
   getFieldProjectionState,
+  getQuestionByAction,
   getWorkspaceRevision,
   getWorkspaceEvents,
   getWorkspaceActions,

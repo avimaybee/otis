@@ -3,10 +3,11 @@ import { SELF, env } from 'cloudflare:test';
 import { applyMigrations } from './migrations.js';
 import { AUTH_BOUNDS } from '@otis/contracts';
 import { acceptWebMessage, createChat } from '../src/inbox/repository.js';
-import { dispatchOutboxItem } from '../src/actor/dispatch.js';
+import { dispatchOutboxItem, resumeRun } from '../src/actor/dispatch.js';
 import { AgentHandler } from '../src/agent/handler.js';
 import { executeAgentTool } from '../src/agent/repository.js';
 import { FakeProviderAdapter } from '@otis/agent';
+import { resumePendingClarification } from '@otis/ledger';
 import { sha256 } from '@otis/identity';
 
 /**
@@ -494,6 +495,10 @@ describe('legacy per-field receipts', () => {
     const rev = await revision(shopD.ws);
     const eventsBefore = await eventCount(shopD);
     await insertChildReceipt(shopD, 'act-leg-part_f0', entityId, 'phone', '+40666666666', rev + 1);
+    // The verified child really advanced the workspace: replay at the
+    // original revision must reconstruct, not conflict.
+    await env.DB.prepare(`UPDATE workspaces SET business_revision = ? WHERE id = ?`)
+      .bind(rev + 1, shopD.ws).run();
     const src = await acceptWebMessage(env.DB, {
       workspaceId: shopD.ws,
       chatId: shopD.chatId,
@@ -524,10 +529,40 @@ describe('legacy per-field receipts', () => {
     expect(res.status).toBe('applied');
     expect(res.summary).toContain('legacy sequential');
     expect(await eventCount(shopD)).toBe(eventsBefore + 1);
+    expect(await revision(shopD.ws)).toBe(rev + 2);
     const lang = await env.DB.prepare(
       `SELECT value_text FROM entity_state WHERE workspace_id = ? AND entity_id = ? AND field_name = 'preferred_language'`,
     ).bind(shopD.ws, entityId).first<{ value_text: string | null }>();
     expect(lang?.value_text).toContain('hu');
+  });
+
+  it('conflicts when the live revision outruns the verified children', async () => {
+    const entityId = await seedEntity(shopD, 'l3', 'Teammate Client');
+    const rev = await revision(shopD.ws);
+    await insertChildReceipt(shopD, 'act-leg-tm_f0', entityId, 'phone', '+40777777777', rev + 1);
+    // Verified child advanced to rev+1, then a teammate committed rev+2:
+    // the replay must not silently rebase around it.
+    await env.DB.prepare(`UPDATE workspaces SET business_revision = ? WHERE id = ?`)
+      .bind(rev + 2, shopD.ws).run();
+    const eventsBefore = await eventCount(shopD);
+    const res = await executeAgentTool({
+      db: env.DB,
+      workspaceId: shopD.ws,
+      actorUserId: shopD.owner,
+      actionId: 'act-leg-tm',
+      toolName: 'set_fields',
+      toolArgs: {
+        entity_id: entityId,
+        fields: [
+          { field_name: 'phone', value: '+40777777777' },
+          { field_name: 'preferred_language', value: 'ro' },
+        ],
+      },
+      expectedBusinessRevision: rev,
+    });
+    expect(res.status).toBe('conflict');
+    expect(res.error?.code).toBe('revision_conflict');
+    expect(await eventCount(shopD)).toBe(eventsBefore);
   });
 });
 
@@ -616,22 +651,16 @@ describe('targeted hydration scales with touched rows, not workspace size', () =
     expect(largeRes.status).toBe('applied');
 
     // Same touched rows, same statements: hydration does not grow with the
-    // workspace. (A full workspace load would read 5 vs 60 entity rows and
-    // issue the same 7-statement shape but parse 12x the rows.)
+    // workspace. Field writes load entity + requested fields only.
     expect(largeCounted.counts()).toEqual(smallCounted.counts());
-    // Structural proof for the cost record: one read batch (3 statements)
+    // Structural proof for the cost record: one read batch (2 statements)
     // plus one commit batch, independent of workspace size.
-    expect(smallCounted.counts()).toEqual({ prepares: 13, batches: 2 });
+    expect(smallCounted.counts()).toEqual({ prepares: 12, batches: 2 });
 
     const explainCases: { sql: string; binds: string[] }[] = [
       {
         sql: `SELECT id, workspace_id, name, kind, status, assigned_user_id, created_at, updated_at
               FROM entities WHERE workspace_id = ? AND id = ?`,
-        binds: ['ws-probe', 'ent-probe'],
-      },
-      {
-        sql: `SELECT id, workspace_id, entity_id, alias, source_event_id, created_at
-              FROM entity_aliases WHERE workspace_id = ? AND entity_id = ?`,
         binds: ['ws-probe', 'ent-probe'],
       },
       {
@@ -652,44 +681,44 @@ describe('targeted hydration scales with touched rows, not workspace size', () =
   });
 });
 
-describe('legacy fallback intent recovery at the resume boundary', () => {
-  async function legacySetup(suffix: string, fields: { field_name: string; value: unknown; provenance: string }[]) {
-    const shop = await makeShop(suffix);
-    const entityId = await seedEntity(shop, `${suffix}-ent`, `Fallback Client ${suffix}`);
-    const src = await acceptWebMessage(env.DB, {
-      workspaceId: shop.ws,
-      chatId: shop.chatId,
-      userId: shop.owner,
-      clientMessageId: `cm-fb-src-${suffix}`,
-      text: `Fallback Client ${suffix} seems warm`,
-    });
-    void src;
-    const srcInboundId = await inboundIdForClientMessage(shop, `cm-fb-src-${suffix}`);
-    const now = new Date().toISOString();
-    const runId = `run_leg_fb_${suffix}`;
-    await env.DB.prepare(
-      `INSERT INTO agent_runs (id, workspace_id, chat_id, source_message_id, executor_kind, status, created_at, updated_at)
-       VALUES (?, ?, ?, ?, 'agent', 'waiting_for_input', ?, ?)`,
-    ).bind(runId, shop.ws, shop.chatId, srcInboundId, now, now).run();
-    const clarId = `clar_leg_fb_${suffix}`;
-    const rev = await revision(shop.ws);
-    await env.DB.prepare(
-      `INSERT INTO pending_clarifications (
-         id, workspace_id, chat_id, run_id, source_message_id, requester_user_id,
-         question, intended_operation, missing_fields, candidates_json, operation_payload_json,
-         answer_message_id, source_revision, status, resolution_response, resolved_at, created_at, updated_at
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, 'set_fields', ?, ?, ?, NULL, ?, 'pending', NULL, NULL, ?, ?)`,
-    ).bind(
-      clarId, shop.ws, shop.chatId, runId, srcInboundId, shop.owner,
-      `Did you want to set the status of this lead to warm?`,
-      JSON.stringify(['status_confirmation']),
-      JSON.stringify(['confirm', 'cancel']),
-      JSON.stringify({ command: 'set_fields', params: { entity_id: entityId, fields } }),
-      rev, now, now,
-    ).run();
-    return { shop, entityId, runId, clarId };
-  }
+async function legacySetup(suffix: string, fields: { field_name: string; value: unknown; provenance: string }[]) {
+  const shop = await makeShop(suffix);
+  const entityId = await seedEntity(shop, `${suffix}-ent`, `Fallback Client ${suffix}`);
+  const src = await acceptWebMessage(env.DB, {
+    workspaceId: shop.ws,
+    chatId: shop.chatId,
+    userId: shop.owner,
+    clientMessageId: `cm-fb-src-${suffix}`,
+    text: `Fallback Client ${suffix} seems warm`,
+  });
+  void src;
+  const srcInboundId = await inboundIdForClientMessage(shop, `cm-fb-src-${suffix}`);
+  const now = new Date().toISOString();
+  const runId = `run_leg_fb_${suffix}`;
+  await env.DB.prepare(
+    `INSERT INTO agent_runs (id, workspace_id, chat_id, source_message_id, executor_kind, status, created_at, updated_at)
+     VALUES (?, ?, ?, ?, 'agent', 'waiting_for_input', ?, ?)`,
+  ).bind(runId, shop.ws, shop.chatId, srcInboundId, now, now).run();
+  const clarId = `clar_leg_fb_${suffix}`;
+  const rev = await revision(shop.ws);
+  await env.DB.prepare(
+    `INSERT INTO pending_clarifications (
+       id, workspace_id, chat_id, run_id, source_message_id, requester_user_id,
+       question, intended_operation, missing_fields, candidates_json, operation_payload_json,
+       answer_message_id, source_revision, status, resolution_response, resolved_at, created_at, updated_at
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, 'set_fields', ?, ?, ?, NULL, ?, 'pending', NULL, NULL, ?, ?)`,
+  ).bind(
+    clarId, shop.ws, shop.chatId, runId, srcInboundId, shop.owner,
+    `Did you want to set the status of this lead to warm?`,
+    JSON.stringify(['status_confirmation']),
+    JSON.stringify(['confirm', 'cancel']),
+    JSON.stringify({ command: 'set_fields', params: { entity_id: entityId, fields } }),
+    rev, now, now,
+  ).run();
+  return { shop, entityId, runId, clarId };
+}
 
+describe('legacy fallback intent recovery at the resume boundary', () => {
   it('applies an explicitly confirmed fallback without rerunning the tool', async () => {
     const { shop, entityId, clarId } = await legacySetup('f1', [
       { field_name: 'phone', value: '+40888888888', provenance: 'stated' },
@@ -725,6 +754,281 @@ describe('legacy fallback intent recovery at the resume boundary', () => {
     const row = await env.DB.prepare(`SELECT status FROM pending_clarifications WHERE id = ?`)
       .bind(vague.clarId).first<{ status: string }>();
     expect(row?.status).toBe('pending');
+  });
+});
+
+describe('audit repair round: approval atomicity, replay honesty, guarded decline', () => {
+  async function rowOp(shop: Shop, clarId: string) {
+    const row = await env.DB.prepare(
+      `SELECT status, missing_fields, operation_payload_json FROM pending_clarifications WHERE id = ?`,
+    ).bind(clarId).first<{ status: string; missing_fields: string; operation_payload_json: string }>();
+    return {
+      status: row?.status,
+      missing: JSON.parse(row?.missing_fields ?? '[]') as string[],
+      op: JSON.parse(row?.operation_payload_json ?? '{}') as Record<string, unknown>,
+    };
+  }
+
+  it('P1-1: a rolled-back approval leaves no armed metadata behind', async () => {
+    const shop = await makeShop('g1');
+    const entityId = await seedEntity(shop, 'g1-ent', 'Atomic Client');
+    const src = await acceptWebMessage(env.DB, {
+      workspaceId: shop.ws, chatId: shop.chatId, userId: shop.owner,
+      clientMessageId: 'cm-g1-src-1', text: 'Atomic Client seems warm',
+    });
+    void src;
+    const srcInboundId = await inboundIdForClientMessage(shop, 'cm-g1-src-1');
+    const now = new Date().toISOString();
+    const runId = 'run_audit_g1';
+    await env.DB.prepare(
+      `INSERT INTO agent_runs (id, workspace_id, chat_id, source_message_id, executor_kind, status, created_at, updated_at)
+       VALUES (?, ?, ?, ?, 'agent', 'waiting_for_input', ?, ?)`,
+    ).bind(runId, shop.ws, shop.chatId, srcInboundId, now, now).run();
+    const clarId = 'clar_audit_g1';
+    const rev = await revision(shop.ws);
+    const fallbackOp = {
+      command: 'set_fields',
+      params: {
+        entity_id: entityId,
+        fields: [{ field_name: 'status', value: 'warm', provenance: 'inferred' }],
+      },
+    };
+    await env.DB.prepare(
+      `INSERT INTO pending_clarifications (
+         id, workspace_id, chat_id, run_id, source_message_id, requester_user_id,
+         question, intended_operation, missing_fields, candidates_json, operation_payload_json,
+         answer_message_id, source_revision, status, resolution_response, resolved_at, created_at, updated_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, 'set_fields', ?, ?, ?, NULL, ?, 'pending', NULL, NULL, ?, ?)`,
+    ).bind(
+      clarId, shop.ws, shop.chatId, runId, srcInboundId, shop.owner,
+      'Did you want to set the status of this lead to warm?',
+      JSON.stringify(['status_confirmation']), JSON.stringify(['confirm', 'cancel']),
+      JSON.stringify(fallbackOp), rev, now, now,
+    ).run();
+    await acceptWebMessage(env.DB, {
+      workspaceId: shop.ws, chatId: shop.chatId, userId: shop.owner,
+      clientMessageId: 'cm-g1-ans-1', text: 'confirm',
+    });
+    const ansInboundId = await inboundIdForClientMessage(shop, 'cm-g1-ans-1');
+
+    // Normalized approval plus an injected SQL failure: the whole batch,
+    // including the row sync, must roll back together (non-guard batch
+    // failures propagate; nothing persists).
+    const badStmt = env.DB.prepare(`INSERT INTO no_such_table (id) VALUES (?)`).bind('x');
+    await expect(
+      resumePendingClarification(
+        env.DB,
+        {
+          workspace_id: shop.ws,
+          action_id: `act_compat_${clarId}:resumed`,
+          actor: { kind: 'member', user_id: shop.owner },
+          membership_revision: 1,
+          request_id: 'req_audit_g1',
+          expected_business_revision: rev,
+          source_message_id: ansInboundId,
+          run_id: runId,
+          chat_id: shop.chatId,
+          resuming_clarification_id: clarId,
+        },
+        {
+          clarification_id: clarId,
+          resolved_fields: {},
+          resolution_response: 'confirm',
+          normalizedOperation: {
+            version: 1,
+            command_name: 'set_fields',
+            action_id: `act_compat_${clarId}`,
+            args: {
+              entity_id: entityId,
+              fields: [{ field_name: 'status', value: 'warm', provenance: 'inferred' }],
+              explicit_status_indexes: [0],
+            },
+            missing_fields: [],
+            source_revision: rev,
+          },
+          normalizedMissingFields: [],
+        },
+        undefined,
+        [badStmt],
+      ),
+    ).rejects.toThrow(/no such table/);
+    const after = await rowOp(shop, clarId);
+    expect(after.status).toBe('pending');
+    expect(after.op).not.toHaveProperty('command_name');
+    expect(after.missing).toEqual(['status_confirmation']);
+    expect(await entityStatus(shop, entityId)).toBe('new');
+  });
+
+  it('P1-1b/P2-4: failed confirm then cancel saves facts without applying status', async () => {
+    const setup = await legacySetup('g2', [
+      { field_name: 'phone', value: '+40999999999', provenance: 'stated' },
+      { field_name: 'status', value: 'warm', provenance: 'inferred' },
+    ]);
+    const { shop, entityId, clarId, runId } = setup;
+    await acceptWebMessage(env.DB, {
+      workspaceId: shop.ws, chatId: shop.chatId, userId: shop.owner,
+      clientMessageId: 'cm-g2-ans-1', text: 'confirm',
+    });
+    const ansInboundId = await inboundIdForClientMessage(shop, 'cm-g2-ans-1');
+
+    // Transient failure between approval and commit: the entity vanishes.
+    let armed = true;
+    const failed = await resumeRun(env.DB, {
+      workspaceId: shop.ws,
+      runId,
+      answer: { clarificationId: clarId, messageId: ansInboundId, authorUserId: shop.owner, text: 'confirm' },
+      testHooks: {
+        afterPrecheck: async () => {
+          if (armed) {
+            armed = false;
+            await env.DB.prepare(`DELETE FROM entities WHERE id = ?`).bind(entityId).run();
+          }
+        },
+      },
+    });
+    expect(failed.resumed).toBe(false);
+    // The row was never rewritten: a later answer still faces the fallback.
+    const afterFail = await rowOp(shop, clarId);
+    expect(afterFail.status).toBe('pending');
+    expect(afterFail.op).not.toHaveProperty('command_name');
+
+    // Restore the entity; declining now saves the phone but never the status.
+    const now = new Date().toISOString();
+    await env.DB.prepare(
+      `INSERT INTO entities (id, workspace_id, name, kind, status, assigned_user_id, created_at, updated_at)
+       VALUES (?, ?, ?, 'lead', 'new', NULL, ?, ?)`,
+    ).bind(entityId, shop.ws, `Fallback Client g2`, now, now).run();
+    const cancelled = await resumeRun(env.DB, {
+      workspaceId: shop.ws,
+      runId,
+      answer: { clarificationId: clarId, messageId: ansInboundId, authorUserId: shop.owner, text: 'cancel' },
+    });
+    expect(cancelled.resumed).toBe(true);
+    expect(await entityStatus(shop, entityId)).toBe('new');
+    expect(await fieldValue(shop, entityId, 'phone')).toContain('40999999999');
+    expect((await rowOp(shop, clarId)).status).toBe('cancelled');
+  });
+
+  it('P1-3: a guarded decline rejects removed membership', async () => {
+    const setup = await legacySetup('g3', [
+      { field_name: 'status', value: 'warm', provenance: 'inferred' },
+    ]);
+    const { shop, entityId, clarId, runId } = setup;
+    await acceptWebMessage(env.DB, {
+      workspaceId: shop.ws, chatId: shop.chatId, userId: shop.owner,
+      clientMessageId: 'cm-g3-ans-1', text: 'cancel',
+    });
+    const ansInboundId = await inboundIdForClientMessage(shop, 'cm-g3-ans-1');
+    let fired = false;
+    const res = await resumeRun(env.DB, {
+      workspaceId: shop.ws,
+      runId,
+      answer: { clarificationId: clarId, messageId: ansInboundId, authorUserId: shop.owner, text: 'cancel' },
+      testHooks: {
+        afterPrecheck: async () => {
+          if (!fired) {
+            fired = true;
+            await env.DB.prepare(`DELETE FROM workspace_users WHERE workspace_id = ? AND user_id = ?`)
+              .bind(shop.ws, shop.owner).run();
+          }
+        },
+      },
+    });
+    expect(res.resumed).toBe(false);
+    expect(res.failureReason).toBe('answer_invalid');
+    expect((await rowOp(shop, clarId)).status).toBe('pending');
+    expect(await entityStatus(shop, entityId)).toBe('new');
+  });
+
+  it('P1-2: replays follow the persisted question, never its ghost', async () => {
+    const shop = await makeShop('g4');
+    const entityId = await seedEntity(shop, 'g4-ent', 'Replay Client');
+    const turn = await runTurn(shop, 'cm-g4-mix-1', 'Replay Client called, seems warm', [
+      {
+        kind: 'tool_calls',
+        calls: [{
+          callId: 'c_sfrep',
+          name: 'set_fields',
+          args: {
+            entity_id: entityId,
+            fields: [
+              { field_name: 'phone', value: '+40111111111' },
+              { field_name: 'status', value: 'warm', provenance: 'inferred' },
+            ],
+          },
+        }],
+      },
+    ]);
+    expect(turn.status).toBe('waiting_for_input');
+    const receipt = await env.DB.prepare(
+      `SELECT action_id FROM action_receipts WHERE workspace_id = ? AND command_name = 'set_fields'
+       ORDER BY created_at DESC LIMIT 1`,
+    ).bind(shop.ws).first<{ action_id: string }>();
+    const parentActionId = receipt!.action_id;
+    const srcInboundId = await inboundIdForClientMessage(shop, 'cm-g4-mix-1');
+    const replayArgs = {
+      entity_id: entityId,
+      fields: [
+        { field_name: 'phone', value: '+40111111111', provenance: 'stated' },
+        { field_name: 'status', value: 'warm', provenance: 'inferred' },
+      ],
+    };
+    const replay = () =>
+      executeAgentTool({
+        db: env.DB, workspaceId: shop.ws, actorUserId: shop.owner, actionId: parentActionId,
+        sourceMessageId: srcInboundId, toolName: 'set_fields', toolArgs: replayArgs,
+        expectedBusinessRevision: 0,
+      });
+
+    // Retry while pending re-parks instead of skipping the question, and
+    // creates no duplicate row.
+    const retry = await replay();
+    expect(retry.status).toBe('needs_clarification');
+    const pendingCount = await env.DB.prepare(
+      `SELECT COUNT(*) AS n FROM pending_clarifications WHERE workspace_id = ? AND status = 'pending'`,
+    ).bind(shop.ws).first<{ n: number }>();
+    expect(Number(pendingCount?.n)).toBe(1);
+
+    // Answer the question, then replay: applied, asked nothing again.
+    const clar = await pendingQuestion(shop, turn.runId);
+    const reply = await answerQuestion(shop, clar!.id, 'confirm', 'cm-g4-ans-1');
+    expect(reply.status).toBe(202);
+    const afterAnswer = await replay();
+    expect(afterAnswer.status).toBe('already_applied');
+
+    // Question-only replay after a decline is terminal, never a re-ask.
+    const shopQ = await makeShop('g5');
+    const entityQ = await seedEntity(shopQ, 'g5-ent', 'Replay Solo');
+    const soloTurn = await runTurn(shopQ, 'cm-g5-solo-1', 'Replay Solo seems warm', [
+      {
+        kind: 'tool_calls',
+        calls: [{
+          callId: 'c_sfsolo',
+          name: 'set_fields',
+          args: { entity_id: entityQ, fields: [{ field_name: 'status', value: 'warm', provenance: 'inferred' }] },
+        }],
+      },
+    ]);
+    expect(soloTurn.status).toBe('waiting_for_input');
+    const soloReceipt = await env.DB.prepare(
+      `SELECT action_id FROM action_receipts WHERE workspace_id = ? AND command_name = 'set_fields'
+       ORDER BY created_at DESC LIMIT 1`,
+    ).bind(shopQ.ws).first<{ action_id: string }>();
+    const soloClar = await pendingQuestion(shopQ, soloTurn.runId);
+    const noQ = await answerQuestion(shopQ, soloClar!.id, 'cancel', 'cm-g5-ans-1');
+    expect(noQ.status).toBe(202);
+    const soloSrcInboundId = await inboundIdForClientMessage(shopQ, 'cm-g5-solo-1');
+    const ghost = await executeAgentTool({
+      db: env.DB, workspaceId: shopQ.ws, actorUserId: shopQ.owner, actionId: soloReceipt!.action_id,
+      sourceMessageId: soloSrcInboundId, toolName: 'set_fields',
+      toolArgs: {
+        entity_id: entityQ,
+        fields: [{ field_name: 'status', value: 'warm', provenance: 'inferred' }],
+      },
+      expectedBusinessRevision: 0,
+    });
+    expect(ghost.status).toBe('rejected');
+    expect(ghost.error?.code).toBe('already_resolved');
   });
 });
 

@@ -1822,6 +1822,16 @@ export interface ResumeClarificationOptions {
   clarification_id: string;
   resolved_fields: Record<string, unknown>;
   resolution_response?: string;
+  /**
+   * In-memory normalized operation (e.g. a legacy fallback intent approved
+   * by this answer). The row sync commits inside the same atomic batch as
+   * the effects — normalization never persists ahead of the guarded
+   * transaction, so a rolled-back approval cannot arm a later answer.
+   */
+  normalizedOperation?: PendingOperationPayload;
+  normalizedMissingFields?: string[];
+  /** Resolve the question normally, or cancel it (decline that still saves). */
+  questionDisposition?: 'resolved' | 'cancelled';
 }
 
 /**
@@ -1882,33 +1892,77 @@ export async function resumePendingClarification(
   }
 
   let pendingOp: PendingOperationPayload;
-  try {
-    pendingOp = JSON.parse(String(clar['operation_payload_json'])) as PendingOperationPayload;
-  } catch {
-    return {
-      status: 'rejected',
-      action_id: context.action_id,
-      error: {
-        code: 'corrupt_clarification',
-        message: `Clarification '${options.clarification_id}' has malformed operation payload JSON.`,
-      },
-    };
+  if (options.normalizedOperation) {
+    // In-memory normalization replaces the stored operation for this
+    // commit: validate the replacement here; the row sync inside the batch
+    // persists it only together with the effects.
+    const candidate = options.normalizedOperation;
+    if (
+      candidate.version !== 1 ||
+      typeof candidate.command_name !== 'string' ||
+      !candidate.args ||
+      typeof candidate.args !== 'object'
+    ) {
+      return {
+        status: 'rejected',
+        action_id: context.action_id,
+        error: { code: 'corrupt_clarification', message: 'Normalized operation payload is malformed.' },
+      };
+    }
+    pendingOp = { ...candidate };
+  } else {
+    try {
+      pendingOp = JSON.parse(String(clar['operation_payload_json'])) as PendingOperationPayload;
+    } catch {
+      return {
+        status: 'rejected',
+        action_id: context.action_id,
+        error: {
+          code: 'corrupt_clarification',
+          message: `Clarification '${options.clarification_id}' has malformed operation payload JSON.`,
+        },
+      };
+    }
+
+    if (pendingOp.version !== 1) {
+      return {
+        status: 'rejected',
+        action_id: context.action_id,
+        error: {
+          code: 'unsupported_version',
+          message: `Unsupported pending operation payload version: ${pendingOp.version}`,
+        },
+      };
+    }
   }
 
-  if (pendingOp.version !== 1) {
-    return {
-      status: 'rejected',
-      action_id: context.action_id,
-      error: {
-        code: 'unsupported_version',
-        message: `Unsupported pending operation payload version: ${pendingOp.version}`,
-      },
-    };
+  // The row sync is conditional on still-pending, so a concurrent
+  // resolution aborts the whole batch through the guard.
+  let syncStatements: D1PreparedStatement[] = [];
+  if (options.normalizedOperation) {
+    pendingOp = { ...options.normalizedOperation };
+    const nowSync = new Date().toISOString();
+    syncStatements = [
+      db
+        .prepare(
+          `UPDATE pending_clarifications
+           SET operation_payload_json = ?, missing_fields = ?, updated_at = ?
+           WHERE id = ? AND status = 'pending'`,
+        )
+        .bind(
+          JSON.stringify(pendingOp),
+          JSON.stringify(options.normalizedMissingFields ?? []),
+          nowSync,
+          options.clarification_id,
+        ),
+    ];
   }
 
   // 2. Validate and bound resolved_fields against clarification's missing_fields
   let allowedMissingFields: string[] = [];
-  if (clar['missing_fields']) {
+  if (options.normalizedOperation) {
+    allowedMissingFields = [...(options.normalizedMissingFields ?? [])];
+  } else if (clar['missing_fields']) {
     try {
       const parsed = JSON.parse(String(clar['missing_fields']));
       if (Array.isArray(parsed)) {
@@ -2051,25 +2105,29 @@ export async function resumePendingClarification(
     };
   }
 
-  // 5. Construct atomic statements to resolve the clarification and unblock the run
+  // 5. Construct atomic statements to resolve the clarification and unblock the run.
+  // The row sync (when normalizing) commits here too: approval metadata,
+  // answer resolution and effects land together or not at all.
   const now = new Date().toISOString();
+  const disposition = options.questionDisposition ?? 'resolved';
   const resolveStmt = db
     .prepare(
       `UPDATE pending_clarifications
-       SET status = 'resolved',
+       SET status = ?,
            resolution_response = ?,
            resolved_at = ?,
            updated_at = ?
        WHERE id = ? AND status = 'pending'`
     )
     .bind(
+      disposition,
       options.resolution_response || JSON.stringify(options.resolved_fields),
       now,
       now,
       options.clarification_id,
     );
 
-  const batchStatements: D1PreparedStatement[] = [resolveStmt];
+  const batchStatements: D1PreparedStatement[] = [...syncStatements, resolveStmt];
   if (extraStatements && extraStatements.length > 0) {
     batchStatements.push(...extraStatements);
   }

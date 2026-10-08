@@ -231,21 +231,18 @@ export async function getWorkspaceProjectionState(
   const core = await db.batch([
     db
       .prepare(
-        `SELECT id, workspace_id, name, kind, status, assigned_user_id, created_at, updated_at
+        `SELECT ${ENTITY_COLUMNS}
          FROM entities WHERE workspace_id = ?`,
       )
       .bind(workspaceId),
     db
       .prepare(
-        `SELECT id, workspace_id, entity_id, alias, source_event_id, created_at
-         FROM entity_aliases WHERE workspace_id = ?`,
+        `SELECT ${ALIAS_COLUMNS} FROM entity_aliases WHERE workspace_id = ?`,
       )
       .bind(workspaceId),
     db
       .prepare(
-        `SELECT id, workspace_id, entity_id, field_name, state, value_text, value_json,
-                provenance, source_event_id, candidate_event_ids_json, last_confirmed_value_text,
-                last_confirmed_value_json, revision, updated_at
+        `SELECT ${FIELD_COLUMNS}
          FROM entity_state WHERE workspace_id = ?`,
       )
       .bind(workspaceId),
@@ -409,11 +406,12 @@ export async function getWorkspaceProjectionState(
 
 /**
  * Targeted field hydration for trusted set_field / set_fields /
- * resolve_conflict handlers: one entity row, the requested field rows with
- * full dispute/source columns, and the entity's alias rows, in a single D1
- * read batch. Unrequested collections stay empty; the returned coverage
- * tells the executor exactly which keys the handler was allowed to touch.
- * An absent requested field is known absent, an unrequested field untouched.
+ * resolve_conflict handlers: one entity row plus the requested field rows
+ * with full dispute/source columns, in a single D1 read batch. These
+ * handlers never read or write aliases, tasks, drafts or memory, so those
+ * collections stay unloaded (and unbounded in the diff) rather than scaling
+ * every field write with the workspace. An absent requested field is known
+ * absent, an unrequested field untouched.
  */
 export async function getFieldProjectionState(
   db: D1Database,
@@ -436,11 +434,6 @@ export async function getFieldProjectionState(
     db
       .prepare(`SELECT ${ENTITY_COLUMNS} FROM entities WHERE workspace_id = ? AND id = ?`)
       .bind(workspaceId, entityId),
-    db
-      .prepare(
-        `SELECT ${ALIAS_COLUMNS} FROM entity_aliases WHERE workspace_id = ? AND entity_id = ?`,
-      )
-      .bind(workspaceId, entityId),
     distinctFields.length > 0
       ? db
           .prepare(
@@ -457,15 +450,8 @@ export async function getFieldProjectionState(
     const e = mapEntityRow(r);
     state.entities.set(e.id, e);
   }
-  const aliasKeys = new Set<string>();
-  for (const r of rowsAt(1)) {
-    const a = mapAliasRow(r);
-    const key = `${workspaceId}:${a.alias.toLowerCase()}`;
-    state.aliases.set(key, a);
-    aliasKeys.add(key);
-  }
   const fieldKeys = new Set<string>();
-  for (const r of rowsAt(2)) {
+  for (const r of rowsAt(1)) {
     const f = mapFieldRow(r);
     const key = `${f.entity_id}:${f.field_name}`;
     state.fields.set(key, f);
@@ -479,7 +465,7 @@ export async function getFieldProjectionState(
     state,
     coverage: {
       entities: new Set([entityId]),
-      aliases: aliasKeys,
+      aliases: new Set(),
       fields: fieldKeys,
       tasks: new Set(),
       drafts: new Set(),
@@ -489,6 +475,63 @@ export async function getFieldProjectionState(
   };
 }
 
+/**
+ * Finds the latest question (any status) for a ledger action, by the stored
+ * operation's action id. Recovery adapts clarification-bearing receipts
+ * against this row: an open question re-parks, a closed one never asks
+ * again, and a sourceless fresh park (no run context, no row) passes
+ * through untouched.
+ */
+export async function getQuestionByAction(
+  db: D1Database,
+  workspaceId: string,
+  actionId: string,
+): Promise<{
+  id: string;
+  status: string;
+  question: string;
+  missing_fields: string[];
+  candidates: string[] | null;
+  operation_payload_json: string;
+  source_revision: number;
+} | null> {
+  const row = await db
+    .prepare(
+      `SELECT id, status, question, missing_fields, candidates_json, operation_payload_json, source_revision
+       FROM pending_clarifications
+       WHERE workspace_id = ?
+         AND json_extract(operation_payload_json, '$.action_id') = ?
+       ORDER BY created_at DESC LIMIT 1`,
+    )
+    .bind(workspaceId, actionId)
+    .first<Record<string, unknown>>();
+  if (!row) return null;
+  let missing: string[] = [];
+  try {
+    const parsed = JSON.parse(String(row['missing_fields'] ?? '[]'));
+    if (Array.isArray(parsed)) missing = parsed.map(String);
+  } catch {
+    missing = [];
+  }
+  let candidates: string[] | null = null;
+  if (row['candidates_json']) {
+    try {
+      const parsed = JSON.parse(String(row['candidates_json']));
+      if (Array.isArray(parsed)) candidates = parsed.map(String);
+    } catch {
+      candidates = null;
+    }
+  }
+  return {
+    id: String(row['id']),
+    status: String(row['status'] ?? ''),
+    question: String(row['question'] ?? ''),
+    missing_fields: missing,
+    candidates,
+    operation_payload_json: String(row['operation_payload_json'] ?? ''),
+    source_revision: Number(row['source_revision'] ?? 0),
+  };
+}
 /**
  * Bounded lookup of action receipts by explicit action IDs, for the legacy
  * per-field (`<parent>_f<N>`) compatibility path. One roundtrip; the caller

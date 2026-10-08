@@ -15,6 +15,7 @@ import { resolveDateAnswer } from './clarificationFields.js';
  */
 
 import { claimWorkspaceLease, releaseWorkspaceLease, renewWorkspaceLease } from './leases.js';
+import type { PendingOperationPayload } from '@otis/contracts';
 import { workerDebug } from '../observability.js';
 import { liveChatBus } from '../chat/liveBus.js';
 import {
@@ -1512,6 +1513,42 @@ export async function dispatchWorkspace(
 }
 
 /**
+ * Aborting answer authorization: the answer source must still exist in this
+ * workspace, still belong to the requesting member, and that member must
+ * still hold membership — rechecked inside the committing transaction. Used
+ * by standard resumption and by every cancellation path, so a removal
+ * between the fast precheck and the commit fails the whole batch.
+ */
+const answerGuardSql = `(SELECT 1 FROM agent_runs r
+   JOIN pending_clarifications c ON c.run_id = r.id
+   JOIN messages_in am ON am.id = ?
+   WHERE r.id = ? AND r.workspace_id = ? AND r.status = 'waiting_for_input'
+     AND c.id = ? AND c.workspace_id = ? AND c.status = 'pending'
+     AND am.workspace_id = r.workspace_id
+     AND am.user_id = c.requester_user_id
+     AND (c.chat_id IS NULL OR am.chat_id IS NULL OR am.chat_id = c.chat_id)
+     AND EXISTS (
+       SELECT 1 FROM workspace_users wu
+       WHERE wu.workspace_id = r.workspace_id AND wu.user_id = am.user_id
+     ))`;
+
+function answerGuardInsert(
+  db: D1Database,
+  params: { workspaceId: string; runId: string; clarificationId: string; answerMessageId: string },
+): D1PreparedStatement {
+  return db
+    .prepare(`INSERT INTO acceptance_guards (id, guard_ok) VALUES (?, ${answerGuardSql}) ON CONFLICT(id) DO UPDATE SET guard_ok = excluded.guard_ok`)
+    .bind(
+      `guard_answer_${params.workspaceId}`,
+      params.answerMessageId,
+      params.runId,
+      params.workspaceId,
+      params.clarificationId,
+      params.workspaceId,
+    );
+}
+
+/**
  * Resumes a run parked in waiting_for_input. The member's answer is stored
  * durably on the clarification row (response text + optional source message)
  * so a restarted handler receives the actual answer, not the original
@@ -1723,6 +1760,9 @@ export async function resumeRun(
   // question pending, and verified already-committed children are excluded
   // before anything runs. Never upgrades arbitrary JSON into authority.
   let resolvedFieldsOverride: Record<string, unknown> | null = null;
+  let normalizedOperation: PendingOperationPayload | null = null;
+  let normalizedMissing: string[] | null = null;
+  let questionDisposition: 'resolved' | 'cancelled' | null = null;
   if (!isLedgerCommand && clar['operation_payload_json']) {
     let fallback: Record<string, unknown> | null = null;
     try {
@@ -1737,35 +1777,12 @@ export async function resumeRun(
     const fallbackFields = fallbackParams?.['fields'];
     if (fallback && typeof fallbackParams?.['entity_id'] === 'string' && Array.isArray(fallbackFields)) {
       const answerText = (params.answer.text || '').trim().toLowerCase();
-      if (STATUS_DECLINE_WORDS.has(answerText)) {
-        await db.batch([
-          db
-            .prepare(
-              `UPDATE pending_clarifications
-               SET status = 'cancelled', resolution_response = ?, answer_message_id = ?, resolved_at = ?, updated_at = ?
-               WHERE id = ? AND status = 'pending'`,
-            )
-            .bind(params.answer.text, params.answer.messageId, nowIso, nowIso, clarId),
-          db
-            .prepare(
-              `UPDATE agent_runs SET status = 'queued', updated_at = ?
-               WHERE id = ? AND workspace_id = ? AND status = 'waiting_for_input'`,
-            )
-            .bind(nowIso, params.runId, params.workspaceId),
-          outboxStmt,
-          msgInStmt,
-        ]);
-        return { resumed: true, ...(params.answer.clarificationId ? { clarificationId: clarId } : {}) };
-      }
-      if (!STATUS_CONFIRM_WORDS.has(answerText)) {
-        return { resumed: false, failureReason: 'answer_invalid' };
-      }
-      // Affirmative: keep every field, approve every status in it, and drop
-      // children whose exact old payload already committed under this run.
       const entityId = String(fallbackParams['entity_id']);
       const items = (fallbackFields as Record<string, unknown>[]).filter(
         (f) => f && typeof f === 'object' && typeof f['field_name'] === 'string',
       );
+      // Verified already-committed children (exact old payload hash under
+      // this run) are excluded before anything runs.
       const committedHashes = new Set(
         (
           await db
@@ -1799,13 +1816,68 @@ export async function resumeRun(
           });
         }
       }
-      if (remaining.length > 0) {
-        const compatActionId = `act_compat_${clarId}`;
-        const compatRev = await db
-          .prepare(`SELECT business_revision FROM workspaces WHERE id = ?`)
-          .bind(params.workspaceId)
-          .first<{ business_revision: number }>();
-        const normalizedOp = {
+      const compatActionId = `act_compat_${clarId}`;
+      const compatRev = await db
+        .prepare(`SELECT business_revision FROM workspaces WHERE id = ?`)
+        .bind(params.workspaceId)
+        .first<{ business_revision: number }>();
+      if (STATUS_DECLINE_WORDS.has(answerText)) {
+        const saveable = remaining.filter((item) => item.field_name !== 'status');
+        if (saveable.length === 0) {
+          // Status-only decline: guarded plain cancel, no effects at all.
+          try {
+            await db.batch([
+              answerGuardInsert(db, {
+                workspaceId: params.workspaceId,
+                runId: params.runId,
+                clarificationId: clarId,
+                answerMessageId: params.answer.messageId,
+              }),
+              db
+                .prepare(
+                  `UPDATE pending_clarifications
+                   SET status = 'cancelled', resolution_response = ?, answer_message_id = ?, resolved_at = ?, updated_at = ?
+                   WHERE id = ? AND status = 'pending'`,
+                )
+                .bind(params.answer.text, params.answer.messageId, nowIso, nowIso, clarId),
+              db
+                .prepare(
+                  `UPDATE agent_runs SET status = 'queued', updated_at = ?
+                   WHERE id = ? AND workspace_id = ? AND status = 'waiting_for_input'`,
+                )
+                .bind(nowIso, params.runId, params.workspaceId),
+              outboxStmt,
+              msgInStmt,
+            ]);
+          } catch (err) {
+            if (isGuardFailure(err)) return { resumed: false, failureReason: 'answer_invalid' };
+            throw err;
+          }
+          return { resumed: true, ...(params.answer.clarificationId ? { clarificationId: clarId } : {}) };
+        }
+        // Decline with independent facts: save the validated remainder
+        // through the guarded writer while cancelling only the status.
+        normalizedOperation = {
+          version: 1,
+          command_name: 'set_fields',
+          action_id: compatActionId,
+          args: { entity_id: entityId, fields: saveable, explicit_status_indexes: [] },
+          missing_fields: [],
+          source_revision: Number(compatRev?.business_revision ?? 0),
+        };
+        normalizedMissing = [];
+        questionDisposition = 'cancelled';
+        isLedgerCommand = true;
+        pendingOpActionId = compatActionId;
+        resolvedFieldsOverride = {};
+      } else if (!STATUS_CONFIRM_WORDS.has(answerText)) {
+        return { resumed: false, failureReason: 'answer_invalid' };
+      } else if (remaining.length > 0) {
+        // Affirmative: keep every field, approve every status in it.
+        // Normalization stays in memory; the row sync commits inside the
+        // same guarded transaction as the effects, so a rolled-back
+        // approval can never arm a later answer.
+        normalizedOperation = {
           version: 1,
           command_name: 'set_fields',
           action_id: compatActionId,
@@ -1816,17 +1888,10 @@ export async function resumeRun(
               .map((item, index) => (item.field_name === 'status' ? index : -1))
               .filter((index) => index >= 0),
           },
-          missing_fields: [] as string[],
+          missing_fields: [],
           source_revision: Number(compatRev?.business_revision ?? 0),
         };
-        await db
-          .prepare(
-            `UPDATE pending_clarifications
-             SET operation_payload_json = ?, missing_fields = ?, updated_at = ?
-             WHERE id = ? AND status = 'pending'`,
-          )
-          .bind(JSON.stringify(normalizedOp), '[]', nowIso, clarId)
-          .run();
+        normalizedMissing = [];
         isLedgerCommand = true;
         pendingOpActionId = compatActionId;
         resolvedFieldsOverride = {};
@@ -1889,6 +1954,13 @@ export async function resumeRun(
         clarification_id: clarId,
         resolved_fields: resolvedFields,
         resolution_response: params.answer.text,
+        ...(normalizedOperation
+          ? {
+              normalizedOperation,
+              normalizedMissingFields: normalizedMissing ?? [],
+              ...(questionDisposition ? { questionDisposition } : {}),
+            }
+          : {}),
       },
       undefined,
       [outboxStmt, msgInStmt, setAnswerMsgStmt],
@@ -1925,36 +1997,14 @@ export async function resumeRun(
     return { resumed: false };
   }
 
-  // 5. Standard non-ledger clarification resumption. The guard repeats the
-  // answer authorization inside the committing transaction: the answer source
-  // must still exist in this workspace, still belong to the requesting member,
-  // and that member must still hold workspace membership. A removal between
-  // the fast pre-check and the commit therefore fails the whole batch.
-  const guard = `(SELECT 1 FROM agent_runs r
-     JOIN pending_clarifications c ON c.run_id = r.id
-     JOIN messages_in am ON am.id = ?
-     WHERE r.id = ? AND r.workspace_id = ? AND r.status = 'waiting_for_input'
-       AND c.id = ? AND c.workspace_id = ? AND c.status = 'pending'
-       AND am.workspace_id = r.workspace_id
-       AND am.user_id = c.requester_user_id
-       AND (c.chat_id IS NULL OR am.chat_id IS NULL OR am.chat_id = c.chat_id)
-       AND EXISTS (
-         SELECT 1 FROM workspace_users wu
-         WHERE wu.workspace_id = r.workspace_id AND wu.user_id = am.user_id
-       ))`;
-
   try {
     await db.batch([
-      db
-        .prepare(`INSERT INTO acceptance_guards (id, guard_ok) VALUES (?, ${guard}) ON CONFLICT(id) DO UPDATE SET guard_ok = excluded.guard_ok`)
-        .bind(
-          `guard_answer_${params.workspaceId}`,
-          params.answer.messageId,
-          params.runId,
-          params.workspaceId,
-          clarId,
-          params.workspaceId,
-        ),
+      answerGuardInsert(db, {
+        workspaceId: params.workspaceId,
+        runId: params.runId,
+        clarificationId: clarId,
+        answerMessageId: params.answer.messageId,
+      }),
       db
         .prepare(`UPDATE agent_runs SET status = 'queued', updated_at = ? WHERE id = ? AND status = 'waiting_for_input'`)
         .bind(nowIso, params.runId),

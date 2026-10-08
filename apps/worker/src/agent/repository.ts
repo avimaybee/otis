@@ -47,6 +47,7 @@ import {
   DEFAULT_COMMAND_HANDLERS,
   executeLedgerCommand,
   getActionReceiptsByIds,
+  getQuestionByAction,
   getWorkspaceActions,
   getWorkspaceEvents,
   handleUndoCommit,
@@ -1274,11 +1275,31 @@ export async function executeAgentTool(
       }
 
       if (committedChildIndexes.size > 0) {
-        // Narrow legacy completion: replayed children already advanced the
-        // workspace before this call; remaining writes execute against the
-        // live revision (a race fails honestly as revision_conflict, never
-        // a silent rebase). Sequential by necessity — never claimed atomic.
-        let currentRevision = effectiveExpectedRevision;
+        // Narrow legacy completion: the resume floor is the higher of the
+        // request revision and the highest verified child revision. The live
+        // revision must equal it exactly — anything above is an unexplained
+        // teammate change and conflicts instead of silently rebasing.
+        // Sequential by necessity, never claimed atomic.
+        const matchedMaxRev = Math.max(
+          ...[...committedChildIndexes].map((i) => receiptByActionId.get(childActionIds[i]!)!.committed_revision),
+        );
+        const liveRevRow = await db
+          .prepare(`SELECT business_revision FROM workspaces WHERE id = ?`)
+          .bind(workspaceId)
+          .first<{ business_revision: number }>();
+        const liveRev = Number(liveRevRow?.business_revision ?? effectiveExpectedRevision);
+        const floor = Math.max(effectiveExpectedRevision, matchedMaxRev);
+        if (liveRev !== floor) {
+          return {
+            status: 'conflict',
+            action_id: actionId,
+            error: {
+              code: 'revision_conflict',
+              message: `Workspace revision ${liveRev} is not explained by the ${committedChildIndexes.size} verified prior child commit(s) from revision ${effectiveExpectedRevision}. Refetch and retry with a fresh revision.`,
+            },
+          };
+        }
+        let currentRevision = liveRev;
         const appliedFieldNames = childItems
           .filter((_, i) => committedChildIndexes.has(i))
           .map((item) => item.field_name);
@@ -1349,15 +1370,38 @@ export async function executeAgentTool(
 
       // Mixed commit: facts saved, uncertain status parked. Expose
       // needs_clarification with the committed revision/events so the run
-      // parks normally while the saved work stays visible.
-      if (batchRes.status === 'applied' && batchRes.clarification) {
+      // parks normally while the saved work stays visible. Replays resolve
+      // against the persisted question row: an open question re-parks (the
+      // actor dedupes), a closed one returns the standing outcome, and a
+      // rowless fresh park passes through untouched.
+      if (batchRes.status === 'applied' || batchRes.status === 'already_applied') {
+        if (!batchRes.clarification) return batchRes;
+        const knownQ = await getQuestionByAction(db, workspaceId, actionId);
+        if (!knownQ || knownQ.status === 'pending') {
+          if (!knownQ) return batchRes;
+          return {
+            status: 'needs_clarification',
+            action_id: actionId,
+            committed_revision: batchRes.committed_revision,
+            summary: batchRes.summary,
+            clarification: batchRes.clarification,
+            data: batchRes.data,
+          };
+        }
+        return batchRes;
+      }
+      if (batchRes.status === 'needs_clarification' && batchRes.clarification) {
+        // Question-only: a fresh park just created its row. A replay whose
+        // question already resolved or cancelled must not park again.
+        const knownQ = await getQuestionByAction(db, workspaceId, actionId);
+        if (!knownQ || knownQ.status === 'pending') return batchRes;
         return {
-          status: 'needs_clarification',
+          status: 'rejected',
           action_id: actionId,
-          committed_revision: batchRes.committed_revision,
-          summary: batchRes.summary,
-          clarification: batchRes.clarification,
-          data: batchRes.data,
+          error: {
+            code: 'already_resolved',
+            message: 'That question was already answered; nothing remains to apply.',
+          },
         };
       }
       return batchRes;
