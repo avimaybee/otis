@@ -3,7 +3,8 @@ import {
   Terminal, FileText, Check, Pencil, Copy, ArrowDown, AlertCircle,
   SlidersHorizontal, Mic, Play, Pause, MoreVertical, Trash2, Plus,
   Table, Filter, Sparkles, History, Save, Redo2, LayoutList,
-  Calculator, Calendar, DollarSign, Phone, Hash, Type, Download
+  Calculator, Calendar, DollarSign, Phone, Hash, Type, Download,
+  User, Users, Briefcase
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 function icon(Component: LucideIcon, defaultSize = 18) {
@@ -48,5 +49,8 @@ export const PhoneIcon = icon(Phone, 14);
 export const HashIcon = icon(Hash, 14);
 export const TypeIcon = icon(Type, 14);
 export const DownloadIcon = icon(Download, 16);
+export const UserIcon = icon(User, 16);
+export const UsersIcon = icon(Users, 16);
+export const BriefcaseIcon = icon(Briefcase, 16);
 
 

@@ -55,7 +55,7 @@
   padding: 0;
 }
 .otis-overlay.otis-overlay--dialog.otis-overlay--wide {
-  width: min(580px, calc(100vw - 32px));
+  width: min(600px, calc(100vw - 32px));
   max-height: min(85dvh, 640px);
 }
 .otis-overlay.otis-overlay--dialog::backdrop {
@@ -100,29 +100,26 @@
   flex: none;
 }
 
-/* Settings dialog: rounded-xl bg-popover, padding 24. Width pending recipe. */
-.otis-overlay.otis-overlay--settings { width: min(600px, calc(100vw - 32px)); height: auto; max-height: calc(var(--app-viewport-height, 100dvh) - 48px); margin: auto; border-radius: 16px; border: 1px solid var(--border); background: var(--popover); box-shadow: var(--shadow-popover); overflow: visible; }
-.otis-settings { display: flex; width: 100%; max-height: calc(var(--app-viewport-height, 100dvh) - 48px); min-height: 0; flex-direction: column; gap: 16px; padding: 24px; overflow: hidden; }
-.otis-settings__tabs { display: flex; gap: 4px; flex: none; border-bottom: 1px solid var(--border); }
-.otis-settings__tabs button { min-height: 44px; padding: 8px 12px; border: 0; border-bottom: 2px solid transparent; background: transparent; color: var(--muted-foreground); transition: color 150ms ease-out, border-color 150ms ease-out; cursor: pointer; }
-.otis-settings__tabs button:hover:not([aria-selected='true']) { color: var(--foreground); }
-.otis-settings__tabs button[aria-selected='true'] { border-bottom-color: var(--foreground); color: var(--foreground); font-weight: 500; }
-.otis-settings__content { flex: 1; min-height: 0; overflow-y: auto; scrollbar-width: thin; }
-.otis-settings__section { display: flex; flex-direction: column; gap: 8px; margin-bottom: 24px; }
-.otis-settings__row { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; }
-.otis-settings__provider { padding: 12px 0; }
-.otis-settings__provider + .otis-settings__provider { border-top: 1px solid var(--border); }
-.otis-settings__provider form { display: flex; flex-direction: column; gap: 8px; margin-top: 12px; }
-.otis-settings .otis-detail__label { color: var(--muted-foreground); }
+/* Settings dialog (Codex-style two-column desktop window): rounded-xl bg-card */
+.otis-overlay.otis-overlay--settings { width: min(880px, calc(100vw - 32px)); height: min(640px, calc(var(--app-viewport-height, 100dvh) - 48px)); margin: auto; border-radius: 16px; border: 1px solid var(--border); background: var(--card); box-shadow: var(--shadow-popover); overflow: hidden; padding: 0; }
+.otis-settings { display: flex; width: 100%; height: 100%; min-height: 0; overflow: hidden; background: var(--card); }
+.otis-settings__sidebar { display: flex; width: 232px; flex-shrink: 0; flex-direction: column; gap: 16px; padding: 16px; border-right: 1px solid var(--border); background: var(--sidebar); overflow-y: auto; scrollbar-width: thin; }
+.otis-settings__nav-item { display: flex; align-items: center; gap: 8px; width: 100%; min-height: 32px; padding: 4px 8px; border-radius: 8px; border: 0; background: transparent; color: var(--muted-foreground); text-align: left; cursor: pointer; transition: background-color 150ms ease-out, color 150ms ease-out; }
+.otis-settings__nav-item:hover { background: var(--sidebar-hover); color: var(--foreground); }
+.otis-settings__nav-item[aria-selected='true'] { background: var(--accent); color: var(--foreground); font-weight: 500; }
+.otis-settings__main { display: flex; flex: 1; min-width: 0; flex-direction: column; overflow: hidden; background: var(--background); }
+.otis-settings__header { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 16px 24px; border-bottom: 1px solid var(--border); flex-shrink: 0; background: var(--card); }
+.otis-settings__body { display: flex; flex: 1; flex-direction: column; min-height: 0; overflow-y: auto; padding: 24px; scrollbar-width: thin; gap: 24px; }
+.otis-settings__card { display: flex; flex-direction: column; gap: 16px; padding: 16px; border-radius: 12px; border: 1px solid var(--border); background: var(--card); }
+.otis-settings__card-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+.otis-settings__card-divider { border: 0; border-top: 1px solid var(--border); margin: 0; }
 .otis-settings__footer { display: flex; align-items: center; justify-content: space-between; flex: none; gap: 12px; padding-top: 8px; color: var(--muted-foreground); }
-.otis-settings__error { margin: 8px 0; color: var(--destructive); }
-@media (max-width: 600px) {
+@media (max-width: 640px) {
   .otis-overlay.otis-overlay--dialog { width: calc(100vw - 32px); margin: auto; border-radius: 16px; }
   .otis-overlay.otis-overlay--settings { width: 100%; height: var(--app-viewport-height, 100dvh); max-height: none; border: 0; border-radius: 0; }
-  .otis-settings { padding: calc(12px + env(safe-area-inset-top)) 16px calc(12px + env(safe-area-inset-bottom)); }
-  .otis-overlay--settings .otis-settings { height: 100%; max-height: none; }
-  .otis-settings__row button,
-  .otis-settings__footer button { min-height: 44px; }
+  .otis-settings { flex-direction: column; }
+  .otis-settings__sidebar { width: 100%; flex-shrink: 0; border-right: 0; border-bottom: 1px solid var(--border); padding: 12px 16px; gap: 8px; }
+  .otis-settings__body { padding: 16px; gap: 16px; }
 }
 
 /* Change detail dialog: bounded intermediate dialog on desktop/tablet, full screen on phone. */
