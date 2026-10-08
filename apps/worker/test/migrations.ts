@@ -40,6 +40,8 @@ import sql18 from '../../../migrations/0019_workspace_erasures.sql?raw';
 import sql19 from '../../../migrations/0020_quote_text_major_units.sql?raw';
 // @ts-expect-error Vite raw SQL import
 import sql20 from '../../../migrations/0021_entity_deleted_kind.sql?raw';
+// @ts-expect-error Vite raw SQL import
+import sql21 from '../../../migrations/0022_member_interpretation_timezone.sql?raw';
 export async function applyMigrationSql(db: D1Database, sql: string) {
   let statement = ''; let trigger = false;
   const run = async (stmt: string) => { await db.prepare(stmt).run(); };
@@ -52,7 +54,7 @@ export async function applyMigrationSql(db: D1Database, sql: string) {
   if (statement.trim()) await run(statement);
 }
 export async function applyMigrations(db: D1Database) {
-  for (const sql of [sql0, sql1, sql2, sql3, sql4, sql5, sql6, sql7, sql8, sql9, sql10, sql11, sql12, sql13, sql14, sql15, sql16, sql17, sql18, sql19, sql20]) {
+  for (const sql of [sql0, sql1, sql2, sql3, sql4, sql5, sql6, sql7, sql8, sql9, sql10, sql11, sql12, sql13, sql14, sql15, sql16, sql17, sql18, sql19, sql20, sql21]) {
     await applyMigrationSql(db, sql);
   }
 }

@@ -118,7 +118,7 @@ export async function getTurnContext(
   const wave = await db.batch([
     db.prepare(`SELECT name, business_revision FROM workspaces WHERE id = ?`).bind(workspaceId),
     db.prepare(
-      `SELECT preferred_language, brief_enabled, brief_local_time, brief_timezone, brief_weekdays, brief_channel
+      `SELECT preferred_language, brief_enabled, brief_local_time, brief_timezone, interpretation_timezone, brief_weekdays, brief_channel
        FROM member_settings WHERE workspace_id = ? AND user_id = ?`,
     ).bind(workspaceId, actorUserId),
     db.prepare(
@@ -473,7 +473,14 @@ export async function getTurnContext(
 
   // 7. Render dynamic context for system prompt
   const effectiveNowIso = params.nowIso || new Date().toISOString();
-  const tz = memberPreferences?.briefTimezone ?? undefined;
+  // Interpretation zone: device-reported first, brief schedule second,
+  // unknown otherwise (never invented — the prompt says to ask).
+  const briefTz = typeof memberRow?.['brief_timezone'] === 'string' && memberRow['brief_timezone']
+    ? String(memberRow['brief_timezone'])
+    : undefined;
+  const tz = (typeof memberRow?.['interpretation_timezone'] === 'string' && memberRow['interpretation_timezone']
+    ? String(memberRow['interpretation_timezone'])
+    : undefined) ?? briefTz;
 
   // Query unresolved disputed fields in this workspace
   const disputedRows = (rowsAt(7) as { field_name: string; entity_name: string }[]);

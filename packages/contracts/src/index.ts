@@ -195,6 +195,11 @@ export interface MemberSettings {
   brief_enabled: boolean;
   brief_local_time: string | null;
   brief_timezone: string | null;
+  /**
+   * Device-reported IANA zone for interpreting the member's relative dates.
+   * Server-derived from message telemetry, never a brief-schedule override.
+   */
+  interpretation_timezone: string | null;
   /** Selected weekdays as 0 (Sunday) through 6 (Saturday). */
   brief_weekdays: number[] | null;
   brief_channel: 'web' | 'telegram';
@@ -467,6 +472,12 @@ export interface CreateChatMessageRequest {
   /** Validated still-image uploads attached to this message (at most IMAGE_BOUNDS.MAX_PER_MESSAGE). */
   image_media_ids?: string[];
   clarification_id?: string;
+  /**
+   * Device-reported IANA timezone of the sender, stored as the member's
+   * interpretation zone for relative dates. Optional telemetry, never
+   * required; invalid values are rejected like any other bad field.
+   */
+  timezone?: string;
 }
 
 export interface AcceptMessageResponse {

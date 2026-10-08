@@ -8,7 +8,8 @@ import migration0002Sql from '../../../migrations/0002_conversations_sources.sql
 import migration0004Sql from '../../../migrations/0004_lifecycle_settings.sql?raw';
 // @ts-expect-error vite raw import
 import migration0016Sql from '../../../migrations/0016_brief_next_due.sql?raw';
-import { AUTH_BOUNDS } from '@otis/contracts';
+// @ts-expect-error vite raw import
+import migration0022Sql from '../../../migrations/0022_member_interpretation_timezone.sql?raw';import { AUTH_BOUNDS } from '@otis/contracts';
 import type { HttpErrorResponse } from '@otis/contracts';
 import {
   acceptInvite,
@@ -62,7 +63,7 @@ describe('Worker Lifecycle, Settings & Credentials Integration (workerd)', () =>
   }
 
   beforeAll(async () => {
-    for (const sql of [migration0001Sql, migration0002Sql, migration0004Sql, migration0016Sql]) {
+    for (const sql of [migration0001Sql, migration0002Sql, migration0004Sql, migration0016Sql, migration0022Sql]) {
       const statements = sql
         .split(';')
         .map((s: string) => s.trim())

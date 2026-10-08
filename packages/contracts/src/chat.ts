@@ -55,6 +55,16 @@ export function validateChatMessageRequest(value: unknown): DtoValidation<Create
     return { valid: false, message: `Text must contain 1–${DOMAIN_BOUNDS.MAX_INPUT_CHARS} characters.` };
   }
   if (body.clarification_id !== undefined && (typeof body.clarification_id !== 'string' || !/^[A-Za-z0-9_-]{1,128}$/.test(body.clarification_id))) return { valid: false, message: 'Invalid clarification_id.' };
+  if (body.timezone !== undefined) {
+    if (typeof body.timezone !== 'string' || body.timezone.length === 0 || body.timezone.length > 64) {
+      return { valid: false, message: 'Invalid timezone.' };
+    }
+    try {
+      new Intl.DateTimeFormat('en-US', { timeZone: body.timezone });
+    } catch {
+      return { valid: false, message: 'Invalid timezone.' };
+    }
+  }
   return {
     valid: true,
     value: {
@@ -63,6 +73,7 @@ export function validateChatMessageRequest(value: unknown): DtoValidation<Create
       ...(hasMedia ? { media_id: mediaId as string } : {}),
       ...(hasImages ? { image_media_ids: imageMediaIds } : {}),
       ...(body.clarification_id ? { clarification_id: body.clarification_id as string } : {}),
+      ...(typeof body.timezone === 'string' ? { timezone: body.timezone } : {}),
     },
   };
 }

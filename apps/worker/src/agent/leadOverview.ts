@@ -191,10 +191,10 @@ export async function readLeadOverview(
   let memberTimezone: string | null = null;
   if (args.actorUserId) {
     const tzRow = await db
-      .prepare(`SELECT brief_timezone FROM member_settings WHERE workspace_id = ? AND user_id = ?`)
+      .prepare(`SELECT brief_timezone, interpretation_timezone FROM member_settings WHERE workspace_id = ? AND user_id = ?`)
       .bind(args.workspaceId, args.actorUserId)
-      .first<{ brief_timezone: string | null }>();
-    if (tzRow?.brief_timezone) memberTimezone = tzRow.brief_timezone;
+      .first<{ brief_timezone: string | null; interpretation_timezone: string | null }>();
+    memberTimezone = tzRow?.interpretation_timezone || tzRow?.brief_timezone || null;
   }
   const localDate = localDateInTimezone(nowIso, memberTimezone);
 

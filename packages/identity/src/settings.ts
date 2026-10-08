@@ -95,6 +95,7 @@ function defaultMemberSettings(workspaceId: string, userId: string, nowIso: stri
     brief_enabled: false,
     brief_local_time: null,
     brief_timezone: null,
+    interpretation_timezone: null,
     brief_weekdays: null,
     brief_channel: 'web',
     preferred_language: 'en',
@@ -125,6 +126,7 @@ function rowToMemberSettings(
     brief_enabled: Number(row['brief_enabled']) === 1,
     brief_local_time: row['brief_local_time'] ? String(row['brief_local_time']) : null,
     brief_timezone: row['brief_timezone'] ? String(row['brief_timezone']) : null,
+    interpretation_timezone: row['interpretation_timezone'] ? String(row['interpretation_timezone']) : null,
     brief_weekdays: weekdays,
     brief_channel: row['brief_channel'] === 'telegram' ? 'telegram' : 'web',
     preferred_language: String(row['preferred_language'] ?? 'en'),
@@ -139,7 +141,7 @@ export async function getMemberSettings(
 ): Promise<MemberSettings> {
   const row = await db
     .prepare(
-      `SELECT brief_enabled, brief_local_time, brief_timezone, brief_weekdays,
+      `SELECT brief_enabled, brief_local_time, brief_timezone, interpretation_timezone, brief_weekdays,
               brief_channel, preferred_language, created_at, updated_at
        FROM member_settings WHERE workspace_id = ? AND user_id = ?`
     )

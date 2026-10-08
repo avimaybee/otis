@@ -60,6 +60,18 @@ describe('voice contract validation', () => {
     expect(emptyTextNoMedia.valid).toBe(false);
   });
 
+  it('accepts a valid IANA timezone and rejects bogus ones', () => {
+    const withZone = validateChatMessageRequest({ client_message_id: 'cm_1', text: 'hi', timezone: 'Europe/Bucharest' });
+    expect(withZone.valid).toBe(true);
+    if (withZone.valid) expect(withZone.value.timezone).toBe('Europe/Bucharest');
+    const withoutZone = validateChatMessageRequest({ client_message_id: 'cm_1', text: 'hi' });
+    expect(withoutZone.valid).toBe(true);
+    if (withoutZone.valid) expect(withoutZone.value.timezone).toBeUndefined();
+    expect(validateChatMessageRequest({ client_message_id: 'cm_1', text: 'hi', timezone: 'Not/AZone' }).valid).toBe(false);
+    expect(validateChatMessageRequest({ client_message_id: 'cm_1', text: 'hi', timezone: '' }).valid).toBe(false);
+    expect(validateChatMessageRequest({ client_message_id: 'cm_1', text: 'hi', timezone: 42 }).valid).toBe(false);
+  });
+
   it('validates STT settings updates against the approved models and rejects client evidence', () => {
     expect(validateUpdateVoiceSettingsRequest({ enabled: true, model: 'whisper-large-v3-turbo' }).valid).toBe(true);
     const invalidModel = validateUpdateVoiceSettingsRequest({ model: 'whisper-tiny' });

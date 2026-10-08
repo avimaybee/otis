@@ -19,6 +19,8 @@ import migration0008Sql from '../../../migrations/0008_memory_and_agent_runs.sql
 // @ts-expect-error vite raw import
 import migration0009Sql from '../../../migrations/0009_thinking_controls.sql?raw';
 // @ts-expect-error vite raw import
+import migration0022Sql from '../../../migrations/0022_member_interpretation_timezone.sql?raw';
+// @ts-expect-error vite raw import
 import migration0012Sql from '../../../migrations/0012_voice_media.sql?raw';
 // @ts-expect-error vite raw import
 import migration0015Sql from '../../../migrations/0015_message_image_attachments.sql?raw';
@@ -116,6 +118,7 @@ describe('Worker Agent Loop, Recovery & Clarification Integration (006B workerd)
       migration0009Sql,
       migration0012Sql,
       migration0015Sql,
+      migration0022Sql,
     ]) {
       for (const stmt of splitSqlStatements(sql)) {
         await env.DB.prepare(stmt).run();

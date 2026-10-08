@@ -207,7 +207,7 @@ describe('End-to-End UI to Backend Flow Verification', () => {
 
     // Verify backend call flow
     expect(createChatSpy).toHaveBeenCalledWith(WS, expect.stringMatching(/^new-/), expect.anything());
-    expect(sendMessageSpy).toHaveBeenCalledWith(WS, 'chat_new_1', expect.any(String), 'Hello Otis, need a proposal', undefined, undefined, expect.anything());
+    expect(sendMessageSpy).toHaveBeenCalledWith(WS, 'chat_new_1', expect.any(String), 'Hello Otis, need a proposal', undefined, undefined, expect.anything(), undefined, expect.any(String));
 
     // Verify URL navigation
     expect(location.search).toContain('chat=chat_new_1');
@@ -629,7 +629,7 @@ describe('End-to-End UI to Backend Flow Verification', () => {
     expect(composerTextarea.value).toBe('');
     await fill(composerTextarea, 'Just a note');
     await React.act(async () => (view.host.querySelector('[aria-label="Send"]') as HTMLButtonElement).click());
-    expect(sendSpy).toHaveBeenCalledWith(WS, 'chat_clarify_1', expect.any(String), 'Just a note', undefined, undefined, expect.anything());
+    expect(sendSpy).toHaveBeenCalledWith(WS, 'chat_clarify_1', expect.any(String), 'Just a note', undefined, undefined, expect.anything(), undefined, expect.any(String));
 
     // The panel answers with its own field and Send, carrying the question id.
     const panelTextarea = panel.querySelector('textarea') as HTMLTextAreaElement;
@@ -638,7 +638,7 @@ describe('End-to-End UI to Backend Flow Verification', () => {
     await React.act(async () => panelSend.click());
 
     // Verify clarification_id was passed to sendMessage
-    expect(sendSpy).toHaveBeenCalledWith(WS, 'chat_clarify_1', expect.any(String), 'At 2:00 PM', 'clarification_123', undefined, expect.anything());
+    expect(sendSpy).toHaveBeenCalledWith(WS, 'chat_clarify_1', expect.any(String), 'At 2:00 PM', 'clarification_123', undefined, expect.anything(), undefined, expect.any(String));
 
     await view.unmount();
   });
@@ -736,7 +736,7 @@ describe('End-to-End UI to Backend Flow Verification', () => {
     await fill(panelTextarea, 'At 2:00 PM');
     const panelSend = Array.from(panel.querySelectorAll('button')).find((button) => button.textContent === 'Send') as HTMLButtonElement;
     await React.act(async () => panelSend.click());
-    expect(sendSpy).toHaveBeenCalledWith(WS, 'chat_clarify_503', expect.any(String), 'At 2:00 PM', 'clarification_503', undefined, expect.anything());
+    expect(sendSpy).toHaveBeenCalledWith(WS, 'chat_clarify_503', expect.any(String), 'At 2:00 PM', 'clarification_503', undefined, expect.anything(), undefined, expect.any(String));
 
     // …and the retry recovers the authoritative list, clearing the outage UI.
     // The button is re-queried: answering re-rendered the transcript, so the
@@ -974,6 +974,7 @@ describe('End-to-End UI to Backend Flow Verification', () => {
       user_id: USER,
       preferred_language: 'en',
       brief_timezone: null,
+      interpretation_timezone: null,
       brief_enabled: false,
       brief_local_time: null,
       brief_weekdays: null,
@@ -1046,6 +1047,7 @@ describe('End-to-End UI to Backend Flow Verification', () => {
       user_id: USER,
       preferred_language: 'en',
       brief_timezone: null,
+      interpretation_timezone: null,
       brief_enabled: false,
       brief_local_time: null,
       brief_weekdays: null,
@@ -1265,7 +1267,7 @@ describe('008B new-chat ordering and recovery (R8)', () => {
     expect(view.host.textContent).toContain('Sending…');
     // Fast chat creation posted the message while the sidebar refetch hangs.
     expect(sendSpy).toHaveBeenCalledTimes(1);
-    expect(sendSpy).toHaveBeenCalledWith(WS, 'chat_new_9', expect.any(String), 'First hello', undefined, undefined, expect.anything());
+    expect(sendSpy).toHaveBeenCalledWith(WS, 'chat_new_9', expect.any(String), 'First hello', undefined, undefined, expect.anything(), undefined, expect.any(String));
     expect(navCalls).toBe(3);
     expect(location.search).toContain('chat=chat_new_9');
 

@@ -507,10 +507,10 @@ export async function executeCommand(
 
     case 'today': {
       const timezoneRow = await context.db
-        .prepare(`SELECT brief_timezone FROM member_settings WHERE workspace_id = ? AND user_id = ?`)
+        .prepare(`SELECT brief_timezone, interpretation_timezone FROM member_settings WHERE workspace_id = ? AND user_id = ?`)
         .bind(context.workspaceId, context.userId)
-        .first<{ brief_timezone: string | null }>();
-      const zone = timezoneRow?.brief_timezone;
+        .first<{ brief_timezone: string | null; interpretation_timezone: string | null }>();
+      const zone = timezoneRow?.interpretation_timezone || timezoneRow?.brief_timezone;
       if (!zone) {
         return {
           kind: 'reply',

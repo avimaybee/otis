@@ -22,7 +22,7 @@ async function mount(element: React.ReactElement) {
   return { host, unmount: async () => { await React.act(async () => root.unmount()); host.remove(); } };
 }
 async function openMenu(button: HTMLElement) { await React.act(async () => button.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))); }
-const own = { workspace_id: 'ws', user_id: 'avi', preferred_language: 'en', brief_timezone: null, brief_enabled: false, brief_local_time: null, brief_weekdays: null, brief_channel: 'web', created_at: '', updated_at: '' } satisfies MemberSettings;
+const own = { workspace_id: 'ws', user_id: 'avi', preferred_language: 'en', brief_timezone: null, interpretation_timezone: null, brief_enabled: false, brief_local_time: null, brief_weekdays: null, brief_channel: 'web', created_at: '', updated_at: '' } satisfies MemberSettings;
 
 describe('Authoritative conversation controls', () => {
   it('updates the thinking badge from saved state and never sends a conversational message', async () => {

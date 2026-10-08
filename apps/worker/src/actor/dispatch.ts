@@ -1921,8 +1921,9 @@ export async function resumeRun(
     }
 
     if (resolvedFields && typeof resolvedFields['due'] === 'string') {
-      const settings = await db.prepare(`SELECT brief_timezone FROM member_settings WHERE workspace_id = ? AND user_id = ?`).bind(params.workspaceId, authorUserId).first<{ brief_timezone: string | null }>();
-      const due = resolveDateAnswer(resolvedFields['due'], nowIso, settings?.brief_timezone ?? null);
+      const settings = await db.prepare(`SELECT brief_timezone, interpretation_timezone FROM member_settings WHERE workspace_id = ? AND user_id = ?`).bind(params.workspaceId, authorUserId).first<{ brief_timezone: string | null; interpretation_timezone: string | null }>();
+      const zone = settings?.interpretation_timezone || settings?.brief_timezone || null;
+      const due = resolveDateAnswer(resolvedFields['due'], nowIso, zone);
       if (due === undefined) return { resumed: false, failureReason: 'answer_invalid' };
       resolvedFields = { ...resolvedFields, due };
     }

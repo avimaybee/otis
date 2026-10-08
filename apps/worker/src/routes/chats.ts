@@ -1,7 +1,7 @@
 /**
  * @otis/worker/routes/chats
  * HTTP handlers for workspace chats and message acceptance.
- * In accordance with docs/contracts.md and plans/004-inbound-routing.md.
+ * In accordance with docs/contracts.md and docs/archive/plans/004-inbound-routing.md.
  */
 
 import {
@@ -327,6 +327,25 @@ export async function handleCreateMessage(
     }
     const parsed = parseCommandText(body.text ?? '', 'web');
     const active = await env.DB.prepare(`SELECT id FROM agent_runs WHERE workspace_id = ? AND chat_id = ? AND executor_kind = 'agent' AND status IN ('running', 'queued') AND COALESCE(json_extract(agent_progress_json, '$.phase'), '') <> 'completed' ORDER BY CASE status WHEN 'running' THEN 0 ELSE 1 END, created_at DESC LIMIT 1`).bind(workspaceId, chatId).first<{ id: string }>();
+    // Device timezone telemetry: records the sender's interpretation zone
+    // for relative dates. Best-effort and independent of acceptance — a
+    // missing column or write failure must never sink the message.
+    if (typeof body.timezone === 'string' && body.timezone) {
+      const zone = body.timezone;
+      const zoneNow = new Date().toISOString();
+      try {
+        await env.DB.prepare(
+          `INSERT INTO member_settings (workspace_id, user_id, brief_enabled, brief_channel, preferred_language, interpretation_timezone, created_at, updated_at)
+           VALUES (?, ?, 0, 'web', 'en', ?, ?, ?)
+           ON CONFLICT (workspace_id, user_id) DO UPDATE SET
+             interpretation_timezone = excluded.interpretation_timezone,
+             updated_at = excluded.updated_at
+           WHERE member_settings.interpretation_timezone IS NOT excluded.interpretation_timezone`,
+        ).bind(workspaceId, auth.userId, zone, zoneNow, zoneNow).run();
+      } catch {
+        /* Telemetry only; acceptance below is authoritative. */
+      }
+    }
     const result = await acceptWebMessage(env.DB, {
       workspaceId,
       chatId,

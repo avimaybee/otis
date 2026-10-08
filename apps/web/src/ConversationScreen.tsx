@@ -737,7 +737,15 @@ export function ConversationScreen({ workspaceId, chat: routeChat, chatParamPres
       }
       if (!chatId) throw new Error('Failed to resolve conversation');
       debugLog('send', 'starting', { operationId: entry.clientId, chatId, chars: entry.text.length, clarificationId: entry.clarificationId ?? null });
-      const accepted = await api.sendMessage(entryWorkspaceId, chatId, entry.clientId, entry.text, entry.clarificationId, entry.mediaId, entryUserId, ...(entry.imageMediaIds?.length ? [entry.imageMediaIds] : []));
+      // Device zone travels at transport time (not queue time) so travel
+      // across zones reports where the member is now, not where they were.
+      let deviceZone: string | undefined;
+      try {
+        deviceZone = Intl.DateTimeFormat().resolvedOptions().timeZone || undefined;
+      } catch {
+        deviceZone = undefined;
+      }
+      const accepted = await api.sendMessage(entryWorkspaceId, chatId, entry.clientId, entry.text, entry.clarificationId, entry.mediaId, entryUserId, entry.imageMediaIds?.length ? entry.imageMediaIds : undefined, deviceZone);
       debugLog('send', 'accepted; run queued server-side', { chatId, message_id: accepted.message_id, run_id: accepted.run_id, sequence: accepted.acceptance_sequence });
       markOutboxSaved(entry.clientId, { messageId: accepted.message_id, runId: accepted.run_id, sequence: accepted.acceptance_sequence });
       if (!sameView(chatId)) return true;
