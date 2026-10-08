@@ -6,6 +6,8 @@ import {
   handleRenameEntity,
   handleAddAlias,
   handleSetField,
+  handleSetFields,
+  normalizeStatusResumeAnswer,
   handleLogEvent,
   handleCreateTask,
   handleRememberContext,
@@ -293,6 +295,152 @@ describe('Ledger Invariants & Pure Reducers', () => {
       const task = updated.nextState!.tasks.get(taskId)!;
       expect(task.due_local_date).toBe('2026-10-05'); // Due date preserved!
       expect(task.snooze_until).toBe(snoozeInstant);
+    });
+  });
+
+  describe('atomic field batches (set_fields)', () => {
+    const batchContext: LedgerCommandContext = {
+      ...dummyContext,
+      action_id: 'act-batch-1',
+    };
+    function seededState() {
+      const { events: [e1], nextState: s1 } = handleCreateEntity(dummyContext, emptyState, 1, {
+        name: 'Client Batch',
+      });
+      return { entityId: e1!.entity_id!, state: s1! };
+    }
+
+    it('commits several ready fields with consecutive sequences under one parent action', () => {
+      const { entityId, state } = seededState();
+      const res = handleSetFields(batchContext, state, 2, {
+        entity_id: entityId,
+        fields: [
+          { field_name: 'phone', value: '+40123456789' },
+          { field_name: 'preferred_language', value: 'ro' },
+        ],
+      });
+      expect(res.result.status).toBe('applied');
+      expect(res.events).toHaveLength(2);
+      expect(res.events[0]!.sequence).toBe(2);
+      expect(res.events[1]!.sequence).toBe(3);
+      for (const e of res.events) expect(e.action_id).toBe('act-batch-1');
+      expect(res.actionCost).toBe(2);
+      expect(res.result.data).toMatchObject({ entity_id: entityId, applied_fields: ['phone', 'preferred_language'] });
+      expect(res.nextState!.fields.get(`${entityId}:phone`)).toBeTruthy();
+    });
+
+    it('collapses exact repeats and rejects conflicting duplicates with no commit', () => {
+      const { entityId, state } = seededState();
+      const collapsed = handleSetFields(batchContext, state, 2, {
+        entity_id: entityId,
+        fields: [
+          { field_name: 'phone', value: '+40123456789' },
+          { field_name: 'phone', value: '+40123456789', provenance: 'stated' },
+        ],
+      });
+      expect(collapsed.result.status).toBe('applied');
+      expect(collapsed.events).toHaveLength(1);
+
+      const conflicted = handleSetFields(batchContext, state, 2, {
+        entity_id: entityId,
+        fields: [
+          { field_name: 'phone', value: '+40123456789' },
+          { field_name: 'phone', value: '+40987654321' },
+        ],
+      });
+      expect(conflicted.result.status).toBe('rejected');
+      expect(conflicted.result.error?.code).toBe('conflicting_fields');
+      expect(conflicted.events).toHaveLength(0);
+      expect(conflicted.nextState).toBeUndefined();
+    });
+
+    it('saves ready facts while parking only the uncertain status (mixed commit)', () => {
+      const { entityId, state } = seededState();
+      const res = handleSetFields(batchContext, state, 2, {
+        entity_id: entityId,
+        fields: [
+          { field_name: 'phone', value: '+40123456789' },
+          { field_name: 'status', value: 'warm', provenance: 'inferred' },
+        ],
+      });
+      expect(res.result.status).toBe('applied');
+      expect(res.events).toHaveLength(1);
+      expect(res.events[0]!.kind).toBe('field_change');
+      expect(res.actionCost).toBe(1);
+      expect(res.result.clarification?.missing_fields).toEqual(['status_confirmation']);
+      const op = res.result.clarification?.pending_operation;
+      expect(op?.command_name).toBe('set_field');
+      expect(op?.args).toMatchObject({ entity_id: entityId, field_name: 'status', value: 'warm' });
+      expect(op?.args).not.toHaveProperty('phone');
+      expect(res.result.data?.pending_field).toEqual({ field_name: 'status', value: 'warm' });
+      expect(res.result.data?.applied_fields).toEqual(['phone']);
+      // The ready fact committed; the status did not.
+      expect(res.nextState!.fields.get(`${entityId}:phone`)).toBeTruthy();
+    });
+
+    it('applies an explicitly instructed status together with the ready facts', () => {
+      const { entityId, state } = seededState();
+      const res = handleSetFields(batchContext, state, 2, {
+        entity_id: entityId,
+        fields: [
+          { field_name: 'phone', value: '+40123456789' },
+          { field_name: 'status', value: 'warm' },
+        ],
+        explicit_status_indexes: [1],
+      });
+      expect(res.result.status).toBe('applied');
+      expect(res.events).toHaveLength(2);
+      expect(res.events[1]!.kind).toBe('status_change');
+      expect(res.result.clarification).toBeUndefined();
+      expect(res.nextState!.entities.get(entityId)!.status).toBe('warm');
+    });
+
+    it('parks a lone uncertain status as needs_clarification with a single-status operation', () => {
+      const { entityId, state } = seededState();
+      const res = handleSetFields(batchContext, state, 2, {
+        entity_id: entityId,
+        fields: [{ field_name: 'status', value: 'warm', provenance: 'inferred' }],
+      });
+      expect(res.result.status).toBe('needs_clarification');
+      expect(res.events).toHaveLength(0);
+      expect(res.result.clarification?.pending_operation?.command_name).toBe('set_field');
+      expect(res.result.clarification?.pending_operation?.args).toEqual({
+        entity_id: entityId,
+        field_name: 'status',
+        value: 'warm',
+      });
+    });
+
+    it('rejects invalid status, unknown entity and disallowed fields without effects', () => {
+      const { entityId, state } = seededState();
+      const invalid = handleSetFields(batchContext, state, 2, {
+        entity_id: entityId,
+        fields: [{ field_name: 'status', value: 'frozen' }],
+      });
+      expect(invalid.result.status).toBe('rejected');
+      expect(invalid.result.error?.code).toBe('invalid_status');
+
+      const missing = handleSetFields(batchContext, state, 2, {
+        entity_id: 'ent-nope',
+        fields: [{ field_name: 'phone', value: 'x' }],
+      });
+      expect(missing.result.error?.code).toBe('not_found');
+
+      const disallowed = handleSetFields(batchContext, state, 2, {
+        entity_id: entityId,
+        fields: [{ field_name: 'nickname', value: 'x' }],
+      });
+      expect(disallowed.result.error?.code).toBe('disallowed_field');
+    });
+
+    it('normalizes status answers: confirm applies, decline cancels, vagueness stays pending', () => {
+      expect(normalizeStatusResumeAnswer('warm', 'yes')).toEqual({ action: 'apply', value: 'warm' });
+      expect(normalizeStatusResumeAnswer('warm', 'CONFIRM')).toEqual({ action: 'apply', value: 'warm' });
+      expect(normalizeStatusResumeAnswer('hot', 'warm')).toEqual({ action: 'apply', value: 'warm' });
+      expect(normalizeStatusResumeAnswer('warm', 'no')).toEqual({ action: 'cancel' });
+      expect(normalizeStatusResumeAnswer('warm', 'cancel')).toEqual({ action: 'cancel' });
+      expect(normalizeStatusResumeAnswer('warm', 'maybe later')).toMatchObject({ action: 'ambiguous' });
+      expect(normalizeStatusResumeAnswer('warm', 'closed')).toMatchObject({ action: 'ambiguous' });
     });
   });
 

@@ -16,12 +16,14 @@ import type {
   PendingOperationPayload,
   Task,
 } from '@otis/contracts';
-import type { LedgerCommandContext, LedgerProjectionState } from '../types.js';
-import { getActionReceipt, getWorkspaceProjectionState, getWorkspaceRevision } from './queries.js';
+import type { LedgerCommandContext, LedgerProjectionState, CoverageScope, ProjectionCoverage } from '../types.js';
+import { FULL_PROJECTION_COVERAGE } from '../types.js';
+import { getActionReceipt, getFieldProjectionState, getWorkspaceProjectionState, getWorkspaceRevision } from './queries.js';
 import { handleCreateEntity } from '../commands/createEntity.js';
 import { handleRenameEntity } from '../commands/renameEntity.js';
 import { handleDeleteEntity } from '../commands/deleteEntity.js';
 import { handleSetField } from '../commands/setField.js';
+import { handleSetFields, normalizeStatusResumeAnswer } from '../commands/setFields.js';
 import { handleCreateTask, handleUpdateTask } from '../commands/tasks.js';
 import { handleLogEvent } from '../commands/logEvent.js';
 import { handleRecordDraft } from '../commands/recordDraft.js';
@@ -48,6 +50,12 @@ export type CommandHandler<TArgs> = (
   result: CommandResult;
   events: LedgerEvent[];
   nextState?: LedgerProjectionState;
+  /**
+   * Trusted business-effect cost for the daily quota: the number of ready
+   * field mutations this commit charges. Defaults to 1 (every other
+   * command). Only the batch field handler sets it; the model never does.
+   */
+  actionCost?: number;
 };
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -58,6 +66,7 @@ export const DEFAULT_COMMAND_HANDLERS: Record<string, AnyCommandHandler> = {
   rename_entity: handleRenameEntity,
   delete_entity: handleDeleteEntity,
   set_field: handleSetField,
+  set_fields: handleSetFields,
   create_task: handleCreateTask,
   update_task: handleUpdateTask,
   log_event: handleLogEvent,
@@ -91,6 +100,7 @@ function createGuardStatement(
   db: D1Database,
   guardId: string,
   context: LedgerCommandContext,
+  actionCost = 1,
 ): D1PreparedStatement {
   return db
     .prepare(
@@ -172,11 +182,13 @@ function createGuardStatement(
                 AND rs.workspace_id = w.id
             ))
             -- 7. Daily action limit validation (if max_daily_actions provided):
+            -- the trusted batch cost counts with the same aborting guard, so
+            -- a multi-field commit exceeding remaining capacity rolls back.
             AND (? IS NULL OR COALESCE((
               SELECT action_count
               FROM workspace_daily_actions
               WHERE workspace_id = w.id AND date_utc = ?
-            ), 0) < ?)
+            ), 0) + ? <= ?)
          )
        )`
     )
@@ -224,6 +236,7 @@ function createGuardStatement(
       // 7 (daily quota):
       context.max_daily_actions !== undefined ? context.max_daily_actions : null,
       new Date().toISOString().slice(0, 10),
+      Number.isInteger(actionCost) && (actionCost as number) >= 0 ? (actionCost as number) : 1,
       context.max_daily_actions !== undefined ? context.max_daily_actions : 0,
     );
 }
@@ -236,6 +249,7 @@ async function handleBatchError(
   err: unknown,
   db: D1Database,
   context: LedgerCommandContext,
+  actionCost = 1,
 ): Promise<CommandResult> {
   const latestWs = await getWorkspaceRevision(db, context.workspace_id);
   if (!latestWs || latestWs.business_revision !== context.expected_business_revision) {
@@ -265,14 +279,15 @@ async function handleBatchError(
     };
   }
 
-  // Check daily action limit
+  // Check daily action limit (cost-aware: a batch charges its ready mutations)
   if (context.max_daily_actions !== undefined) {
     const todayUtc = new Date().toISOString().slice(0, 10);
     const quotaRow = await db
       .prepare(`SELECT action_count FROM workspace_daily_actions WHERE workspace_id = ? AND date_utc = ?`)
       .bind(context.workspace_id, todayUtc)
       .first<{ action_count: number }>();
-    if ((quotaRow?.action_count ?? 0) >= context.max_daily_actions) {
+    const cost = Number.isInteger(actionCost) && (actionCost as number) >= 0 ? (actionCost as number) : 1;
+    if ((quotaRow?.action_count ?? 0) + cost > context.max_daily_actions) {
       return {
         status: 'rejected',
         action_id: context.action_id,
@@ -701,6 +716,211 @@ function diffSnapshots<V>(
   return { created, changed, deleted };
 }
 
+/**
+ * Trusted footprint selection for targeted hydration. Matches the actual
+ * registered handler identity, never the caller's command-name string:
+ * custom handlers under a familiar name keep the full loader. Returns null
+ * for anything unrecognized so hydration stays fail-open to full state.
+ */
+function fieldFootprintFor(
+  handler: CommandHandler<unknown>,
+  args: unknown,
+): { entityId: string; fieldNames: string[] } | null {
+  if (handler !== (handleSetField as AnyCommandHandler) && handler !== (handleSetFields as AnyCommandHandler) && handler !== (handleResolveConflict as AnyCommandHandler)) {
+    return null;
+  }
+  const record = (args ?? {}) as Record<string, unknown>;
+  if (typeof record['entity_id'] !== 'string' || !record['entity_id']) return null;
+  if (handler === (handleSetFields as AnyCommandHandler)) {
+    if (!Array.isArray(record['fields'])) return null;
+    const names: string[] = [];
+    for (const item of record['fields']) {
+      const name = (item as Record<string, unknown> | null)?.['field_name'];
+      if (typeof name !== 'string' || !name) return null;
+      names.push(name);
+    }
+    return { entityId: record['entity_id'], fieldNames: names };
+  }
+  const name = record['field_name'];
+  if (typeof name !== 'string' || !name) return null;
+  return { entityId: record['entity_id'], fieldNames: [name] };
+}
+
+/**
+ * Pure post-handler bounds assertion for targeted hydration: any created,
+ * changed or deleted key outside the loaded coverage is rejected before any
+ * commit, so a partial state can never persist as the whole workspace.
+ */
+function coverageViolations(
+  before: ProjectionSnapshots,
+  next: LedgerProjectionState | undefined,
+  coverage: ProjectionCoverage,
+): string[] {
+  if (!next) return [];
+  const violations: string[] = [];
+  const check = <V>(
+    label: string,
+    scope: CoverageScope,
+    snap: Map<string, { fingerprint: string; del: unknown[] }>,
+    values: Map<string, V>,
+    fingerprint: (value: V) => string,
+  ) => {
+    if (scope === 'all') return;
+    for (const [key, value] of values) {
+      if (scope.has(key)) continue;
+      const prior = snap.get(key);
+      if (!prior) violations.push(`created ${label} '${key}' outside loaded coverage`);
+      else if (prior.fingerprint !== fingerprint(value)) {
+        violations.push(`changed ${label} '${key}' outside loaded coverage`);
+      }
+    }
+    for (const key of snap.keys()) {
+      if (!scope.has(key) && !values.has(key)) violations.push(`deleted ${label} '${key}' outside loaded coverage`);
+    }
+  };
+  check('entity', coverage.entities, before.entities.records, next.entities, fpEntity);
+  check('alias', coverage.aliases, before.aliases.records, next.aliases, fpAlias);
+  check('field', coverage.fields, before.fields.records, next.fields, fpField);
+  check('task', coverage.tasks, before.tasks.records, next.tasks, fpTask);
+  check('draft', coverage.drafts, before.drafts.records, next.drafts, fpDraft);
+  check('memory entry', coverage.memoryEntries, before.memoryEntries.records, next.memoryEntries, fpMemory);
+  check('suppression', coverage.memorySuppressions, before.memorySuppressions.records, next.memorySuppressions, fpSuppression);
+  return violations;
+}
+
+/**
+ * Shared pending-question persistence: the clarification row plus its
+ * question activity, committed in the same atomic batch as the receipt or
+ * the applied facts. The actor's waitForInput sees the row and skips its own
+ * duplicate, so the question is never published twice.
+ */
+function pendingQuestionStatements(
+  db: D1Database,
+  input: {
+    workspaceId: string;
+    runId: string;
+    chatId: string;
+    sourceMessageId: string;
+    requesterUserId: string;
+    question: string;
+    intendedOperation: string;
+    missingFields: string[];
+    candidates: string[] | undefined;
+    pendingOperation: PendingOperationPayload;
+    sourceRevision: number;
+    now: string;
+    deferRunTransition: boolean;
+  },
+): D1PreparedStatement[] {
+  const clarId = `clar_${crypto.randomUUID()}`;
+  const statements: D1PreparedStatement[] = [
+    db
+      .prepare(
+        `INSERT INTO pending_clarifications (
+           id, workspace_id, chat_id, run_id, source_message_id, requester_user_id,
+           question, intended_operation, missing_fields, candidates_json, operation_payload_json,
+           source_revision, status, created_at, updated_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)`
+      )
+      .bind(
+        clarId,
+        input.workspaceId,
+        input.chatId,
+        input.runId,
+        input.sourceMessageId,
+        input.requesterUserId,
+        input.question,
+        input.intendedOperation,
+        JSON.stringify(input.missingFields),
+        input.candidates ? JSON.stringify(input.candidates) : null,
+        JSON.stringify(input.pendingOperation),
+        input.sourceRevision,
+        input.now,
+        input.now,
+      ),
+  ];
+  if (!input.deferRunTransition) {
+    statements.push(
+      db
+        .prepare(`UPDATE agent_runs SET status = 'waiting_for_input', updated_at = ? WHERE id = ? AND workspace_id = ?`)
+        .bind(input.now, input.runId, input.workspaceId),
+    );
+  }
+  const actId = `act_${crypto.randomUUID()}`;
+  statements.push(
+    db
+      .prepare(
+        `UPDATE chats
+         SET activity_cursor = activity_cursor + 1,
+             updated_at = ?,
+             last_activity_at = ?
+         WHERE id = ?`
+      )
+      .bind(input.now, input.now, input.chatId),
+    db
+      .prepare(
+        `INSERT INTO run_activity (id, workspace_id, chat_id, run_id, cursor, type, payload_json, created_at)
+         VALUES (
+           ?, ?, ?, ?,
+           (SELECT activity_cursor FROM chats WHERE id = ?),
+           'clarification_required',
+           ?,
+           ?
+         )`
+      )
+      .bind(
+        actId,
+        input.workspaceId,
+        input.chatId,
+        input.runId,
+        input.chatId,
+        JSON.stringify({
+          action_id: input.pendingOperation.action_id,
+          command_name: input.pendingOperation.command_name,
+          prompt: input.question,
+          missing_fields: input.missingFields,
+          pending_operation: input.pendingOperation,
+        }),
+        input.now,
+      ),
+  );
+  return statements;
+}
+
+/**
+ * Cancels the unresolved intent of undone actions in the same Undo
+ * transaction, so a later answer cannot resurrect reverted work. Matches on
+ * the stored operation's action id; unrelated run/teammate questions stay
+ * pending. Chunked to respect the 100-bindings-per-statement budget.
+ */
+function revertedIntentCancelStatements(
+  db: D1Database,
+  workspaceId: string,
+  revertedActionIds: string[],
+  now: string,
+): D1PreparedStatement[] {
+  const ids = [...new Set(revertedActionIds.filter((id) => typeof id === 'string' && id !== ''))];
+  const statements: D1PreparedStatement[] = [];
+  for (let offset = 0; offset < ids.length; offset += 40) {
+    const chunk = ids.slice(offset, offset + 40);
+    const placeholders = chunk.map(() => '?').join(',');
+    statements.push(
+      db
+        .prepare(
+          `UPDATE pending_clarifications
+           SET status = 'cancelled',
+               resolution_response = 'Undone with its saved action.',
+               resolved_at = ?,
+               updated_at = ?
+           WHERE workspace_id = ? AND status = 'pending'
+             AND json_extract(operation_payload_json, '$.action_id') IN (${placeholders})`,
+        )
+        .bind(now, now, workspaceId, ...chunk),
+    );
+  }
+  return statements;
+}
+
 export async function executeLedgerCommand<TArgs>(
   db: D1Database,
   context: LedgerCommandContext,
@@ -814,15 +1034,40 @@ export async function executeLedgerCommand<TArgs>(
   };
 
   // 5. Load current projection state and execute pure domain command.
-  // The immutable snapshot is captured BEFORE the handler: reducers may
-  // mutate the shared objects in place or shallow-copy the maps, so the
-  // commit diff below compares post-handler values against these strings,
-  // never against the (possibly mutated) currentState objects.
-  const currentState = await getWorkspaceProjectionState(db, context.workspace_id);
+  // Trusted field handlers hydrate only their target entity, requested
+  // fields and the entity's aliases in one read batch; every other handler
+  // keeps the full workspace load. The immutable snapshot is captured
+  // BEFORE the handler: reducers may mutate the shared objects in place or
+  // shallow-copy the maps, so the commit diff below compares post-handler
+  // values against these strings, never against the (possibly mutated)
+  // currentState objects.
+  const footprint = fieldFootprintFor(handler as CommandHandler<unknown>, args);
+  const targeted = footprint
+    ? await getFieldProjectionState(db, context.workspace_id, footprint.entityId, footprint.fieldNames)
+    : null;
+  const currentState = targeted?.state ?? (await getWorkspaceProjectionState(db, context.workspace_id));
+  const coverage: ProjectionCoverage = targeted?.coverage ?? FULL_PROJECTION_COVERAGE;
   const beforeSnapshot = snapshotProjections(currentState);
   const beforeMemoryFlags = snapMemoryFlags(currentState);
   const nextSeq = wsMeta.last_event_sequence + 1;
-  const { result, events, nextState } = handler(resolvedContext, currentState, nextSeq, args);
+  const { result, events, nextState, actionCost } = handler(resolvedContext, currentState, nextSeq, args);
+  const batchCost = Number.isInteger(actionCost) && (actionCost as number) >= 0 ? (actionCost as number) : 1;
+
+  // Targeted loads must stay inside their footprint: anything outside the
+  // loaded keys rejects before any commit.
+  if (targeted) {
+    const violations = coverageViolations(beforeSnapshot, nextState, coverage);
+    if (violations.length > 0) {
+      return {
+        status: 'rejected',
+        action_id: context.action_id,
+        error: {
+          code: 'coverage_violation',
+          message: `Field handler mutated state outside its loaded footprint: ${violations.slice(0, 3).join('; ')}.`,
+        },
+      };
+    }
+  }
 
   // 6. Handle needs_clarification: durably persist action receipt and pending clarification in D1
   if (result.status === 'needs_clarification') {
@@ -830,23 +1075,31 @@ export async function executeLedgerCommand<TArgs>(
     const guardId = `guard_${crypto.randomUUID()}`;
     const receiptId = `rcpt_${crypto.randomUUID()}`;
 
-    // Construct versioned, typed pending operation payload with original validated args
-    const pendingOperation: PendingOperationPayload = {
-      version: 1,
-      command_name: commandName,
-      action_id: context.action_id,
-      args: (args || {}) as Record<string, unknown>,
-      missing_fields: result.clarification?.missing_fields || [],
-      candidates: result.clarification?.candidates,
-      source_revision: wsMeta.business_revision,
-    };
+    // Construct versioned, typed pending operation payload with original validated args.
+    // A handler may narrow it (the field batch stores only the uncertain
+    // status operation, never already-saved fields); anything else keeps the
+    // whole-request form. The revision always comes from this transaction.
+    const providedOp = result.clarification?.pending_operation;
+    const pendingOperation: PendingOperationPayload =
+      providedOp && providedOp.version === 1 && typeof providedOp.command_name === 'string' && providedOp.args && typeof providedOp.args === 'object'
+        ? { ...providedOp, source_revision: wsMeta.business_revision }
+        : {
+            version: 1,
+            command_name: commandName,
+            action_id: context.action_id,
+            args: (args || {}) as Record<string, unknown>,
+            missing_fields: result.clarification?.missing_fields || [],
+            candidates: result.clarification?.candidates,
+            source_revision: wsMeta.business_revision,
+          };
 
     if (result.clarification) {
       result.clarification.pending_operation = pendingOperation;
     }
 
-    // Step 0: Guard
-    clarStatements.push(createGuardStatement(db, guardId, resolvedContext));
+    // Step 0: Guard. Question-only commits charge no business effects
+    // (no revision, no quota increment), so they never consume capacity.
+    clarStatements.push(createGuardStatement(db, guardId, resolvedContext, 0));
 
     // Step 1: Action Receipt for clarification (stores pending_operation in result_json)
     clarStatements.push(
@@ -876,91 +1129,27 @@ export async function executeLedgerCommand<TArgs>(
         )
     );
 
-    // Step 2: If in run context with chat and member source, persist pending_clarifications
+    // Step 2: If in run context with chat and member source, persist pending_clarifications.
+    // The run transition stays deferred for active dispatch turns (single
+    // owner): the dispatcher completes waiting via waitForInput, which skips
+    // duplicate clarification/activity when it sees the pending row.
     if (context.run_id && effectiveChatId && context.source_message_id && context.actor.user_id) {
-      const clarId = `clar_${crypto.randomUUID()}`;
       clarStatements.push(
-        db
-          .prepare(
-            `INSERT INTO pending_clarifications (
-               id, workspace_id, chat_id, run_id, source_message_id, requester_user_id,
-               question, intended_operation, missing_fields, candidates_json, operation_payload_json,
-               source_revision, status, created_at, updated_at
-             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)`
-          )
-          .bind(
-            clarId,
-            context.workspace_id,
-            effectiveChatId,
-            context.run_id,
-            context.source_message_id,
-            context.actor.user_id,
-            result.clarification?.prompt || result.summary || 'Clarification required',
-            commandName,
-            JSON.stringify(result.clarification?.missing_fields || []),
-            result.clarification?.candidates ? JSON.stringify(result.clarification.candidates) : null,
-            JSON.stringify(pendingOperation),
-            wsMeta.business_revision,
-            now,
-            now,
-          )
-      );
-
-      // Transition run status to waiting_for_input, unless the caller is an
-      // active dispatch turn that will own the run/outbox/lease transition
-      // itself (single owner). In that case the receipt + clarification row +
-      // activity still commit here, and the dispatcher completes waiting
-      // (run + inbox + outbox + lease) via waitForInput, which skips duplicate
-      // clarification/activity when it sees the pending row.
-      if (!options?.deferRunTransition) {
-        clarStatements.push(
-          db
-            .prepare(`UPDATE agent_runs SET status = 'waiting_for_input', updated_at = ? WHERE id = ? AND workspace_id = ?`)
-            .bind(now, context.run_id, context.workspace_id),
-        );
-      }
-
-      // Advance chat cursor and record clarification_required activity
-      const actId = `act_${crypto.randomUUID()}`;
-      clarStatements.push(
-        db
-          .prepare(
-            `UPDATE chats
-             SET activity_cursor = activity_cursor + 1,
-                 updated_at = ?,
-                 last_activity_at = ?
-             WHERE id = ?`
-          )
-          .bind(now, now, effectiveChatId)
-      );
-
-      clarStatements.push(
-        db
-          .prepare(
-            `INSERT INTO run_activity (id, workspace_id, chat_id, run_id, cursor, type, payload_json, created_at)
-             VALUES (
-               ?, ?, ?, ?,
-               (SELECT activity_cursor FROM chats WHERE id = ?),
-               'clarification_required',
-               ?,
-               ?
-             )`
-          )
-          .bind(
-            actId,
-            context.workspace_id,
-            effectiveChatId,
-            context.run_id,
-            effectiveChatId,
-            JSON.stringify({
-              action_id: context.action_id,
-              command_name: commandName,
-              prompt: result.clarification?.prompt,
-              missing_fields: result.clarification?.missing_fields,
-              pending_operation: pendingOperation,
-            }),
-            now,
-          )
+        ...pendingQuestionStatements(db, {
+          workspaceId: context.workspace_id,
+          runId: context.run_id,
+          chatId: effectiveChatId,
+          sourceMessageId: context.source_message_id,
+          requesterUserId: context.actor.user_id,
+          question: result.clarification?.prompt || result.summary || 'Clarification required',
+          intendedOperation: pendingOperation.command_name,
+          missingFields: result.clarification?.missing_fields || [],
+          candidates: result.clarification?.candidates,
+          pendingOperation,
+          sourceRevision: wsMeta.business_revision,
+          now,
+          deferRunTransition: options?.deferRunTransition ?? false,
+        }),
       );
     }
 
@@ -968,7 +1157,7 @@ export async function executeLedgerCommand<TArgs>(
       await db.batch(clarStatements);
       return result;
     } catch (err) {
-      return handleBatchError(err, db, resolvedContext);
+      return handleBatchError(err, db, resolvedContext, 0);
     }
   }
 
@@ -1003,7 +1192,7 @@ export async function executeLedgerCommand<TArgs>(
 
   // Step 0b: Transaction guard (membership, source ownership, expected
   // revision, fence, run, step)
-  statements.push(createGuardStatement(db, guardId, resolvedContext));
+  statements.push(createGuardStatement(db, guardId, resolvedContext, batchCost));
 
   // Step 0c: Remaining extras (e.g., resolving pending clarifications) stay
   // after the guard unless the caller explicitly opted into pre-guard order.
@@ -1224,18 +1413,20 @@ export async function executeLedgerCommand<TArgs>(
       )
   );
 
-  // Step 4b: Atomic daily actions quota tracking (UTC-day scope)
+  // Step 4b: Atomic daily actions quota tracking (UTC-day scope).
+  // A batch charges its trusted ready-mutation cost once, not once per
+  // fact; question-only and replayed writes charge nothing here.
   const todayUtc = now.slice(0, 10);
   statements.push(
     db
       .prepare(
         `INSERT INTO workspace_daily_actions (workspace_id, date_utc, action_count, updated_at)
-         VALUES (?, ?, 1, ?)
+         VALUES (?, ?, ?, ?)
          ON CONFLICT(workspace_id, date_utc) DO UPDATE SET
-           action_count = action_count + 1,
+           action_count = action_count + ?,
            updated_at = excluded.updated_at`
       )
-      .bind(context.workspace_id, todayUtc, now)
+      .bind(context.workspace_id, todayUtc, batchCost, now, batchCost)
   );
 
   // Step 5: Increment workspace revision and sequence
@@ -1572,12 +1763,58 @@ export async function executeLedgerCommand<TArgs>(
     );
   }
 
+  // Step 8: Undo cancels the unresolved intent of its reverted actions in
+  // the same transaction, so a later answer cannot resurrect reverted work.
+  const revertedIds = (result.data as { reverted_action_ids?: unknown } | undefined)?.reverted_action_ids;
+  if (Array.isArray(revertedIds) && revertedIds.length > 0) {
+    statements.push(
+      ...revertedIntentCancelStatements(
+        db,
+        context.workspace_id,
+        revertedIds.filter((id): id is string => typeof id === 'string'),
+        now,
+      ),
+    );
+  }
+
+  // Step 9: A mixed commit persists its attached pending question alongside
+  // the saved facts. The revision is post-commit; the actor parks on the row
+  // and skips its own duplicate via waitForInput.
+  const attachedOp = finalResult.clarification?.pending_operation;
+  if (
+    attachedOp &&
+    attachedOp.version === 1 &&
+    context.run_id &&
+    effectiveChatId &&
+    context.source_message_id &&
+    context.actor.user_id
+  ) {
+    statements.push(
+      ...pendingQuestionStatements(db, {
+        workspaceId: context.workspace_id,
+        runId: context.run_id,
+        chatId: effectiveChatId,
+        sourceMessageId: context.source_message_id,
+        requesterUserId: context.actor.user_id,
+        question:
+          finalResult.clarification?.prompt || finalResult.summary || 'Clarification required',
+        intendedOperation: attachedOp.command_name,
+        missingFields: finalResult.clarification?.missing_fields || [],
+        candidates: finalResult.clarification?.candidates,
+        pendingOperation: { ...attachedOp, source_revision: committedRevision },
+        sourceRevision: committedRevision,
+        now,
+        deferRunTransition: true,
+      }),
+    );
+  }
+
   // 9. Execute atomic batch
   try {
     await db.batch(statements);
     return finalResult;
   } catch (err) {
-    return handleBatchError(err, db, resolvedContext);
+    return handleBatchError(err, db, resolvedContext, batchCost);
   }
 }
 
@@ -1682,8 +1919,71 @@ export async function resumePendingClarification(
     }
   }
 
+  // 2b. Narrow status-answer normalization: a parked status question carries
+  // the proposal in its stored args; the member's persisted answer only
+  // selects it. Confirmation maps to the original value with stated
+  // provenance, a decline cancels, and anything ambiguous rejects without
+  // touching the row so the same question stays pending. Supplied
+  // entity/field identity is never honored.
+  const resolved: Record<string, unknown> = { ...(options.resolved_fields || {}) };
+  let statusResumeValue: string | null = null;
+  if (pendingOp.command_name === 'set_field') {
+    for (const guarded of ['entity_id', 'field_name', 'action_id']) {
+      if (resolved[guarded] !== undefined) {
+        return {
+          status: 'rejected',
+          action_id: context.action_id,
+          error: {
+            code: 'unsolicited_field',
+            message: `Field '${guarded}' cannot be supplied in a status answer.`,
+          },
+        };
+      }
+    }
+    const storedArgs = (pendingOp.args ?? {}) as Record<string, unknown>;
+    const answerKey =
+      resolved['status_confirmation'] !== undefined
+        ? 'status_confirmation'
+        : resolved['status'] !== undefined
+          ? 'status'
+          : null;
+    if (answerKey) {
+      if (storedArgs['field_name'] !== 'status') {
+        return {
+          status: 'rejected',
+          action_id: context.action_id,
+          error: {
+            code: 'answer_ambiguous',
+            message: 'That answer does not match the parked status question. Reply confirm to apply it or cancel to drop it.',
+          },
+        };
+      }
+      const decision = normalizeStatusResumeAnswer(storedArgs['value'], resolved[answerKey]);
+      if (decision.action === 'cancel') {
+        return {
+          status: 'rejected',
+          action_id: context.action_id,
+          error: {
+            code: 'cancelled_by_member',
+            message: `Status change declined; nothing changed.`,
+          },
+        };
+      }
+      if (decision.action === 'ambiguous') {
+        return {
+          status: 'rejected',
+          action_id: context.action_id,
+          error: { code: 'answer_ambiguous', message: decision.message },
+        };
+      }
+      statusResumeValue = decision.value;
+      delete resolved[answerKey];
+      allowedMissingFields = allowedMissingFields.filter((f) => f !== answerKey);
+    }
+  }
+
   const allowedSet = new Set(allowedMissingFields);
-  const resolvedKeys = Object.keys(options.resolved_fields || {});
+  const resolvedKeys = Object.keys(resolved);
 
   // Reject unsolicited fields (e.g. attempting to overwrite title or entity_id)
   for (const key of resolvedKeys) {
@@ -1701,7 +2001,7 @@ export async function resumePendingClarification(
 
   // Reject if any required missing field is omitted
   for (const requiredField of allowedMissingFields) {
-    if (options.resolved_fields[requiredField] === undefined) {
+    if (resolved[requiredField] === undefined) {
       return {
         status: 'rejected',
         action_id: context.action_id,
@@ -1716,9 +2016,13 @@ export async function resumePendingClarification(
   // Merge strictly bounded fields into original validated args
   const mergedArgs: Record<string, unknown> = { ...pendingOp.args };
   for (const key of allowedMissingFields) {
-    if (options.resolved_fields[key] !== undefined) {
-      mergedArgs[key] = options.resolved_fields[key];
+    if (resolved[key] !== undefined) {
+      mergedArgs[key] = resolved[key];
     }
+  }
+  if (statusResumeValue !== null) {
+    mergedArgs['value'] = statusResumeValue;
+    mergedArgs['provenance'] = 'stated';
   }
 
   // 3. Resuming clarification requires a source_message_id attributing the member answer

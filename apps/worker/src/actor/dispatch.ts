@@ -25,7 +25,8 @@ import {
   persistStep,
   StepError,
 } from './steps.js';
-import { resumePendingClarification } from '@otis/ledger';
+import { resumePendingClarification, STATUS_CONFIRM_WORDS, STATUS_DECLINE_WORDS } from '@otis/ledger';
+import { sha256 } from '@otis/identity';
 import { buildTelegramDeliveryInserts } from '../inbox/telegramDelivery.js';
 
 export type ActorErrorCode =
@@ -1686,8 +1687,156 @@ export async function resumeRun(
     }
   }
 
+  // Continuation intents shared by every resume path below: exactly one
+  // live execute_run wake plus source requeue, created only when none live.
+  const outboxStmt = db
+    .prepare(
+      `INSERT INTO outbox (id, workspace_id, destination, topic, payload_json, status, created_at, updated_at)
+       SELECT ?, ?, 'workspace_actor', 'execute_run', ?, 'pending', ?, ?
+       WHERE NOT EXISTS (
+         SELECT 1 FROM outbox WHERE workspace_id = ? AND status IN ('pending', 'sending')
+           AND json_extract(payload_json, '$.run_id') = ?
+       )`,
+    )
+    .bind(
+      `out_${crypto.randomUUID()}`,
+      params.workspaceId,
+      JSON.stringify({ run_id: params.runId, resumed: true }),
+      nowIso,
+      nowIso,
+      params.workspaceId,
+      params.runId,
+    );
+
+  const msgInStmt = db
+    .prepare(
+      `UPDATE messages_in SET status = 'queued', updated_at = ?
+       WHERE id = (SELECT source_message_id FROM agent_runs WHERE id = ?)`,
+    )
+    .bind(nowIso, params.runId);
+
+  // 4b. Legacy fallback intent compatibility: pre-batch agent questions
+  // stored {command: 'set_fields', params} without a versioned operation.
+  // An explicit member answer normalizes the stored intent into a versioned
+  // batch op instead of resolving the old question and rerunning the tool
+  // from scratch. Declines cancel, anything ambiguous leaves the original
+  // question pending, and verified already-committed children are excluded
+  // before anything runs. Never upgrades arbitrary JSON into authority.
+  let resolvedFieldsOverride: Record<string, unknown> | null = null;
+  if (!isLedgerCommand && clar['operation_payload_json']) {
+    let fallback: Record<string, unknown> | null = null;
+    try {
+      const parsed = JSON.parse(String(clar['operation_payload_json'])) as Record<string, unknown>;
+      if (parsed && typeof parsed === 'object' && !parsed['command_name'] && parsed['command'] === 'set_fields') {
+        fallback = parsed;
+      }
+    } catch {
+      fallback = null;
+    }
+    const fallbackParams = fallback?.['params'] as Record<string, unknown> | undefined;
+    const fallbackFields = fallbackParams?.['fields'];
+    if (fallback && typeof fallbackParams?.['entity_id'] === 'string' && Array.isArray(fallbackFields)) {
+      const answerText = (params.answer.text || '').trim().toLowerCase();
+      if (STATUS_DECLINE_WORDS.has(answerText)) {
+        await db.batch([
+          db
+            .prepare(
+              `UPDATE pending_clarifications
+               SET status = 'cancelled', resolution_response = ?, answer_message_id = ?, resolved_at = ?, updated_at = ?
+               WHERE id = ? AND status = 'pending'`,
+            )
+            .bind(params.answer.text, params.answer.messageId, nowIso, nowIso, clarId),
+          db
+            .prepare(
+              `UPDATE agent_runs SET status = 'queued', updated_at = ?
+               WHERE id = ? AND workspace_id = ? AND status = 'waiting_for_input'`,
+            )
+            .bind(nowIso, params.runId, params.workspaceId),
+          outboxStmt,
+          msgInStmt,
+        ]);
+        return { resumed: true, ...(params.answer.clarificationId ? { clarificationId: clarId } : {}) };
+      }
+      if (!STATUS_CONFIRM_WORDS.has(answerText)) {
+        return { resumed: false, failureReason: 'answer_invalid' };
+      }
+      // Affirmative: keep every field, approve every status in it, and drop
+      // children whose exact old payload already committed under this run.
+      const entityId = String(fallbackParams['entity_id']);
+      const items = (fallbackFields as Record<string, unknown>[]).filter(
+        (f) => f && typeof f === 'object' && typeof f['field_name'] === 'string',
+      );
+      const committedHashes = new Set(
+        (
+          await db
+            .prepare(
+              `SELECT payload_hash FROM action_receipts
+               WHERE workspace_id = ? AND run_id = ? AND command_name = 'set_field'
+                 AND result_status IN ('applied', 'already_applied') LIMIT 50`,
+            )
+            .bind(params.workspaceId, params.runId)
+            .all<{ payload_hash: string }>()
+        ).results.map((r) => String(r.payload_hash)),
+      );
+      const remaining: { field_name: string; value: unknown; provenance: unknown }[] = [];
+      for (const item of items) {
+        const childHash = await sha256(
+          JSON.stringify({
+            commandName: 'set_field',
+            args: {
+              entity_id: entityId,
+              field_name: String(item['field_name']),
+              value: item['value'],
+              provenance: item['provenance'],
+            },
+          }),
+        );
+        if (!committedHashes.has(childHash)) {
+          remaining.push({
+            field_name: String(item['field_name']),
+            value: item['value'],
+            provenance: item['provenance'],
+          });
+        }
+      }
+      if (remaining.length > 0) {
+        const compatActionId = `act_compat_${clarId}`;
+        const compatRev = await db
+          .prepare(`SELECT business_revision FROM workspaces WHERE id = ?`)
+          .bind(params.workspaceId)
+          .first<{ business_revision: number }>();
+        const normalizedOp = {
+          version: 1,
+          command_name: 'set_fields',
+          action_id: compatActionId,
+          args: {
+            entity_id: entityId,
+            fields: remaining,
+            explicit_status_indexes: remaining
+              .map((item, index) => (item.field_name === 'status' ? index : -1))
+              .filter((index) => index >= 0),
+          },
+          missing_fields: [] as string[],
+          source_revision: Number(compatRev?.business_revision ?? 0),
+        };
+        await db
+          .prepare(
+            `UPDATE pending_clarifications
+             SET operation_payload_json = ?, missing_fields = ?, updated_at = ?
+             WHERE id = ? AND status = 'pending'`,
+          )
+          .bind(JSON.stringify(normalizedOp), '[]', nowIso, clarId)
+          .run();
+        isLedgerCommand = true;
+        pendingOpActionId = compatActionId;
+        resolvedFieldsOverride = {};
+      }
+      // Fully committed already: fall through to the standard resolve path.
+    }
+  }
+
   if (isLedgerCommand) {
-    let resolvedFields = params.answer.resolvedFields;
+    let resolvedFields = resolvedFieldsOverride ?? params.answer.resolvedFields;
     if (!resolvedFields) {
       let missingList: string[] = [];
       if (clar['missing_fields']) {
@@ -1712,32 +1861,6 @@ export async function resumeRun(
       if (due === undefined) return { resumed: false, failureReason: 'answer_invalid' };
       resolvedFields = { ...resolvedFields, due };
     }
-
-    const outboxStmt = db
-      .prepare(
-        `INSERT INTO outbox (id, workspace_id, destination, topic, payload_json, status, created_at, updated_at)
-         SELECT ?, ?, 'workspace_actor', 'execute_run', ?, 'pending', ?, ?
-         WHERE NOT EXISTS (
-           SELECT 1 FROM outbox WHERE workspace_id = ? AND status IN ('pending', 'sending')
-             AND json_extract(payload_json, '$.run_id') = ?
-         )`,
-      )
-      .bind(
-        `out_${crypto.randomUUID()}`,
-        params.workspaceId,
-        JSON.stringify({ run_id: params.runId, resumed: true }),
-        nowIso,
-        nowIso,
-        params.workspaceId,
-        params.runId,
-      );
-
-    const msgInStmt = db
-      .prepare(
-        `UPDATE messages_in SET status = 'queued', updated_at = ?
-         WHERE id = (SELECT source_message_id FROM agent_runs WHERE id = ?)`,
-      )
-      .bind(nowIso, params.runId);
 
     const setAnswerMsgStmt = db
       .prepare(`UPDATE pending_clarifications SET answer_message_id = ? WHERE id = ?`)

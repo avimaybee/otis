@@ -17,6 +17,8 @@ const ALLOWED_CORE_FIELDS = new Set([
   'quote',
 ]);
 
+export { ALLOWED_CORE_FIELDS };
+
 const VALID_LEAD_STATUSES = new Set([
   'new',
   'cold',
@@ -26,6 +28,8 @@ const VALID_LEAD_STATUSES = new Set([
   'lost',
   'deprioritized',
 ]);
+
+export { VALID_LEAD_STATUSES };
 
 export function handleSetField(
   context: LedgerCommandContext,

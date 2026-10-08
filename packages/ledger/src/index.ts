@@ -22,7 +22,15 @@ export { handleCreateEntity } from './commands/createEntity.js';
 export { handleRenameEntity, handleAddAlias } from './commands/renameEntity.js';
 export { handleDeleteEntity } from './commands/deleteEntity.js';
 export { handleLogEvent } from './commands/logEvent.js';
-export { handleSetField } from './commands/setField.js';
+export { handleSetField, ALLOWED_CORE_FIELDS, VALID_LEAD_STATUSES } from './commands/setField.js';
+export {
+  handleSetFields,
+  normalizeStatusResumeAnswer,
+  STATUS_CONFIRM_WORDS,
+  STATUS_DECLINE_WORDS,
+  type SetFieldsAppliedData,
+  type StatusResumeDecision,
+} from './commands/setFields.js';
 export { handleCreateTask, handleUpdateTask } from './commands/tasks.js';
 export { handleResolveConflict } from './commands/resolveConflict.js';
 export { handleRecordDraft } from './commands/recordDraft.js';
@@ -54,6 +62,8 @@ export {
 } from './repository/executor.js';
 export {
   getActionReceipt,
+  getActionReceiptsByIds,
+  getFieldProjectionState,
   getWorkspaceRevision,
   getWorkspaceEvents,
   getWorkspaceActions,

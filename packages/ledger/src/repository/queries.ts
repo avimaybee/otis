@@ -14,7 +14,7 @@ import type {
   MemorySuppression,
   Task,
 } from '@otis/contracts';
-import type { LedgerProjectionState } from '../types.js';
+import type { LedgerProjectionState, ProjectionCoverage } from '../types.js';
 
 export async function getWorkspaceRevision(
   db: D1Database,
@@ -150,6 +150,64 @@ export async function getWorkspaceActions(
   }));
 }
 
+function mapEntityRow(r: Record<string, unknown>): Entity {
+  return {
+    id: String(r['id']),
+    workspace_id: String(r['workspace_id']),
+    name: String(r['name']),
+    kind: String(r['kind']),
+    status: r['status'] as Entity['status'],
+    assigned_user_id: r['assigned_user_id'] ? String(r['assigned_user_id']) : null,
+    created_at: String(r['created_at']),
+    updated_at: String(r['updated_at']),
+  };
+}
+
+function mapAliasRow(r: Record<string, unknown>): EntityAlias {
+  return {
+    id: String(r['id']),
+    workspace_id: String(r['workspace_id']),
+    entity_id: String(r['entity_id']),
+    alias: String(r['alias']),
+    source_event_id: r['source_event_id'] ? String(r['source_event_id']) : null,
+    created_at: String(r['created_at']),
+  };
+}
+
+function mapFieldRow(r: Record<string, unknown>): EntityStateField {
+  return {
+    id: String(r['id']),
+    workspace_id: String(r['workspace_id']),
+    entity_id: String(r['entity_id']),
+    field_name: String(r['field_name']),
+    state: r['state'] as EntityStateField['state'],
+    value_text: r['value_text'] ? String(r['value_text']) : null,
+    value_json: r['value_json'] ? String(r['value_json']) : null,
+    provenance: r['provenance'] as EntityStateField['provenance'],
+    source_event_id: r['source_event_id'] ? String(r['source_event_id']) : null,
+    candidate_event_ids: r['candidate_event_ids_json']
+      ? (JSON.parse(String(r['candidate_event_ids_json'])) as string[])
+      : null,
+    last_confirmed_value_text: r['last_confirmed_value_text']
+      ? String(r['last_confirmed_value_text'])
+      : null,
+    last_confirmed_value_json: r['last_confirmed_value_json']
+      ? String(r['last_confirmed_value_json'])
+      : null,
+    revision: Number(r['revision']),
+    updated_at: String(r['updated_at']),
+  };
+}
+
+const ENTITY_COLUMNS =
+  `id, workspace_id, name, kind, status, assigned_user_id, created_at, updated_at`;
+const ALIAS_COLUMNS =
+  `id, workspace_id, entity_id, alias, source_event_id, created_at`;
+const FIELD_COLUMNS =
+  `id, workspace_id, entity_id, field_name, state, value_text, value_json,
+   provenance, source_event_id, candidate_event_ids_json, last_confirmed_value_text,
+   last_confirmed_value_json, revision, updated_at`;
+
 export async function getWorkspaceProjectionState(
   db: D1Database,
   workspaceId: string,
@@ -214,16 +272,7 @@ export async function getWorkspaceProjectionState(
   const entityRows = rowsAt(0);
 
   for (const r of entityRows) {
-    const e: Entity = {
-      id: String(r['id']),
-      workspace_id: String(r['workspace_id']),
-      name: String(r['name']),
-      kind: String(r['kind']),
-      status: r['status'] as Entity['status'],
-      assigned_user_id: r['assigned_user_id'] ? String(r['assigned_user_id']) : null,
-      created_at: String(r['created_at']),
-      updated_at: String(r['updated_at']),
-    };
+    const e = mapEntityRow(r);
     state.entities.set(e.id, e);
   }
 
@@ -231,14 +280,7 @@ export async function getWorkspaceProjectionState(
   const aliasRows = rowsAt(1);
 
   for (const r of aliasRows) {
-    const a: EntityAlias = {
-      id: String(r['id']),
-      workspace_id: String(r['workspace_id']),
-      entity_id: String(r['entity_id']),
-      alias: String(r['alias']),
-      source_event_id: r['source_event_id'] ? String(r['source_event_id']) : null,
-      created_at: String(r['created_at']),
-    };
+    const a = mapAliasRow(r);
     const key = `${workspaceId}:${a.alias.toLowerCase()}`;
     state.aliases.set(key, a);
   }
@@ -247,28 +289,7 @@ export async function getWorkspaceProjectionState(
   const fieldRows = rowsAt(2);
 
   for (const r of fieldRows) {
-    const f: EntityStateField = {
-      id: String(r['id']),
-      workspace_id: String(r['workspace_id']),
-      entity_id: String(r['entity_id']),
-      field_name: String(r['field_name']),
-      state: r['state'] as EntityStateField['state'],
-      value_text: r['value_text'] ? String(r['value_text']) : null,
-      value_json: r['value_json'] ? String(r['value_json']) : null,
-      provenance: r['provenance'] as EntityStateField['provenance'],
-      source_event_id: r['source_event_id'] ? String(r['source_event_id']) : null,
-      candidate_event_ids: r['candidate_event_ids_json']
-        ? (JSON.parse(String(r['candidate_event_ids_json'])) as string[])
-        : null,
-      last_confirmed_value_text: r['last_confirmed_value_text']
-        ? String(r['last_confirmed_value_text'])
-        : null,
-      last_confirmed_value_json: r['last_confirmed_value_json']
-        ? String(r['last_confirmed_value_json'])
-        : null,
-      revision: Number(r['revision']),
-      updated_at: String(r['updated_at']),
-    };
+    const f = mapFieldRow(r);
     const key = `${f.entity_id}:${f.field_name}`;
     state.fields.set(key, f);
   }
@@ -384,4 +405,129 @@ export async function getWorkspaceProjectionState(
   }
 
   return state;
+}
+
+/**
+ * Targeted field hydration for trusted set_field / set_fields /
+ * resolve_conflict handlers: one entity row, the requested field rows with
+ * full dispute/source columns, and the entity's alias rows, in a single D1
+ * read batch. Unrequested collections stay empty; the returned coverage
+ * tells the executor exactly which keys the handler was allowed to touch.
+ * An absent requested field is known absent, an unrequested field untouched.
+ */
+export async function getFieldProjectionState(
+  db: D1Database,
+  workspaceId: string,
+  entityId: string,
+  fieldNames: string[],
+): Promise<{ state: LedgerProjectionState; coverage: ProjectionCoverage }> {
+  const state: LedgerProjectionState = {
+    entities: new Map(),
+    aliases: new Map(),
+    fields: new Map(),
+    tasks: new Map(),
+    drafts: new Map(),
+    memoryEntries: new Map(),
+    memorySuppressions: new Map(),
+  };
+  const distinctFields = [...new Set(fieldNames.filter((n) => typeof n === 'string' && n !== ''))];
+  const fieldPlaceholders = distinctFields.map(() => '?').join(',');
+  const loaded = await db.batch([
+    db
+      .prepare(`SELECT ${ENTITY_COLUMNS} FROM entities WHERE workspace_id = ? AND id = ?`)
+      .bind(workspaceId, entityId),
+    db
+      .prepare(
+        `SELECT ${ALIAS_COLUMNS} FROM entity_aliases WHERE workspace_id = ? AND entity_id = ?`,
+      )
+      .bind(workspaceId, entityId),
+    distinctFields.length > 0
+      ? db
+          .prepare(
+            `SELECT ${FIELD_COLUMNS} FROM entity_state
+             WHERE workspace_id = ? AND entity_id = ? AND field_name IN (${fieldPlaceholders})`,
+          )
+          .bind(workspaceId, entityId, ...distinctFields)
+      : db.prepare(`SELECT ${FIELD_COLUMNS} FROM entity_state WHERE 1 = 0`),
+  ]);
+  const rowsAt = (index: number): Record<string, unknown>[] =>
+    ((loaded[index] as unknown as { results?: Record<string, unknown>[] }).results ?? []);
+
+  for (const r of rowsAt(0)) {
+    const e = mapEntityRow(r);
+    state.entities.set(e.id, e);
+  }
+  const aliasKeys = new Set<string>();
+  for (const r of rowsAt(1)) {
+    const a = mapAliasRow(r);
+    const key = `${workspaceId}:${a.alias.toLowerCase()}`;
+    state.aliases.set(key, a);
+    aliasKeys.add(key);
+  }
+  const fieldKeys = new Set<string>();
+  for (const r of rowsAt(2)) {
+    const f = mapFieldRow(r);
+    const key = `${f.entity_id}:${f.field_name}`;
+    state.fields.set(key, f);
+  }
+  // Requested fields are covered whether present or known absent: creating
+  // a requested field is inside the footprint, touching any other field is
+  // not.
+  for (const name of distinctFields) fieldKeys.add(`${entityId}:${name}`);
+
+  return {
+    state,
+    coverage: {
+      entities: new Set([entityId]),
+      aliases: aliasKeys,
+      fields: fieldKeys,
+      tasks: new Set(),
+      drafts: new Set(),
+      memoryEntries: new Set(),
+      memorySuppressions: new Set(),
+    },
+  };
+}
+
+/**
+ * Bounded lookup of action receipts by explicit action IDs, for the legacy
+ * per-field (`<parent>_f<N>`) compatibility path. One roundtrip; the caller
+ * matches command name and exact payload hash, never a suffix alone.
+ */
+export async function getActionReceiptsByIds(
+  db: D1Database,
+  workspaceId: string,
+  actionIds: string[],
+): Promise<ActionReceipt[]> {
+  const ids = [...new Set(actionIds.filter((id) => typeof id === 'string' && id !== ''))].slice(0, 25);
+  if (ids.length === 0) return [];
+  const placeholders = ids.map(() => '?').join(',');
+  const rows = (
+    await db
+      .prepare(
+        `SELECT id, workspace_id, action_id, payload_hash, command_name, result_status, result_json,
+                actor_kind, actor_user_id, source_message_id, source_job_id, run_id, step_id,
+                committed_revision, created_at
+         FROM action_receipts WHERE workspace_id = ? AND action_id IN (${placeholders})`,
+      )
+      .bind(workspaceId, ...ids)
+      .all<Record<string, unknown>>()
+  ).results || [];
+  return rows.map((r) => ({
+    id: String(r['id']),
+    workspace_id: String(r['workspace_id']),
+    action_id: String(r['action_id']),
+    payload_hash: String(r['payload_hash']),
+    command_name: String(r['command_name']),
+    result_status: r['result_status'] as ActionReceipt['result_status'],
+    result_json: String(r['result_json']),
+    actor_kind: r['actor_kind'] as ActionReceipt['actor_kind'],
+    actor_user_id: r['actor_user_id'] ? String(r['actor_user_id']) : null,
+    source_message_id: r['source_message_id'] ? String(r['source_message_id']) : null,
+    source_job_id: r['source_job_id'] ? String(r['source_job_id']) : null,
+    run_id: r['run_id'] ? String(r['run_id']) : null,
+    step_id: r['step_id'] ? String(r['step_id']) : null,
+    committed_revision: Number(r['committed_revision']),
+    created_at: String(r['created_at']),
+  }));
 }

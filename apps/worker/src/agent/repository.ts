@@ -46,13 +46,14 @@ import {
 import {
   DEFAULT_COMMAND_HANDLERS,
   executeLedgerCommand,
+  getActionReceiptsByIds,
   getWorkspaceActions,
   getWorkspaceEvents,
   handleUndoCommit,
   rankEntityMatches,
   type LedgerCommandContext,
 } from '@otis/ledger';
-import { setMemberSettings, SettingsError } from '@otis/identity';
+import { setMemberSettings, SettingsError, sha256 } from '@otis/identity';
 import { executeCommand, resolveModelAlias } from '../routes/commands.js';
 import { getChat } from '../inbox/repository.js';
 import { sanitizeFtsQuery } from './context.js';
@@ -126,24 +127,19 @@ export async function executeAgentTool(
     };
   }
 
-  // 3. Explicit intent check for lead status changes
+  // 3. Per-item explicit intent for lead status changes. The verdict travels
+  // into the ledger batch as trusted indexes; the batch saves clear facts
+  // while parking only uncertain status, instead of rejecting the whole tool.
+  // Model provenance can never grant confirmation here.
+  let explicitStatusIndexes: number[] | undefined;
   if (toolName === 'set_fields') {
     const sfArgs = args as SetFieldsToolArgs;
-    const statusFields = sfArgs.fields.filter((f) => f.field_name === 'status');
-    for (const statusField of statusFields) {
-      const explicitRes = isExplicitStatusIntent(sourceText, statusField.value as LeadStatus);
-      if (!explicitRes.isExplicit) {
-        return {
-          status: 'needs_clarification',
-          action_id: actionId,
-          clarification: {
-            prompt: `Did you want to set the status of this lead to ${String(statusField.value)}?`,
-            missing_fields: ['status_confirmation'],
-            candidates: ['confirm', 'cancel'],
-          },
-        };
-      }
-    }
+    explicitStatusIndexes = [];
+    sfArgs.fields.forEach((field, index) => {
+      if (field.field_name !== 'status') return;
+      const explicitRes = isExplicitStatusIntent(sourceText, field.value as LeadStatus);
+      if (explicitRes.isExplicit) explicitStatusIndexes!.push(index);
+    });
   }
 
   let effectiveExpectedRevision = expectedBusinessRevision;
@@ -1229,55 +1225,142 @@ export async function executeAgentTool(
 
     case 'set_fields': {
       const sfArgs = args as SetFieldsToolArgs;
-      let currentRevision = effectiveExpectedRevision;
-      const appliedFieldNames: string[] = [];
+      const childItems = sfArgs.fields.map((item) => ({
+        entity_id: sfArgs.entity_id,
+        field_name: item.field_name,
+        value: item.value,
+        provenance: item.provenance,
+      }));
 
-      for (let i = 0; i < sfArgs.fields.length; i++) {
-        const item = sfArgs.fields[i]!;
-        const childActionId = `${actionId}_f${i}`;
-        const childContext: LedgerCommandContext = {
-          ...ledgerContext,
-          action_id: childActionId,
-          expected_business_revision: currentRevision,
-        };
-
-        const res = await executeLedgerCommand(
-          db,
-          childContext,
-          'set_field',
-          {
-            entity_id: sfArgs.entity_id,
-            field_name: item.field_name,
-            value: item.value,
-            provenance: item.provenance,
-          },
-          DEFAULT_COMMAND_HANDLERS['set_field']!,
-          undefined,
-          { deferRunTransition: true },
+      // Legacy compatibility: an in-flight request from the old per-field
+      // loop may already have `<parent>_f<N>` receipts without a parent
+      // receipt. Match workspace, command and exact child payload hash —
+      // never a suffix alone — then finish only the remainder sequentially.
+      const childActionIds = childItems.map((_, i) => `${actionId}_f${i}`);
+      const childReceipts = await getActionReceiptsByIds(db, workspaceId, childActionIds);
+      const receiptByActionId = new Map(childReceipts.map((r) => [r.action_id, r]));
+      const committedChildIndexes = new Set<number>();
+      for (let i = 0; i < childItems.length; i++) {
+        const receipt = receiptByActionId.get(childActionIds[i]!);
+        if (!receipt) continue;
+        const expectedHash = await sha256(
+          JSON.stringify({ commandName: 'set_field', args: childItems[i] }),
         );
-
-        if (res.status === 'applied') {
-          appliedFieldNames.push(item.field_name);
-          currentRevision = res.committed_revision ?? currentRevision + 1;
-        } else if (res.status === 'already_applied') {
-          appliedFieldNames.push(item.field_name);
-        } else {
+        if (receipt.command_name !== 'set_field' || receipt.payload_hash !== expectedHash) {
           return {
-            ...res,
+            status: 'conflict',
             action_id: actionId,
-            summary: appliedFieldNames.length > 0
-              ? `Applied fields [${appliedFieldNames.join(', ')}], but failed on '${item.field_name}': ${res.error?.message}`
-              : res.error?.message,
+            error: {
+              code: 'action_conflict',
+              message: `Action ID '${childActionIds[i]}' already committed with a different payload.`,
+            },
           };
+        }
+        if (receipt.result_status === 'applied' || receipt.result_status === 'already_applied') {
+          committedChildIndexes.add(i);
         }
       }
 
-      return {
-        status: 'applied',
-        action_id: actionId,
-        committed_revision: currentRevision,
-        summary: `Updated fields: ${appliedFieldNames.join(', ')}.`,
-      };
+      if (committedChildIndexes.size === childItems.length && childItems.length > 0) {
+        const committedRevision = Math.max(
+          ...[...committedChildIndexes].map((i) => receiptByActionId.get(childActionIds[i]!)!.committed_revision),
+        );
+        return {
+          status: 'applied',
+          action_id: actionId,
+          committed_revision: committedRevision,
+          summary: `Updated fields: ${sfArgs.fields.map((f) => f.field_name).join(', ')} (previously committed).`,
+        };
+      }
+
+      if (committedChildIndexes.size > 0) {
+        // Narrow legacy completion: replayed children already advanced the
+        // workspace before this call; remaining writes execute against the
+        // live revision (a race fails honestly as revision_conflict, never
+        // a silent rebase). Sequential by necessity — never claimed atomic.
+        let currentRevision = effectiveExpectedRevision;
+        const appliedFieldNames = childItems
+          .filter((_, i) => committedChildIndexes.has(i))
+          .map((item) => item.field_name);
+        for (let i = 0; i < childItems.length; i++) {
+          if (committedChildIndexes.has(i)) continue;
+          const item = childItems[i]!;
+          const childContext: LedgerCommandContext = {
+            ...ledgerContext,
+            action_id: childActionIds[i]!,
+            expected_business_revision: currentRevision,
+          };
+          const res = await executeLedgerCommand(
+            db,
+            childContext,
+            'set_field',
+            {
+              entity_id: item.entity_id,
+              field_name: item.field_name,
+              value: item.value,
+              provenance: item.provenance,
+            },
+            DEFAULT_COMMAND_HANDLERS['set_field']!,
+            undefined,
+            { deferRunTransition: true },
+          );
+          if (res.status === 'applied') {
+            appliedFieldNames.push(item.field_name);
+            currentRevision = res.committed_revision ?? currentRevision + 1;
+          } else if (res.status === 'already_applied') {
+            appliedFieldNames.push(item.field_name);
+          } else {
+            return {
+              ...res,
+              action_id: actionId,
+              summary: appliedFieldNames.length > 0
+                ? `Applied fields [${appliedFieldNames.join(', ')}] (including previously committed work), but failed on '${item.field_name}': ${res.error?.message ?? res.summary}`
+                : (res.error?.message ?? res.summary),
+            };
+          }
+        }
+        return {
+          status: 'applied',
+          action_id: actionId,
+          committed_revision: currentRevision,
+          summary: `Updated fields: ${appliedFieldNames.join(', ')} (legacy sequential completion after previously committed work).`,
+        };
+      }
+
+      // New parent batch path: one validated transaction, one receipt, one
+      // business revision for the whole request.
+      const batchRes = await executeLedgerCommand(
+        db,
+        ledgerContext,
+        'set_fields',
+        {
+          entity_id: sfArgs.entity_id,
+          fields: childItems.map((item) => ({
+            field_name: item.field_name,
+            value: item.value,
+            provenance: item.provenance,
+          })),
+          explicit_status_indexes: explicitStatusIndexes ?? [],
+        },
+        DEFAULT_COMMAND_HANDLERS['set_fields']!,
+        undefined,
+        { deferRunTransition: true },
+      );
+
+      // Mixed commit: facts saved, uncertain status parked. Expose
+      // needs_clarification with the committed revision/events so the run
+      // parks normally while the saved work stays visible.
+      if (batchRes.status === 'applied' && batchRes.clarification) {
+        return {
+          status: 'needs_clarification',
+          action_id: actionId,
+          committed_revision: batchRes.committed_revision,
+          summary: batchRes.summary,
+          clarification: batchRes.clarification,
+          data: batchRes.data,
+        };
+      }
+      return batchRes;
     }
 
     case 'resolve_conflict': {

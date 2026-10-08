@@ -74,6 +74,52 @@ export interface SetFieldArgs {
   supersedes_event_id?: string | null;
 }
 
+export interface SetFieldsFieldItem {
+  field_name: string;
+  value: unknown;
+  provenance?: Provenance;
+}
+
+export interface SetFieldsArgs {
+  entity_id: string;
+  fields: SetFieldsFieldItem[];
+  /**
+   * Trusted agent-layer verdict: indexes into `fields` whose status update
+   * was explicitly instructed by the member's own words. Never model-supplied:
+   * the agent bridge derives it from the source text, and resumption derives
+   * it from a persisted member confirmation. Absent means no explicit intent.
+   */
+  explicit_status_indexes?: number[];
+}
+
+/**
+ * Which projection keys a targeted hydration loaded. Unloaded collections
+ * are empty maps; the post-handler bounds assertion treats any mutation
+ * outside the covered keys as a violation instead of silently persisting a
+ * partial state as the whole workspace.
+ */
+export type CoverageScope = 'all' | Set<string>;
+
+export interface ProjectionCoverage {
+  entities: CoverageScope;
+  aliases: CoverageScope;
+  fields: CoverageScope;
+  tasks: CoverageScope;
+  drafts: CoverageScope;
+  memoryEntries: CoverageScope;
+  memorySuppressions: CoverageScope;
+}
+
+export const FULL_PROJECTION_COVERAGE: ProjectionCoverage = {
+  entities: 'all',
+  aliases: 'all',
+  fields: 'all',
+  tasks: 'all',
+  drafts: 'all',
+  memoryEntries: 'all',
+  memorySuppressions: 'all',
+};
+
 export interface CreateTaskArgs {
   title: string;
   entity_id?: string | null;

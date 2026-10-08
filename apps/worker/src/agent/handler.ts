@@ -1523,7 +1523,16 @@ export class AgentHandler implements TurnHandler {
             await publishAgentActivity(ctx, `step${stepIndex}_finished`, 'step_finished', {
               tool_name: call.name,
               step_index: stepIndex,
-              status: ['applied', 'already_applied'].includes(result.status) ? 'succeeded' : result.status === 'needs_clarification' ? 'skipped' : 'failed',
+              status: ['applied', 'already_applied'].includes(result.status)
+                ? 'succeeded'
+                : result.status === 'needs_clarification'
+                  // A mixed commit saved facts before parking its question:
+                  // expose the save instead of labelling the step skipped.
+                  ? (Array.isArray((result.data as { applied_fields?: unknown } | undefined)?.applied_fields) &&
+                    ((result.data as { applied_fields?: unknown[] }).applied_fields?.length ?? 0) > 0)
+                    ? 'succeeded'
+                    : 'skipped'
+                  : 'failed',
               ...(toolTarget ? { target: toolTarget.slice(0, 80) } : {}),
             });
 
