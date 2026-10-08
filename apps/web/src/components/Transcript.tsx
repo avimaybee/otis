@@ -142,17 +142,18 @@ export function WorkingDisclosure({ steps, finished, expanded, onToggle, onInspe
   if (!steps.length) return null;
   const current = steps.find(step => step.state === 'running') ?? steps.at(-1)!;
   const displaySteps = consolidateWorkingSteps(steps);
+  const active = !finished && !isWaiting;
   return (
     <section className="otis-working" aria-label={finished ? 'Worked' : isWaiting ? 'Paused' : 'Working'} aria-live="off">
       <button type="button" className="otis-working__disclosure mb-2 flex items-center gap-2 text-xs text-muted-foreground" aria-expanded={expanded} onClick={onToggle}>
         {!finished && (
           <span
             aria-hidden="true"
-            className={`size-2 shrink-0 rounded-full ${isWaiting ? 'bg-muted-foreground/60' : 'bg-highlight'}`}
+            className={`size-2 shrink-0 rounded-full ${isWaiting ? 'bg-muted-foreground/60' : 'bg-highlight otis-working__pulse-dot--active'}`}
           />
         )}
         <span className="size-4 text-subtle" aria-hidden="true"><ChevronDownIcon /></span>
-        <span>
+        <span className={active ? 'otis-working__label--active' : undefined}>
           {finished
             ? `Worked · ${steps.length} step${steps.length === 1 ? '' : 's'}`
             : isWaiting
@@ -166,7 +167,7 @@ export function WorkingDisclosure({ steps, finished, expanded, onToggle, onInspe
             <li key={step.id} className={`otis-working__step otis-working__step--${step.state}`}>
               <span className="otis-working__step-icon">
                 {step.state === 'running' && !isWaiting ? (
-                  <span className="size-2 shrink-0 rounded-full bg-highlight" aria-hidden="true" />
+                  <span className="size-2 shrink-0 rounded-full bg-highlight otis-working__pulse-dot--active" aria-hidden="true" />
                 ) : (
                   <StepIcon label={step.label} state={step.state} />
                 )}
@@ -203,15 +204,15 @@ function RunWork({ run, steps, activities, onInspectAction, onReply, onRetryRun,
   return <div className="otis-run">
     {(run?.status === 'queued' || (run?.status === 'running' && !steps.length && thinking.blocks.length === 0)) && (
       <div className="flex items-center gap-2 text-xs text-muted-foreground" role="status">
-        <span aria-hidden="true" className="size-2 shrink-0 rounded-full bg-highlight" />
-        <span>{run?.status === 'queued' ? 'Thinking…' : 'Working…'}</span>
+        <span aria-hidden="true" className="size-2 shrink-0 rounded-full bg-highlight otis-working__pulse-dot--active" />
+        <span className="otis-working__label--active">{run?.status === 'queued' ? 'Thinking…' : 'Working…'}</span>
       </div>
     )}
     {steps.length === 0 && thinking.blocks.length > 0 && (
       <button type="button" className="otis-working__disclosure flex items-center gap-2 text-xs text-muted-foreground" aria-expanded={expanded} onClick={() => setManual(!expanded)}>
-        {!finished && <span aria-hidden="true" className={`size-2 shrink-0 rounded-full ${isWaiting ? 'bg-muted-foreground/60' : 'bg-highlight'}`} />}
+        {!finished && <span aria-hidden="true" className={`size-2 shrink-0 rounded-full ${isWaiting ? 'bg-muted-foreground/60' : 'bg-highlight otis-working__pulse-dot--active'}`} />}
         <span className="size-4 text-subtle" aria-hidden="true"><ChevronDownIcon /></span>
-        <span>{finished ? 'Worked' : isWaiting ? 'Paused · Needs your answer' : 'Working…'}</span>
+        <span className={!finished && !isWaiting ? 'otis-working__label--active' : undefined}>{finished ? 'Worked' : isWaiting ? 'Paused · Needs your answer' : 'Working…'}</span>
       </button>
     )}
     <WorkingDisclosure steps={steps} finished={finished} expanded={expanded} onToggle={() => setManual(!expanded)} onInspectAction={onInspectAction} isWaiting={isWaiting}/>

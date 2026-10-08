@@ -116,7 +116,15 @@ function checkFile(file) {
     // The trailing color-stop alternative is anchored out of identifiers:
     // fixture ids like 'photo-ready-1' contain "to-ready-1" but are not
     // gradient utilities; real stops always follow a class boundary.
-    if (/bg-gradient|linear-gradient|radial-gradient|background-clip\s*:\s*text|-webkit-text-fill-color|(?<![\w-])to-[a-z]+-[0-9]/.test(line)) {
+    // The gradient/clip-text mechanics of the approved Working shimmer
+    // (see rule 9 exception) are the sole exemption, confined to
+    // apps/web/src/index.css; every other construction still fails.
+    const shimmerMechanics = rel === 'apps/web/src/index.css' && (
+      /linear-gradient\(90deg, var\(--muted-foreground\)/.test(line) ||
+      /background-clip\s*:\s*text/.test(line) ||
+      /-webkit-text-fill-color/.test(line)
+    );
+    if (!shimmerMechanics && /bg-gradient|linear-gradient|radial-gradient|background-clip\s*:\s*text|-webkit-text-fill-color|(?<![\w-])to-[a-z]+-[0-9]/.test(line)) {
       fail(file, 'banned gradient construction', `${at} ${line}`);
     }
     // 4. Off-system palette classes (the approved store has no red/blue/… scale).
@@ -148,7 +156,13 @@ function checkFile(file) {
       fail(file, 'parallel TypeScript palette (CSS variables are the only token store)', `${at} ${line}`);
     }
     // 9. Banned motion names. otis-spin is the in-control send pending state.
-    if (/animate-(pulse|ping|bounce)|otis-pulse|otis-shimmer|otis-question-enter|otis-picker-enter/.test(line)) {
+    // otis-shimmer and otis-pulse are approved exclusively for the active
+    // Working status label and running dots in apps/web/src/index.css
+    // (explicit user direction); anywhere else they still fail.
+    if (/animate-(pulse|ping|bounce)|otis-question-enter|otis-picker-enter/.test(line)) {
+      fail(file, 'banned decorative motion', `${at} ${line}`);
+    }
+    if (/otis-shimmer|otis-pulse/.test(line) && rel !== 'apps/web/src/index.css') {
       fail(file, 'banned decorative motion', `${at} ${line}`);
     }
     // 10. Radius inventory: 4/8/12/16/20 pills only (declaration values only).
@@ -273,7 +287,7 @@ if (failures.length > 0) {
   process.exit(1);
 }
 
-// 18. Approved 2026-10-04 additions (docs/design/approved-additions-2026-10-04.md).
+// 18. Approved 2026-10-04 additions (docs/archive/docs/design/approved-additions-2026-10-04.md).
 // Narrow exact-value assertions for the four approved recipes. These assert
 // the approved values exist; they never permit arbitrary values elsewhere.
 function expectContains(label, fileRel, snippet) {

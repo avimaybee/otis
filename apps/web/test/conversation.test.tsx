@@ -231,6 +231,26 @@ describe('Clarification dismissal', () => {
     const undo = Array.from(view.host.querySelectorAll('button')).filter(button => button.textContent === 'Inspect / Undo'); expect(undo).toHaveLength(1);
     await React.act(async () => undo[0]!.click()); expect(onInspect).toHaveBeenCalledWith('act_1'); await view.unmount();
   });
+  it('shimmers the active Working label, never finished or paused states', async () => {
+    const running = await mount(<Transcript messages={[]} members={{}} currentUserId="usr_1" run={{ status: 'running' } as never} steps={[{ id: 's1', label: 'Reading notes', state: 'running' }]} onInspectAction={vi.fn()}/>);
+    expect(running.host.querySelector('.otis-working__label--active')?.textContent).toContain('Reading notes');
+    expect(running.host.querySelector('.otis-working__pulse-dot--active')).toBeTruthy();
+    await running.unmount();
+    const done = await mount(<Transcript messages={[]} members={{}} currentUserId="usr_1" run={{ status: 'succeeded' } as never} steps={[{ id: 's1', label: 'Reading notes', state: 'succeeded', actionId: 'act_1' }]} onInspectAction={vi.fn()}/>);
+    expect(done.host.querySelector('.otis-working__label--active')).toBeNull();
+    expect(done.host.querySelector('.otis-working__pulse-dot--active')).toBeNull();
+    expect(done.host.textContent).toContain('Worked · 1 step');
+    await done.unmount();
+    const waiting = await mount(<Transcript messages={[]} members={{}} currentUserId="usr_1" run={{ status: 'waiting_for_input' } as never} steps={[{ id: 's1', label: 'Reading notes', state: 'running' }]} onInspectAction={vi.fn()}/>);
+    expect(waiting.host.querySelector('.otis-working__label--active')).toBeNull();
+    expect(waiting.host.querySelector('.otis-working__pulse-dot--active')).toBeNull();
+    await waiting.unmount();
+    const css = readFileSync(resolve(__dirname, '../src/index.css'), 'utf-8');
+    expect(css).toContain('@keyframes otis-shimmer');
+    expect(css).toContain('.otis-working__label--active');
+    expect(css).toContain('@keyframes otis-pulse');
+    expect(css).toContain('.otis-working__pulse-dot--active');
+  });
   it('uses the persisted author name for teammate history', async () => {
     const view = await mount(<Transcript messages={[message({ id: 'teammate', content_text: 'Visited Bistro', author_user_id: 'usr_2', author_display_name: 'Hunor' })]} members={{}} currentUserId="usr_1" steps={[]} onInspectAction={vi.fn()}/>);
     expect(view.host.querySelector('.otis-turn__meta')?.textContent).toBe('Hunor'); await view.unmount();
