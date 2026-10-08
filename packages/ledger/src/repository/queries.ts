@@ -9,6 +9,7 @@ import type {
   Entity,
   EntityAlias,
   EntityStateField,
+  InteractionState,
   LedgerEvent,
   MemoryEntry,
   MemorySuppression,
@@ -174,6 +175,22 @@ function mapAliasRow(r: Record<string, unknown>): EntityAlias {
   };
 }
 
+function mapInteractionRow(r: Record<string, unknown>): InteractionState {
+  return {
+    workspace_id: String(r['workspace_id']),
+    root_event_id: String(r['root_event_id']),
+    entity_id: r['entity_id'] ? String(r['entity_id']) : null,
+    kind: r['kind'] as InteractionState['kind'],
+    head_event_id: String(r['head_event_id']),
+    revision: Number(r['revision']),
+    state: r['state'] as InteractionState['state'],
+    occurred_at: String(r['occurred_at']),
+    sequence: Number(r['sequence']),
+    updated_at: String(r['updated_at']),
+    head_value_json: r['head_value_json'] ? String(r['head_value_json']) : null,
+  };
+}
+
 function mapFieldRow(r: Record<string, unknown>): EntityStateField {
   return {
     id: String(r['id']),
@@ -208,14 +225,20 @@ const FIELD_COLUMNS =
    provenance, source_event_id, candidate_event_ids_json, last_confirmed_value_text,
    last_confirmed_value_json, revision, updated_at`;
 
+const INTERACTION_COLUMNS =
+  `workspace_id, root_event_id, entity_id, kind, head_event_id, revision,
+   state, occurred_at, sequence, updated_at, head_value_json`;
+
 export async function getWorkspaceProjectionState(
   db: D1Database,
   workspaceId: string,
+  options?: { includeInteractions?: boolean },
 ): Promise<LedgerProjectionState> {
   const state: LedgerProjectionState = {
     entities: new Map(),
     aliases: new Map(),
     fields: new Map(),
+    interactions: new Map(),
     tasks: new Map(),
     drafts: new Map(),
     memoryEntries: new Map(),
@@ -401,6 +424,26 @@ export async function getWorkspaceProjectionState(
     if (!String(err).includes('no such table')) throw err;
   }
 
+  // Interaction lifecycle rows are opt-in on the full loader: ordinary
+  // writes hydrate them scoped (or not at all) through the executor, so a
+  // full-workspace interaction scan plus fingerprinting never rides along
+  // on every command. Direct readers keep the complete view by default.
+  if (options?.includeInteractions === false) return state;
+  try {
+    const interactionRows = (
+      await db
+        .prepare(`SELECT ${INTERACTION_COLUMNS} FROM interaction_state WHERE workspace_id = ?`)
+        .bind(workspaceId)
+        .all<Record<string, unknown>>()
+    ).results || [];
+    for (const r of interactionRows) {
+      const row = mapInteractionRow(r);
+      state.interactions.set(row.root_event_id, row);
+    }
+  } catch (err) {
+    if (!String(err).includes('no such table')) throw err;
+  }
+
   return state;
 }
 
@@ -423,6 +466,7 @@ export async function getFieldProjectionState(
     entities: new Map(),
     aliases: new Map(),
     fields: new Map(),
+    interactions: new Map(),
     tasks: new Map(),
     drafts: new Map(),
     memoryEntries: new Map(),
@@ -467,12 +511,136 @@ export async function getFieldProjectionState(
       entities: new Set([entityId]),
       aliases: new Set(),
       fields: fieldKeys,
+      interactions: new Set(),
       tasks: new Set(),
       drafts: new Set(),
       memoryEntries: new Set(),
       memorySuppressions: new Set(),
     },
   };
+}
+
+/**
+ * Entity-scoped interaction rows for the delete_entity commit path: only
+ * the doomed entity's lifecycle is loaded, never the workspace history.
+ * Tolerant of pre-C1 databases, where there is simply nothing to drop.
+ */
+export async function getEntityInteractions(
+  db: D1Database,
+  workspaceId: string,
+  entityId: string,
+): Promise<Map<string, InteractionState>> {
+  const rows = new Map<string, InteractionState>();
+  try {
+    const found = (
+      await db
+        .prepare(`SELECT ${INTERACTION_COLUMNS} FROM interaction_state WHERE workspace_id = ? AND entity_id = ?`)
+        .bind(workspaceId, entityId)
+        .all<Record<string, unknown>>()
+    ).results || [];
+    for (const r of found) {
+      const row = mapInteractionRow(r);
+      rows.set(row.root_event_id, row);
+    }
+  } catch (err) {
+    if (!String(err).includes('no such table')) throw err;
+  }
+  return rows;
+}
+
+/**
+ * Targeted hydration for the C1 revise/remove interaction handlers: the
+ * single interaction row, its scoped entity, and — for quote kinds — the
+ * shared quote field row the revision reduces into. One D1 batch; the
+ * caller never scans workspace history to resolve a root. A requested
+ * quote field is covered whether present or known absent. Databases
+ * predating the C1 migration resolve unknown roots, never fake rows.
+ */
+export async function getInteractionProjectionState(
+  db: D1Database,
+  workspaceId: string,
+  rootEventId: string,
+): Promise<{ state: LedgerProjectionState; coverage: ProjectionCoverage }> {
+  const state: LedgerProjectionState = {
+    entities: new Map(),
+    aliases: new Map(),
+    fields: new Map(),
+    interactions: new Map(),
+    tasks: new Map(),
+    drafts: new Map(),
+    memoryEntries: new Map(),
+    memorySuppressions: new Map(),
+  };
+  const coverage: ProjectionCoverage = {
+    entities: new Set(),
+    aliases: new Set(),
+    fields: new Set(),
+    interactions: new Set(),
+    tasks: new Set(),
+    drafts: new Set(),
+    memoryEntries: new Set(),
+    memorySuppressions: new Set(),
+  };
+  let row: InteractionState | null = null;
+  try {
+    const found = await db
+      .prepare(`SELECT ${INTERACTION_COLUMNS} FROM interaction_state WHERE workspace_id = ? AND root_event_id = ?`)
+      .bind(workspaceId, rootEventId)
+      .first<Record<string, unknown>>();
+    if (found) row = mapInteractionRow(found);
+  } catch (err) {
+    if (!String(err).includes('no such table')) throw err;
+    return { state, coverage };
+  }
+  if (!row) return { state, coverage };
+  state.interactions.set(row.root_event_id, row);
+  (coverage.interactions as Set<string>).add(row.root_event_id);
+  if (!row.entity_id) return { state, coverage };
+
+  // Sibling roots of the same entity and kind feed head-aware field
+  // recompute: revising one disputant must see the others to preserve the
+  // dispute instead of overwriting it. Entity histories stay small; the
+  // read is indexed and never workspace-wide.
+  const loaded = await db.batch([
+    db
+      .prepare(`SELECT ${ENTITY_COLUMNS} FROM entities WHERE workspace_id = ? AND id = ?`)
+      .bind(workspaceId, row.entity_id),
+    row.kind === 'quote'
+      ? db
+          .prepare(
+            `SELECT ${FIELD_COLUMNS} FROM entity_state
+             WHERE workspace_id = ? AND entity_id = ? AND field_name = 'quote'`,
+          )
+          .bind(workspaceId, row.entity_id)
+      : db.prepare(`SELECT ${FIELD_COLUMNS} FROM entity_state WHERE 1 = 0`),
+    db
+      .prepare(
+        `SELECT ${INTERACTION_COLUMNS} FROM interaction_state
+         WHERE workspace_id = ? AND entity_id = ? AND kind = ? AND root_event_id != ?`,
+      )
+      .bind(workspaceId, row.entity_id, row.kind, row.root_event_id),
+  ]);
+  const rowsAt = (index: number): Record<string, unknown>[] =>
+    ((loaded[index] as unknown as { results?: Record<string, unknown>[] }).results ?? []);
+  for (const r of rowsAt(0)) {
+    const e = mapEntityRow(r);
+    state.entities.set(e.id, e);
+    (coverage.entities as Set<string>).add(e.id);
+  }
+  for (const r of rowsAt(1)) {
+    const f = mapFieldRow(r);
+    const key = `${f.entity_id}:${f.field_name}`;
+    state.fields.set(key, f);
+  }
+  if (row.kind === 'quote') {
+    (coverage.fields as Set<string>).add(`${row.entity_id}:quote`);
+  }
+  for (const r of rowsAt(2)) {
+    const sibling = mapInteractionRow(r);
+    state.interactions.set(sibling.root_event_id, sibling);
+    (coverage.interactions as Set<string>).add(sibling.root_event_id);
+  }
+  return { state, coverage };
 }
 
 /**

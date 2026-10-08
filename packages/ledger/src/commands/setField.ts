@@ -136,7 +136,7 @@ export function handleSetField(
     const nextFields = new Map(state.fields);
 
     reduceEntity(nextEntities, nextAliases, event);
-    reduceFields(nextFields, event);
+    reduceFields(nextFields, state.interactions, event);
 
     return {
       result: {
@@ -174,7 +174,7 @@ export function handleSetField(
   const nextFields = new Map(state.fields);
 
   reduceEntity(nextEntities, nextAliases, event);
-  reduceFields(nextFields, event);
+  reduceFields(nextFields, state.interactions, event);
 
   return {
     result: {

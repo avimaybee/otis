@@ -30,6 +30,8 @@ import {
   validateLogEventArgs,
   validateQueryArgs,
   validateRememberContextArgs,
+  validateRemoveInteractionArgs,
+  validateReviseInteractionArgs,
   validateSetFieldsArgs,
   validateToolCall,
   validateUndoArgs,
@@ -37,8 +39,8 @@ import {
 } from '../src/index.js';
 
 describe('006A: Tool Schemas and Argument Validation', () => {
-  it('defines all 27 agent tools and 1 control tool with additionalProperties: false', () => {
-    expect(ALL_AGENT_TOOLS.length).toBe(28);
+  it('defines all 29 agent tools and 1 control tool with additionalProperties: false', () => {
+    expect(ALL_AGENT_TOOLS.length).toBe(30);
     for (const tool of ALL_AGENT_TOOLS) {
       expect(tool.parameters.type).toBe('object');
       expect(tool.parameters.additionalProperties).toBe(false);
@@ -50,6 +52,8 @@ describe('006A: Tool Schemas and Argument Validation', () => {
     expect(toolNames).toContain('rename_entity');
     expect(toolNames).toContain('delete_entity');
     expect(toolNames).toContain('log_event');
+    expect(toolNames).toContain('revise_interaction');
+    expect(toolNames).toContain('remove_interaction');
     expect(toolNames).toContain('set_fields');
     expect(toolNames).toContain('resolve_conflict');
     expect(toolNames).toContain('create_task');
@@ -625,6 +629,68 @@ describe('006A: Pure Policy Rules', () => {
     expect(forged.ok).toBe(false);
   });
 
+  it('validates revise_interaction arguments and rejects smuggled root markers', () => {
+    const good = validateReviseInteractionArgs({
+      interaction_id: 'evt_root',
+      expected_head_event_id: 'evt_head',
+      kind: 'quote',
+      payload: { amount: 50000, currency: 'EUR', role: 'offered' },
+    });
+    expect(good.ok).toBe(true);
+    expect(validateReviseInteractionArgs({}).ok).toBe(false);
+    expect(
+      validateReviseInteractionArgs({
+        interaction_id: 'evt_root',
+        expected_head_event_id: 'evt_head',
+        kind: 'task',
+        payload: {},
+      }).ok,
+    ).toBe(false);
+    // A model-supplied root inside the payload is never honored.
+    const smuggled = validateReviseInteractionArgs({
+      interaction_id: 'evt_root',
+      expected_head_event_id: 'evt_head',
+      kind: 'note',
+      payload: { text: 'hi', interaction_id: 'evt_other' },
+    });
+    expect(smuggled.ok).toBe(false);
+    // The lower log_event boundary rejects the same reserved key, so a new
+    // log can never attach to another root.
+    expect(
+      validateLogEventArgs({
+        entity_id: 'ent_1',
+        kind: 'note',
+        payload: { text: 'hi', interaction_id: 'evt_other' },
+      }).ok,
+    ).toBe(false);
+  });
+
+  it('validates remove_interaction arguments', () => {
+    const good = validateRemoveInteractionArgs({
+      interaction_id: 'evt_root',
+      expected_head_event_id: 'evt_head',
+      reason: 'duplicate entry',
+    });
+    expect(good.ok).toBe(true);
+    if (good.ok) expect(good.data.reason).toBe('duplicate entry');
+    expect(validateRemoveInteractionArgs({ interaction_id: 'evt_root' }).ok).toBe(false);
+    const forged = validateRemoveInteractionArgs({
+      interaction_id: 'evt_root',
+      expected_head_event_id: 'evt_head',
+      action_id: 'act_fake',
+    });
+    expect(forged.ok).toBe(false);
+  });
+
+  it('blocks interaction revision and removal from forwarded or stored sources', () => {
+    expect(checkUntrustedContentPolicy('forwarded_client', 'revise_interaction', 'change the quote').allowed).toBe(false);
+    expect(checkUntrustedContentPolicy('forwarded_client', 'remove_interaction', 'delete that note').allowed).toBe(false);
+    expect(checkUntrustedContentPolicy('memory', 'revise_interaction').allowed).toBe(false);
+    expect(checkUntrustedContentPolicy('memory', 'remove_interaction').allowed).toBe(false);
+    expect(checkUntrustedContentPolicy('member', 'revise_interaction', 'fix the quote').allowed).toBe(true);
+    expect(checkUntrustedContentPolicy('member', 'remove_interaction', 'remove the duplicate').allowed).toBe(true);
+  });
+
   it('classifies every registered tool as mutating or read-only, exactly once', () => {
     for (const tool of ALL_AGENT_TOOLS) {
       const mutating = MUTATING_TOOL_NAMES.has(tool.name);
@@ -632,6 +698,8 @@ describe('006A: Pure Policy Rules', () => {
       expect(`${tool.name}:${mutating}:${readOnly}`).toBe(`${tool.name}:${!readOnly}:${!mutating}`);
     }
     expect(MUTATING_TOOL_NAMES.has('delete_entity')).toBe(true);
+    expect(MUTATING_TOOL_NAMES.has('revise_interaction')).toBe(true);
+    expect(MUTATING_TOOL_NAMES.has('remove_interaction')).toBe(true);
     expect(READ_ONLY_TOOL_NAMES.has('find_entities')).toBe(true);
   });
 

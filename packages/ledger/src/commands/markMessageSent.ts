@@ -72,6 +72,7 @@ export function handleMarkMessageSent(
     entities: new Map(state.entities),
     aliases: new Map(state.aliases),
     fields: new Map(state.fields),
+    interactions: new Map(state.interactions),
     tasks: new Map(state.tasks),
     drafts: new Map(state.drafts),
     memoryEntries: new Map(state.memoryEntries),

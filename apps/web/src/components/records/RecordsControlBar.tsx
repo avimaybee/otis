@@ -6,7 +6,7 @@ import {
   SearchIcon, CloseIcon, PlusIcon, FilterIcon,
   TableIcon, LayoutListIcon, UndoIcon, RedoIcon,
   SaveIcon, HistoryIcon, SparklesIcon, ChevronDownIcon,
-  AlertCircleIcon
+  AlertCircleIcon, RefreshIcon
 } from '../icons.js';
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem,
@@ -37,6 +37,8 @@ export interface RecordsControlBarProps {
   onOpenHistory: () => void;
   onToggleAskOtis: () => void;
   isAskOtisOpen: boolean;
+  onRefresh?: () => void;
+  isRefreshing?: boolean;
 }
 
 export function RecordsControlBar({
@@ -63,6 +65,8 @@ export function RecordsControlBar({
   onOpenHistory,
   onToggleAskOtis,
   isAskOtisOpen,
+  onRefresh,
+  isRefreshing,
 }: RecordsControlBarProps) {
   const [filterMenuOpen, setFilterMenuOpen] = useState(false);
 
@@ -94,7 +98,7 @@ export function RecordsControlBar({
               </DropdownMenuItem>
             ))}
             <DropdownMenuSeparator />
-            <DropdownMenuItem onSelect={onOpenNewList} className="text-highlight">
+            <DropdownMenuItem onSelect={onOpenNewList} className="gap-2">
               <PlusIcon />
               <span>Create new list</span>
             </DropdownMenuItem>
@@ -217,6 +221,22 @@ export function RecordsControlBar({
           </div>
         )}
 
+        {/* Refresh records */}
+        {onRefresh && (
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={onRefresh}
+            disabled={isRefreshing}
+            className="h-8 gap-1 text-xs text-muted-foreground hover:text-foreground"
+            title="Refresh records from workspace memory"
+            aria-label="Refresh records"
+          >
+            <RefreshIcon className={isRefreshing ? 'animate-spin' : ''} />
+            <span className="hidden sm:inline">Refresh</span>
+          </Button>
+        )}
+
         {/* View toggle (Grid / Cards) */}
         <Button
           variant="ghost"
@@ -249,7 +269,7 @@ export function RecordsControlBar({
         >
           <SparklesIcon />
           <span>Ask Otis</span>
-          <span className="size-1.5 rounded-full bg-highlight" aria-hidden="true" />
+          {dirtyCount > 0 && <span className="size-1.5 rounded-full bg-warning" aria-hidden="true" />}
         </Button>
       </div>
     </div>

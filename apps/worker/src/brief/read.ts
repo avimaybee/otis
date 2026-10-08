@@ -204,6 +204,39 @@ async function readLastContacts(
                  WHERE reverted_by.workspace_id = events.workspace_id
                    AND reverted_by.reverts_event_id = events.id
                )
+               -- A superseded head is not current: a live revision points
+               -- at it. Entity correlation keeps the lookup indexed.
+               AND NOT EXISTS (
+                 SELECT 1 FROM events AS superseded_by
+                 WHERE superseded_by.workspace_id = events.workspace_id
+                   AND superseded_by.entity_id = events.entity_id
+                   AND superseded_by.supersedes_event_id = events.id
+                   AND NOT EXISTS (
+                     SELECT 1 FROM events AS unreverted
+                     WHERE unreverted.workspace_id = superseded_by.workspace_id
+                       AND unreverted.reverts_event_id = superseded_by.id
+                   )
+               )
+               -- A removed interaction is not current either. The root of
+               -- an event is its revision marker, or its own id for legacy
+               -- heads; NULL comparisons never match, so untracked kinds
+               -- (sent drafts) and pre-C1 history keep legacy behavior.
+               AND NOT EXISTS (
+                 SELECT 1 FROM events AS removed_by
+                 WHERE removed_by.workspace_id = events.workspace_id
+                   AND removed_by.entity_id = events.entity_id
+                   AND removed_by.kind = 'interaction_removed'
+                   AND (
+                     json_extract(removed_by.payload_json, '$.root_event_id') = events.id
+                     OR json_extract(removed_by.payload_json, '$.root_event_id')
+                       = json_extract(events.payload_json, '$.interaction_id')
+                   )
+                   AND NOT EXISTS (
+                     SELECT 1 FROM events AS unremoved
+                     WHERE unremoved.workspace_id = removed_by.workspace_id
+                       AND unremoved.reverts_event_id = removed_by.id
+                   )
+               )
            ) WHERE rn = 1`,
         )
         .bind(workspaceId, ...chunk)

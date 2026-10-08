@@ -10,6 +10,7 @@ import type {
   Entity,
   EntityAlias,
   EntityStateField,
+  InteractionState,
   LedgerEvent,
   MemoryEntry,
   MemorySuppression,
@@ -18,10 +19,11 @@ import type {
 } from '@otis/contracts';
 import type { LedgerCommandContext, LedgerProjectionState, CoverageScope, ProjectionCoverage } from '../types.js';
 import { FULL_PROJECTION_COVERAGE } from '../types.js';
-import { getActionReceipt, getFieldProjectionState, getWorkspaceProjectionState, getWorkspaceRevision } from './queries.js';
+import { getActionReceipt, getEntityInteractions, getFieldProjectionState, getInteractionProjectionState, getWorkspaceProjectionState, getWorkspaceRevision } from './queries.js';
 import { handleCreateEntity } from '../commands/createEntity.js';
 import { handleRenameEntity } from '../commands/renameEntity.js';
 import { handleDeleteEntity } from '../commands/deleteEntity.js';
+import { handleReviseInteraction, handleRemoveInteraction } from '../commands/interactions.js';
 import { handleSetField } from '../commands/setField.js';
 import { handleSetFields, normalizeStatusResumeAnswer } from '../commands/setFields.js';
 import { handleCreateTask, handleUpdateTask } from '../commands/tasks.js';
@@ -65,6 +67,8 @@ export const DEFAULT_COMMAND_HANDLERS: Record<string, AnyCommandHandler> = {
   create_entity: handleCreateEntity,
   rename_entity: handleRenameEntity,
   delete_entity: handleDeleteEntity,
+  revise_interaction: handleReviseInteraction,
+  remove_interaction: handleRemoveInteraction,
   set_field: handleSetField,
   set_fields: handleSetFields,
   create_task: handleCreateTask,
@@ -546,6 +550,13 @@ function fpField(f: EntityStateField): string {
   ]);
 }
 
+function fpInteraction(row: InteractionState): string {
+  return fpValues([
+    row.workspace_id, row.root_event_id, row.entity_id ?? null, row.kind, row.head_event_id,
+    row.revision, row.state, row.occurred_at, row.sequence, row.updated_at, row.head_value_json ?? null,
+  ]);
+}
+
 function fpTask(t: Task): string {
   return fpValues([
     t.id, t.workspace_id, t.entity_id ?? null, t.title, t.assignee_user_id ?? null, t.status,
@@ -609,6 +620,17 @@ function snapFields(state: LedgerProjectionState): ProjectionSnap {
   return { records };
 }
 
+function snapInteractions(state: LedgerProjectionState): ProjectionSnap {
+  const records = new Map<string, { fingerprint: string; del: unknown[] }>();
+  for (const [key, row] of state.interactions) {
+    records.set(key, {
+      fingerprint: fpInteraction(row),
+      del: [row.workspace_id, row.root_event_id],
+    });
+  }
+  return { records };
+}
+
 function snapTasks(state: LedgerProjectionState): ProjectionSnap {
   const records = new Map<string, { fingerprint: string; del: unknown[] }>();
   for (const [key, t] of state.tasks) {
@@ -657,6 +679,7 @@ interface ProjectionSnapshots {
   entities: ProjectionSnap;
   aliases: ProjectionSnap;
   fields: ProjectionSnap;
+  interactions: ProjectionSnap;
   tasks: ProjectionSnap;
   drafts: ProjectionSnap;
   memoryEntries: ProjectionSnap;
@@ -668,6 +691,7 @@ function snapshotProjections(state: LedgerProjectionState): ProjectionSnapshots 
     entities: snapEntities(state),
     aliases: snapAliases(state),
     fields: snapFields(state),
+    interactions: snapInteractions(state),
     tasks: snapTasks(state),
     drafts: snapDrafts(state),
     memoryEntries: snapMemoryEntries(state),
@@ -747,6 +771,24 @@ function fieldFootprintFor(
 }
 
 /**
+ * Trusted footprint selection for C1 targeted hydration. Matches the actual
+ * registered revise/remove handler identity, never the caller's
+ * command-name string. Returns null for anything unrecognized so hydration
+ * stays fail-open to full state.
+ */
+function interactionFootprintFor(
+  handler: CommandHandler<unknown>,
+  args: unknown,
+): { rootId: string } | null {
+  if (handler !== (handleReviseInteraction as AnyCommandHandler) && handler !== (handleRemoveInteraction as AnyCommandHandler)) {
+    return null;
+  }
+  const record = (args ?? {}) as Record<string, unknown>;
+  if (typeof record['interaction_id'] !== 'string' || !record['interaction_id']) return null;
+  return { rootId: record['interaction_id'] };
+}
+
+/**
  * Pure post-handler bounds assertion for targeted hydration: any created,
  * changed or deleted key outside the loaded coverage is rejected before any
  * commit, so a partial state can never persist as the whole workspace.
@@ -781,6 +823,7 @@ function coverageViolations(
   check('entity', coverage.entities, before.entities.records, next.entities, fpEntity);
   check('alias', coverage.aliases, before.aliases.records, next.aliases, fpAlias);
   check('field', coverage.fields, before.fields.records, next.fields, fpField);
+  check('interaction', coverage.interactions, before.interactions.records, next.interactions, fpInteraction);
   check('task', coverage.tasks, before.tasks.records, next.tasks, fpTask);
   check('draft', coverage.drafts, before.drafts.records, next.drafts, fpDraft);
   check('memory entry', coverage.memoryEntries, before.memoryEntries.records, next.memoryEntries, fpMemory);
@@ -1042,10 +1085,31 @@ export async function executeLedgerCommand<TArgs>(
   // values against these strings, never against the (possibly mutated)
   // currentState objects.
   const footprint = fieldFootprintFor(handler as CommandHandler<unknown>, args);
+  const interactionFootprint = footprint
+    ? null
+    : interactionFootprintFor(handler as CommandHandler<unknown>, args);
   const targeted = footprint
     ? await getFieldProjectionState(db, context.workspace_id, footprint.entityId, footprint.fieldNames)
-    : null;
-  const currentState = targeted?.state ?? (await getWorkspaceProjectionState(db, context.workspace_id));
+    : interactionFootprint
+      ? await getInteractionProjectionState(db, context.workspace_id, interactionFootprint.rootId)
+      : null;
+  const currentState = targeted?.state ?? (await getWorkspaceProjectionState(db, context.workspace_id, { includeInteractions: false }));
+  // Deletion drops the doomed entity's lifecycle rows, and log_event/resolve_conflict
+  // need the entity's active interactions to correctly compute quotes/disputes.
+  // Merge exactly those (indexed, entity-scoped) before the snapshot.
+  if (
+    !targeted &&
+    (handler === (handleDeleteEntity as AnyCommandHandler) ||
+      handler === (handleLogEvent as AnyCommandHandler) ||
+      handler === (handleResolveConflict as AnyCommandHandler))
+  ) {
+    const record = (args ?? {}) as Record<string, unknown>;
+    if (typeof record['entity_id'] === 'string' && record['entity_id']) {
+      for (const [key, row] of await getEntityInteractions(db, context.workspace_id, record['entity_id'])) {
+        currentState.interactions.set(key, row);
+      }
+    }
+  }
   const coverage: ProjectionCoverage = targeted?.coverage ?? FULL_PROJECTION_COVERAGE;
   const beforeSnapshot = snapshotProjections(currentState);
   const beforeMemoryFlags = snapMemoryFlags(currentState);
@@ -1208,6 +1272,7 @@ export async function executeLedgerCommand<TArgs>(
   const entityDiff = diffSnapshots(beforeSnapshot.entities.records, nextState.entities, fpEntity);
   const aliasDiff = diffSnapshots(beforeSnapshot.aliases.records, nextState.aliases, fpAlias);
   const fieldDiff = diffSnapshots(beforeSnapshot.fields.records, nextState.fields, fpField);
+  const interactionDiff = diffSnapshots(beforeSnapshot.interactions.records, nextState.interactions, fpInteraction);
   const taskDiff = diffSnapshots(beforeSnapshot.tasks.records, nextState.tasks, fpTask);
   const draftDiff = diffSnapshots(beforeSnapshot.drafts.records, nextState.drafts, fpDraft);
   const memoryDiff = diffSnapshots(beforeSnapshot.memoryEntries.records, nextState.memoryEntries, fpMemory);
@@ -1243,6 +1308,18 @@ export async function executeLedgerCommand<TArgs>(
     statements.push(
       db
         .prepare(`DELETE FROM entity_state WHERE workspace_id = ? AND entity_id = ? AND field_name = ?`)
+        .bind(...prior.del)
+    );
+  }
+
+  // Delete interaction rows missing from nextState (entity deletion drops
+  // the whole lifecycle; history stays in events for replay/audit).
+  for (const key of interactionDiff.deleted) {
+    const prior = beforeSnapshot.interactions.records.get(key);
+    if (!prior) continue;
+    statements.push(
+      db
+        .prepare(`DELETE FROM interaction_state WHERE workspace_id = ? AND root_event_id = ?`)
         .bind(...prior.del)
     );
   }
@@ -1442,7 +1519,7 @@ export async function executeLedgerCommand<TArgs>(
       .bind(newLastEventSequence, now, context.workspace_id)
   );
 
-  // Step 6: Upsert remaining projected tables (Aliases, Fields, Tasks, Drafts)
+  // Step 6: Upsert remaining projected tables (aliases, fields, interactions, tasks, drafts)
   // Aliases are immutable once created: only keys absent from the snapshot
   // emit anything at all (never a blanket INSERT OR IGNORE per alias).
   for (const key of [...aliasDiff.created, ...aliasDiff.changed]) {
@@ -1504,6 +1581,46 @@ export async function executeLedgerCommand<TArgs>(
           field.last_confirmed_value_json || null,
           field.revision,
           field.updated_at,
+        )
+    );
+  }
+
+  // Interactions — only created or value-changed rows. New and changed
+  // roots preserve next-state order; they carry no FK into events, so they
+  // commit alongside the other child projections after the event inserts.
+  for (const key of [...interactionDiff.created, ...interactionDiff.changed]) {
+    const row = nextState.interactions.get(key);
+    if (!row) continue;
+    statements.push(
+      db
+        .prepare(
+          `INSERT INTO interaction_state (
+             workspace_id, root_event_id, entity_id, kind, head_event_id,
+             revision, state, occurred_at, sequence, updated_at, head_value_json
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           ON CONFLICT(workspace_id, root_event_id) DO UPDATE SET
+             entity_id = excluded.entity_id,
+             kind = excluded.kind,
+             head_event_id = excluded.head_event_id,
+             revision = excluded.revision,
+             state = excluded.state,
+             occurred_at = excluded.occurred_at,
+             sequence = excluded.sequence,
+             updated_at = excluded.updated_at,
+             head_value_json = excluded.head_value_json`
+        )
+        .bind(
+          row.workspace_id,
+          row.root_event_id,
+          row.entity_id || null,
+          row.kind,
+          row.head_event_id,
+          row.revision,
+          row.state,
+          row.occurred_at,
+          row.sequence,
+          row.updated_at,
+          row.head_value_json || null,
         )
     );
   }

@@ -254,7 +254,7 @@ export function handleSetFields(
         provenance: 'stated',
       });
       reduceEntity(nextEntities, nextAliases, event);
-      reduceFields(nextFields, event);
+      reduceFields(nextFields, state.interactions, event);
       events.push(event);
     } else {
       const event = createLedgerEvent(context, seq++, {
@@ -264,7 +264,7 @@ export function handleSetFields(
         provenance: item.provenance === 'inferred' ? 'inferred' : 'stated',
       });
       reduceEntity(nextEntities, nextAliases, event);
-      reduceFields(nextFields, event);
+      reduceFields(nextFields, state.interactions, event);
       events.push(event);
     }
   }

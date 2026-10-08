@@ -125,6 +125,43 @@ export function computeUndoPreview(
     }
   }
 
+  // Interaction descendants: a later revision or removal chained onto a
+  // selected root belongs to the same interaction. Undoing the original
+  // without them would orphan (or resurrect) the chain, so those actions
+  // require clarification like any other dependent edit.
+  const selectedRoots = new Set<string>();
+  for (const evt of allEvents) {
+    if (!selectedActionSet.has(evt.action_id) || evt.kind === 'revert') continue;
+    if (evt.kind === 'note' || evt.kind === 'visit' || evt.kind === 'contact' || evt.kind === 'quote') {
+      const payload = (evt.payload ?? {}) as Record<string, unknown>;
+      const marker = payload['interaction_id'];
+      selectedRoots.add(typeof marker === 'string' && marker ? marker : evt.id);
+    }
+    if (evt.kind === 'interaction_removed') {
+      const payload = (evt.payload ?? {}) as Record<string, unknown>;
+      if (typeof payload['root_event_id'] === 'string') selectedRoots.add(payload['root_event_id']);
+    }
+  }
+  for (const evt of allEvents) {
+    if (selectedActionSet.has(evt.action_id) || evt.kind === 'revert') continue;
+    const payload = (evt.payload ?? {}) as Record<string, unknown>;
+    const descendantOfSelected =
+      ((evt.kind === 'note' || evt.kind === 'visit' || evt.kind === 'contact' || evt.kind === 'quote') &&
+        typeof payload['interaction_id'] === 'string' &&
+        selectedRoots.has(payload['interaction_id'])) ||
+      (evt.kind === 'interaction_removed' &&
+        typeof payload['root_event_id'] === 'string' &&
+        selectedRoots.has(payload['root_event_id']));
+    if (descendantOfSelected && !seenActionIds.has(evt.action_id)) {
+      seenActionIds.add(evt.action_id);
+      uniqueDeps.push({
+        action_id: evt.action_id,
+        reason: `Later action revised or removed an interaction that would be undone.`,
+        requires_clarification: true,
+      });
+    }
+  }
+
   // 5. Simulate rebuild with selected events suppressed to determine affected records
   const selectedEventSet = new Set(selectedEventIds);
   const simulatedEvents = allEvents.filter((e) => !selectedEventSet.has(e.id));
@@ -175,7 +212,7 @@ export function computeUndoPreview(
   const affectedContext: { id: string; summary: string; changes: string[] }[] = [];
   for (const evt of allEvents) {
     if (selectedActionSet.has(evt.action_id) && evt.kind !== 'revert' && !alreadyRevertedEventIds.has(evt.id)) {
-      if (['memory_note', 'memory_forgotten', 'draft_created', 'draft_updated', 'note', 'visit', 'contact', 'quote', 'entity_deleted'].includes(evt.kind)) {
+      if (['memory_note', 'memory_forgotten', 'draft_created', 'draft_updated', 'note', 'visit', 'contact', 'quote', 'entity_deleted', 'interaction_removed'].includes(evt.kind)) {
         const payload = (evt.payload ?? {}) as Record<string, unknown>;
         let desc = '';
         if (evt.kind === 'memory_note') {
@@ -191,6 +228,9 @@ export function computeUndoPreview(
         } else if (evt.kind === 'entity_deleted') {
           const raw = String(payload['name'] ?? 'entity');
           desc = `Deleted entity "${raw.slice(0, 60)}" and its details will be restored.`;
+        } else if (evt.kind === 'interaction_removed') {
+          const target = String(payload['target_kind'] ?? 'entry');
+          desc = `Removed ${target} will be restored to current use.`;
         } else {
           desc = `${evt.kind.replace(/_/g, ' ')} record will be reverted.`;
         }

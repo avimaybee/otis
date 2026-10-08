@@ -406,6 +406,8 @@ export function checkUntrustedContentPolicy(
     'upsert_entity',
     'rename_entity',
     'delete_entity',
+    'revise_interaction',
+    'remove_interaction',
     'set_fields',
     'resolve_conflict',
     'create_task',

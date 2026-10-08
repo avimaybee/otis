@@ -1,5 +1,62 @@
 import type { RecordList } from './types.js';
 
+export const EMPTY_RECORD_LISTS: RecordList[] = [
+  {
+    id: 'leads',
+    name: 'Leads',
+    description: 'Active client and prospect records tracked by you and Otis.',
+    columns: [
+      { id: 'name', name: 'Lead name', type: 'text', width: 200, isCore: true },
+      { id: 'status', name: 'Status', type: 'status', width: 120, isCore: true, options: ['new', 'warm', 'hot', 'won', 'cold', 'lost', 'deprioritized'] },
+      { id: 'phone', name: 'Phone', type: 'phone', width: 160, isCore: true },
+      { id: 'language', name: 'Language', type: 'text', width: 120, isCore: true },
+      { id: 'value', name: 'Deal value', type: 'currency', width: 130 },
+      { id: 'assignee', name: 'Assignee', type: 'text', width: 140 },
+      { id: 'access', name: 'Access instructions', type: 'text', width: 240 },
+      { id: 'notes', name: 'Notes', type: 'text', width: 280 },
+    ],
+    rows: [],
+  },
+  {
+    id: 'tasks',
+    name: 'Tasks',
+    description: 'Action items, commitments and upcoming deadlines.',
+    columns: [
+      { id: 'title', name: 'Task', type: 'text', width: 260, isCore: true },
+      { id: 'status', name: 'Status', type: 'status', width: 120, isCore: true, options: ['open', 'done', 'cancelled'] },
+      { id: 'due', name: 'Due date', type: 'date', width: 140 },
+      { id: 'assignee', name: 'Assignee', type: 'text', width: 140 },
+      { id: 'entity', name: 'Related record', type: 'text', width: 180 },
+    ],
+    rows: [],
+  },
+  {
+    id: 'notes',
+    name: 'Notes & interactions',
+    description: 'Notes, calls, visits and quotes captured in conversation.',
+    columns: [
+      { id: 'date', name: 'Date', type: 'text', width: 160, isCore: true },
+      { id: 'type', name: 'Type', type: 'text', width: 110, isCore: true },
+      { id: 'summary', name: 'Summary / note', type: 'text', width: 340, isCore: true },
+      { id: 'entity', name: 'Related record', type: 'text', width: 180 },
+      { id: 'actor', name: 'Logged by', type: 'text', width: 140 },
+    ],
+    rows: [],
+  },
+  {
+    id: 'drafts',
+    name: 'Drafts',
+    description: 'Prepared outward messages ready for review.',
+    columns: [
+      { id: 'channel', name: 'Channel', type: 'text', width: 120, isCore: true },
+      { id: 'recipient', name: 'Recipient', type: 'text', width: 180 },
+      { id: 'content', name: 'Draft message', type: 'text', width: 360, isCore: true },
+      { id: 'entity', name: 'Related record', type: 'text', width: 180 },
+    ],
+    rows: [],
+  },
+];
+
 export const INITIAL_RECORD_LISTS: RecordList[] = [
   {
     id: 'leads',

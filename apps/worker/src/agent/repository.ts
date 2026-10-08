@@ -26,6 +26,8 @@ import {
   type QueryToolArgs,
   type ReadChatHistoryToolArgs,
   type RememberContextToolArgs,
+  type RemoveInteractionToolArgs,
+  type ReviseInteractionToolArgs,
   type UpdateReminderToolArgs,
   type RenameEntityToolArgs,
   type RequestClarificationToolArgs,
@@ -1219,6 +1221,32 @@ export async function executeAgentTool(
         'log_event',
         leArgs,
         DEFAULT_COMMAND_HANDLERS['log_event']!,
+        undefined,
+        { deferRunTransition: true },
+      );
+    }
+
+    case 'revise_interaction': {
+      const riArgs = args as ReviseInteractionToolArgs;
+      return executeLedgerCommand(
+        db,
+        ledgerContext,
+        'revise_interaction',
+        riArgs,
+        DEFAULT_COMMAND_HANDLERS['revise_interaction']!,
+        undefined,
+        { deferRunTransition: true },
+      );
+    }
+
+    case 'remove_interaction': {
+      const rmArgs = args as RemoveInteractionToolArgs;
+      return executeLedgerCommand(
+        db,
+        ledgerContext,
+        'remove_interaction',
+        rmArgs,
+        DEFAULT_COMMAND_HANDLERS['remove_interaction']!,
         undefined,
         { deferRunTransition: true },
       );

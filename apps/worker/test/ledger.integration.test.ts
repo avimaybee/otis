@@ -18,6 +18,10 @@ import migration0007Sql from '../../../migrations/0007_outbox_claim_owner.sql?ra
 import migration0008Sql from '../../../migrations/0008_memory_and_agent_runs.sql?raw';
 // @ts-expect-error vite raw import
 import migration0009Sql from '../../../migrations/0009_thinking_controls.sql?raw';
+// @ts-expect-error vite raw import
+import migration0017Sql from '../../../migrations/0017_task_markers.sql?raw';
+// @ts-expect-error vite raw import
+import migration0023Sql from '../../../migrations/0023_interaction_state.sql?raw';
 
 import {
   executeLedgerCommand,
@@ -75,7 +79,9 @@ describe('Worker Ledger D1 Integration (workerd runtime)', () => {
   }
 
   beforeAll(async () => {
-    // Apply migrations 0001 through 0008 directly to D1
+    // Apply migrations 0001 through 0009 plus 0017 (task marker columns the
+    // current projection reads) and 0023 (interaction lifecycle table for
+    // log_event projections; dependency-free by design) directly to D1
     for (const sql of [
       migration0001Sql,
       migration0002Sql,
@@ -86,6 +92,8 @@ describe('Worker Ledger D1 Integration (workerd runtime)', () => {
       migration0007Sql,
       migration0008Sql,
       migration0009Sql,
+      migration0017Sql,
+      migration0023Sql,
     ]) {
       const statements = splitSqlStatements(sql);
 
@@ -579,7 +587,7 @@ describe('Worker Ledger D1 Integration (workerd runtime)', () => {
         .bind(entityId)
         .first<Record<string, unknown>>();
       expect(fieldQuote1!['state']).toBe('clear');
-      expect(fieldQuote1!['value_text']).toContain('350000 EUR');
+      expect(fieldQuote1!['value_text']).toContain('3500 EUR (offered)');
 
       // 6. Competing quote report 2 (Hunor reports 4500 EUR without superseding) -> DISPUTE (CF-01)
       const ctxHunor: LedgerCommandContext = {

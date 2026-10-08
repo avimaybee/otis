@@ -80,7 +80,7 @@ Select a small actionable set with concrete reasons, dates where known and sourc
 
 Done, Draft, Move and Snooze may use existing authorized services; ordinary conversation remains sufficient. Replies to a saved brief item must resolve that item, while “the second one” after a newer table refers to the relevant newer result.
 
-Explicit one-off reminders are intended but not implemented at the audited baseline. They require a chosen/confirmed time, timezone and channel plus durable deduplicated delivery. Additional unsolicited proactivity remains unresolved and disabled.
+Explicit one-off reminder create/change/cancel and due delivery are implemented through the existing reminder service; actual chosen-channel/device acceptance remains separate evidence. Recurring and after-quote reminders are selected follow-on work in the [capability plan](plans/business-memory-capabilities.md#10-c6--recurring-and-condition-based-follow-ups), extending those owners with chosen/confirmed time, timezone, channel and durable deduplicated delivery. Additional unsolicited proactivity remains unresolved and disabled.
 
 ## 10. Outward drafts and export
 

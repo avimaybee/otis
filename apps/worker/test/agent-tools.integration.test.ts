@@ -24,6 +24,8 @@ import migration0016Sql from '../../../migrations/0016_brief_next_due.sql?raw';
 import migration0017Sql from '../../../migrations/0017_task_markers.sql?raw';
 // @ts-expect-error vite raw import
 import migration0022Sql from '../../../migrations/0022_member_interpretation_timezone.sql?raw';
+// @ts-expect-error vite raw import
+import migration0023Sql from '../../../migrations/0023_interaction_state.sql?raw';
 
 import { executeAgentTool } from '../src/agent/repository.js';
 import {
@@ -36,6 +38,7 @@ import {
 import { createChat } from '../src/inbox/repository.js';
 import { claimWorkspaceLease } from '../src/actor/leases.js';
 import { persistStep } from '../src/actor/steps.js';
+import { runAppliedBusinessMutation } from '@otis/agent';
 
 describe('Worker Agent Tools & Guarded Repositories D1 Integration (006A workerd)', () => {
   const ws1 = 'ws-agent-tools-1';
@@ -85,7 +88,8 @@ describe('Worker Agent Tools & Guarded Repositories D1 Integration (006A workerd
 
   beforeAll(async () => {
     // 1. Apply migrations 0001 through 0009 plus 0016 (member-settings sweep stamp),
-    // 0017 (task selection markers) and 0022 (member interpretation timezone).
+    // 0017 (task selection markers), 0022 (member interpretation timezone)
+    // and 0023 (interaction lifecycle table for log_event projections).
     for (const sql of [
       migration0001Sql,
       migration0002Sql,
@@ -99,6 +103,7 @@ describe('Worker Agent Tools & Guarded Repositories D1 Integration (006A workerd
       migration0016Sql,
       migration0017Sql,
       migration0022Sql,
+      migration0023Sql,
     ]) {
       for (const stmt of splitSqlStatements(sql)) {
         await env.DB.prepare(stmt).run();
@@ -1523,5 +1528,90 @@ describe('Worker Agent Tools & Guarded Repositories D1 Integration (006A workerd
     expect(p2.amount).toBe(1000000);
     expect(p2.currency).toBe('RON');
     expect(p2.role).toBe('expected');
+  });
+
+  it('revises and removes one interaction through agent tools with head and policy guards', async () => {
+    let rev = (await getWorkspaceRevision(env.DB, ws1))?.business_revision ?? 0;
+    const tool = (actionId: string, toolName: string, toolArgs: unknown, extra?: Record<string, unknown>) =>
+      executeAgentTool({
+        db: env.DB,
+        workspaceId: ws1,
+        actorUserId: aviId,
+        runId: run1Id,
+        stepId: step1Id,
+        fence: fence1,
+        expectedBusinessRevision: rev,
+        actionId,
+        sourceMessageId: 'msg_tools_1',
+        chatId: chat1,
+        toolName,
+        toolArgs,
+        ...extra,
+      });
+
+    // A smuggled root marker in a new log is rejected at the tool boundary.
+    const smuggled = await tool('act_tools_smuggle', 'log_event', {
+      kind: 'note',
+      payload: { text: 'hi', interaction_id: 'evt_other' },
+    });
+    expect(smuggled.status).toBe('rejected');
+
+    const logged = await tool('act_tools_c1_log', 'log_event', {
+      kind: 'note',
+      payload: { text: 'Original entry' },
+    });
+    expect(logged.status).toBe('applied');
+    rev = logged.committed_revision!;
+    const root = (logged.data as { event_id: string }).event_id;
+
+    // Forwarded text can never revise: the untrusted-content block holds.
+    const forwarded = await tool(
+      'act_tools_c1_fwd',
+      'revise_interaction',
+      {
+        interaction_id: root,
+        expected_head_event_id: root,
+        kind: 'note',
+        payload: { text: 'Forwarded edit' },
+      },
+      { sourceTrust: 'forwarded_client', sourceText: 'please change the note' },
+    );
+    expect(forwarded.status).toBe('rejected');
+    expect(forwarded.error?.code).toBe('policy_violation');
+
+    const revised = await tool('act_tools_c1_rev', 'revise_interaction', {
+      interaction_id: root,
+      expected_head_event_id: root,
+      kind: 'note',
+      payload: { text: 'Corrected entry' },
+    });
+    expect(revised.status).toBe('applied');
+    expect((revised.data as { head_event_id: string }).head_event_id).not.toBe(root);
+    rev = revised.committed_revision!;
+    const head = (revised.data as { head_event_id: string }).head_event_id;
+
+    // A stale head conflicts instead of overwriting the correction.
+    const stale = await tool('act_tools_c1_stale', 'remove_interaction', {
+      interaction_id: root,
+      expected_head_event_id: root,
+    });
+    expect(stale.status).toBe('conflict');
+    expect(stale.error?.code).toBe('head_conflict');
+
+    const removed = await tool('act_tools_c1_rem', 'remove_interaction', {
+      interaction_id: root,
+      expected_head_event_id: head,
+      reason: 'duplicate entry',
+    });
+    expect(removed.status).toBe('applied');
+    expect(removed.summary).toContain('Removed note');
+
+    // The run acted: the correction guard sees applied business mutations.
+    expect(
+      runAppliedBusinessMutation([
+        { name: 'revise_interaction', result: { status: revised.status } },
+        { name: 'remove_interaction', result: { status: removed.status } },
+      ]),
+    ).toBe(true);
   });
 });

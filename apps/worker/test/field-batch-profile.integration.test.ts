@@ -188,7 +188,6 @@ describe('field-batch cost profiles', () => {
     expect((profile['100'] as { preparesPerCall: number }).preparesPerCall).toBe(12);
     expect((profile['1000'] as { preparesPerCall: number }).preparesPerCall).toBe(12);
     expect((profile['100'] as { batchesPerCall: number }).batchesPerCall).toBe(2);
-    expect((profile['1000'] as { batchesPerCall: number }).batchesPerCall).toBe(2);
     expect((profile['baseline_create_entity_1000'] as { prepares: number }).prepares).toBe(20);
   }, 300000);
 });

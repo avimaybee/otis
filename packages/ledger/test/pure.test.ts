@@ -9,6 +9,8 @@ import {
   handleSetFields,
   normalizeStatusResumeAnswer,
   handleLogEvent,
+  handleReviseInteraction,
+  handleRemoveInteraction,
   handleCreateTask,
   handleRememberContext,
   handleUpdateTask,
@@ -600,6 +602,767 @@ describe('Ledger Invariants & Pure Reducers', () => {
       });
       expect(resIncompleteCandidates.result.status).toBe('rejected');
       expect(resIncompleteCandidates.result.error?.code).toBe('candidate_mismatch');
+    });
+  });
+
+  describe('C1 characterization: single-interaction lifecycle before revision/removal', () => {
+    const fullEmptyState: LedgerProjectionState = {
+      entities: new Map(),
+      aliases: new Map(),
+      fields: new Map(),
+      interactions: new Map(),
+      tasks: new Map(),
+      drafts: new Map(),
+      memoryEntries: new Map(),
+      memorySuppressions: new Map(),
+    };
+
+    function seedVisit() {
+      const created = handleCreateEntity(dummyContext, fullEmptyState, 1, { name: 'Cluj Gym' });
+      const entityId = created.events[0]!.entity_id!;
+      const logged = handleLogEvent(dummyContext, created.nextState!, 2, {
+        entity_id: entityId,
+        kind: 'visit',
+        payload: { summary: 'Met Monday', contact_made: true },
+        occurred_at: '2026-10-05T10:00:00.000Z',
+      });
+      const root = logged.events[0]!.id;
+      return { entityId, root, state: logged.nextState!, events: [created.events[0]!, logged.events[0]!] };
+    }
+
+    function interactionEntries(state: LedgerProjectionState) {
+      return [...state.interactions.entries()].map(([k, v]) => [k, { ...v }]);
+    }
+    it('pins that offered and expected quotes currently dispute one shared field', () => {
+      const { events: [e1], nextState: s1 } = handleCreateEntity(dummyContext, emptyState, 1, {
+        name: 'Romanian Client',
+      });
+      const entityId = e1!.entity_id!;
+      const offered = handleLogEvent(dummyContext, s1!, 2, {
+        entity_id: entityId,
+        kind: 'quote',
+        payload: { amount: 45000, currency: 'EUR', role: 'offered' },
+      });
+      const expected = handleLogEvent(dummyContext, offered.nextState!, 3, {
+        entity_id: entityId,
+        kind: 'quote',
+        payload: { amount: 400000, currency: 'RON', role: 'expected' },
+      });
+      const field = expected.nextState!.fields.get(`${entityId}:quote`)!;
+      // Baseline gap (C1 step 6): two roles share one field, so the second
+      // report disputes the first instead of sitting beside it.
+      expect(field.state).toBe('disputed');
+      expect(field.value_text).toBeNull();
+      expect(field.candidate_event_ids).toHaveLength(2);
+    });
+
+    it('pins that a corrected visit is a second appended event with no effective head', () => {
+      const { events: [e1], nextState: s1 } = handleCreateEntity(dummyContext, emptyState, 1, {
+        name: 'Cluj Gym',
+      });
+      const entityId = e1!.entity_id!;
+      const monday = handleLogEvent(dummyContext, s1!, 2, {
+        entity_id: entityId,
+        kind: 'visit',
+        payload: { summary: 'Met Monday', contact_made: true },
+        occurred_at: '2026-10-05T10:00:00.000Z',
+      });
+      const tuesday = handleLogEvent(dummyContext, monday.nextState!, 3, {
+        entity_id: entityId,
+        kind: 'visit',
+        payload: { summary: 'Met Tuesday, not Monday', contact_made: true },
+        occurred_at: '2026-10-06T10:00:00.000Z',
+      });
+      // Both reports survive as history; no reducer picks a current head yet.
+      expect(tuesday.events).toHaveLength(1);
+      expect(monday.events[0]!.id).not.toBe(tuesday.events[0]!.id);
+      expect(tuesday.nextState!.fields.has(`${entityId}:visit`)).toBe(false);
+      const rebuilt = rebuildProjections([
+        e1!,
+        monday.events[0]!,
+        tuesday.events[0]!,
+      ]);
+      expect(rebuilt.fields.has(`${entityId}:visit`)).toBe(false);
+    });
+
+    it('pins that reverting a duplicate note keeps the original via rebuild', () => {
+      const { events: [e1], nextState: s1 } = handleCreateEntity(dummyContext, emptyState, 1, {
+        name: 'Dancer Girlfriend',
+      });
+      const entityId = e1!.entity_id!;
+      const first = handleLogEvent(dummyContext, s1!, 2, {
+        entity_id: entityId,
+        kind: 'note',
+        payload: { text: 'Wants a booking website' },
+      });
+      const duplicate = handleLogEvent(dummyContext, first.nextState!, 3, {
+        entity_id: entityId,
+        kind: 'note',
+        payload: { text: 'Wants a booking website' },
+      });
+      const revert: LedgerEvent = {
+        id: 'evt-revert-dup',
+        workspace_id: 'ws-test',
+        sequence: 4,
+        entity_id: entityId,
+        actor_kind: 'member',
+        actor_user_id: 'usr-avi',
+        kind: 'revert',
+        schema_version: 1,
+        payload: {
+          target_event_id: duplicate.events[0]!.id,
+          target_action_id: 'act-dup',
+          target_event_kind: 'note',
+          mode: 'single',
+          group_operation_id: 'grp-1',
+        },
+        occurred_at: '2026-10-07T10:00:00.000Z',
+        recorded_at: '2026-10-07T10:00:00.000Z',
+        channel: 'web',
+        action_id: 'act-revert',
+        reverts_event_id: duplicate.events[0]!.id,
+      };
+      const rebuilt = rebuildProjections([
+        e1!,
+        first.events[0]!,
+        duplicate.events[0]!,
+        revert,
+      ]);
+      // Rebuild drops the reverted duplicate; the original report remains.
+      expect(rebuilt.entities.has(entityId)).toBe(true);
+      const liveIds = [e1!.id, first.events[0]!.id];
+      expect(liveIds).toContain(first.events[0]!.id);
+      expect(duplicate.events[0]!.id).not.toBe(first.events[0]!.id);
+    });
+
+    it('runs append, revise, revise, remove with live projection equal to rebuild', () => {
+      const seed = seedVisit();
+      const all = [...seed.events];
+
+      const r1 = handleReviseInteraction(
+        { ...dummyContext, action_id: 'act-rev-1' },
+        seed.state,
+        3,
+        {
+          interaction_id: seed.root,
+          expected_head_event_id: seed.root,
+          kind: 'visit',
+          payload: { summary: 'Met Tuesday, not Monday', contact_made: true },
+          occurred_at: '2026-10-06T10:00:00.000Z',
+        },
+      );
+      expect(r1.result.status).toBe('applied');
+      expect(r1.events[0]!.supersedes_event_id).toBe(seed.root);
+      expect((r1.events[0]!.payload as Record<string, unknown>)['interaction_id']).toBe(seed.root);
+      all.push(r1.events[0]!);
+      let head = r1.result.data!.head_event_id;
+      expect(r1.nextState!.interactions.get(seed.root)!.head_event_id).toBe(head);
+      expect(r1.nextState!.interactions.get(seed.root)!.revision).toBe(2);
+      expect(r1.nextState!.interactions.get(seed.root)!.state).toBe('active');
+      expect(interactionEntries(rebuildProjections(all))).toEqual(interactionEntries(r1.nextState!));
+
+      const r2 = handleReviseInteraction(
+        { ...dummyContext, action_id: 'act-rev-2' },
+        r1.nextState!,
+        4,
+        {
+          interaction_id: seed.root,
+          expected_head_event_id: head,
+          kind: 'visit',
+          payload: { summary: 'Met Tuesday at the gym', contact_made: true },
+          occurred_at: '2026-10-06T10:00:00.000Z',
+        },
+      );
+      expect(r2.result.status).toBe('applied');
+      all.push(r2.events[0]!);
+      head = r2.result.data!.head_event_id;
+      expect(r2.nextState!.interactions.get(seed.root)!.revision).toBe(3);
+      expect(interactionEntries(rebuildProjections(all))).toEqual(interactionEntries(r2.nextState!));
+
+      const removed = handleRemoveInteraction(
+        { ...dummyContext, action_id: 'act-rem-1' },
+        r2.nextState!,
+        5,
+        { interaction_id: seed.root, expected_head_event_id: head, reason: 'duplicate visit' },
+      );
+      expect(removed.result.status).toBe('applied');
+      expect(removed.events[0]!.kind).toBe('interaction_removed');
+      all.push(removed.events[0]!);
+      const row = removed.nextState!.interactions.get(seed.root)!;
+      expect(row.state).toBe('removed');
+      expect(row.head_event_id).toBe(removed.events[0]!.id);
+      expect(interactionEntries(rebuildProjections(all))).toEqual(interactionEntries(removed.nextState!));
+
+      // History retains every report: root, two revisions, removal.
+      expect(all.map((e) => e.kind)).toEqual(['entity_created', 'visit', 'visit', 'visit', 'interaction_removed']);
+    });
+
+    it('rejects a stale head with a narrow conflict and commits nothing', () => {
+      const seed = seedVisit();
+      const r1 = handleReviseInteraction(
+        { ...dummyContext, action_id: 'act-rev-1' },
+        seed.state,
+        3,
+        {
+          interaction_id: seed.root,
+          expected_head_event_id: seed.root,
+          kind: 'visit',
+          payload: { summary: 'Corrected', contact_made: true },
+        },
+      );
+      expect(r1.result.status).toBe('applied');
+
+      // A teammate correction landed first; the stale edit must not apply silently.
+      const stale = handleReviseInteraction(
+        { ...dummyContext, action_id: 'act-rev-stale' },
+        r1.nextState!,
+        4,
+        {
+          interaction_id: seed.root,
+          expected_head_event_id: seed.root,
+          kind: 'visit',
+          payload: { summary: 'Stale overwrite', contact_made: false },
+        },
+      );
+      expect(stale.result.status).toBe('conflict');
+      expect(stale.result.error?.code).toBe('head_conflict');
+      expect(stale.events).toHaveLength(0);
+      expect(stale.nextState).toBeUndefined();
+    });
+
+    it('rejects unknown roots, kind conversion, bad payloads and bad dates', () => {
+      const seed = seedVisit();
+      const unknown = handleReviseInteraction(
+        dummyContext,
+        seed.state,
+        3,
+        { interaction_id: 'evt_missing', expected_head_event_id: 'evt_missing', kind: 'visit', payload: {} },
+      );
+      expect(unknown.result.status).toBe('rejected');
+      expect(unknown.result.error?.code).toBe('not_found');
+
+      const converted = handleReviseInteraction(
+        dummyContext,
+        seed.state,
+        3,
+        {
+          interaction_id: seed.root,
+          expected_head_event_id: seed.root,
+          kind: 'quote',
+          payload: { amount: 50000, currency: 'EUR', role: 'offered' },
+        },
+      );
+      expect(converted.result.status).toBe('rejected');
+      expect(converted.result.error?.code).toBe('kind_mismatch');
+
+      const badPayload = handleReviseInteraction(
+        dummyContext,
+        seed.state,
+        3,
+        {
+          interaction_id: seed.root,
+          expected_head_event_id: seed.root,
+          kind: 'visit',
+          payload: { summary: 'Missing flag' },
+        },
+      );
+      expect(badPayload.result.status).toBe('rejected');
+      expect(badPayload.result.error?.code).toBe('invalid_visit');
+
+      const badDate = handleReviseInteraction(
+        dummyContext,
+        seed.state,
+        3,
+        {
+          interaction_id: seed.root,
+          expected_head_event_id: seed.root,
+          kind: 'visit',
+          payload: { summary: 'Dated', contact_made: true },
+          occurred_at: 'not-a-date',
+        },
+      );
+      expect(badDate.result.status).toBe('rejected');
+      expect(badDate.result.error?.code).toBe('invalid_occurred_at');
+    });
+
+    it('validates quote revisions exactly like new quote logging', () => {
+      const created = handleCreateEntity(dummyContext, fullEmptyState, 1, { name: 'Romanian Client' });
+      const entityId = created.events[0]!.entity_id!;
+      const logged = handleLogEvent(dummyContext, created.nextState!, 2, {
+        entity_id: entityId,
+        kind: 'quote',
+        payload: { amount: 45000, currency: 'EUR', role: 'offered' },
+      });
+      const root = logged.events[0]!.id;
+
+      const badUnits = handleReviseInteraction(
+        dummyContext,
+        logged.nextState!,
+        3,
+        {
+          interaction_id: root,
+          expected_head_event_id: root,
+          kind: 'quote',
+          payload: { amount: 450.5, currency: 'EUR', role: 'offered' },
+        },
+      );
+      expect(badUnits.result.status).toBe('rejected');
+      expect(badUnits.result.error?.code).toBe('invalid_quote');
+
+      const corrected = handleReviseInteraction(
+        { ...dummyContext, action_id: 'act-rev-q' },
+        logged.nextState!,
+        3,
+        {
+          interaction_id: root,
+          expected_head_event_id: root,
+          kind: 'quote',
+          payload: { amount: 50000, currency: 'EUR', role: 'offered' },
+          occurred_at: '2026-10-07T10:00:00.000Z',
+        },
+      );
+      expect(corrected.result.status).toBe('applied');
+      expect(corrected.result.summary).toContain('500 EUR (offered)');
+      expect(corrected.nextState!.fields.get(`${entityId}:quote`)!.value_text).toContain('500 EUR');
+    });
+
+    it('makes double removal idempotent and blocks revising a removed root', () => {
+      const seed = seedVisit();
+      const removed = handleRemoveInteraction(
+        { ...dummyContext, action_id: 'act-rem-1' },
+        seed.state,
+        3,
+        { interaction_id: seed.root, expected_head_event_id: seed.root },
+      );
+      expect(removed.result.status).toBe('applied');
+
+      const again = handleRemoveInteraction(
+        { ...dummyContext, action_id: 'act-rem-2' },
+        removed.nextState!,
+        4,
+        { interaction_id: seed.root, expected_head_event_id: seed.root },
+      );
+      expect(again.result.status).toBe('already_applied');
+      expect(again.events).toHaveLength(0);
+
+      const reviseAfterRemove = handleReviseInteraction(
+        dummyContext,
+        removed.nextState!,
+        4,
+        {
+          interaction_id: seed.root,
+          expected_head_event_id: removed.events[0]!.id,
+          kind: 'visit',
+          payload: { summary: 'Resurrected', contact_made: true },
+        },
+      );
+      expect(reviseAfterRemove.result.status).toBe('rejected');
+      expect(reviseAfterRemove.result.error?.code).toBe('interaction_removed');
+    });
+
+    it('rejects revise and remove when the owning entity is gone', () => {
+      const seed = seedVisit();
+      const deleted = handleDeleteEntity(
+        { ...dummyContext, action_id: 'act-del-1' },
+        seed.state,
+        3,
+        { entity_id: seed.entityId, confirm: 'yes' },
+      );
+      expect(deleted.result.status).toBe('applied');
+      expect(deleted.nextState!.interactions.has(seed.root)).toBe(false);
+
+      const revise = handleReviseInteraction(dummyContext, deleted.nextState!, 4, {
+        interaction_id: seed.root,
+        expected_head_event_id: seed.root,
+        kind: 'visit',
+        payload: { summary: 'Late edit', contact_made: true },
+      });
+      expect(revise.result.status).toBe('rejected');
+      expect(revise.result.error?.code).toBe('not_found');
+
+      const remove = handleRemoveInteraction(dummyContext, deleted.nextState!, 4, {
+        interaction_id: seed.root,
+        expected_head_event_id: seed.root,
+      });
+      expect(remove.result.status).toBe('rejected');
+      expect(remove.result.error?.code).toBe('not_found');
+    });
+
+    it('orders heads by commit sequence when occurrence dates tie', () => {
+      const seed = seedVisit();
+      const sameDay = '2026-10-06T10:00:00.000Z';
+      const r1 = handleReviseInteraction(
+        { ...dummyContext, action_id: 'act-rev-1' },
+        seed.state,
+        3,
+        {
+          interaction_id: seed.root,
+          expected_head_event_id: seed.root,
+          kind: 'visit',
+          payload: { summary: 'First correction', contact_made: true },
+          occurred_at: sameDay,
+        },
+      );
+      const r2 = handleReviseInteraction(
+        { ...dummyContext, action_id: 'act-rev-2' },
+        r1.nextState!,
+        4,
+        {
+          interaction_id: seed.root,
+          expected_head_event_id: r1.events[0]!.id,
+          kind: 'visit',
+          payload: { summary: 'Second correction', contact_made: true },
+          occurred_at: sameDay,
+        },
+      );
+      expect(r2.result.status).toBe('applied');
+      expect(r2.nextState!.interactions.get(seed.root)!.head_event_id).toBe(r2.events[0]!.id);
+      expect(r2.nextState!.interactions.get(seed.root)!.sequence).toBe(4);
+    });
+
+    it('restores prior heads when a revision or removal is reverted', () => {
+      const seed = seedVisit();
+      const all = [...seed.events];
+      const r1 = handleReviseInteraction(
+        { ...dummyContext, action_id: 'act-rev-1' },
+        seed.state,
+        3,
+        {
+          interaction_id: seed.root,
+          expected_head_event_id: seed.root,
+          kind: 'visit',
+          payload: { summary: 'Corrected', contact_made: true },
+        },
+      );
+      all.push(r1.events[0]!);
+      const removed = handleRemoveInteraction(
+        { ...dummyContext, action_id: 'act-rem-1' },
+        r1.nextState!,
+        4,
+        { interaction_id: seed.root, expected_head_event_id: r1.events[0]!.id },
+      );
+      all.push(removed.events[0]!);
+
+      const revertRemoval: LedgerEvent = {
+        id: 'evt-revert-removal',
+        workspace_id: 'ws-test',
+        sequence: 5,
+        entity_id: seed.entityId,
+        actor_kind: 'member',
+        actor_user_id: 'usr-avi',
+        kind: 'revert',
+        schema_version: 1,
+        payload: {
+          target_event_id: removed.events[0]!.id,
+          target_action_id: 'act-rem-1',
+          target_event_kind: 'interaction_removed',
+          mode: 'single',
+          group_operation_id: 'grp-1',
+        },
+        occurred_at: '2026-10-07T10:00:00.000Z',
+        recorded_at: '2026-10-07T10:00:00.000Z',
+        channel: 'web',
+        source_message_id: 'msg-101',
+        action_id: 'act-undo-1',
+        reverts_event_id: removed.events[0]!.id,
+      };
+      const restored = rebuildProjections([...all, revertRemoval]);
+      const row = restored.interactions.get(seed.root)!;
+      expect(row.state).toBe('active');
+      expect(row.head_event_id).toBe(r1.events[0]!.id);
+
+      const revertRevision: LedgerEvent = {
+        ...revertRemoval,
+        id: 'evt-revert-revision',
+        sequence: 6,
+        payload: {
+          target_event_id: r1.events[0]!.id,
+          target_action_id: 'act-rev-1',
+          target_event_kind: 'visit',
+          mode: 'single',
+          group_operation_id: 'grp-2',
+        },
+        action_id: 'act-undo-2',
+        reverts_event_id: r1.events[0]!.id,
+      };
+      const original = rebuildProjections([...all, revertRemoval, revertRevision]);
+      expect(original.interactions.get(seed.root)!.head_event_id).toBe(seed.root);
+    });
+
+    it('empties the quote field when its only active root is removed', () => {
+      const created = handleCreateEntity(dummyContext, fullEmptyState, 1, { name: 'Solo Quote' });
+      const entityId = created.events[0]!.entity_id!;
+      const logged = handleLogEvent(dummyContext, created.nextState!, 2, {
+        entity_id: entityId,
+        kind: 'quote',
+        payload: { amount: 45000, currency: 'EUR', role: 'offered' },
+      });
+      const root = logged.events[0]!.id;
+      expect(logged.nextState!.fields.get(`${entityId}:quote`)!.value_text).toContain('450 EUR');
+
+      const removed = handleRemoveInteraction(
+        { ...dummyContext, action_id: 'act-rem solo' },
+        logged.nextState!,
+        3,
+        { interaction_id: root, expected_head_event_id: root, reason: 'entered by mistake' },
+      );
+      expect(removed.result.status).toBe('applied');
+      const field = removed.nextState!.fields.get(`${entityId}:quote`)!;
+      expect(field.state).toBe('clear');
+      expect(field.value_text).toBeNull();
+      expect(field.value_json).toBeNull();
+      expect(field.source_event_id).toBeNull();
+      expect(field.last_confirmed_value_text).toContain('450 EUR');
+      expect(
+        interactionEntries(
+          rebuildProjections([created.events[0]!, logged.events[0]!, removed.events[0]!]),
+        ),
+      ).toEqual(interactionEntries(removed.nextState!));
+    });
+
+    it('preserves a dispute when revising one disputant, swapping its candidate', () => {
+      const created = handleCreateEntity(dummyContext, fullEmptyState, 1, { name: 'Disputed Co' });
+      const entityId = created.events[0]!.entity_id!;
+      const first = handleLogEvent(dummyContext, created.nextState!, 2, {
+        entity_id: entityId,
+        kind: 'quote',
+        payload: { amount: 300000, currency: 'EUR', role: 'offered' },
+      });
+      const second = handleLogEvent(dummyContext, first.nextState!, 3, {
+        entity_id: entityId,
+        kind: 'quote',
+        payload: { amount: 400000, currency: 'EUR', role: 'offered' },
+      });
+      const rootA = first.events[0]!.id;
+      const rootB = second.events[0]!.id;
+      expect(second.nextState!.fields.get(`${entityId}:quote`)!.state).toBe('disputed');
+
+      const revised = handleReviseInteraction(
+        { ...dummyContext, action_id: 'act-rev dispute' },
+        second.nextState!,
+        4,
+        {
+          interaction_id: rootA,
+          expected_head_event_id: rootA,
+          kind: 'quote',
+          payload: { amount: 350000, currency: 'EUR', role: 'offered' },
+        },
+      );
+      expect(revised.result.status).toBe('applied');
+      const field = revised.nextState!.fields.get(`${entityId}:quote`)!;
+      expect(field.state).toBe('disputed');
+      expect(field.value_text).toBeNull();
+      expect(field.candidate_event_ids).toHaveLength(2);
+      expect(field.candidate_event_ids).toContain(rootB);
+      expect(field.candidate_event_ids).toContain(revised.events[0]!.id);
+      expect(field.candidate_event_ids).not.toContain(rootA);
+      expect(
+        interactionEntries(
+          rebuildProjections([created.events[0]!, first.events[0]!, second.events[0]!, revised.events[0]!]),
+        ),
+      ).toEqual(interactionEntries(revised.nextState!));
+    });
+
+    it('resolves to the surviving root when removing one disputant', () => {
+      const created = handleCreateEntity(dummyContext, fullEmptyState, 1, { name: 'Split Co' });
+      const entityId = created.events[0]!.entity_id!;
+      const first = handleLogEvent(dummyContext, created.nextState!, 2, {
+        entity_id: entityId,
+        kind: 'quote',
+        payload: { amount: 300000, currency: 'EUR', role: 'offered' },
+      });
+      const second = handleLogEvent(dummyContext, first.nextState!, 3, {
+        entity_id: entityId,
+        kind: 'quote',
+        payload: { amount: 400000, currency: 'EUR', role: 'offered' },
+      });
+      const removed = handleRemoveInteraction(
+        { ...dummyContext, action_id: 'act-rem disputant' },
+        second.nextState!,
+        4,
+        { interaction_id: first.events[0]!.id, expected_head_event_id: first.events[0]!.id },
+      );
+      expect(removed.result.status).toBe('applied');
+      const field = removed.nextState!.fields.get(`${entityId}:quote`)!;
+      expect(field.state).toBe('clear');
+      expect(field.value_text).toContain('4000 EUR');
+      expect(field.source_event_id).toBe(second.events[0]!.id);
+    });
+
+    it('keeps the original date on content-only revision and rejects impossible dates', () => {
+      const seed = seedVisit();
+      const fixed = handleReviseInteraction(
+        { ...dummyContext, action_id: 'act-rev nodate' },
+        seed.state,
+        3,
+        {
+          interaction_id: seed.root,
+          expected_head_event_id: seed.root,
+          kind: 'visit',
+          payload: { summary: 'Same day, better notes', contact_made: true },
+        },
+      );
+      expect(fixed.result.status).toBe('applied');
+      expect(fixed.events[0]!.occurred_at).toBe('2026-10-05T10:00:00.000Z');
+      expect(fixed.nextState!.interactions.get(seed.root)!.occurred_at).toBe('2026-10-05T10:00:00.000Z');
+
+      const impossible = handleReviseInteraction(
+        dummyContext,
+        seed.state,
+        3,
+        {
+          interaction_id: seed.root,
+          expected_head_event_id: seed.root,
+          kind: 'visit',
+          payload: { summary: 'Bad date', contact_made: true },
+          occurred_at: '2026-02-30',
+        },
+      );
+      expect(impossible.result.status).toBe('rejected');
+      expect(impossible.result.error?.code).toBe('invalid_occurred_at');
+
+      const impossibleInstant = handleReviseInteraction(
+        dummyContext,
+        seed.state,
+        3,
+        {
+          interaction_id: seed.root,
+          expected_head_event_id: seed.root,
+          kind: 'visit',
+          payload: { summary: 'Bad instant', contact_made: true },
+          occurred_at: '2026-02-30T10:00:00.000Z',
+        },
+      );
+      expect(impossibleInstant.result.status).toBe('rejected');
+      expect(impossibleInstant.result.error?.code).toBe('invalid_occurred_at');
+    });
+
+    it('strips a smuggled root marker from new logs instead of hijacking another root', () => {
+      const createdA = handleCreateEntity(dummyContext, fullEmptyState, 1, { name: 'First Client' });
+      const entityA = createdA.events[0]!.entity_id!;
+      const logged = handleLogEvent(dummyContext, createdA.nextState!, 2, {
+        entity_id: entityA,
+        kind: 'note',
+        payload: { text: 'First client entry' },
+      });
+      const root = logged.events[0]!.id;
+
+      // A lower-level caller smuggles another root's marker into a new log
+      // for a different entity: the entry must land as its own fresh root.
+      const smuggled = handleLogEvent(
+        { ...dummyContext, action_id: 'act-smuggle' },
+        logged.nextState!,
+        3,
+        {
+          entity_id: entityA,
+          kind: 'note',
+          payload: { text: 'Second client entry', interaction_id: root },
+        },
+      );
+      expect(smuggled.result.status).toBe('applied');
+      expect(smuggled.events[0]!.id).not.toBe(root);
+      const row = smuggled.nextState!.interactions.get(root)!;
+      expect(row.entity_id).toBe(entityA);
+      expect(row.head_event_id).toBe(root);
+      expect(row.revision).toBe(1);
+      // The smuggled entry stands alone under its own root.
+      expect(smuggled.nextState!.interactions.get(smuggled.events[0]!.id)).toMatchObject({
+        entity_id: entityA,
+        head_event_id: smuggled.events[0]!.id,
+      });
+    });
+
+    it('names the restored entry when previewing removal Undo', () => {
+      const created = handleCreateEntity(dummyContext, fullEmptyState, 1, { name: 'Undo Target' });
+      const logged = handleLogEvent(dummyContext, created.nextState!, 2, {
+        entity_id: null,
+        kind: 'note',
+        payload: { text: 'Entry to restore' },
+      });
+      const root = logged.events[0]!.id;
+      const removed = handleRemoveInteraction(
+        { ...dummyContext, action_id: 'act-rem preview' },
+        logged.nextState!,
+        3,
+        { interaction_id: root, expected_head_event_id: root },
+      );
+      expect(removed.result.status).toBe('applied');
+      const removal = removed.events[0]!;
+      const receipt: ActionReceipt = {
+        id: 'rcpt-rem',
+        workspace_id: 'ws-test',
+        action_id: 'act-rem preview',
+        payload_hash: 'hash',
+        command_name: 'remove_interaction',
+        result_status: 'applied',
+        result_json: JSON.stringify(removed.result),
+        actor_kind: 'member',
+        actor_user_id: 'usr-avi',
+        source_message_id: 'msg-101',
+        source_job_id: null,
+        run_id: 'run-1',
+        step_id: null,
+        committed_revision: 3,
+        created_at: '2026-10-07T10:00:00.000Z',
+      };
+      const preview = computeUndoPreview(
+        'act-rem preview',
+        'single',
+        [receipt],
+        [created.events[0]!, logged.events[0]!, removal],
+        removed.nextState!,
+        3,
+      );
+      expect(preview.affected_event_ids).toHaveLength(1);
+      expect(preview.affected_context).toHaveLength(1);
+      expect(preview.affected_context[0]!.changes[0]).toContain('note');
+    });
+
+    it('flags later revisions as dependents when previewing undo of the original log', () => {
+      const created = handleCreateEntity(dummyContext, fullEmptyState, 1, { name: 'Chain Co' });
+      const logged = handleLogEvent(dummyContext, created.nextState!, 2, {
+        entity_id: null,
+        kind: 'note',
+        payload: { text: 'Original' },
+      });
+      const root = logged.events[0]!.id;
+      const revised = handleReviseInteraction(
+        { ...dummyContext, action_id: 'act-rev chain' },
+        logged.nextState!,
+        3,
+        {
+          interaction_id: root,
+          expected_head_event_id: root,
+          kind: 'note',
+          payload: { text: 'Correction' },
+        },
+      );
+      const receiptFor = (actionId: string, command: string): ActionReceipt => ({
+        id: `rcpt-${actionId}`,
+        workspace_id: 'ws-test',
+        action_id: actionId,
+        payload_hash: 'hash',
+        command_name: command,
+        result_status: 'applied',
+        result_json: '{}',
+        actor_kind: 'member',
+        actor_user_id: 'usr-avi',
+        source_message_id: 'msg-101',
+        source_job_id: null,
+        run_id: 'run-1',
+        step_id: null,
+        committed_revision: 3,
+        created_at: '2026-10-07T10:00:00.000Z',
+      });
+      const preview = computeUndoPreview(
+        'act-1',
+        'single',
+        [receiptFor('act-1', 'log_event'), receiptFor('act-rev chain', 'revise_interaction')],
+        [created.events[0]!, logged.events[0]!, revised.events[0]!],
+        revised.nextState!,
+        3,
+      );
+      expect(preview.dependencies.map((d) => d.action_id)).toContain('act-rev chain');
     });
   });
 

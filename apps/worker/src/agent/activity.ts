@@ -27,16 +27,21 @@ export async function publishAgentActivity(
   // commit: a stale publisher's first write affects zero rows, so the empty
   // RETURNING below skips the broadcast. Committed public activity is still
   // persisted before publication; the guard only refuses frames whose turn
-  // already lost the run.
+  const hasGuard = Boolean(ctx.attemptId && ctx.fence !== undefined);
+  const guardSql = hasGuard ? ` AND EXISTS ${holderGuardSql()}` : '';
+  const guardBindings = hasGuard
+    ? [ctx.runId, ctx.attemptId!, ctx.fence!, ctx.fence!, ctx.attemptId!, ctx.attemptId!, now]
+    : [];
+
   const [, inserted] = await ctx.db.batch([
     ctx.db.prepare(
-      `UPDATE chats SET activity_cursor = activity_cursor + 1, last_activity_at = ?, updated_at = ? WHERE id = ? AND workspace_id = ? AND NOT EXISTS (SELECT 1 FROM run_activity WHERE id = ? AND workspace_id = ?) AND EXISTS ${holderGuardSql()}`
-    ).bind(now, now, ctx.chatId, ctx.workspaceId, id, ctx.workspaceId, ctx.runId, ctx.attemptId, ctx.fence, ctx.fence, ctx.attemptId, ctx.attemptId, now),
+      `UPDATE chats SET activity_cursor = activity_cursor + 1, last_activity_at = ?, updated_at = ? WHERE id = ? AND workspace_id = ? AND NOT EXISTS (SELECT 1 FROM run_activity WHERE id = ? AND workspace_id = ?)${guardSql}`
+    ).bind(now, now, ctx.chatId, ctx.workspaceId, id, ctx.workspaceId, ...guardBindings),
     ctx.db.prepare(
       `INSERT INTO run_activity (id, workspace_id, chat_id, run_id, cursor, type, payload_json, created_at)
-       SELECT ?, ?, ?, ?, activity_cursor, ?, ?, ? FROM chats WHERE id = ? AND workspace_id = ? AND NOT EXISTS (SELECT 1 FROM run_activity WHERE id = ? AND workspace_id = ?) AND EXISTS ${holderGuardSql()}
+       SELECT ?, ?, ?, ?, activity_cursor, ?, ?, ? FROM chats WHERE id = ? AND workspace_id = ? AND NOT EXISTS (SELECT 1 FROM run_activity WHERE id = ? AND workspace_id = ?)${guardSql}
        RETURNING cursor`
-    ).bind(id, ctx.workspaceId, ctx.chatId, ctx.runId, type, JSON.stringify(payload), now, ctx.chatId, ctx.workspaceId, id, ctx.workspaceId, ctx.runId, ctx.attemptId, ctx.fence, ctx.fence, ctx.attemptId, ctx.attemptId, now),
+    ).bind(id, ctx.workspaceId, ctx.chatId, ctx.runId, type, JSON.stringify(payload), now, ctx.chatId, ctx.workspaceId, id, ctx.workspaceId, ...guardBindings),
   ]);
   const rows = (inserted as unknown as { results?: Array<{ cursor: number }> }).results ?? [];
   if (rows.length === 0) {

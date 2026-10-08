@@ -650,6 +650,7 @@ export type LedgerEventKind =
   | 'memory_note'
   | 'memory_forgotten'
   | 'entity_deleted'
+  | 'interaction_removed'
   | 'revert';
 
 export type Provenance = 'stated' | 'inferred';
@@ -660,21 +661,33 @@ export interface QuoteValue {
   amount: number; // integer minor units (e.g. 360000 cents = 3600 EUR)
   currency: string; // ISO 4217, e.g. 'EUR'
   role: 'offered' | 'expected';
+  /**
+   * Stable interaction root for C1 revision chains. Absent on legacy rows,
+   * where the root is the event's own ID. Set on revision events to the
+   * original interaction event ID; never rewrites who originally logged it.
+   */
+  interaction_id?: string | null;
 }
 
 export interface VisitPayload {
   summary: string;
   contact_made: boolean;
   location?: string;
+  /** Stable interaction root; absent on legacy rows (root is own event ID). */
+  interaction_id?: string | null;
 }
 
 export interface ContactPayload {
   summary: string;
   channel: 'phone' | 'email' | 'in_person' | 'telegram' | 'whatsapp' | 'other';
+  /** Stable interaction root; absent on legacy rows (root is own event ID). */
+  interaction_id?: string | null;
 }
 
 export interface NotePayload {
   text: string;
+  /** Stable interaction root; absent on legacy rows (root is own event ID). */
+  interaction_id?: string | null;
 }
 
 export interface StatusChangePayload {
@@ -726,6 +739,36 @@ export interface RevertPayload {
   mode: UndoMode;
   group_operation_id: string;
   rationale?: string;
+}
+
+/**
+ * C1 logical removal of one interaction (note/visit/contact/quote).
+ * Targets the stable root and the exact current head; the original report
+ * and every revision stay in append-only history. Removal is logical, not
+ * audited erasure: Undo restores the prior head.
+ */
+export interface InteractionRemovedPayload {
+  /** Stable root: the original interaction event ID (legacy roots equal it). */
+  root_event_id: string;
+  /** Exact current head event ID at removal time (optimistic token). */
+  head_event_id: string;
+  /** Original kind of the removed interaction; never converted. */
+  target_kind: 'note' | 'visit' | 'contact' | 'quote';
+  reason?: string | null;
+}
+
+/** Result data for a successful `revise_interaction` commit. */
+export interface ReviseInteractionResult {
+  event_id: string;
+  interaction_id: string;
+  head_event_id: string;
+}
+
+/** Result data for a successful `remove_interaction` commit. */
+export interface RemoveInteractionResult {
+  event_id: string;
+  interaction_id: string;
+  head_event_id: string;
 }
 
 export interface LedgerEvent<T = unknown> {
@@ -810,11 +853,36 @@ export interface Task {
   updated_at: string;
 }
 
+/**
+ * C1 single-interaction lifecycle projection: one row per stable interaction
+ * root tracking the current head, removal state and revision. Content stays
+ * in events; this row carries only the metadata timeline/file reads need.
+ * Legacy rows use their own event ID as root. Rebuilt deterministically
+ * from the event stream, so projection always equals replay.
+ */
+export interface InteractionState {
+  workspace_id: string;
+  root_event_id: string;
+  entity_id: string | null;
+  kind: 'note' | 'visit' | 'contact' | 'quote';
+  head_event_id: string;
+  revision: number;
+  state: 'active' | 'removed';
+  occurred_at: string;
+  sequence: number;
+  updated_at: string;
+  /**
+   * Head value snapshot for quote rows (the head event's quote payload),
+   * letting head-aware quote reduction recompute from the projection
+   * without rereading history. NULL for other kinds.
+   */
+  head_value_json: string | null;
+}
+
 export interface DraftProjection {
   id: string;
   workspace_id: string;
-  entity_id: string | null;
-  channel: 'whatsapp' | 'email' | 'sms' | 'other';
+  entity_id: string | null;  channel: 'whatsapp' | 'email' | 'sms' | 'other';
   recipient_address: string | null;
   content_text: string;
   status: 'draft' | 'member_confirmed_sent' | 'archived';

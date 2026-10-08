@@ -22,6 +22,14 @@ export { handleCreateEntity } from './commands/createEntity.js';
 export { handleRenameEntity, handleAddAlias } from './commands/renameEntity.js';
 export { handleDeleteEntity } from './commands/deleteEntity.js';
 export { handleLogEvent } from './commands/logEvent.js';
+export { handleReviseInteraction, handleRemoveInteraction } from './commands/interactions.js';
+export {
+  validateInteractionPayload,
+  INTERACTION_KINDS,
+  type InteractionKind,
+  type InteractionPayloadValidation,
+} from './commands/interactionPayload.js';
+export { reduceInteractions } from './reducers/interactions.js';
 export { handleSetField, ALLOWED_CORE_FIELDS, VALID_LEAD_STATUSES } from './commands/setField.js';
 export {
   handleSetFields,
@@ -63,7 +71,9 @@ export {
 export {
   getActionReceipt,
   getActionReceiptsByIds,
+  getEntityInteractions,
   getFieldProjectionState,
+  getInteractionProjectionState,
   getQuestionByAction,
   getWorkspaceRevision,
   getWorkspaceEvents,

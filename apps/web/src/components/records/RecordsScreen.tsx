@@ -1,8 +1,11 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Button } from '../ui/button.js';
 import { HistoryNav } from '../HistoryNav.js';
+import { SettingsPane } from '../SettingsPane.js';
 import { SparklesIcon, MenuIcon } from '../icons.js';
-import { INITIAL_RECORD_LISTS } from './seedData.js';
+import { EMPTY_RECORD_LISTS } from './seedData.js';
+import { api } from '../../api/client.js';
+import { useNavChats } from '../../api/queries.js';
 import type {
   DirtyCellState,
   DraftOperation,
@@ -35,7 +38,7 @@ export interface RecordsScreenProps {
 }
 
 export function RecordsScreen(props: RecordsScreenProps) {
-  const [lists, setLists] = useState<RecordList[]>(() => props.initialLists ?? INITIAL_RECORD_LISTS);
+  const [lists, setLists] = useState<RecordList[]>(() => props.initialLists ?? EMPTY_RECORD_LISTS);
   const [activeListId, setActiveListId] = useState<string>(() => {
     if (props.listId && lists.some(item => item.id === props.listId)) {
       return props.listId;
@@ -65,26 +68,38 @@ export function RecordsScreen(props: RecordsScreenProps) {
   });
 
   // History entries per list
-  const [historyItems, setHistoryItems] = useState<Record<string, RecordHistoryItem[]>>({
-    leads: [
-      {
-        id: 'hist-1',
-        timestamp: 'Today, 2:30 PM',
-        actor: 'user',
-        description: 'Updated phone and deal value for John Klakney',
-        affectedCount: 2,
-        canRestore: true,
-      },
-      {
-        id: 'hist-2',
-        timestamp: 'Yesterday',
-        actor: 'otis',
-        description: 'Extracted access gate code instructions from conversation',
-        affectedCount: 3,
-        canRestore: true,
-      },
-    ],
-  });
+  const [historyItems, setHistoryItems] = useState<Record<string, RecordHistoryItem[]>>({});
+
+  // Query real chats for the left navigation sidebar
+  const mineQuery = useNavChats(props.userId, props.workspaceId, 'mine', false);
+  const teamQuery = useNavChats(props.userId, props.workspaceId, 'team', false);
+  const ownChats = mineQuery.data?.chats ?? [];
+  const teamChats = teamQuery.data?.chats ?? [];
+
+  const [isFetching, setIsFetching] = useState(false);
+
+  // Fetch real records from D1 ledger
+  const fetchRecords = useCallback(async () => {
+    if (props.initialLists) return;
+    setIsFetching(true);
+    try {
+      const data = await api.getRecords(props.workspaceId);
+      if (data && Array.isArray(data.lists) && data.lists.length > 0) {
+        setLists(data.lists);
+        if (data.history) {
+          setHistoryItems(data.history);
+        }
+      }
+    } catch {
+      // Retain clean empty lists
+    } finally {
+      setIsFetching(false);
+    }
+  }, [props.workspaceId, props.initialLists]);
+
+  useEffect(() => {
+    void fetchRecords();
+  }, [fetchRecords]);
 
   // Navigation & UI controls
   const [isNavDrawerOpen, setIsNavDrawerOpen] = useState(false);
@@ -98,8 +113,21 @@ export function RecordsScreen(props: RecordsScreenProps) {
   const [isAddListOpen, setIsAddListOpen] = useState(false);
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
   const [isAskOtisOpen, setIsAskOtisOpen] = useState(false);
+  const [sidebarChatId, setSidebarChatId] = useState<string | null>(null);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [saveBanner, setSaveBanner] = useState<string | null>(null);
+
+  const handleSidebarNavigate = useCallback(
+    (ws: string, nextChat: string | null) => {
+      if (ws !== props.workspaceId) {
+        props.onNavigate(ws, nextChat);
+      } else {
+        setSidebarChatId(nextChat);
+      }
+    },
+    [props.workspaceId, props.onNavigate],
+  );
 
   // Effective columns computation
   const effectiveColumns = useMemo(() => {
@@ -416,56 +444,83 @@ export function RecordsScreen(props: RecordsScreenProps) {
   // Save changes batch to D1
   const handleSave = useCallback(async () => {
     setIsSaving(true);
-    // Simulate transactional D1 ledger batch latency
-    await new Promise(resolve => setTimeout(resolve, 320));
-
-    // Commit effective changes to lists state
-    setLists(prevLists => {
-      return prevLists.map(list => {
-        if (list.id !== activeListId) return list;
-        return {
-          ...list,
-          columns: effectiveColumns,
-          rows: effectiveRows.map(row => {
-            const nextCells = { ...row.cells };
-            for (const [, dirty] of Object.entries(draft.dirtyCells)) {
-              if (dirty.rowId === row.id) {
-                nextCells[dirty.columnId] = dirty.currentValue;
-              }
-            }
+    try {
+      if (!props.initialLists) {
+        await api.saveRecords(props.workspaceId, {
+          listId: activeListId,
+          dirtyCells: draft.dirtyCells,
+          addedRows: draft.addedRows,
+          deletedRowIds: Array.from(draft.deletedRowIds),
+        });
+        await fetchRecords();
+      } else {
+        // Fallback for isolated test or Storybook fixtures
+        setLists(prevLists => {
+          return prevLists.map(list => {
+            if (list.id !== activeListId) return list;
             return {
-              ...row,
-              cells: nextCells,
+              ...list,
+              columns: effectiveColumns,
+              rows: effectiveRows.map(row => {
+                const nextCells = { ...row.cells };
+                for (const [, dirty] of Object.entries(draft.dirtyCells)) {
+                  if (dirty.rowId === row.id) {
+                    nextCells[dirty.columnId] = dirty.currentValue;
+                  }
+                }
+                return {
+                  ...row,
+                  cells: nextCells,
+                };
+              }),
             };
-          }),
-        };
-      });
-    });
+          });
+        });
+      }
 
-    // Record in history audit
-    const savedCount = dirtyCount;
-    setHistoryItems(prev => ({
-      ...prev,
-      [activeListId]: [
-        {
-          id: `hist-${Date.now()}`,
-          timestamp: 'Just now',
-          actor: 'user',
-          description: `Saved batch of ${savedCount} changes to ledger`,
-          affectedCount: savedCount,
-          canRestore: true,
-        },
-        ...(prev[activeListId] ?? []),
-      ],
-    }));
+      // Record in history audit
+      const savedCount = dirtyCount;
+      setHistoryItems(prev => ({
+        ...prev,
+        [activeListId]: [
+          {
+            id: `hist-${Date.now()}`,
+            timestamp: 'Just now',
+            actor: 'user',
+            description: `Saved batch of ${savedCount} change(s) to business memory`,
+            affectedCount: savedCount,
+            canRestore: true,
+          },
+          ...(prev[activeListId] ?? []),
+        ],
+      }));
 
-    handleDiscard();
-    setIsSaving(false);
-    setSaveBanner('All changes saved to workspace ledger');
-    setTimeout(() => {
-      setSaveBanner(null);
-    }, 3000);
-  }, [activeListId, dirtyCount, draft.dirtyCells, effectiveColumns, effectiveRows, handleDiscard]);
+      handleDiscard();
+      setSaveBanner('All changes saved to workspace ledger');
+      setTimeout(() => {
+        setSaveBanner(null);
+      }, 3000);
+    } catch {
+      setSaveBanner('Failed to save changes to ledger. Please try again.');
+      setTimeout(() => {
+        setSaveBanner(null);
+      }, 3000);
+    } finally {
+      setIsSaving(false);
+    }
+  }, [
+    dirtyCount,
+    props.initialLists,
+    props.workspaceId,
+    activeListId,
+    draft.dirtyCells,
+    draft.addedRows,
+    draft.deletedRowIds,
+    fetchRecords,
+    effectiveColumns,
+    effectiveRows,
+    handleDiscard,
+  ]);
 
   // Apply Otis proposal to draft without saving
   const handleApplyOtisProposal = useCallback(
@@ -546,8 +601,8 @@ export function RecordsScreen(props: RecordsScreenProps) {
           workspaceName={currentWorkspaceName}
           workspaces={props.workspaces}
           workspaceId={props.workspaceId}
-          ownChats={[]}
-          teamChats={[]}
+          ownChats={ownChats}
+          teamChats={teamChats}
           activeChatId={null}
           variant="sidebar"
           members={props.members}
@@ -556,7 +611,7 @@ export function RecordsScreen(props: RecordsScreenProps) {
           onNewChat={() => props.onNavigate(props.workspaceId, null)}
           onOpenRecords={() => {}}
           onSwitchWorkspace={id => props.onNavigate(id, null)}
-          onOpenSettings={() => {}}
+          onOpenSettings={() => setSettingsOpen(true)}
         />
       </div>
 
@@ -565,8 +620,8 @@ export function RecordsScreen(props: RecordsScreenProps) {
         workspaceName={currentWorkspaceName}
         workspaces={props.workspaces}
         workspaceId={props.workspaceId}
-        ownChats={[]}
-        teamChats={[]}
+        ownChats={ownChats}
+        teamChats={teamChats}
         activeChatId={null}
         variant="drawer"
         open={isNavDrawerOpen}
@@ -585,7 +640,10 @@ export function RecordsScreen(props: RecordsScreenProps) {
           setIsNavDrawerOpen(false);
           props.onNavigate(id, null);
         }}
-        onOpenSettings={() => setIsNavDrawerOpen(false)}
+        onOpenSettings={() => {
+          setIsNavDrawerOpen(false);
+          setSettingsOpen(true);
+        }}
         onClose={() => setIsNavDrawerOpen(false)}
       />
 
@@ -618,7 +676,7 @@ export function RecordsScreen(props: RecordsScreenProps) {
             </span>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 md:hidden">
             <Button
               variant={isAskOtisOpen ? 'secondary' : 'ghost'}
               size="sm"
@@ -664,6 +722,8 @@ export function RecordsScreen(props: RecordsScreenProps) {
           statusFilter={statusFilter}
           isSaving={isSaving}
           isAskOtisOpen={isAskOtisOpen}
+          onRefresh={() => void fetchRecords()}
+          isRefreshing={isFetching}
           onSelectList={id => {
             setActiveListId(id);
             props.onNavigateToList?.(props.workspaceId, id);
@@ -721,6 +781,15 @@ export function RecordsScreen(props: RecordsScreenProps) {
                 focusedRow={selectedRowForEditor}
                 onClose={() => setIsAskOtisOpen(false)}
                 onApplyProposal={handleApplyOtisProposal}
+                workspaceId={props.workspaceId}
+                userId={props.userId}
+                members={props.members}
+                workspaces={props.workspaces}
+                onSignOut={props.onSignOut}
+                onNavigate={handleSidebarNavigate}
+                onRefreshSession={props.onRefreshSession}
+                chatId={sidebarChatId}
+                onSelectChat={setSidebarChatId}
               />
             </div>
           )}
@@ -771,9 +840,32 @@ export function RecordsScreen(props: RecordsScreenProps) {
               focusedRow={selectedRowForEditor}
               onClose={() => setIsAskOtisOpen(false)}
               onApplyProposal={handleApplyOtisProposal}
+              workspaceId={props.workspaceId}
+              userId={props.userId}
+              members={props.members}
+              workspaces={props.workspaces}
+              onSignOut={props.onSignOut}
+              onNavigate={handleSidebarNavigate}
+              onRefreshSession={props.onRefreshSession}
+              chatId={sidebarChatId}
+              onSelectChat={setSidebarChatId}
             />
           </div>
         </div>
+      )}
+
+      {/* Settings Modal */}
+      {settingsOpen && (
+        <SettingsPane
+          workspaceId={props.workspaceId}
+          workspaceName={currentWorkspaceName}
+          members={props.members}
+          currentUserId={props.userId}
+          currentUserRole={(props.workspaces.find(w => w.id === props.workspaceId)?.role as 'owner' | 'member') ?? 'owner'}
+          onClose={() => setSettingsOpen(false)}
+          onSignOut={props.onSignOut}
+          onWorkspaceCreated={id => props.onNavigate(id, null)}
+        />
       )}
     </div>
   );

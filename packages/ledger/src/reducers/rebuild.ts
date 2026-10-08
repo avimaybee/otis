@@ -8,6 +8,7 @@ import type { LedgerEvent, RevertPayload } from '@otis/contracts';
 import type { LedgerProjectionState } from '../types.js';
 import { reduceEntity } from './entities.js';
 import { reduceFields } from './fields.js';
+import { reduceInteractions } from './interactions.js';
 import { reduceTasks } from './tasks.js';
 import { reduceDrafts } from './drafts.js';
 import { reduceMemory } from './memory.js';
@@ -37,16 +38,20 @@ export function rebuildProjections(events: LedgerEvent[]): LedgerProjectionState
     entities: new Map(),
     aliases: new Map(),
     fields: new Map(),
+    interactions: new Map(),
     tasks: new Map(),
     drafts: new Map(),
     memoryEntries: new Map(),
     memorySuppressions: new Map(),
   };
 
-  // 4. Apply pure reducers in strict sequence order
+  // 4. Apply pure reducers in strict sequence order. Interactions reduce
+  // before fields so head-aware quote reduction sees the triggering
+  // revision or removal already reflected in the rows.
   for (const evt of activeEvents) {
     reduceEntity(state.entities, state.aliases, evt);
-    reduceFields(state.fields, evt);
+    reduceInteractions(state.interactions, evt);
+    reduceFields(state.fields, state.interactions, evt);
     reduceTasks(state.tasks, evt);
     reduceDrafts(state.drafts, evt);
     reduceMemory(state.memoryEntries, state.memorySuppressions, evt);

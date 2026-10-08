@@ -131,6 +131,20 @@ export interface LogEventToolArgs {
   provenance?: Provenance;
 }
 
+export interface ReviseInteractionToolArgs {
+  interaction_id: string;
+  expected_head_event_id: string;
+  kind: 'note' | 'visit' | 'contact' | 'quote';
+  payload: Record<string, unknown>;
+  occurred_at?: string;
+}
+
+export interface RemoveInteractionToolArgs {
+  interaction_id: string;
+  expected_head_event_id: string;
+  reason?: string | null;
+}
+
 export interface SetFieldsFieldItem {
   field_name: string;
   value: unknown;
@@ -465,6 +479,81 @@ export function validateLogEventArgs(raw: unknown): ValidationResult<LogEventToo
   const occurred_at = typeof obj['occurred_at'] === 'string' && obj['occurred_at'].trim() ? obj['occurred_at'].trim() : undefined;
 
   return { ok: true, data: { entity_id, kind, payload, occurred_at, provenance } };
+}
+
+export function validateReviseInteractionArgs(raw: unknown): ValidationResult<ReviseInteractionToolArgs> {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return fail('invalid_type', 'Expected object.');
+  const obj = raw as Record<string, unknown>;
+  const sec = checkNoForbiddenKeys(obj);
+  if (sec) return sec;
+  const unk = checkNoUnknownKeys(
+    obj,
+    new Set(['interaction_id', 'expected_head_event_id', 'kind', 'payload', 'occurred_at']),
+    'revise_interaction',
+  );
+  if (unk) return unk;
+
+  if (typeof obj['interaction_id'] !== 'string' || !obj['interaction_id'].trim()) {
+    return fail('invalid_argument', "Field 'interaction_id' must be the original interaction event ID (non-empty string).");
+  }
+  if (typeof obj['expected_head_event_id'] !== 'string' || !obj['expected_head_event_id'].trim()) {
+    return fail('invalid_argument', "Field 'expected_head_event_id' must be the exact current head event ID (non-empty string).");
+  }
+  const validKinds = new Set(['note', 'visit', 'contact', 'quote']);
+  if (typeof obj['kind'] !== 'string' || !validKinds.has(obj['kind'])) {
+    return fail('invalid_argument', "Field 'kind' must be 'note', 'visit', 'contact', or 'quote', matching the original entry.");
+  }
+  if (!obj['payload'] || typeof obj['payload'] !== 'object' || Array.isArray(obj['payload'])) {
+    return fail('invalid_argument', "Field 'payload' must be an object.");
+  }
+  const payload = obj['payload'] as Record<string, unknown>;
+  // The stable root is server-bound from interaction_id; a model-supplied
+  // marker inside the payload is never honored.
+  if ('interaction_id' in payload) {
+    return fail('invalid_argument', "Field 'payload.interaction_id' is reserved and must not be supplied.");
+  }
+  const occurred_at = typeof obj['occurred_at'] === 'string' && obj['occurred_at'].trim() ? obj['occurred_at'].trim() : undefined;
+
+  return {
+    ok: true,
+    data: {
+      interaction_id: (obj['interaction_id'] as string).trim(),
+      expected_head_event_id: (obj['expected_head_event_id'] as string).trim(),
+      kind: obj['kind'] as ReviseInteractionToolArgs['kind'],
+      payload,
+      occurred_at,
+    },
+  };
+}
+
+export function validateRemoveInteractionArgs(raw: unknown): ValidationResult<RemoveInteractionToolArgs> {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return fail('invalid_type', 'Expected object.');
+  const obj = raw as Record<string, unknown>;
+  const sec = checkNoForbiddenKeys(obj);
+  if (sec) return sec;
+  const unk = checkNoUnknownKeys(
+    obj,
+    new Set(['interaction_id', 'expected_head_event_id', 'reason']),
+    'remove_interaction',
+  );
+  if (unk) return unk;
+
+  if (typeof obj['interaction_id'] !== 'string' || !obj['interaction_id'].trim()) {
+    return fail('invalid_argument', "Field 'interaction_id' must be the original interaction event ID (non-empty string).");
+  }
+  if (typeof obj['expected_head_event_id'] !== 'string' || !obj['expected_head_event_id'].trim()) {
+    return fail('invalid_argument', "Field 'expected_head_event_id' must be the exact current head event ID (non-empty string).");
+  }
+  const reason = typeof obj['reason'] === 'string' && obj['reason'].trim() ? obj['reason'].trim() : null;
+
+  return {
+    ok: true,
+    data: {
+      interaction_id: (obj['interaction_id'] as string).trim(),
+      expected_head_event_id: (obj['expected_head_event_id'] as string).trim(),
+      reason,
+    },
+  };
 }
 
 export function validateSetFieldsArgs(raw: unknown): ValidationResult<SetFieldsToolArgs> {
@@ -1453,6 +1542,10 @@ export function validateToolCall(
     case 'delete_entity':
       return validateDeleteEntityArgs(rawArgs);    case 'log_event':
       return validateLogEventArgs(rawArgs);
+    case 'revise_interaction':
+      return validateReviseInteractionArgs(rawArgs);
+    case 'remove_interaction':
+      return validateRemoveInteractionArgs(rawArgs);
     case 'set_fields':
       return validateSetFieldsArgs(rawArgs);
     case 'resolve_conflict':
@@ -1514,6 +1607,8 @@ export const MUTATING_TOOL_NAMES: ReadonlySet<string> = new Set([
   'rename_entity',
   'delete_entity',
   'log_event',
+  'revise_interaction',
+  'remove_interaction',
   'set_fields',
   'resolve_conflict',
   'create_task',
@@ -1640,6 +1735,39 @@ export const ALL_AGENT_TOOLS: ProviderToolDeclaration[] = [
         provenance: { type: 'string', enum: ['stated', 'inferred'] },
       },
       required: ['kind', 'payload'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'revise_interaction',
+    description: 'Correct one logged note, visit, contact, or quote identified by its interaction event ID. Applies only when the entry is still current: expected_head_event_id must be the exact current head, otherwise the call conflicts instead of overwriting a teammate edit. The kind never changes and a revision keeps the same entity; omit occurred_at to keep the original date.',
+    parameters: {
+      type: 'object',
+      properties: {
+        interaction_id: { type: 'string', description: 'Original interaction event ID (the stable root).' },
+        expected_head_event_id: { type: 'string', description: 'Exact current head event ID; stale values conflict.' },
+        kind: { type: 'string', enum: ['note', 'visit', 'contact', 'quote'] },
+        payload: {
+          type: 'object',
+          description: 'Replacement payload matching kind, validated exactly like new logging. Note: { text }. Visit: { summary, contact_made, location? }. Contact: { summary, channel }. Quote: { amount (integer minor units >= 0), currency (3-letter ISO), role: offered|expected }.',
+        },
+        occurred_at: { type: 'string', description: 'New ISO occurrence timestamp. Omit to keep the original date.' },
+      },
+      required: ['interaction_id', 'expected_head_event_id', 'kind', 'payload'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'remove_interaction',
+    description: 'Remove one logged note, visit, contact, or quote from current use. The original report and history are retained and Undo restores the entry. Applies only when the entry is still current: expected_head_event_id must be the exact current head.',
+    parameters: {
+      type: 'object',
+      properties: {
+        interaction_id: { type: 'string', description: 'Original interaction event ID (the stable root).' },
+        expected_head_event_id: { type: 'string', description: 'Exact current head event ID; stale values conflict.' },
+        reason: { type: 'string', description: 'Optional short reason recorded with the removal (e.g. duplicate entry).' },
+      },
+      required: ['interaction_id', 'expected_head_event_id'],
       additionalProperties: false,
     },
   },

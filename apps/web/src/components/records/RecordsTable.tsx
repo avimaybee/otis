@@ -268,7 +268,7 @@ export function RecordsTable({
                 <td colSpan={columns.length + 2} className="py-12 text-center text-xs text-muted-foreground">
                   <div className="flex flex-col items-center justify-center gap-1">
                     <span className="font-medium text-foreground">No records found</span>
-                    <span className="text-subtle">Try adjusting your search query or filters.</span>
+                    <span className="text-subtle">No records in this collection. Click &quot;+ Add row&quot; or ask Otis in the sidebar.</span>
                   </div>
                 </td>
               </tr>

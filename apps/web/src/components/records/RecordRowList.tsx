@@ -37,7 +37,8 @@ export function RecordRowList({
   if (rows.length === 0) {
     return (
       <div className="flex flex-1 flex-col items-center justify-center p-8 text-center">
-        <p className="text-sm text-muted-foreground">No records match your filters.</p>
+        <p className="text-sm font-medium text-foreground">No records found</p>
+        <p className="mt-1 text-xs text-muted-foreground">No records in this collection. Click below or ask Otis in the sidebar.</p>
         <Button variant="outline" size="sm" onClick={onAddRow} className="mt-4 gap-1 text-xs">
           <PlusIcon />
           <span>Add first row</span>

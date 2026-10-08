@@ -99,6 +99,9 @@ export interface ConversationScreenProps {
   onNavigate: (workspace: string, chat: string | null, replace?: boolean) => void;
   onNavigateToRecords?: (workspace: string) => void;
   onRefreshSession?: () => Promise<void>;
+  embedded?: boolean;
+  onClose?: () => void;
+  headerBanner?: React.ReactNode;
 }
 function safeError(error: unknown, fallback: string) { if (error instanceof ApiError && error.status === 401) return 'Your session has expired. Sign in again.'; if (error instanceof ApiError && error.status === 404) return 'This conversation is unavailable or your access has changed.'; return fallback; }
 /**
@@ -151,7 +154,7 @@ function runKnownQuestion(
   return undefined;
 }
 
-export function ConversationScreen({ workspaceId, chat: routeChat, chatParamPresent, workspaces, userId, members, onSignOut, onNavigate, onNavigateToRecords, onRefreshSession }: ConversationScreenProps) {
+export function ConversationScreen({ workspaceId, chat: routeChat, chatParamPresent, workspaces, userId, members, onSignOut, onNavigate, onNavigateToRecords, onRefreshSession, embedded, onClose, headerBanner }: ConversationScreenProps) {
   const activeChatId = routeChat;
   const [drawerOpen, setDrawerOpen] = useState(false); const [settingsOpen, setSettingsOpen] = useState(false); const [detailActionId, setDetailActionId] = useState<string | null>(null);
   const [streamStatus, setStreamStatus] = useState<StreamStatus>('idle'); const [error, setError] = useState<string | null>(null); const [accessLost, setAccessLost] = useState(false);
@@ -1231,10 +1234,35 @@ export function ConversationScreen({ workspaceId, chat: routeChat, chatParamPres
     if (otherWorkspaces.length > 0) switchWorkspace(otherWorkspaces[0]!.id);
   };
 
-  return <div className="otis-shell h-dvh bg-background text-foreground flex">
-    <Toaster theme="dark" position="top-center" visibleToasts={2} closeButton toastOptions={{ className: 'otis-toast', duration: 3000 }} offset={64}/>
-    {!accessLost && <HistoryNav variant="sidebar" {...navProps}/>} {!accessLost && <HistoryNav variant="drawer" open={drawerOpen} {...navProps} onClose={() => setDrawerOpen(false)}/>}
-    <main id="main-content" className="otis-main"><header className="otis-topbar flex h-12 items-center gap-2 border-b border-border px-4"><Button variant="ghost" size="icon" type="button" className="otis-iconbutton otis-topbar__menu" aria-label="Open history" aria-expanded={drawerOpen} onClick={() => setDrawerOpen(true)} disabled={accessLost}><MenuIcon/></Button><div className="otis-topbar__identity"><h1 className="otis-topbar__title truncate text-sm font-medium" title={currentDetail?.chat.title ?? workspaceName}>{currentDetail?.chat.title ?? workspaceName}</h1><span className="otis-topbar__subtitle text-xs text-subtle">{readOnly ? `${currentDetail!.chat.author_display_name ?? members[currentDetail!.chat.author_user_id] ?? 'Teammate'} · read only` : activeChatId ? workspaceName : 'New conversation'}</span></div><div className="otis-topbar__actions"><ChatOverflow models={models} followsDefault={followsDefault} disabled={accessLost || readOnly} pending={controlPending} running={Boolean(running)} onCommand={applyCommand} onStop={running ? async () => { await api.stopRun(workspaceId, running.run.id); if (activeChatId) refreshRun(workspaceId, activeChatId, running.run.id); } : undefined} onRename={activeChatId && !readOnly ? () => handleOpenRename(activeChatId, currentDetail?.chat.title ?? '') : undefined} onDelete={activeChatId && !readOnly ? () => handleOpenDelete(activeChatId, currentDetail?.chat.title ?? '') : undefined}/><Button variant="ghost" size="icon" type="button" className="otis-iconbutton" aria-label="New chat" onClick={() => navigate(workspaceId, null)} disabled={accessLost}><ComposeIcon/></Button></div></header>
+  return <div className={embedded ? "otis-shell-embedded h-full w-full bg-background text-foreground flex flex-col min-w-0 min-h-0 overflow-hidden" : "otis-shell h-dvh bg-background text-foreground flex"}>
+    {!embedded && <Toaster theme="dark" position="top-center" visibleToasts={2} closeButton toastOptions={{ className: 'otis-toast', duration: 3000 }} offset={64}/>}
+    {!embedded && !accessLost && <HistoryNav variant="sidebar" {...navProps}/>} {!embedded && !accessLost && <HistoryNav variant="drawer" open={drawerOpen} {...navProps} onClose={() => setDrawerOpen(false)}/>}
+    <main id="main-content" className="otis-main">
+      <header className="otis-topbar flex h-12 items-center gap-2 border-b border-border px-4">
+        {embedded ? (
+          <>
+            <div className="otis-topbar__identity">
+              <h2 className="otis-topbar__title truncate text-sm font-medium">Ask Otis</h2>
+              <span className="otis-topbar__subtitle text-xs text-subtle">{currentDetail?.chat.title ?? (activeChatId ? workspaceName : 'New conversation')}</span>
+            </div>
+            <div className="otis-topbar__actions">
+              <Button variant="ghost" size="icon" type="button" className="otis-iconbutton" aria-label="New chat" onClick={() => navigate(workspaceId, null)} title="New chat">
+                <ComposeIcon/>
+              </Button>
+              {onClose && (
+                <Button variant="ghost" size="icon" type="button" className="otis-iconbutton" aria-label="Close Ask Otis panel" onClick={onClose} title="Close panel">
+                  <CloseIcon/>
+                </Button>
+              )}
+            </div>
+          </>
+        ) : (
+          <>
+            <Button variant="ghost" size="icon" type="button" className="otis-iconbutton otis-topbar__menu" aria-label="Open history" aria-expanded={drawerOpen} onClick={() => setDrawerOpen(true)} disabled={accessLost}><MenuIcon/></Button><div className="otis-topbar__identity"><h1 className="otis-topbar__title truncate text-sm font-medium" title={currentDetail?.chat.title ?? workspaceName}>{currentDetail?.chat.title ?? workspaceName}</h1><span className="otis-topbar__subtitle text-xs text-subtle">{readOnly ? `${currentDetail!.chat.author_display_name ?? members[currentDetail!.chat.author_user_id] ?? 'Teammate'} · read only` : activeChatId ? workspaceName : 'New conversation'}</span></div><div className="otis-topbar__actions"><ChatOverflow models={models} followsDefault={followsDefault} disabled={accessLost || readOnly} pending={controlPending} running={Boolean(running)} onCommand={applyCommand} onStop={running ? async () => { await api.stopRun(workspaceId, running.run.id); if (activeChatId) refreshRun(workspaceId, activeChatId, running.run.id); } : undefined} onRename={activeChatId && !readOnly ? () => handleOpenRename(activeChatId, currentDetail?.chat.title ?? '') : undefined} onDelete={activeChatId && !readOnly ? () => handleOpenDelete(activeChatId, currentDetail?.chat.title ?? '') : undefined}/><Button variant="ghost" size="icon" type="button" className="otis-iconbutton" aria-label="New chat" onClick={() => navigate(workspaceId, null)} disabled={accessLost}><ComposeIcon/></Button></div>
+          </>
+        )}
+      </header>
+      {embedded && headerBanner}
     {accessLost ? (
       <div className="otis-access"><h2 className="text-xl font-medium">Conversation unavailable</h2><p className="text-sm text-muted-foreground">Your session may have expired or your workspace access has changed. Private content has been closed.</p><Button variant="outline" type="button" onClick={() => location.reload()}>Reload access</Button><Button variant="secondary" type="button" onClick={onSignOut}>Sign out</Button></div>
     ) : workspaceGone ? (

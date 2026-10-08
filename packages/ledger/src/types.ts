@@ -7,6 +7,7 @@ import type {
   Entity,
   EntityAlias,
   EntityStateField,
+  InteractionState,
   Task,
   DraftProjection,
   MemoryEntry,
@@ -24,6 +25,7 @@ export interface LedgerProjectionState {
   entities: Map<string, Entity>;
   aliases: Map<string, EntityAlias>; // key: `${workspace_id}:${alias.toLowerCase()}`
   fields: Map<string, EntityStateField>; // key: `${entity_id}:${field_name}`
+  interactions: Map<string, InteractionState>; // key: root event id
   tasks: Map<string, Task>;
   drafts: Map<string, DraftProjection>;
   memoryEntries: Map<string, MemoryEntry>; // key: `${id}`
@@ -66,6 +68,40 @@ export interface LogEventArgs {
   provenance?: Provenance;
 }
 
+/**
+ * C1 single-interaction revision. Emits another note/visit/contact/quote
+ * event with `supersedes_event_id` pointing at the exact current head and a
+ * typed replacement payload carrying the stable root ID. Strict by design:
+ * no arbitrary JSON merge patch, no event-kind conversion (replacing a visit
+ * with a quote is remove + log, preserving both histories), no
+ * workspace/actor override, no model-supplied approval.
+ */
+export interface ReviseInteractionArgs {
+  /** Stable root: the original interaction event ID. */
+  interaction_id: string;
+  /** Optimistic edit token: the exact current head event ID. */
+  expected_head_event_id: string;
+  /** Must equal the root interaction's kind; kinds never convert. */
+  kind: 'note' | 'visit' | 'contact' | 'quote';
+  /** Replacement payload, validated exactly as new logging validates it. */
+  payload: Record<string, unknown>;
+  /** New occurrence time; recorded time stays the commit time. */
+  occurred_at?: string;
+}
+
+/**
+ * C1 single-interaction removal. Emits one `interaction_removed` event
+ * targeting root/current head with an optional reason. Logical removal with
+ * history/Undo, not audited erasure.
+ */
+export interface RemoveInteractionArgs {
+  /** Stable root: the original interaction event ID. */
+  interaction_id: string;
+  /** Optimistic edit token: the exact current head event ID. */
+  expected_head_event_id: string;
+  reason?: string | null;
+}
+
 export interface SetFieldArgs {
   entity_id: string;
   field_name: string;
@@ -104,6 +140,7 @@ export interface ProjectionCoverage {
   entities: CoverageScope;
   aliases: CoverageScope;
   fields: CoverageScope;
+  interactions: CoverageScope;
   tasks: CoverageScope;
   drafts: CoverageScope;
   memoryEntries: CoverageScope;
@@ -114,6 +151,7 @@ export const FULL_PROJECTION_COVERAGE: ProjectionCoverage = {
   entities: 'all',
   aliases: 'all',
   fields: 'all',
+  interactions: 'all',
   tasks: 'all',
   drafts: 'all',
   memoryEntries: 'all',

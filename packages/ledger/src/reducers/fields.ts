@@ -3,7 +3,7 @@
  * Reducer for entity_state, core fields, disputes, and conflict resolutions.
  */
 
-import type { EntityStateField, LedgerEvent, QuoteValue } from '@otis/contracts';
+import type { EntityStateField, InteractionState, LedgerEvent } from '@otis/contracts';
 
 /** ISO 4217 zero-decimal currencies: the stored amount is already major units. */
 const ZERO_DECIMAL_CURRENCIES = new Set([
@@ -25,8 +25,175 @@ export function formatQuoteText(amount: number, currency: string, role: string):
   return `${text} ${currency} (${role})`;
 }
 
+interface QuoteTriple {
+  amount: number;
+  currency: string;
+  role: string;
+}
+
+function quoteTripleOf(value: unknown): QuoteTriple | null {
+  const record = (value ?? {}) as Record<string, unknown>;
+  if (
+    typeof record['amount'] !== 'number' ||
+    typeof record['currency'] !== 'string' ||
+    typeof record['role'] !== 'string'
+  ) {
+    return null;
+  }
+  return { amount: record['amount'], currency: record['currency'], role: record['role'] };
+}
+
+function quoteRootOf(event: LedgerEvent): string {
+  const payload = (event.payload ?? {}) as Record<string, unknown>;
+  const marker = payload['interaction_id'];
+  if (typeof marker === 'string' && marker.length > 0) return marker;
+  return event.id;
+}
+
+/**
+ * Head-aware quote reduction: the current `quote` field is recomputed from
+ * the active quote roots of the entity, never from one event alone. A
+ * root-specific revision replaces only its own root's contribution, so an
+ * unrelated dispute survives with its candidate swapped; removing the last
+ * active root empties the field instead of leaving a stale value. One
+ * distinct value across active heads reads clear; several dispute with
+ * their head IDs as candidates. Reductions run interactions-first so the
+ * triggering revision or removal is already reflected in the rows.
+ */
+function recomputeQuoteField(
+  fields: Map<string, EntityStateField>,
+  interactions: Map<string, InteractionState>,
+  event: LedgerEvent,
+): void {
+  const entityId = event.entity_id;
+  if (!entityId) return;
+  const fieldKey = `${entityId}:quote`;
+  const existing = fields.get(fieldKey);
+
+  // Active contributions per root: persisted head snapshots, with the
+  // triggering quote event overlaid for its own root (live targeted loads
+  // still hold the previous head, and replay sees the pre-reduction row).
+  const contributions = new Map<string, { triple: QuoteTriple | null; headId: string; sequence: number }>();
+  for (const [root, row] of interactions) {
+    if (row.entity_id !== entityId || row.kind !== 'quote' || row.state !== 'active') continue;
+    contributions.set(root, {
+      triple: row.head_value_json ? quoteTripleOf(JSON.parse(row.head_value_json)) : null,
+      headId: row.head_event_id,
+      sequence: row.sequence,
+    });
+  }
+  if (event.kind === 'quote') {
+    const payload = (event.payload ?? {}) as Record<string, unknown>;
+    contributions.set(quoteRootOf(event), {
+      triple: quoteTripleOf(payload),
+      headId: event.id,
+      sequence: event.sequence,
+    });
+  }
+
+  const distinct = new Map<string, { triple: QuoteTriple | null; headId: string; sequence: number }>();
+  for (const [root, contribution] of contributions) {
+    const key = contribution.triple
+      ? `${contribution.triple.amount}|${contribution.triple.currency}|${contribution.triple.role}`
+      : `unknown:${root}`;
+    if (!distinct.has(key)) distinct.set(key, contribution);
+    else {
+      const kept = distinct.get(key)!;
+      if (contribution.sequence > kept.sequence) distinct.set(key, contribution);
+    }
+  }
+
+  const revision = (existing?.revision || 0) + 1;
+  if (distinct.size === 0) {
+    // No active quote root: the field goes empty, preserving the last
+    // agreed value for history instead of a stale current claim.
+    fields.set(fieldKey, {
+      id: `${entityId}_quote`,
+      workspace_id: event.workspace_id,
+      entity_id: entityId,
+      field_name: 'quote',
+      state: 'clear',
+      value_text: null,
+      value_json: null,
+      provenance: event.provenance,
+      source_event_id: null,
+      candidate_event_ids: null,
+      last_confirmed_value_text: existing?.last_confirmed_value_text ?? null,
+      last_confirmed_value_json: existing?.last_confirmed_value_json ?? null,
+      revision,
+      updated_at: event.recorded_at,
+    });
+    return;
+  }
+
+  if (distinct.size === 1) {
+    const only = [...distinct.values()][0]!;
+    if (!only.triple) {
+      // A single malformed contribution cannot format a value: keep it
+      // visible as an unresolved candidate rather than inventing text.
+      fields.set(fieldKey, {
+        id: `${entityId}_quote`,
+        workspace_id: event.workspace_id,
+        entity_id: entityId,
+        field_name: 'quote',
+        state: 'disputed',
+        value_text: null,
+        value_json: null,
+        provenance: event.provenance,
+        source_event_id: null,
+        candidate_event_ids: [only.headId],
+        last_confirmed_value_text: existing?.last_confirmed_value_text ?? null,
+        last_confirmed_value_json: existing?.last_confirmed_value_json ?? null,
+        revision,
+        updated_at: event.recorded_at,
+      });
+      return;
+    }
+    const formattedText = formatQuoteText(only.triple.amount, only.triple.currency, only.triple.role);
+    const jsonStr = JSON.stringify(only.triple);
+    fields.set(fieldKey, {
+      id: `${entityId}_quote`,
+      workspace_id: event.workspace_id,
+      entity_id: entityId,
+      field_name: 'quote',
+      state: 'clear',
+      value_text: formattedText,
+      value_json: jsonStr,
+      provenance: event.provenance,
+      source_event_id: only.headId,
+      candidate_event_ids: null,
+      last_confirmed_value_text: formattedText,
+      last_confirmed_value_json: jsonStr,
+      revision,
+      updated_at: event.recorded_at,
+    });
+    return;
+  }
+
+  const candidates = [...contributions.values()]
+    .sort((a, b) => (a.sequence === b.sequence ? (a.headId < b.headId ? -1 : 1) : a.sequence - b.sequence))
+    .map((contribution) => contribution.headId);
+  fields.set(fieldKey, {
+    id: `${entityId}_quote`,
+    workspace_id: event.workspace_id,
+    entity_id: entityId,
+    field_name: 'quote',
+    state: 'disputed',
+    value_text: null,
+    value_json: null,
+    provenance: event.provenance,
+    source_event_id: null,
+    candidate_event_ids: candidates,
+    last_confirmed_value_text: existing?.last_confirmed_value_text ?? null,
+    last_confirmed_value_json: existing?.last_confirmed_value_json ?? null,
+    revision,
+    updated_at: event.recorded_at,
+  });
+}
+
 export function reduceFields(
   fields: Map<string, EntityStateField>,
+  interactions: Map<string, InteractionState>,
   event: LedgerEvent,
 ): void {
   if (!event.entity_id) return;
@@ -56,75 +223,15 @@ export function reduceFields(
     }
 
     case 'quote': {
-      const quote = event.payload as QuoteValue;
-      const fieldKey = `${event.entity_id}:quote`;
-      const existing = fields.get(fieldKey);
-      const formattedText = formatQuoteText(quote.amount, quote.currency, quote.role);
-      const jsonStr = JSON.stringify(quote);
+      recomputeQuoteField(fields, interactions, event);
+      break;
+    }
 
-      if (existing && !event.supersedes_event_id) {
-        let isDifferent = false;
-        if (existing.state === 'disputed') {
-          isDifferent = true;
-        } else if (existing.value_json) {
-          try {
-            const parsed = JSON.parse(existing.value_json) as QuoteValue;
-            if (
-              parsed.amount !== quote.amount ||
-              parsed.currency !== quote.currency ||
-              parsed.role !== quote.role
-            ) {
-              isDifferent = true;
-            }
-          } catch {
-            isDifferent = true;
-          }
-        } else {
-          isDifferent = true;
-        }
-
-        if (isDifferent) {
-          // Competing incompatible quote claims -> field becomes disputed, current value NULL
-          const candidateSet = new Set<string>();
-          if (existing.candidate_event_ids) {
-            for (const id of existing.candidate_event_ids) candidateSet.add(id);
-          } else if (existing.source_event_id) {
-            candidateSet.add(existing.source_event_id);
-          }
-          candidateSet.add(event.id);
-
-          fields.set(fieldKey, {
-            ...existing,
-            state: 'disputed',
-            value_text: null,
-            value_json: null,
-            provenance: event.provenance,
-            source_event_id: null,
-            candidate_event_ids: Array.from(candidateSet),
-            revision: existing.revision + 1,
-            updated_at: event.recorded_at,
-          });
-          return;
-        }
+    case 'interaction_removed': {
+      const payload = event.payload as { root_event_id?: unknown; target_kind?: unknown };
+      if (payload.target_kind === 'quote') {
+        recomputeQuoteField(fields, interactions, event);
       }
-
-      // Explicit superseding, resolution, or initial clean quote
-      fields.set(fieldKey, {
-        id: `${event.entity_id}_quote`,
-        workspace_id: event.workspace_id,
-        entity_id: event.entity_id,
-        field_name: 'quote',
-        state: 'clear',
-        value_text: formattedText,
-        value_json: jsonStr,
-        provenance: event.provenance,
-        source_event_id: event.id,
-        candidate_event_ids: null,
-        last_confirmed_value_text: formattedText,
-        last_confirmed_value_json: jsonStr,
-        revision: (existing?.revision || 0) + 1,
-        updated_at: event.recorded_at,
-      });
       break;
     }
 

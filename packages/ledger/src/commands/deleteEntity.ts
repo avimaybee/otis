@@ -13,6 +13,7 @@ import { createLedgerEvent } from './events.js';
 import { reduceDrafts } from '../reducers/drafts.js';
 import { reduceEntity } from '../reducers/entities.js';
 import { reduceFields } from '../reducers/fields.js';
+import { reduceInteractions } from '../reducers/interactions.js';
 import { reduceMemory } from '../reducers/memory.js';
 import { reduceTasks } from '../reducers/tasks.js';
 
@@ -78,12 +79,14 @@ export function handleDeleteEntity(
   const nextEntities = new Map(state.entities);
   const nextAliases = new Map(state.aliases);
   const nextFields = new Map(state.fields);
+  const nextInteractions = new Map(state.interactions);
   const nextTasks = new Map(state.tasks);
   const nextDrafts = new Map(state.drafts);
   const nextMemoryEntries = new Map(state.memoryEntries);
   const nextSuppressions = new Map(state.memorySuppressions);
   reduceEntity(nextEntities, nextAliases, event);
-  reduceFields(nextFields, event);
+  reduceInteractions(nextInteractions, event);
+  reduceFields(nextFields, nextInteractions, event);
   reduceTasks(nextTasks, event);
   reduceDrafts(nextDrafts, event);
   reduceMemory(nextMemoryEntries, nextSuppressions, event);
@@ -103,6 +106,7 @@ export function handleDeleteEntity(
       entities: nextEntities,
       aliases: nextAliases,
       fields: nextFields,
+      interactions: nextInteractions,
       tasks: nextTasks,
       drafts: nextDrafts,
       memoryEntries: nextMemoryEntries,

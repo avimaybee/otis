@@ -4,7 +4,7 @@ import {
   SlidersHorizontal, Mic, Play, Pause, MoreVertical, Trash2, Plus,
   Table, Filter, Sparkles, History, Save, Redo2, LayoutList,
   Calculator, Calendar, DollarSign, Phone, Hash, Type, Download,
-  User, Users, Briefcase
+  User, Users, Briefcase, RefreshCw
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 function icon(Component: LucideIcon, defaultSize = 18) {
@@ -52,5 +52,6 @@ export const DownloadIcon = icon(Download, 16);
 export const UserIcon = icon(User, 16);
 export const UsersIcon = icon(Users, 16);
 export const BriefcaseIcon = icon(Briefcase, 16);
+export const RefreshIcon = icon(RefreshCw, 14);
 
 

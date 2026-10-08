@@ -3,10 +3,12 @@
  * Handles log_event command for closed kinds: note, visit, contact, quote.
  */
 
-import type { CommandResult, LedgerEvent, QuoteValue } from '@otis/contracts';
+import type { CommandResult, LedgerEvent } from '@otis/contracts';
 import type { LedgerCommandContext, LedgerProjectionState, LogEventArgs } from '../types.js';
 import { createLedgerEvent } from './events.js';
+import { validateInteractionPayload } from './interactionPayload.js';
 import { reduceFields } from '../reducers/fields.js';
+import { reduceInteractions } from '../reducers/interactions.js';
 
 export function handleLogEvent(
   context: LedgerCommandContext,
@@ -31,107 +33,42 @@ export function handleLogEvent(
     }
   }
 
-  // Validate payload by kind
-  switch (args.kind) {
-    case 'quote': {
-      const q = args.payload as Partial<QuoteValue>;
-      if (
-        typeof q.amount !== 'number' ||
-        !Number.isInteger(q.amount) ||
-        q.amount < 0 ||
-        typeof q.currency !== 'string' ||
-        q.currency.trim().length !== 3 ||
-        (q.role !== 'offered' && q.role !== 'expected')
-      ) {
-        return {
-          result: {
-            status: 'rejected',
-            error: {
-              code: 'invalid_quote',
-              message:
-                'Quote requires integer minor units (amount >= 0), 3-letter currency, and role ("offered" | "expected").',
-            },
-          },
-          events: [],
-        };
-      }
-      break;
-    }
-
-    case 'visit': {
-      const v = args.payload as { summary?: unknown; contact_made?: unknown };
-      if (typeof v.summary !== 'string' || typeof v.contact_made !== 'boolean') {
-        return {
-          result: {
-            status: 'rejected',
-            error: {
-              code: 'invalid_visit',
-              message: 'Visit event requires string summary and boolean contact_made flag.',
-            },
-          },
-          events: [],
-        };
-      }
-      break;
-    }
-
-    case 'contact': {
-      const c = args.payload as { summary?: unknown; channel?: unknown };
-      if (typeof c.summary !== 'string' || typeof c.channel !== 'string') {
-        return {
-          result: {
-            status: 'rejected',
-            error: {
-              code: 'invalid_contact',
-              message: 'Contact event requires string summary and valid channel.',
-            },
-          },
-          events: [],
-        };
-      }
-      break;
-    }
-
-    case 'note': {
-      const n = args.payload as { text?: unknown };
-      if (typeof n.text !== 'string' || n.text.trim().length === 0) {
-        return {
-          result: {
-            status: 'rejected',
-            error: {
-              code: 'invalid_note',
-              message: 'Note event requires non-empty text string.',
-            },
-          },
-          events: [],
-        };
-      }
-      break;
-    }
-
-    default:
-      return {
-        result: {
-          status: 'rejected',
-          error: {
-            code: 'unsupported_event_kind',
-            message: `Event kind '${String(args.kind)}' is not permitted for log_event.`,
-          },
+  // Validate payload by kind through the shared interaction validator so
+  // corrections accept exactly what new logging accepts.
+  const validation = validateInteractionPayload(args.kind, args.payload);
+  if (!validation.valid) {
+    return {
+      result: {
+        status: 'rejected',
+        error: {
+          code: validation.code,
+          message: validation.message,
         },
-        events: [],
-      };
+      },
+      events: [],
+    };
   }
+
+  // A new log is always a fresh root: a model-supplied interaction_id
+  // marker is stripped, never attached to another root. Only the revision
+  // command may chain onto an existing root, through its validated
+  // root/head arguments. The agent schemas reject this key up front; this
+  // lower boundary stays safe for every other trusted command caller.
+  const { interaction_id: _dropped, ...freshPayload } = args.payload as Record<string, unknown>;
+  void _dropped;
 
   const event = createLedgerEvent(context, nextSequence, {
     entity_id: args.entity_id || null,
     kind: args.kind,
-    payload: args.payload,
+    payload: freshPayload,
     occurred_at: args.occurred_at,
     provenance: args.provenance || 'stated',
   });
 
   const nextFields = new Map(state.fields);
-  reduceFields(nextFields, event);
+  const nextInteractions = new Map(state.interactions);
+  reduceInteractions(nextInteractions, event);
+  reduceFields(nextFields, nextInteractions, event);
 
   return {
     result: {
@@ -143,6 +80,6 @@ export function handleLogEvent(
       data: { event_id: event.id },
     },
     events: [event],
-    nextState: { ...state, fields: nextFields },
+    nextState: { ...state, fields: nextFields, interactions: nextInteractions },
   };
 }

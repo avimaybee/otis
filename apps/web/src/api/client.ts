@@ -358,4 +358,55 @@ export const api = {
 
   activityStreamUrl: (workspaceId: string, chatId: string, after: number) =>
     `/api/workspaces/${workspaceId}/chats/${encodeURIComponent(chatId)}/activity?stream=sse&after=${after}`,
+
+  getRecords: (workspaceId: string, signal?: AbortSignal) =>
+    request<{
+      lists: Array<{
+        id: string;
+        name: string;
+        description?: string;
+        columns: Array<{
+          id: string;
+          name: string;
+          type: 'text' | 'status' | 'phone' | 'currency' | 'number' | 'date' | 'calculation';
+          width?: number;
+          isCore?: boolean;
+          options?: string[];
+        }>;
+        rows: Array<{
+          id: string;
+          source: 'entity' | 'task' | 'memory' | 'interaction' | 'draft' | 'custom';
+          cells: Record<string, string>;
+          provenance?: Record<string, string>;
+        }>;
+      }>;
+      history: Record<
+        string,
+        Array<{
+          id: string;
+          timestamp: string;
+          actor: 'user' | 'otis';
+          description: string;
+          affectedCount: number;
+          canRestore: boolean;
+        }>
+      >;
+    }>(`/api/workspaces/${encodeURIComponent(workspaceId)}/records`, signal ? { signal } : undefined),
+
+  saveRecords: (
+    workspaceId: string,
+    payload: {
+      listId: string;
+      dirtyCells?: Record<string, { columnId: string; currentValue: string }>;
+      addedRows?: Array<{ id: string; cells: Record<string, string> }>;
+      deletedRowIds?: string[];
+    },
+  ) =>
+    request<{ saved: boolean; affectedCount: number }>(
+      `/api/workspaces/${encodeURIComponent(workspaceId)}/records`,
+      {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      },
+    ),
 };

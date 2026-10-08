@@ -21,6 +21,7 @@ import {
 } from './routes/chats.js';
 import { handleGetChatDetail, handleGetMessages } from './routes/chat.js';
 import { handleExportWorkspace } from './routes/exports.js';
+import { handleGetRecords, handleSaveRecords } from './routes/records.js';
 import { handleGetActivity } from './routes/activity.js';
 import { handleGetMemorySource } from './routes/sources.js';
 import {
@@ -531,6 +532,19 @@ export default {
         const workspaceId = exportMatch[1];
         if (request.method === 'GET' && workspaceId) {
           return await handleExportWorkspace(request, env, workspaceId, requestId);
+        }
+        return jsonError(405, 'method_not_allowed', 'Method not allowed.', requestId);
+      }
+
+      // 4b. Workspace records route: /api/workspaces/:workspaceId/records
+      const recordsMatch = url.pathname.match(/^\/api\/workspaces\/([^/]+)\/records$/);
+      if (recordsMatch) {
+        const workspaceId = recordsMatch[1];
+        if (request.method === 'GET' && workspaceId) {
+          return await handleGetRecords(request, env, workspaceId, requestId);
+        }
+        if (request.method === 'POST' && workspaceId) {
+          return await handleSaveRecords(request, env, workspaceId, requestId);
         }
         return jsonError(405, 'method_not_allowed', 'Method not allowed.', requestId);
       }

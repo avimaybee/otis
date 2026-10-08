@@ -176,4 +176,19 @@ describe('Editable Records UI (R16)', () => {
 
     await view.unmount();
   });
+
+  it('renders clean empty state without hardcoded mock leads when initialLists is omitted', async () => {
+    const { initialLists: _, ...liveProps } = defaultProps;
+    const view = await mount(<RecordsScreen {...liveProps} />);
+
+    // Must NOT contain hardcoded mock names
+    expect(view.host.textContent).not.toContain('John Klakney');
+    expect(view.host.textContent).not.toContain('Elena Vance');
+    expect(view.host.textContent).not.toContain('Tariq Mansoor');
+
+    // Shows empty collection hint
+    expect(view.host.textContent).toContain('No records found');
+
+    await view.unmount();
+  });
 });

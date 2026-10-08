@@ -111,7 +111,7 @@ export function handleResolveConflict(
   });
 
   const nextFields = new Map(state.fields);
-  reduceFields(nextFields, event);
+  reduceFields(nextFields, state.interactions, event);
 
   return {
     result: {

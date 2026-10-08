@@ -1,6 +1,6 @@
 # R09 prerequisite — Targeted ledger reads and atomic field batches
 
-**Implementation present; A–C acceptance incomplete after review.** Prepared and reviewed 2026-10-08 against `45a4fef` plus the uncommitted implementation. The user selected these repairs **before starting R16**. This plan improves current conversational writes first; [editable information](editable-records.md) later extends the accepted writer. [Review corrections](#10-review-corrections-2026-10-08) and [status evidence](../docs/status.md#ledger-write-prerequisite-review-2026-10-08) record six confirmed issues and required revalidation. This review does not authorize commits, pushes, deployment, remote mutations or subagents.
+**Implementation and repair commit present; final A–C acceptance remains open.** The original 2026-10-08 review tested `45a4fef` plus then-uncommitted code. Repairs subsequently landed in `7d67719`; the [current acceptance handoff](#11-current-repair-acceptance-2026-10-08) records the seven-pass/one-failure rerun at `929b57e`, with these execution owners unchanged through `32fd9e5`. The user selected this prerequisite **before starting R16**. Improve current conversational writes first; [editable information](editable-records.md) and [business memory capabilities](business-memory-capabilities.md) extend the accepted writer. Section 10 preserves historical findings, not an instruction to reimplement fixes already present. No commit, push, deployment, remote mutation or subagent is authorized by this plan.
 
 ## 1. Outcome and scope
 
@@ -183,7 +183,7 @@ Completion requires a recorded source baseline, files/contracts/migrations actua
 
 ## 10. Review corrections, 2026-10-08
 
-**Required before R16 production implementation.** Normal pure tests (324 pass / 1 skip) and the existing field-batch plus agent-tools files (28 pass) are green. The [audit probe](qa/2026-10-08-ledger-write-review.probe.test.ts) reproduces seven behavior failures across six issues; its late-membership rollback control passes. Use the existing executor, receipt/question stores and answer guard for these fixes. No new service, schema, cache or guard framework is needed.
+**Historical findings against `45a4fef` plus the initial implementation.** At that baseline, normal pure tests (324 pass / 1 skip) and field-batch plus agent-tools files (28 pass) were green, while the [audit probe](qa/2026-10-08-ledger-write-review.probe.test.ts) reproduced seven behavior failures across six issues; its late-membership rollback control passed. The source has since advanced; section 11 owns current acceptance. Preserve these failure cases and the existing executor, receipt/question stores and answer guard. No new service, schema, cache or guard framework is needed.
 
 ### Recovery and authority repairs
 
@@ -208,3 +208,47 @@ After repair, populate unrelated aliases, fields, tasks, drafts and memory as we
 The implementation's [local cost profile](qa/2026-10-08-field-batch-profile.json) records n=11 smoke samples at 100/1000 entities, with 13 prepares and 2 batches for a single-field write. Its full-load `create_entity` comparator is a different command, not before/after field latency evidence. Production billing, ordinary-Worker CPU and end-to-end latency remain unmeasured. Missing venue measurements must remain explicit rather than being replaced by a statement-count claim.
 
 Re-run the audit config with `pnpm exec vitest run --config plans/qa/2026-10-08-ledger-write-review.vitest.config.ts --reporter=dot`, the meaningful ledger/agent/actor regressions and the required implementation checks in section 8. Update the existing status/backlog with exact source/check results and remaining limitations; do not add another handoff document. A–C are accepted only when recovery/authority/cost cases pass and uncovered dispute/rebuild/Undo/FTS evidence is supplied. Follow-on broad command hydration stays separate R09 work.
+
+## 11. Current repair acceptance, 2026-10-08
+
+### Verified refresh and limits
+
+The original eight-case audit was rerun after repair commit `7d67719`, at `929b57e`: **7 pass, 1 fails**, exit 1, 6.38 seconds. [Actual output](qa/2026-10-08-ledger-write-plan-refresh-tests.txt). The inspected executor, queries, agent repository and dispatch owners did not change through `32fd9e5`. This refresh did not rerun the whole application suite or prove production CPU/billing. Do not replace the historical red evidence or cite another session's green report as independent acceptance.
+
+| Original observation | Current source/probe result | Remaining acceptance |
+|---|---|---|
+| 52, approval metadata | Normalization remains in memory; its sync and answer/effects share the guarded batch. Fault-then-decline probe passes. | Exercise ambiguous answer, repeated confirmation, conflict/quota/attempt failures and restart after actual commit. No failed approval may survive. |
+| 51, mixed replay | Pending mixed receipt re-parks the existing question; probe passes. Closed question-only now returns `rejected` with `already_resolved`, and does not recreate the question. | The old assertion expects `already_applied` and still fails. Verify standing cancelled/resolved semantics through the actual handler/actor continuation before accepting or changing that expectation. |
+| 55, answer authority | Guarded legacy decline rejects late membership removal; parent rollback control also passes. | Cover versioned decline, requester/source mismatch, answer versus Undo, stale attempt and removed-owner races. |
+| 53, independent facts | Legacy decline now saves phone while retaining prior status; probe passes. | Verify original fact versus answer attribution, all-facts-already-saved and quota/SQL rollback. |
+| 54, partial legacy revision | Real child revision 0 → 1 replay finishes the remaining field; probe passes. | Changed actor/source/run/step/hash and unrelated teammate revision must never be treated as owned prior work. Test full and interrupted completion. |
+| 50, target-only hydration | Alias SELECT and its coverage were removed. | The old probe reads batch result slot 1, which is now a fields result, while its alias EXPLAIN is unused SQL. Its pass is not a current billed-row comparison. Refresh measurement by actual statement identity. |
+
+### Slice D — Finish standing-result and recovery acceptance
+
+Owners: `apps/worker/src/agent/repository.ts`, `agent/handler.ts`, `actor/dispatch.ts`, ledger receipt/resume owner, existing `field-batch.integration.test.ts`, `actor.integration.test.ts` and `agent-tools.integration.test.ts`.
+
+1. Preserve immutable receipts and completed business effects. A closed question-only decline has no applied field to invent. A truthful standing cancellation may use the existing result contract; an `already_resolved` result is acceptable only if consumers complete recovery without re-asking, retrying effects or leaving the run blocked. Include canonical question status/standing outcome where consumers need it, rather than disguising a decline as a fresh successful mutation.
+2. Construct real source/run/step rows and inject interruption after the field batch commits but before tool completion/parking. Recover through the actual execution owner. For mixed work, show saved facts once and one pending question. Then explicitly confirm/decline and recover again. Repeat for question-only work and an ambiguous answer. Assert durable step/run state, question count/status, activity, receipts, events, revision and quota.
+3. Put SQL faults and authority races at commit boundaries, including versioned and legacy answers. Persisted accepted answer text must not imply committed approval. Revoke membership, change source/requester, race Undo, and invalidate the attempt after precheck. Failed transitions must leave no cancellation, run wake, partial metadata sync or effect.
+4. Add realistic legacy child fixtures from ledger commands. Match owned actor/source/run/step and exact payload before including their committed revisions in the resume floor. The current compatibility loop explicitly checks command/hash; test the identity boundaries supported by existing receipt metadata and reject mismatch if they are not enforced elsewhere. Do not infer ownership from an `_fN` suffix or silently rebase onto live teammate work. Historical missing metadata needs a narrowly justified compatibility rule, not unconditional acceptance.
+5. Keep the original red output. Once standing semantics are proved, update the current probe assertion to the agreed truthful outcome and add the consumer-level regression; do not weaken it merely to turn exit 1 green. New requests must stay on one atomic parent batch; only verified historical partial children use sequential completion.
+
+Done: crash/retry/closed-answer/ambiguous/authority cases pass through actual local Workers/D1 plus handler/actor continuation, and output/action status accurately distinguishes saved facts, declined status and pending work. No new question, business effect or quota charge occurs on exact completed replay.
+
+### Slice E — Bounded cost and reducer acceptance
+
+Owners: `getFieldProjectionState`, footprint/executor tests, `field-batch-profile.integration.test.ts`, ledger migrations/rebuild/Undo and memory FTS tests.
+
+1. Capture executed SQL and result metadata by statement identity. Assert that the field read batch contains entity and requested full field rows, with no aliases/tasks/drafts/memory SELECT. Populate unrelated aliases, fields, tasks, drafts and memory at increasing workspace sizes, and a target with disputed field history. Constant prepares alone is insufficient; record scanned rows/returned rows/bytes where exposed.
+2. Compare one field and five fields on identical before/after fixtures and venue. Use the old field command path as the baseline, not `create_entity`. Include exact replay, mixed question, question-only, stale revision, quota exact limit and forced rollback. Record all invocation SQL/guard/event/index writes and receipt/revision counts. Unavailable local metadata stays unknown; measured SQL/wall time does not establish Worker CPU.
+3. Verify full current/candidate/confirmed provenance, field disputes and status/assignment entity changes against full-hydration semantics. Preserve custom-handler full fallback and bounds rejection; a partial loader must never clear unloaded stores. Run event replay/rebuild, single/from-here Undo, question cancellation with Undo, FTS and action-inspection checks with unrelated teammate writes.
+4. Run meaningful affected suites, then implementation commands from section 8. Current focused command example:
+
+```text
+pnpm exec vitest run --project worker apps/worker/test/field-batch.integration.test.ts apps/worker/test/ledger-footprint.integration.test.ts apps/worker/test/agent-tools.integration.test.ts apps/worker/test/actor.integration.test.ts
+pnpm exec vitest run --project worker apps/worker/test/ledger.integration.test.ts apps/worker/test/ledger-migrations.integration.test.ts apps/worker/test/memory.integration.test.ts
+pnpm exec vitest run --config plans/qa/2026-10-08-ledger-write-review.vitest.config.ts --reporter=dot
+```
+
+Report actual failures/hangs and narrower evidence honestly. Accept the R09 prerequisite only after slices D/E supply the missing proofs, recording one current verdict in status/backlog. Later broad command footprints, startup/cache work and production latency profiling remain separate carried work; none require reintroducing aliases to this field footprint or adding a new transaction framework.
