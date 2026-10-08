@@ -1,0 +1,60 @@
+{
+  "date": "2026-10-07",
+  "reviewed_commit": "f73c0a6360c6487b06e534ac98afe8446e10a8cc",
+  "parent_commit": "2db5344378efaaa5e5aa891b3fd17db4c44161f5",
+  "verdict": "Accept the reported cancellation-only scope. Transcript staging remains unfinished at this baseline.",
+  "installed_tanstack_query": "5.104.1",
+  "verification": {
+    "initial_snapshot_and_offline_tests": { "passed": 51, "failed": 0 },
+    "initial_review_probes": { "passed": 13, "failed": 0 },
+    "final_commit_pinned_tests": {
+      "passed": 64,
+      "failed": 0,
+      "existing_tests": 51,
+      "review_probes": 13,
+      "result_file": "2026-10-07-surgery1-pinned-tests.json",
+      "pinned_files": [
+        "apps/web/src/api/client.ts",
+        "apps/web/src/api/snapshot.ts",
+        "apps/web/src/ConversationScreen.tsx",
+        "apps/web/test/snapshot-fetch.test.tsx"
+      ]
+    },
+    "probe_categories": {
+      "positive_transport_checks": 7,
+      "defect_characterizations_and_counterexamples": 4,
+      "negative_controls": 2
+    },
+    "typecheck": "Passed before independent staging edits appeared.",
+    "lint": "Initial scoped lint passed. A later run caught an independently edited test mid-write. Committed test stdin lint and final review-probe/config lint passed.",
+    "documentation_links": { "checked": 710, "broken": 0 },
+    "diff_check": "Passed."
+  },
+  "findings": [
+    {
+      "priority": "P1",
+      "origin": "pre-existing",
+      "finding": "A late snapshot return replaces a receipt-patched accepted message after production outbox pruning, leaving neither row nor echo in the derived transcript.",
+      "boundary": "Client cache/display loss was reproduced; backend deletion was not demonstrated. The offline fixture uses a static messages API that does not persist its mocked send receipt."
+    },
+    {
+      "priority": "P2",
+      "origin": "pre-existing",
+      "finding": "The optional runs-batch catch turns 401/403 into a successful snapshot, bypassing query-error access-loss handling.",
+      "boundary": "Coordinate auth propagation with workspace-scoped cleanup so other workspaces retain unsent work."
+    },
+    {
+      "origin": "proposal correction",
+      "finding": "Splitting metadata from primary reads alone does not prevent a stale primary return from overwriting newer acceptance/live patches.",
+      "negative_controls": "Supported scoped cancelQueries before patching prevented the stale-return path. Navigation cancellation in installed TanStack 5.104.1 preserved manual accepted-row updates."
+    }
+  ],
+  "boundaries": [
+    "Transport and IndexedDB were mocked; real query, snapshot, acceptance updater, outbox pruning and transcript derivation code were exercised.",
+    "Passing characterization tests confirm the asserted defects rather than declaring those behaviors correct.",
+    "Independent staging work was preserved. HEAD advanced to 99d5871 during review; this verdict applies to f73c0a6, not that subsequent implementation.",
+    "No production application source was edited by this review.",
+    "Full root suite, build, native browser, live provider and production latency checks were not rerun for this review.",
+    "No subagents, deployment or remote mutations were used."
+  ]
+}

@@ -1,7 +1,7 @@
 /**
  * @otis/ledger/reducers/rebuild
  * Deterministic pure projection rebuild from immutable append-only event stream.
- * In accordance with architecture.md section 8 and plans/002-ledger.md.
+ * In accordance with architecture.md section 8 and docs/archive/plans/002-ledger.md.
  */
 
 import type { LedgerEvent, RevertPayload } from '@otis/contracts';

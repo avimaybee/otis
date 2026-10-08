@@ -2,7 +2,7 @@
  * @otis/worker/test/memory.integration.test
  * Checkpoint 006C: Bounded context retrieval, sourced memory, deterministic summaries,
  * and reconciliation in workerd real D1.
- * In accordance with plans/006-implementation-handoff.md Section 11 (006C).
+ * In accordance with docs/archive/plans/006-implementation-handoff.md Section 11 (006C).
  */
 
 import { describe, it, expect, beforeAll } from 'vitest';

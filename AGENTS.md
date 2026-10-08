@@ -1,81 +1,64 @@
 # Working on Otis
 
-Otis is a mobile-first conversational business memory for Kerning. Execute the assigned gate; do not invent a CRM or general browser assistant.
+Otis is a mobile-first conversational business memory. Execute the user's assigned task; do not invent a CRM, dashboard or general browser assistant. Latest explicit user instructions take precedence over old plans. Preserve unrelated changes. Do not invoke subagents when the user has prohibited them.
 
-## Read before implementing
+## Before work
 
-Read README.md and your assigned plan, then the relevant product.md, architecture.md and docs/contracts.md sections. UI/copy work requires design-tokens.md, design.md and plans/008-ui-implementation-handoff.md. The token file and docs/design/approved-reference.png are mandatory visual authority; do not reinterpret or improve them. roadmap.md explains dependencies; plans/README.md records status. docs/agent-handoff.md gives a portable start/completion template.
+Read [README](README.md), inspect git status/history and live source, then read only the relevant [product](product.md), [architecture](architecture.md) and [contract](docs/contracts.md) sections. [Status](docs/status.md) records current evidence; [plans/README](plans/README.md) records current backlog. Historical documents in [docs/archive](docs/archive/README.md) describe their original baseline and do not authorize work.
 
-Inspect git status/history and live source. Plans describe targets, not proof that dependencies already exist. Preserve unrelated changes. Resolve routine file decomposition, naming and reversible implementation choices yourself. Ask only about material unresolved product, data, authority or external-action decisions; do not reopen settled choices in docs/decisions.md.
+For UI/copy work, read [design-tokens](design-tokens.md) and [design](design.md). The current approved token file and `docs/design/approved-reference.png` are visual authority, with the latest explicit approved/user change resolving older recipes. Fonts come from that authority; do not copy an obsolete Inter requirement from an archived handoff. Use the existing production components and shadcn primitives. Do not edit approved tokens to excuse styling drift.
 
-## Product decisions to preserve
+Resolve routine decomposition, naming and reversible choices yourself. Ask only for a material unresolved product, data, authority or external-action decision. Do not reopen settled [decisions](docs/decisions.md). Finish authorized preparatory work before any necessary final approval.
 
-- Ordinary work is conversational. Commands, settings and inspection controls are optional helpers.
-- Clear complete instructions save directly. Missing deadlines and uncertain details ask. Inferred lead-status changes ask before mutation.
-- Approved charcoal + muted Highlighter visual baseline in design-tokens.md; ChatGPT-like mobile composition, Codex-like desktop sidebar/chat/detail. Exact token recipes, Inter latin-ext, no composer toolbar, no dashboard/dead controls. Highlight has exactly the five approved uses.
-- Clean multi-tenancy: Built for Avi and Hunor today, but designed so anyone can use it. ZERO hardcoded identities, emails, or tenant IDs in business logic or database queries.
-- Dual-tier model credentials: API keys (Gemini, OpenCode, Groq) live directly on Cloudflare Dashboard (`env` secrets) for zero-setup platform usage. Workspaces can optionally provide their own encrypted keys (BYOK) via Settings, which cleanly take priority.
-- Lean UI architecture: Use shadcn UI components customized strictly to Otis design tokens (`design-tokens.md`). Avoid sprawling bespoke UI reinventing basic primitives.
-- Recorded voice notes, text reply default; Android/iPhone/Telegram formats need actual evidence.
-- Briefs start disabled and run at each member's chosen time/days/timezone. No 09:00 fallback.
+## Product rules
+
+- Ordinary work is conversational. Commands, settings and inspection are optional helpers.
+- Clear, complete instructions save directly. Save unrelated clear facts while asking narrowly for missing deadlines or uncertain details. Inferred changes to an existing lead status ask before mutation.
+- Response detail follows the request. Tables are general: leads are one example, not a fixed reporting template. Choose useful columns, retrieve needed facts, disclose partial coverage and never invent cells.
+- Use the Codex-style question panel: a question has its own options/free-text answer, Skip and Send. Main-composer follow-ups do not implicitly answer a paused question.
+- Every business query/write is workspace-scoped with trusted identity. No hardcoded emails, member or tenant IDs in business logic.
+- Platform Gemini/OpenCode/Groq keys live in Worker secrets; encrypted workspace BYOK takes priority. Secrets stay server-side.
+- Voice notes receive text replies by default. Android/iPhone/Telegram formats need actual evidence.
+- Briefs start disabled and use each member's chosen time/days/timezone/channel; no 09:00 fallback. Additional unsolicited proactivity remains unresolved.
 - Default Undo from here reverts the selected write and later writes of that run; single-action is secondary. Preserve unrelated teammate work.
-- All durable memory/preferences stay per workspace. No canonical mutable memory.md runtime file.
-- V1 outward messages are drafts; opening WhatsApp is not proof of sending.
+- Durable memory/preferences stay per workspace. No canonical mutable `memory.md`.
+- Outward messages are drafts in v1. Copying/opening WhatsApp is not evidence of sending.
 
-## Anti-overengineering mandate (Cloudflare Free Tier First)
+## Lean implementation and budgets
 
-1. **Cloudflare Free Limits are strict invariants**: Code must operate comfortably within Cloudflare Free limits:
-   - Worker CPU execution time: < 10ms per request.
-   - D1 row writes: < 100,000 per day.
-   - D1 row reads: < 5,000,000 per day.
-   Avoid chatty roundtrips, heartbeat loops, or write multiplication.
-2. **Never simulate distributed consensus on SQLite/D1**: D1 is an ACID SQLite engine with atomic, serialized writes. Never implement artificial lease-fence tables, Raft consensus emulations, or multi-step guard tables that multiply writes. Use direct atomic SQL (`INSERT ... ON CONFLICT DO UPDATE`, `UPDATE ... WHERE ... RETURNING`).
-3. **Never poll the database for live streaming**: SSE response streaming must stream provider tokens directly in-memory to the client response. Persist the final turn and receipts atomically to D1 at completion in one batch.
-4. **No speculative abstractions**: No ORMs, no vector databases, no microservice splits. Use prepared SQL statements and direct TypeScript functions.
-5. **No custom wheel reinvention for UI**: Use shadcn UI primitives customized to design tokens. Keep state local, optimistic (<100ms), and simple.
+Cloudflare Free limits are design constraints: ordinary Worker CPU under 10 ms/request, D1 writes under 100,000/day and reads under 5,000,000/day. Check current official limits and measure the actual venue/usage before claiming compliance; network waiting is not CPU. No chatty roundtrips, heartbeat database polling for provider tokens or write multiplication.
 
-## UI execution rules
+Use direct TypeScript and prepared SQL. No speculative ORM, vector database, service split, report engine or new orchestration framework. Do not simulate distributed consensus on SQLite/D1. Prefer atomic conditional SQL; a failed precondition must actually abort the transaction. Existing stale-attempt checks protect external async work and must not be removed on the assumption that D1 serialization makes stale data impossible. Measure and reduce guard storage without adding guard layers.
 
-- Use one production message/composer implementation in both stories and application. Every design.md fixture is a Storybook story, including failure, pending and long content; future-feature contract stories are labeled unimplemented.
-- Every action gives local feedback within 100 ms; pending beyond 300 ms stays inside the affected control. Messages echo immediately with one stable UUID reused for delivery retry; saved input is not completed agent work.
-- Commands apply real scoped operations without config chat bubbles. Model/effort state reflects server-confirmed values; follow-ups/corrections remain sendable during active work under design.md's explicit Send/Stop clarification.
-- Implement the path-correct fail-closed design checker from the 008 handoff. Run it and compare token section 12 at 360, 390, 900, 1280 and 1440 px before claiming UI completion. Until tooling is built, record it as missing, not passing.
-- Missing visual token/recipe: ask Avi with the exact gap. Known token mismatch: fix it. Do not modify the approved token file to excuse old styling. Do not install all proposed libraries or rewrite backend foundations for a UI task.
+Stream provider previews directly in memory and batch durable completion/receipts. D1 catch-up is for recovery, not a live token transport. Known remaining heartbeat/publication costs are open work in status, not an exemption or a verified zero-polling claim.
 
-## Architecture invariants
+Use shadcn primitives customized to approved tokens; keep state local, scoped, optimistic and simple. Add a package only for behavior being implemented now.
 
-1. Business writes go through ledger commands. Events are append-only in ordinary operation; only the separate audited erasure procedure may remove/anonymize history.
-2. Projections rebuild deterministically from versioned events. Conversation/identity/transport are separate durable stores, not all ledger projections.
-3. Workspace-owned reads and writes require trusted scoped context. Recheck current membership and source ownership; model/client IDs cannot grant authority.
-4. Failed D1 preconditions must abort the transaction. A zero-row UPDATE is not rollback. Test membership, revision, fence and late-batch failure.
-5. Persist accepted input/outbox, logical tool steps and receipts. Queue retries and actor restart cannot repeat business effects.
-6. Human clarification releases the workspace execution slot but preserves the pending operation. Revalidate before continuing.
-7. Permission, schema validation, date validity, ranking and scheduling are code. The model proposes interpretation and tools; it is not a security boundary.
-8. Public activity is persisted before publication. Display only provider-supplied public summaries, never fabricated thoughts or hidden prompts/protocol artifacts.
-   Provider-exposed reasoning text is also permitted when verified and safely normalized. Render it in one nested Thinking disclosure inside Working under design.md and the 008B handoff; no synthetic traces, per-delta panels, fake step counts or new thinking service.
-9. Private audio/exports use membership-checked Worker access. Secrets never enter client bundles, prompts, logs or exported data.
-10. Provider caches/IDs, DO memory and summaries are not the sole source of business or conversation state.
+## Durable correctness
 
-## Work order and scope
+1. Business writes go through ledger commands. Events are append-only in ordinary operation; only a separate audited erasure procedure may remove/anonymize history.
+2. Versioned events deterministically rebuild projections. Identity/conversation/transport are separate durable stores.
+3. Recheck current membership and source ownership. Model/client IDs cannot grant authority.
+4. Failed membership/revision/attempt preconditions abort the batch; a zero-row UPDATE is not rollback.
+5. Persist accepted input/outbox, logical tool steps and receipts. Queue retries/restarts cannot repeat business effects.
+6. Human clarification releases the execution slot and retains the pending operation. Revalidate before continuing.
+7. Permission, validation, date validity, ranking and scheduling are code; the model proposes interpretation.
+8. Committed public activity is persisted before publication. Actual provider-supplied displayable reasoning may appear in one nested Thinking disclosure inside Working. Transient text previews are explicitly non-authoritative; no fake thoughts/counts or hidden protocol.
+9. Private media/exports require Worker membership checks. Secrets never enter client bundles, prompts, logs or exports.
+10. Provider IDs/caches, actor RAM and summaries are not the sole business/conversation source.
 
-Use the dependency gates, not numeric filename order: 003A identity → 004A conversation/source storage → 002 ledger → 003B/004B integration → providers → agent/memory → API/commands → clients → voice/brief/export → release. Do not duplicate schemas in later plans. One coordinated migration sequence owns numbering.
+## UI execution
 
-Introduce packages/dependencies only when required for implemented behavior. Use prepared SQL for v1; no speculative ORM/vector service. Shared schema changes update contracts, fixtures and affected clients together. Provider/cloud APIs must be checked against current official documentation when implementing them.
+Use one production message/composer implementation in stories and app. Every design.md fixture has a story; future capability fixtures are labeled unimplemented. Give local feedback within 100 ms and keep pending beyond 300 ms in its affected control. Echo a sent message immediately with one stable UUID reused for retry; accepted input is not completed agent work.
 
-## Verification and handoff
+Commands apply actual scoped operations without config bubbles. Model/effort values reflect server confirmation. Follow-ups remain sendable during work: empty composer shows Stop; a valid draft shows Send, with Stop reachable in overflow. Question answers preserve their explicit target and immutable retry payload.
 
-For implementation changes run:
-```powershell
-pnpm typecheck
-pnpm lint
-pnpm test
-pnpm build
-```
+Run the implemented design/story checkers. Compare token section 12 at 360, 390, 900, 1280 and 1440 px before claiming UI completion. Use native Codex/Antigravity browser controls, no Playwright. DOM geometry and synthetic screenshots are not physical device/provider proof.
 
-Add targeted behavior tests from docs/verification.md. UI implementation additionally requires the implemented design checker, Storybook build, scoped behavior/a11y tests and recorded browser comparison; consult the 008 handoff for planned tooling and commands. Use actual local Workers/D1 integration for transactions/bindings. Fake providers are for reproducible orchestration tests, not live capability claims.
+## Verification and documentation
 
-Use Codex/Antigravity native browser controls for UI review; no Playwright. happy-dom geometry is not layout proof. Record real viewport/browser/device evidence or explicitly leave it unverified. Documentation-only changes require link/consistency/diff checks; do not claim application tests were rerun if they were not.
+Implementation changes run `pnpm typecheck`, `pnpm lint`, `pnpm test`, `pnpm build` and meaningful targeted behavior checks. Transactions/bindings use actual local Workers/D1. UI changes also run design/story checks, Storybook build, scoped behavior/a11y tests and a native-browser comparison. Fake providers prove orchestration, not live capability or answer quality.
 
-Completion report: implemented behavior, files/contracts/migrations, exact checks, evidence, unresolved limitations and next eligible gate. Mark a subgate complete only with its evidence. Do not label stubs or documentation as built features.
+Documentation-only changes require link, consistency and diff checks; report application commands only if actually run. Record implemented behavior, affected files/contracts/migrations, exact checks/evidence and remaining limitations in the task handoff. Update existing status/backlog; do not create a new audit/handoff/status document for every round. Archive a finished task's detailed record only when it adds evidence unavailable elsewhere.
 
-Task authorization governs commits, pushes, PRs and deployment. Do preparatory reversible work before any genuinely necessary final approval. Never send real lead messages, publish secrets or run a destructive remote operation because a sample plan mentions it.
+The actual next task is selected by the user/backlog, not obsolete numeric gate order. Schema dependencies still matter: identity/conversation sources precede ledger references, then integration/providers/agent/APIs/clients. Inspect migration numbering and never edit an applied migration. Commit, push, PR and deployment require task authorization. Never send real lead messages, expose secrets or execute destructive remote operations because an archived sample plan says so.

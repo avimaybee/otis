@@ -3,22 +3,28 @@ import tseslint from 'typescript-eslint';
 import jsxA11y from 'eslint-plugin-jsx-a11y';
 
 export default tseslint.config(
-  js.configs.recommended,
-  ...tseslint.configs.recommended,
   {
     ignores: [
       '**/dist/**',
+      'dist/**',
+      'packages/*/dist/**',
+      'packages/**/dist/**',
+      'apps/*/dist/**',
+      'apps/**/dist/**',
       '**/dist-client/**',
       '**/dist-worker/**',
       '**/storybook-static/**',
+      'storybook-static/**',
       '**/008-browser-evidence/**',
       '**/.wrangler/**',
       '**/node_modules/**',
       '**/.vite/**',
       '**/eval-output/**',
-      'UI-refs/**'
-    ]
+      'UI-refs/**',
+    ],
   },
+  js.configs.recommended,
+  ...tseslint.configs.recommended,
   {
     rules: {
       '@typescript-eslint/no-explicit-any': 'warn',

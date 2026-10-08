@@ -1,7 +1,7 @@
 /**
  * @otis/worker/routes/inbound
  * Telegram webhook inbound router.
- * In accordance with docs/contracts.md and plans/004-inbound-routing.md.
+ * In accordance with docs/contracts.md and docs/archive/plans/004-inbound-routing.md.
  *
  * 009A additions: the conversational route requires the server bot token
  * (replies are the point of the route; without it the endpoint truthfully

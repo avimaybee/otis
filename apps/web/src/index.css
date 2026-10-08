@@ -28,6 +28,11 @@
   button:disabled { cursor: default; }
   button, input, textarea, select { -webkit-tap-highlight-color: transparent; }
   p { margin: 0; }
+  * { scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
+  ::-webkit-scrollbar { width: 6px; height: 6px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 9999px; }
+  ::-webkit-scrollbar-thumb:hover { background: var(--muted-foreground); }
 }
 
 /* One vertical shell: the transcript alone scrolls. */
@@ -45,6 +50,7 @@
 /* 32px desktop visual with extended reach; 36px elsewhere for coarse pointers. */
 .otis-iconbutton { position: relative; display: inline-flex; flex: none; width: 36px; height: 36px; align-items: center; justify-content: center; padding: 0; border: 0; border-radius: 8px; background: transparent; color: var(--muted-foreground); transition: background-color 150ms ease-out, color 150ms ease-out; }
 .otis-iconbutton:hover { background: var(--accent); color: var(--foreground); }
+.otis-iconbutton:active { transform: scale(0.92); }
 .otis-stop-square { display: block; width: 12px; height: 12px; background: currentColor; }
 @media (min-width: 56.25rem) and (pointer: fine) {
   .otis-iconbutton { width: 32px; height: 32px; }
@@ -267,6 +273,9 @@ a.otis-button, a.otis-button:hover { text-decoration: none; }
 .otis-records__card { display: flex; flex-direction: column; gap: 8px; padding: 12px 16px; border-radius: 8px; border: 1px solid var(--border); background: var(--card); cursor: pointer; transition: background-color 150ms ease-out; }
 .otis-records__card:hover { background: var(--accent); }
 .otis-records__card--dirty { border-color: var(--warning); }
+.otis-records__chip { display: inline-flex; align-items: center; min-height: 24px; padding: 4px 12px; border-radius: 9999px; border: 1px solid var(--border); background: var(--card); color: var(--muted-foreground); text-align: left; transition: background-color 150ms ease-out, color 150ms ease-out, transform 100ms ease-out; cursor: pointer; }
+.otis-records__chip:hover { background: var(--accent); color: var(--foreground); }
+.otis-records__chip:active { transform: scale(0.96); }
 .otis-records__ask-pane { display: flex; flex: none; width: 384px; min-height: 0; flex-direction: column; border-left: 1px solid var(--border); background: var(--sidebar); overflow-y: auto; }
 
 @media (min-width: 56.25rem) {

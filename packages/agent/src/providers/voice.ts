@@ -3,8 +3,8 @@
  * Voice capability and route-resolution contract for Gate 005.
  *
  * Implements the automatic native-preferred / configured-Groq-STT routing
- * rules defined in decisions D23/D24, plans/005-provider-spike.md, and
- * plans/010-groq-stt-handoff.md:
+ * rules defined in decisions D23/D24, docs/archive/plans/005-provider-spike.md, and
+ * docs/archive/plans/010-groq-stt-handoff.md:
  *
  * 1. Exact selected native model has verified transcription for recording format -> native
  * 2. Native unsupported or unverified, and workspace has verified Groq STT -> groq_stt

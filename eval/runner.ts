@@ -1,7 +1,7 @@
 /**
  * @otis/eval/runner
  * Offline pure-rule evaluation runner for Gate 006 conversational agent fixtures.
- * In accordance with plans/006-implementation-handoff.md Section 11 (006D).
+ * In accordance with docs/archive/plans/006-implementation-handoff.md Section 11 (006D).
  * NOTE: Evaluates in-memory schema, policy, and matching rules without Cloudflare workerd/D1.
  * For composed end-to-end pipeline execution with D1 database state, see `apps/worker/test/agent-composed-eval.integration.test.ts`.
  */

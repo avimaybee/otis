@@ -1,7 +1,7 @@
 /**
  * @otis/ledger/commands/markMessageSent
  * Command handler for mark_message_sent.
- * In accordance with plans/006-implementation-handoff.md Section 5.
+ * In accordance with docs/archive/plans/006-implementation-handoff.md Section 5.
  */
 
 import type { CommandResult, LedgerEvent, MessageSentByMemberPayload } from '@otis/contracts';

@@ -1,7 +1,7 @@
 /**
  * @otis/ledger/commands/memory
  * Command handlers for remember_context and forget_memory.
- * In accordance with plans/006-implementation-handoff.md Section 5 & 9.
+ * In accordance with docs/archive/plans/006-implementation-handoff.md Section 5 & 9.
  */
 
 import type {

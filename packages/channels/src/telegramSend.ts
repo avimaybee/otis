@@ -2,7 +2,7 @@
  * @otis/channels/telegramSend
  * Pure Telegram outbound formatting: plain-text part splitting and
  * reply-markup selection. No network, no storage, no secrets.
- * In accordance with docs/contracts.md and plans/009A-text-loop-handoff.md.
+ * In accordance with docs/contracts.md and docs/archive/plans/009A-text-loop-handoff.md.
  */
 
 /** Conservative application limit: Telegram allows 4096 after entities; plain text has none. */

@@ -1,82 +1,68 @@
-# Decision register
+# Decisions
 
-Revised 2026-10-04. This register records user decisions and implementation defaults; it does not claim implementation. Resolve contradictions by updating the owning spec and dependent plans together.
+Latest explicit user instructions resolve older conflicts. This register records choices, not implementation proof; [status](status.md) owns evidence and [product](../product.md) owns behavior. Historical context is preserved in the [baseline register](archive/baseline-2026-10-07/docs/decisions.md).
 
-| ID | Decision | Authority / owning document |
-|---|---|---|
-| D01 | Kerning business-memory dogfood first; no general research agent in v1 | User; product/roadmap |
-| D02 | Web and Telegram are complete conversational surfaces | User; product |
-| D03 | ChatGPT mobile composition, Codex desktop composition, no extra dashboard | User; design |
-| D04 | Dark charcoal and muted Highlighter baseline; exact approved token file and reference supersede former monochrome controls | User 2026-10-03; design-tokens.md and design.md |
-| D05 | One identity, equal memberships, protected owner transfer | User; product/architecture |
-| D06 | Full teammate chat and retained audio history, including pre-join | User; product |
-| D07 | Shared workspace provider keys; handpicked models; `/model` chat override | User; contracts |
-| D08 | Gemini and OpenCode Go; private Go integration approved, commercial review later | User; provider plan |
-| D09 | Voice notes, text reply default, Android and iPhone required | User; design/provider matrix |
-| D10 | Durable memory/context in D1, scoped per workspace, no canonical mutable memory.md | Architecture selected to satisfy user's continuity requirement |
-| D11 | Clear complete instructions save directly; missing/uncertain details ask | User 2026-09-29; product/autonomy |
-| D12 | Missing deadline asks; never assume today | User 2026-09-29; date contract |
-| D13 | Status inferred from sentiment asks before changing existing lead status | User 2026-09-29; tool policy |
-| D14 | Default Undo from here reverses selected and later same-run changes; single-action option | User 2026-09-29; undo contract |
-| D15 | Member chooses brief time; no hardcoded send time | User 2026-09-29; schedules |
-| D16 | Schedule starts disabled; chosen weekdays/timezone; max one daily scheduled brief | Conservative implementation default realizing D15; change only with explicit product choice |
-| D17 | Whether Otis may initiate high-confidence follow-ups beyond chosen briefs and explicit reminders is unresolved. Keep such triggers disabled until Avi decides; the agent's implementation must support the chosen policy cleanly. | Open product question; see the proactivity question from 2026-09-30 |
-| D18 | Outward messages draft-only, sent record requires explicit confirmation | Existing approved v1 boundary |
-| D19 | No Playwright; native browser review with evidence | User; verification |
-| D20 | Plain prepared SQL for v1; no speculative ORM or vector infrastructure | Engineering choice; architecture |
-| D21 | Private file download through Worker membership check, not public presigned bearer access | Required consequence of revocation contract |
-| D22 | Identity → conversation/source → ledger schema order, independent of plan numbers | Engineering repair; architecture/roadmap |
-| D23 | Automatic voice routing: use the selected model's verified native transcription path for the actual format; otherwise use workspace-configured Groq STT. Unsupported/unverified native audio does not disqualify a text/tool model. | User 2026-10-01; architecture section 13 and Plan 010 handoff |
-| D24 | No additional inference spending for dogfood: existing Go subscription and free Gemini/Groq access only; no automatic paid fallback, upgrade, or quota evasion. | User 2026-10-01; provider/voice plans |
+## Settled choices
 
-## UI decisions confirmed 2026-10-03
+| ID | Current choice |
+|---|---|
+| D01 | Conversational business memory first; no general research/browser agent in v1 |
+| D02 | Web and Telegram share complete conversation/business ownership |
+| D03 | Mobile chat composition and Codex-style desktop sidebar/chat/detail; no dashboard |
+| D04 | Current approved charcoal/Highlighter tokens supersede earlier visuals |
+| D05 | One identity, shared memberships and protected workspace owner transfer |
+| D06 | Members see workspace history, including pre-join retained chat/audio with disclosure |
+| D07 | Platform runtime provider keys; encrypted workspace BYOK takes priority; chat override stays personal to that chat |
+| D08 | Gemini/OpenCode Go dogfood integration is approved; commercial reliance is separate |
+| D09 | Voice notes, text replies by default; real Android/iPhone evidence required |
+| D10 | Durable scoped D1 memory; no canonical mutable memory.md |
+| D11 | Clear complete instructions save; uncertain details ask narrowly |
+| D12 | Missing deadline asks; never invent today |
+| D13 | Inferred existing lead status asks before mutation |
+| D14 | Default suffix Undo from here; single-action secondary, unrelated work preserved |
+| D15 | Member chooses brief time |
+| D16 | Brief disabled initially; chosen days/timezone/channel, at most one scheduled daily brief |
+| D18 | Outward draft-only; sent requires explicit completed-send confirmation |
+| D19 | Native browser review, no Playwright |
+| D20 | Direct TypeScript/prepared SQL; no speculative ORM/vector service |
+| D21 | Private downloads use live Worker membership checks |
+| D22 | Identity/conversation-source dependencies precede ledger references; one migration sequence |
+| D23 | Verified selected-model native transcription for actual format; otherwise configured verified Groq |
+| D24 | No automatic extra paid inference/fallback or quota evasion for dogfood |
+| D25 | Approved token recipes/reference are visual authority; never edit tokens to excuse styling drift |
+| D26 | Quiet real commands/settings; no composer toolbar/configuration chat bubbles |
+| D27 | Active empty input shows Stop; valid follow-up shows Send, Stop remains in overflow |
+| D28 | Feedback within 100 ms, in-control pending after 300 ms, stable retry UUID |
+| D29 | Scoped IndexedDB drafts/outbox and static PWA shell; no private service-worker caches |
+| D30 | Production component per fixture, Storybook coverage and five-width native review |
+| D31 | Reuse installed frontend owners and shadcn primitives; don't install a proposed library stack |
+| D32 | Detected voice format, ordered chunks, actual meter and explicit interruption |
+| D33 | Capture → memory → useful resurfacing → action is the quality loop |
+| D34 | Sourced confirmed corrections/aliases improve recall; no training service or absolute never-ask-again promise |
+| D35 | Bounded entity timeline may use existing inspection. The previous exclusion of direct editing is superseded by D47; no dashboard is selected. |
+| D36 | Actual provider-exposed displayable reasoning in one nested Thinking disclosure; no invented traces |
+| D37 | Supplemental references establish composition; current approved tokens own visual values |
+| D38 | Approved entry/dialog sizing is owned by tokens/design, not repeated constants here |
+| D39 | Slash picker supports full names, anchoring and bounded internal scroll |
+| D40 | Token scrim, no blur or stacked darker nested scrims |
+| D41 | Neutral control recipes; internal inspection acts as a button, links navigate |
 
-| ID | Decision | Authority / owning document |
-|---|---|---|
-| D25 | Verbatim supplied design-tokens.md is visual authority; no ad hoc values, no parallel palette, no redesign without asking | User; token sections 0–12/14 |
-| D26 | No composer toolbar/model/thinking chips; slash commands and quiet chat overflow apply real settings without configuration chat bubbles | User; design.md section 8 |
-| D27 | Follow-ups/corrections remain sendable while Otis works. Empty active draft shows Stop; valid follow-up shows Send, with Stop still reachable in chat overflow. This qualifies only the unconditional Stop-slot behavior in token section 8.9 | User async answer 2026-10-03; design.md section 1 |
-| D28 | Immediate feedback (100 ms), in-place pending after 300 ms, optimistic messages with stable retry UUID and attached failures | User; design.md sections 4–5 |
-| D29 | Scoped IndexedDB drafts/outbox, bounded online/foreground flush and static offline PWA shell; no paid fallback or private service-worker caches | User; architecture section 17, 008D |
-| D30 | Storybook story per fixture; native-browser screenshots/review at 360, 390, 900, 1280, 1440; no duplicate components | User; design.md sections 13–14 |
-| D31 | Selected frontend library ownership follows 008 handoff, installed only in relevant checkpoints; preserve backend foundations | User library list; 008 handoff section 3 |
-| D32 | Voice capture: detected codec, 1 s chunk persistence, real meter, explicit interruption, Android/iPhone evidence | User; design.md section 10, 010 voice UX supplement |
+## User corrections incorporated 2026-10-07
 
-## Field-use principles incorporated 2026-10-03
+| ID | Choice and implication |
+|---|---|
+| D42 | Questions follow the supplied Codex interface: separate options/free-text input, Skip and Send; main composer stays ordinary conversation. No implicit latest-question reply. |
+| D43 | Current compact tokens and approved fonts govern. Old Inter and expanded composer/sidebar instructions are superseded. |
+| D44 | Comprehensive tables are a general response ability. Leads were an example; a lead-specific read helper cannot stand in for flexible useful tables across topics. |
+| D45 | Improve response quality and native-like latency practically. Avoiding overengineering does not mean reducing answer usefulness, context or recovery. |
+| D46 | Consolidate docs; maintain one implementation status and one backlog. Archive historical evidence rather than keep competing current handoffs/audits. |
+| D47 | User selected direct editing of Otis's authoritative information: desktop spreadsheet, convenient mobile forms, flexible sparse columns and simple lists for nontechnical users. [R16 plan](../plans/editable-records.md); implementation remains open. |
+| D48 | Manual cell/row/column edits collect in a recoverable draft until explicit Save. Local Undo differs from saved ledger Undo; current information and original history remain recoverable. |
+| D49 | Otis applies authorized saved-information cleanup immediately with history/Undo. With an unsaved manual draft, it tidies the draft and the member still clicks Save. This target must be enforced by the server, including legacy write tools. |
+| D50 | Calculations and organization can be requested conversationally. Reuse suitable existing fields, preserve distinctive facts, and retain original values/sources through synthesis or cleanup. |
 
-| ID | Decision | Authority / owning document |
-|---|---|---|
-| D33 | Capture → memory → resurfacing → action is the quality loop; honest local/received/filed milestones complement delivery states | User supplied field-use notes, selectively incorporated; product principles/design |
-| D34 | Confirmed corrections/shorthand improve sourced workspace aliases; no unqualified never-ask-again promise or model-training service | Existing scoped memory/ledger policy plus supplied notes; 006 follow-up |
-| D35 | Read-only sourced entity timeline belongs to existing inspection, with authorized bounded history; no lead editor/new dashboard | Applicable supplied proposal; 008C after reliable send, coordinated read contract |
+## Unresolved or deferred
 
-Proposal disposition: keep Stop→Review→Send, disabled/chosen-time/chosen-channel briefs, text replies and D17's unresolved proactivity boundary. Auto-send on Stop, a default Telegram channel, push, one unsolicited nudge/day, ignore-three adaptation and end-of-day wraps were suggestions in supplied material, not explicit approval to change those contracts. No automatic enablement. PWA recording shortcut/Share Target, audio word seeking, spoken briefs, photo/location capture, calendar sync and periodic reviews are deferred expansion candidates; scoped read-only MCP already belongs after dogfood. Further explicit user decisions may change these boundaries.
+D17 remains open: unsolicited high-confidence outreach/check-ins beyond a chosen brief or explicit reminder. Keep those triggers disabled; don't use a supplied proposal as consent.
 
-## Working and mobile composition, 2026-10-04
-
-| ID | Decision | Authority / owning document |
-|---|---|---|
-| D36 | Display provider-exposed reasoning/summary as a streaming nested Thinking section inside Working when actually available; no invented private trace or empty disclosure | User request; design.md section 6, contracts section 8, 008B handoff |
-| D37 | Supplemental mobile references establish compact Working/Undo sheet and voice/clarification composition; approved tokens still own visual values and shadcn remains the component system | User screenshots and prior shadcn decision; docs/design, design.md sections 1/9/10 |
-
-Implementation defaults for D36: nested disclosure initially collapsed, manual choice preserved, separate blocks per provider round, actual tool-only step counts, bounded text with explicit truncation. These are documented engineering/product presentation defaults, not evidence of live model support. D37 retains existing preview-based undo and Stop→Review→Send voice capture; screenshots do not approve auto-send, extra controls or changing palette/dimensions.
-
-## Approved visual additions, 2026-10-04
-
-| ID | Decision | Authority / owning document |
-|---|---|---|
-| D38 | Dialog widths: settings/result/source dialogs cap at `min(600px, calc(100vw - 32px))` (maximum, scrollable content, mobile sheet preserved, desktop detail pane excluded); entry screens cap at 384 px with 16 px gutters and no phone overflow | User approval 2026-10-04; docs/design/approved-additions-2026-10-04.md |
-| D39 | Slash-command picker caps at `min(360px, 100%)`, anchored to the composer with internal scrolling and full (wrapped) model names; full cmdk popup pattern arrives in 008B | User approval 2026-10-04; approved additions supplement |
-| D40 | Dialog/drawer scrim is the background token at 80% on the backdrop itself, no blur; nested modals reuse the outer scrim instead of stacking darker | User approval 2026-10-04; approved additions supplement |
-| D41 | Jump to latest, clarification candidates, Working Undo and source inspection reuse neutral control recipes; source inspection is a ghost-button action (opens an internal view), never highlight/underline link styling; buttons act, links navigate | User approval 2026-10-04; approved additions supplement |
-
-## Remaining measurements, not guessed decisions
-
-- The six initial model IDs are selected in provider-capabilities.md; their live endpoint/audio/tool/cache evidence remains to be measured. Groq Whisper Large V3 and Turbo are selected STT candidates; the production STT default follows accuracy/latency tests.
-- Provider budgets/timeouts and practical latency/cost targets from controlled tests.
-- Actual provisioned data locations and deployment-specific secrets/rotation configuration.
-- Real browser/device acceptance; existing DOM tests cannot supply it.
-- Outside-customer wedge, pricing and provider/data-processing arrangements after dogfood.
-- Proactive follow-ups outside a chosen brief or explicit reminder (D17).
-
-Do not block work on already settled preferences or ask for API keys in a public report. Record new material choices here with date, reason, owner and affected contracts. Routine file decomposition and component naming do not need a decision-register entry.
+Broader services (connected Sheets, read-only MCP, WhatsApp bot, live calls/billing) require separate user-selected work. Flexible fields/direct editing are now selected in D47–D50. Real device/provider measurements, provisioned data location and outside-customer arrangements are evidence/launch work, not settled facts. Routine file naming/decomposition does not need a decision entry.

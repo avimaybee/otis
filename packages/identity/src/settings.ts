@@ -139,15 +139,61 @@ export async function getMemberSettings(
   db: D1Database,
   params: { workspaceId: string; userId: string },
 ): Promise<MemberSettings> {
-  const row = await db
-    .prepare(
-      `SELECT brief_enabled, brief_local_time, brief_timezone, interpretation_timezone, brief_weekdays,
-              brief_channel, preferred_language, created_at, updated_at
-       FROM member_settings WHERE workspace_id = ? AND user_id = ?`
-    )
-    .bind(params.workspaceId, params.userId)
-    .first<Record<string, unknown>>();
-  return rowToMemberSettings(params.workspaceId, params.userId, row, new Date().toISOString());
+  // Pre-migration databases lack interpretation_timezone: degrade to null
+  // instead of failing settings reads on a not-yet-migrated D1.
+  try {
+    const row = await db
+      .prepare(
+        `SELECT brief_enabled, brief_local_time, brief_timezone, interpretation_timezone, brief_weekdays,
+                brief_channel, preferred_language, created_at, updated_at
+         FROM member_settings WHERE workspace_id = ? AND user_id = ?`
+      )
+      .bind(params.workspaceId, params.userId)
+      .first<Record<string, unknown>>();
+    return rowToMemberSettings(params.workspaceId, params.userId, row, new Date().toISOString());
+  } catch (err) {
+    if (!String(err).includes('no such column')) throw err;
+    const row = await db
+      .prepare(
+        `SELECT brief_enabled, brief_local_time, brief_timezone, brief_weekdays,
+                brief_channel, preferred_language, created_at, updated_at
+         FROM member_settings WHERE workspace_id = ? AND user_id = ?`
+      )
+      .bind(params.workspaceId, params.userId)
+      .first<Record<string, unknown>>();
+    return rowToMemberSettings(params.workspaceId, params.userId, row, new Date().toISOString());
+  }
+}
+
+/**
+ * Bounded zone read for date interpretation: device-reported zone first,
+ * brief schedule second, null when unknown. Never throws for a missing
+ * interpretation_timezone column — pre-migration databases simply resolve
+ * unknown until 0022 lands.
+ */
+export async function getMemberZones(
+  db: D1Database,
+  params: { workspaceId: string; userId: string },
+): Promise<{ brief_timezone: string | null; interpretation_timezone: string | null }> {
+  const empty = { brief_timezone: null as string | null, interpretation_timezone: null as string | null };
+  try {
+    const row = await db
+      .prepare(`SELECT brief_timezone, interpretation_timezone FROM member_settings WHERE workspace_id = ? AND user_id = ?`)
+      .bind(params.workspaceId, params.userId)
+      .first<Record<string, unknown>>();
+    if (!row) return empty;
+    return {
+      brief_timezone: row['brief_timezone'] ? String(row['brief_timezone']) : null,
+      interpretation_timezone: row['interpretation_timezone'] ? String(row['interpretation_timezone']) : null,
+    };
+  } catch (err) {
+    if (!String(err).includes('no such column')) throw err;
+    const row = await db
+      .prepare(`SELECT brief_timezone FROM member_settings WHERE workspace_id = ? AND user_id = ?`)
+      .bind(params.workspaceId, params.userId)
+      .first<{ brief_timezone: string | null }>();
+    return { brief_timezone: row?.brief_timezone ?? null, interpretation_timezone: null };
+  }
 }
 
 async function computeSha256(data: string): Promise<string> {

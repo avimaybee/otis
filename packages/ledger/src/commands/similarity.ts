@@ -2,7 +2,7 @@
  * @otis/ledger/commands/similarity
  * Duplicate and near-duplicate entity name matching with Unicode normalization,
  * Romanian/Hungarian diacritics handling, and candidate ranking.
- * In accordance with plans/006-implementation-handoff.md Section 5.
+ * In accordance with docs/archive/plans/006-implementation-handoff.md Section 5.
  */
 
 export const MATCH_MIN_SCORE = 0.85;

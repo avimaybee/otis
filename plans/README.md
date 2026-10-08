@@ -1,114 +1,57 @@
-# Otis implementation gates
+# Current work
 
-Revised 2026-10-03. UI documentation was inspected against commit `663f0b3`; earlier gate baselines are historical evidence. [roadmap.md](../roadmap.md) is the full delivery guide; [architecture.md](../architecture.md) and [contracts](../docs/contracts.md) are the technical agreements. Earlier pre-build document hashes and fixed migration numbers are retired. Inspect current Git state and dependencies before implementing.
+[Implementation status](../docs/status.md) is the single current evidence record. This file is the ordered backlog, not another gate-completion table. The [001–015 closure register](../docs/status.md#numbered-plan-closure) accounts for all 45 numbered plans, supplements and review records. They are retired as active work lists; valid unfinished requirements live below. Their archived scope, line numbers, migration numbers and DONE labels describe the old baseline.
 
-## Independent UI and responsiveness audit — 2026-10-07
+Work selected by the user proceeds within that scope. Do not require a new handoff/approval cycle for routine reversible engineering, and do not create one report per review round. Keep current specs/status/backlog updated; preserve unique detailed evidence separately.
 
-The [running audit](2026-10-07-ui-and-reply-audit.md) independently inspects current source/rendered behavior and distinguishes concurrent repairs from unresolved work. The user selected Codex's question panel as the reply interaction; generic quoted-message replies are not requested. These are advisory specifications, not completed implementation or deployment gates.
+## Selected feature
 
-| Order | Work | Status / dependency |
+**First: R09 — [Targeted ledger reads and atomic field batches](ledger-write-efficiency.md).** The user selected these backend repairs before starting R16. Code is present and uncommitted, but A–C acceptance is incomplete: the [independent review](../docs/status.md#ledger-write-prerequisite-review-2026-10-08) reproduced six issues (seven failing behavior cases) in clarification replay, legacy approval/decline/revisions and alias-read cost. Complete the plan's review corrections and real-D1 revalidation before the editor's A–F slices. Local wall-time smoke is recorded; production billing/CPU/end-to-end profiles and follow-on command footprints remain open.
+
+**Then: R16 — [Editable information shared with Otis](editable-records.md).** The implementation plan covers a dedicated desktop spreadsheet/mobile row-editing page, flexible custom fields and simple lists, explicit manual Save, saved history/Undo, and conversational calculations/cleanup. Otis tidies an existing dirty draft without saving it. Planning is complete; production implementation and native/D1/provider acceptance remain open. Extend the repaired R09 writer rather than reopening the old numbered plans or creating another ledger path. No commit/push/deployment is authorized by these plans.
+
+## Repair order
+
+Backlog IDs are stable references for carried requirements; they do not restart the old numbered gates. Source/test owners and current verdicts are in status.
+
+| ID / priority / work | Practical scope | Done evidence |
 |---|---|---|
-| 1 | [Explicit Codex-style question panel](2026-10-07-codex-style-questions-plan.md) | SPECIFIED; text uses existing clarification/outbox contracts; voice requires targeted transport evidence |
-| 2 | [Compact conversation UI](2026-10-07-compact-ui-plan.md) | SPECIFIED; sidebar/transcript density can proceed independently; final dock depends on question ownership |
+| R01 / P1 — Transcript delivery and reconciliation | Cancellation and hook-local primary paint shipped in `99d5871`; 281 web tests pass. Completion remains open: protect accepted/live rows from older full returns and unsafe pruning, propagate metadata auth failures, recover failed question reads and remove serial optional-read/live-readiness delays | Controlled delayed-primary/delayed-metadata/acceptance/live-answer/cancel/401/403/question-outage cases, snapshot/offline suites and the full suite; no lost/duplicate bubble, dead answer action or scope leak |
+| R02 / P1 — Authority and input safety | Guard agent public activity against stale attempts; separate workspace access loss from user-wide purge; bound and truthfully report server sign-out; correct completed-send/target-status authority and calendar-instant validation | Meaningful real-D1 stale/revoked tests, two-workspace unsent-work retention, multilingual/negative/other-target intent/date fixtures |
+| R03 / P1 — Response grounding and continuity | Preserve note subject/scope/date/source in prompts; suppress inactive memory on reads; improve relevant FTS/alias/older conversation recall and current visible-row reference | Source-grounded cases across chats/entities/forget/summary/ordinal ambiguity, then controlled actual-model evaluation |
+| R04 / P1 — Useful recovery | Handle successful-but-empty output honestly; report committed/unfinished work precisely; add receipt-aware failed-run continuation through the existing server owner | No duplicate effects on restart/late acceptance; partial/empty/terminal-retry cases with truthful user output |
+| R05 / P1 — Native-like response flow | Preserve direct actor wake + first preview; remove avoidable D1 heartbeat/catch-up and full snapshot reload costs; scope outside-actor terminal publications and live revocation | Reconnect/disconnect/Stop/revocation/lost-final/slow-consumer fixtures plus measured first useful output/end-to-end row/CPU/network cost |
+| R06 / P2 — Question/table acceptance | Replace placeholder states with production journeys, verify immutable question target/reopen/failed/late answer, varied grounded tables and responsive/copy behavior | Required production stories, native five-width/keyboard checks and [response corpus](qa/2026-10-07-agent-response-cases.md); live model quality is separate |
+| R07 / P2 — Voice field acceptance | Complete exact-device capture/playback/upload-resume and chosen native/Groq format evidence using the existing recorder/media/job path | Actual Android/iPhone/Telegram formats, interruption, wrong scope, stable retry UUID, transcript correction and retention |
+| R08 / P2 — Briefs and explicit reminders | Prove explicit no-deadline/promise/stale selection, relevant candidate coverage and saved-item actions; implement confirmed one-off reminder create/change/cancel/delivery | Chosen schedule/DST/daily dedupe, exact saved-order reply mapping, empty scheduled silence, reminder time/zone/channel and cancellation/retry |
+| R09 / P1 selected prerequisite; remaining P2 — Lean reads/startup/retention | **First repair and accept [ledger-write prerequisite](ledger-write-efficiency.md#10-review-corrections-2026-10-08)**: uncommitted parent-batch code exists, but review observations 50–55 remain open. Then carry broader ledger/action reads, remaining guard/key cleanup, context reload, lazy panes, image quota and session/terminal-outbox retention without losing dedupe/recovery/evidence | All seven failing audit cases corrected, normal/late-guard tests preserved; actual bounded D1 rows, one parent commit/receipt, mixed-question/retry/rollback/Undo/rebuild/FTS proof and honest CPU/venue limits |
+| R10 / P2 — Draft/action feedback | Await clipboard success/failure, normalize usable recipient phone and preserve language/recipient/dispute evidence | Copy denial/success, handoff encoding/phone/language fixtures; no false sent record |
+| R11 / P2 — Export/privacy/operations | Implement actual private workbook + JSON export and audited cross-store erasure/retention/restore, separate from existing draft handoff | Independent workbook reader, formula-safe/scoped download, full store inventory and synthetic erasure/restore drill |
+| R12 / P3 — Presentation contracts | Add per-message language, deliberate display timezone and bounded read-only entity history when selected | Shared storage/types/serializers/clients plus semantic and native evidence |
+| R13 / P2 — Run accounting and model quality | Retain final-round usage as well as tool-round usage, aggregate reported token/cache/cost and first-output/total timing through existing run records. Review independent total tool/token budgets against current action/round/4,096-output limits. Run a controlled varied multilingual held-out model set | Durable accounting for text/tool/partial/retry runs without double counting; null unsupported metrics; response/effect/abstention/clarification failures with measured latency/cost |
+| R14 / P2 — Integrated field/release proof | Record a clean frozen install/migration/rebuild and a two-member sign-in/capture/query/clarification/correction/Undo/offline/restart journey; native five-width, keyboard/screen-reader and physical-device evidence. Remote resource/migration/secret/recovery checks apply when release is authorized | Actual commands, scoped journey/device artifacts and unresolved cases; chosen-time bot delivery, export/erasure drills only after their code exists; field-use target measured after release |
+| R15 / P2 — Complete original Telegram helpers | Register available shared commands in the native bot menu; implement opaque scoped callback model/Undo/Done/Draft choices and date clarification through existing owners | Callback replay/removed-member/other-workspace denial, prompt acknowledgement, same command semantics and synthetic/live private-bot journey |
+| R16 / P1 — Editable information (after R09 prerequisite) | [Plan](editable-records.md): extend the repaired ledger writer with shared authoritative records, sparse custom columns/lists, desktop range editing/mobile forms, manual drafts until Save, granular conflicts, draft-aware Otis and lossless tidy/calculations | R09 prerequisite accepted, then real D1 rollback/replay/receipts/concurrency/Undo and bounded row/CPU metrics; production range/mobile/offline/delayed-read/stale-patch stories; five-width native/a11y comparison and controlled actual-model evidence |
 
-[Interactive visual study](qa/otis-compact-question-preview.html) and [native-browser geometry](qa/2026-10-07-study-geometry.json) are proposal evidence only. Audit baseline `2d2c0c1`; concurrent fixes reviewed through `06ee63c`. Full implementation and release verification remain required.
+Fix a concrete user-facing failure before optional infrastructure changes. Multiple rows share owners and can be one coherent task; no new ORM, vector service, report engine, workflow migration, analytics service or second agent loop is implied. R13–R15 are cross-cutting/carried work; their IDs do not make them prerequisites for earlier concrete repairs.
 
-## Order and current status
+### R01 implementation boundary
 
-**2026-10-04 runtime repair:** fresh-chat readiness, Gemini stateful tool continuation, clarification answer identity, unfinished preview labeling and implicit-chat Undo retry are locally reviewed. Final implementation suite645/45; reviewer targeted adapter24, transcript24 and chat API53 passed. See [QA adjudication](qa/2026-10-04-antigravity-review.md) for exact evidence and prior failures. No release performed. Next acceptance step is the [identified-build browser retest](qa/runtime-repair-browser-retest.md); production remains unaccepted until save→confirmation→retrieval→reload works on the released repair. Preserve the queued008C and unrelated dirty tree; do not infer authority to deploy or start another feature from this note.
+Owners: `apps/web/src/api/snapshot.ts`, `ConversationScreen.tsx`, `api/outbox.ts` and `api/transcript.ts`, with current snapshot/offline tests. Preserve cancellation and the implemented scoped primary paint. The [R01 staged review](../docs/status.md#r01-staged-transcript-review) supplies current production-screen race, question-outage and stream-delay evidence; the [Surgery 1 review](../docs/status.md#surgery-1-review) preserves the prior baseline.
 
-**Current priority — prove the useful conversation:** the reviewer-authored [dogfood execution order](013-dogfood-execution-order.md) supersedes older foundation-first sequencing. Independently close the current 015A.1 patch, then assign one text-only Telegram capture → actual reply → later retrieval journey under 009. Add voice to that path, then the member-chosen brief. Repair demonstrated runtime/cost blockers, not every proposed foundation improvement. [007-conversation-repair.md](007-conversation-repair.md) remains the existing defect record. Earlier DONE rows describe local evidence, not deployed conversational acceptance.
+1. Keep primary chat/message reads and optional run/activity/question metadata from delaying each other unnecessarily. Activity/questions do not require primary, and runs require primary IDs but not activity/questions. Make live reply readiness independent of optional metadata while keeping acceptance/live cache ownership safe. Separate queries composed at render time are reasonable; metadata must not replace the primary transcript.
+2. Also protect the primary query from old results replacing acceptance receipts or committed live messages. Use existing scoped query cancellation/patch operations where appropriate, or the existing outbox as a retained read-time overlay until safe reconciliation. Handle the no-primary-snapshot case and reconnect. A metadata split alone is not this guarantee.
+3. Preserve tombstones and same-UUID delivery; prevent premature pruning against an unstable receipt-patched cache. Do not add another local queue/store or modify TanStack internals. Surface auth 401/403 from every metadata source, coordinating workspace-only 403 recovery with R02 so another workspace's unsent work survives. Retain visible retryable metadata failures; a failed questions read must not disable a known pending question's answer action or claim there are no questions.
+4. Reproduce delayed primary and delayed metadata reads, accept/send and committed reply during refetch, then release the old result. Assert one retained bubble, monotonic live state, no resurrected outbox, navigation abort, and later authoritative recovery. Use the current route-level offline test plus the review probe; passing a fixed-timing fixture alone is insufficient.
 
-| Gate / plan | Outcome | Depends on | Status |
-|---|---|---|---|
-| [001](001-foundation.md) | Tooling/runtime foundation and browser acceptance | — | IMPLEMENTED; actual browser evidence pending |
-| [003A](003-identity.md) | Identity/workspace/session foundations | 001 technical checks | DONE |
-| [004A](004-inbound-routing.md) | Durable conversation, sources, runs, inbox/outbox schema | 003A | DONE |
-| [002](002-ledger.md) | Guarded ledger, projections, dispute and grouped undo | 003A, 004A | DONE |
-| [003B](003-identity.md) | Complete shared settings/lifecycle/provider configuration | 003A, 002 where integration needs it | DONE |
-| [004B](004-inbound-routing.md) | Actor leases, dispatch and recovery | 004A, 002, 003B | DONE; independently reviewed 2026-10-01; local evidence only |
-| [005](005-provider-spike.md) | Exact provider/model capability and budget evidence | 003B; fake work may start earlier | DONE; [independently accepted 2026-10-01](005-review-followup.md); three primary models enabled, secondary/audio capabilities remain gated |
-| [006](006-agent.md) | Bounded agent and durable sourced workspace memory | 002, 004B, 005 | DONE; [independently accepted 2026-10-02](006-review-round6.md); local evidence only |
-| [007](007-web-chat-api.md) | Chat APIs, replay stream and shared commands | 006, 003B, 004A | DONE; [independently accepted 2026-10-03](007-review-round3.md); local evidence only |
-| [008](008-conversation-ui.md) | Exact approved visuals + reliable conversation behavior | 007; see 008A–008D in [UI handoff](008-ui-implementation-handoff.md) | 008A IMPLEMENTED UNVERIFIED (tooling + stories done, real-browser review pending; see `docs/reviews/2026-10-04-008/REVIEW.md`); 008B IMPLEMENTED — REVIEW PENDING (evidence `docs/reviews/2026-10-04-008/008B.md`); 008C PARTIAL — REVIEW PENDING (implemented scope plus exact contract-blocked scope with proposals in `docs/reviews/2026-10-04-008/008C.md` and `plans/008C-contract-proposals.md`); 008D IMPLEMENTED — REVIEW PENDING (evidence `docs/reviews/2026-10-04-008/008D.md`) |
-| [009](009-telegram.md) | Complete linked private Telegram channel; current scoped implementation: [009A text loop](009A-text-loop-handoff.md) | 007, 004B; accepted 015A.1 | 009A ACCEPTED locally ([independent review](009A-review-acceptance.md), 633 tests / 45 files); remainder TODO |
-| [010](010-voice.md) | Voice notes and authenticated retained audio | 005, 008, 009 | IMPLEMENTED — REVIEW PENDING (recorder/chunks, Groq STT route, transcription processor, claim/PUT/finalize recovery, authenticated retained reads with expiry; workerd voice suites + web voice suites green; actual Android/iPhone/Telegram-OGG device evidence still pending per gate) |
-| [011](011-briefs.md) | Member-chosen brief schedule and explicit reminders | 002, 007, 009 | IMPLEMENTED — REVIEW PENDING (member-chosen time/days/timezone/channel, disabled-by-default, due-aware sweep on persisted next-due stamp, deterministic due-first candidates, `/today`; brief/schedule/DST suites + worker brief suite green; live scheduled-fire evidence still pending per gate) |
-| [012](012-drafts-sheet.md) | Requested drafts and private XLSX | 002, 007, 009 | TODO |
-| [013](013-release-readiness.md) | Integrated recovery/security/device/release gate | 001–012 accepted | TODO |
-| [014](014-implementation-handoff.md) | Reviewer-authored web live-transport/D1 separation; old agent draft superseded; execute only explicitly assigned 014A–014C checkpoint | 007 economics containment; independent per-checkpoint review | SPECIFIED; NOT ASSIGNED; not a Telegram-text prerequisite |
-| [015](015-foundation-efficiency.md) | 015A.1 changed-only persistence [independently accepted](015A1-review-acceptance.md); other proposed efficiency tasks remain unassigned | Existing ledger; no dependency on completing 014 for 015A.1 | 015A.1 ACCEPTED locally; remaining tasks PROPOSED |
+## Existing work to preserve
 
-Numbers are stable work-package identifiers, not execution or migration order. 003A/004A exist to avoid building ledger/agent references to tables that do not yet exist. Plan 007 extends the chat storage from 004A instead of recreating it. Status vocabulary: TODO, IN PROGRESS, IMPLEMENTED (code present, acceptance incomplete), DONE (required evidence complete), BLOCKED (specific unmet external prerequisite), or DEFERRED (explicit product choice).
+Direct actor dispatch/SSE venue, immediate text preview, batched initial context, changed-only ledger persistence, bounded entity reads, due-only brief discovery, response-body deadlines, session-generation/coalescing, batched local voice storage, image replay/history/renditions, question panel and general table shell are already present. Recovery excludes healthy parked questions; several guard families already reuse scoped rows and have bounded cleanup. Extend or repair their real boundary instead of reimplementing them from an archived finding.
 
-## Required reading and decision authority
+General tables are the capability. `lead_overview` is only an efficient data source for one domain. Do not assign another fixed lead-report feature in response to the user's broader request.
 
-Read assigned plan and relevant source docs; use [agent-handoff.md](../docs/agent-handoff.md). Product governs intent; design-tokens.md and its approved reference govern visual values/recipes, design.md governs interaction; architecture/contracts govern implementation. Never silently follow an old example that contradicts a confirmed current decision.
+## Remaining choices
 
-Settled: Kerning scope, equal members/full history, charcoal + approved Highlighter UI, private Go+Gemini, handpicked models, shared provider keys, /model chat overrides, workspace-only memory, text replies to voice, Android/iPhone, explicit missing-date/inferred-status clarification, same-run suffix undo, and chosen-time briefs without a default schedule. See [decision register](../docs/decisions.md).
+Additional unsolicited proactivity (D17) is unresolved; keep it disabled. Per-chat execution concurrency, commercial model/service arrangements and broader product expansion are separate decisions. Ordinary implementation naming, file placement, targeted query design and reversible doc cleanup do not need permission.
 
-## Current UI assignment
-
-Read [008-conversation-ui.md](008-conversation-ui.md) and the detailed [008 UI handoff](008-ui-implementation-handoff.md). Execute 008A first: one token store, enforcement, Inter, production-component stories and reference fidelity. Then 008B send/state/commands, 008C scroll/viewport/a11y/routes, 008D offline durability. These stay inside the existing gate. Real conversation/provider/dispatch repair proceeds under 007 where needed; styling does not close runtime failures.
-
-[010-voice-ux-handoff.md](010-voice-ux-handoff.md) adds recording/interruption/local recovery/device evidence to the existing voice plan; it does not duplicate the STT service. No new feature is marked implemented by these docs.
-
-## Engineering simplicity
-
-Gate 005 has a detailed [implementation-agent handoff](005-implementation-handoff.md), supplementing its original plan without changing gate order.
-
-The user-requested [thinking-controls handoff](005-thinking-controls-handoff.md) is IMPLEMENTED: verified per-model effort options, `/thinking` on both surfaces, an optional model-adjacent selector now superseded on web by the approved slash/quiet-overflow placement (no composer chips), conversational `set_chat_thinking` tool, and immutable accepted-run configuration. It extends 005–009 without adding a new gate or changing prior acceptance. Provider default remains available while adjustable options operate on verified endpoint evidence.
-
-Gate 006 has a detailed [agent/memory execution contract](006-implementation-handoff.md): current source baseline, typed tool ownership, checkpoints 006A–006D, pinned models, durable loop/receipt recovery, memory projections and exact acceptance tests. The checkpoints stay within 006; they are not new roadmap gates. Implemented work remains review pending until independently accepted.
-
-Gate 010 has a detailed [native-audio/Groq STT handoff](010-groq-stt-handoff.md). Gate 005 defines the capability/resolver boundary; gate 010 implements recording, transcription and encrypted Groq credentials. No new gate or parallel STT infrastructure is required. Dogfood adds no paid inference beyond the existing Go subscription.
-
-## Strict Anti-Overengineering Mandate (Cloudflare Free Tier First)
-
-Future agents working on Otis must follow these absolute rules:
-1. **Cloudflare Free Tier Limits are Hard Laws**: Worker CPU time < 10ms, D1 writes < 100,000/day, D1 reads < 5,000,000/day. Over-engineering that incurs multiple DB roundtrips or complex distributed locking will exhaust limits and break the app.
-2. **Never simulate distributed consensus on SQLite/D1**: D1 is single-writer atomic SQLite. Writes serialize automatically. Do not add artificial lease-fence tables, Raft consensus emulations, or multi-step guard tables that multiply writes. Use direct atomic SQL (`INSERT ... ON CONFLICT DO UPDATE`, `UPDATE ... WHERE ... RETURNING`).
-3. **No Database Polling for Live Streaming**: Live token streaming must flow directly in-memory to the client SSE stream; commit the final response and receipts atomically to D1 at turn completion.
-4. **Cloudflare Dashboard API Keys First**: Primary keys (`GEMINI_API_KEY`, `OPENCODE_API_KEY`, `GROQ_API_KEY`) live directly in Cloudflare Dashboard Worker secrets. Workspace encrypted BYOK is an optional override.
-5. **Clean Multi-Tenancy**: Zero hardcoded user IDs, emails, names, or tenant IDs anywhere in code.
-6. **shadcn UI with Design Tokens**: Build clean, modern, accessible UI using standard shadcn component primitives tailored to `design-tokens.md`. No bespoke reinvented UI frameworks.
-
-Keep Otis simple, modular and easy to maintain without weakening its working guarantees. Prefer a small set of explicit code paths and existing services. Add an abstraction only when it removes demonstrated duplication or owns a concrete responsibility; do not create generic frameworks, speculative extension points, or infrastructure for later phases.
-
-Durable acceptance, workspace isolation, authorization, idempotency, lease fencing and recovery are required correctness mechanisms. Enforce them at shared committing boundaries rather than duplicating prechecks in each caller. Test meaningful failure and concurrency scenarios; avoid tests that merely repeat implementation details. Split large modules by an existing responsibility when that makes ownership clearer, not to meet an arbitrary line count. Reviews must distinguish defects that can lose or corrupt data from optional cleanup, and must not turn optional cleanup into another release gate.
-
-## Gate discipline
-
-Each gate ends with actual targeted evidence and the four root implementation checks. UI requires native-browser evidence; voice requires real-device/endpoint evidence. Mark unavailable checks honestly. Keep commands cross-platform for Windows paths containing spaces.
-
-Inspect live schema/migrations before allocating the next SQL file. Do not edit applied shared migrations or introduce foreign keys to sources whose tables are created later. Preserve source history and use one package owner for each write path.
-
-Review/smoke uses synthetic data. Live provider tests are explicit controlled runs, not automatic CI calls. Do not deploy or send real third-party messages merely because a plan describes the eventual workflow. Existing task authorization remains applicable; routine work does not need repeated confirmation.
-
-## Supporting contracts
-
-- [Workspace memory](workspace-memory-cloudflare.md) is part of 006.
-- [Verification matrix](../docs/verification.md) supplies cross-cutting failure cases.
-- [Browser evidence](../docs/browser-review.md) records actual observations.
-- [Provider capability matrix](../docs/decisions/provider-capabilities.md) begins unverified.
-- [Roadmap expansion](../roadmap.md#20-after-dogfood-ordered-expansion-candidates) covers future self-serve/MCP/Sheets/WhatsApp, not v1 work authorization.
-
-## Known remaining evidence
-
-Plan 001's technical fixes passed review at 1626124; a3bd462 added simulated-DOM width assertions. A real browser review has not been recorded here. Actual D1 jurisdiction and future provider/audio capabilities remain provisioning/spike evidence, not facts established by source comments.
-
-## Considered and rejected approaches
-
-- Global workspace rewind: would erase unrelated teammate work; use selected same-run actions with dependency checks.
-- Auto-assigned today deadline and inferred warm/cold status: contradict confirmed clarification policy.
-- Mutable memory.md authority: loses structured provenance, concurrency and workspace enforcement.
-- Raw private R2 bearer URLs: incompatible with immediate membership checks.
-- Queue exactly-once assumption: use durable leases/receipts/outbox instead.
-- Simulated-DOM geometry as browser proof: requires a real browser record.
-- Unrequested dashboard/cards/live voice/MCP inside the core: outside the first useful conversational release.
-
-## Reviewer and implementation-agent responsibility (2026-10-04)
-
-The reviewer writes architecture decisions, implementation handoffs and scoped commands, and independently accepts work. The implementation agent executes the assigned command, writes code/tests and reports evidence. It may report contradictions but does not own architecture planning or start subsequent checkpoints unassigned. The user corrected this division explicitly.
-
-For live transport, `014-live-transport.md` is a superseded implementation-agent draft; [014-implementation-handoff.md](014-implementation-handoff.md) is the reviewer-authored authority with checkpoints014A–014C. No checkpoint is started by this index. 015A.1 is independently accepted in [review evidence](015A1-review-acceptance.md); [009A](009A-text-loop-handoff.md) was explicitly assigned to the existing OpenCode session on 2026-10-04. 009A is now locally accepted in [independent review](009A-review-acceptance.md); the next checkpoint requires its own explicit reviewer handoff. No live bot/deployment acceptance is implied.
+Use [AGENTS](../AGENTS.md) for working rules and [verification](../docs/verification.md) for checks. Task authorization governs commit/push/PR/deployment; no historical plan grants those actions.

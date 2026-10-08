@@ -1,7 +1,7 @@
 /**
  * @otis/worker/inbox/telegram
  * Telegram inbound message routing, account linking, media handling, and acceptance.
- * In accordance with docs/contracts.md and plans/004-inbound-routing.md.
+ * In accordance with docs/contracts.md and docs/archive/plans/004-inbound-routing.md.
  */
 
 import {

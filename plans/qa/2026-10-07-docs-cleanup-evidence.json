@@ -1,0 +1,40 @@
+{
+  "date": "2026-10-07",
+  "baseline": "2db5344",
+  "inventoried": 94,
+  "archived": 81,
+  "snapshots": 8,
+  "active": 14,
+  "active_lines": 1758,
+  "numbered_families_closed": 15,
+  "numbered_records_closed": 45,
+  "carried_backlog_ids": [
+    "R01",
+    "R02",
+    "R03",
+    "R04",
+    "R05",
+    "R06",
+    "R07",
+    "R08",
+    "R09",
+    "R10",
+    "R11",
+    "R12",
+    "R13",
+    "R14",
+    "R15"
+  ],
+  "approved_tokens_unchanged": true,
+  "source_comment_only_files": 33,
+  "migration_files_unchanged": true,
+  "unrelated_application_changes_preserved": [
+    "apps/web/src/ConversationScreen.tsx",
+    "apps/web/src/api/client.ts",
+    "apps/web/src/api/snapshot.ts",
+    "apps/web/test/offline-flush.test.tsx"
+  ],
+  "unrelated_untracked_application_files_preserved": [
+    "apps/web/test/snapshot-fetch.test.tsx"
+  ]
+}

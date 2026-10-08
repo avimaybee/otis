@@ -35,11 +35,11 @@ function SpikeHarness() {
     }
   })();
   return (
-    <div className="flex flex-col gap-2 p-4" style={{ maxWidth: harnessWidth }}>
+    <div className="flex flex-col gap-2 p-4 w-full max-w-[760px]">
       <p className="text-sm text-muted-foreground">
         Spike only: select a rectangle, type to edit, paste TSV. Selection JSON reports below.
       </p>
-      <div style={{ width: harnessWidth, maxWidth: '100%', overflowX: 'auto' }}>
+      <div className="w-full max-w-full overflow-x-auto">
       <RecordsGridSpike
         initialRows={seedRows()}
         columns={COLUMNS}
@@ -77,21 +77,12 @@ export const GridSpike: StoryObj = {
 
 function RdgHarness() {
   const [selectionJson, setSelectionJson] = useState('none');
-  const harnessWidth = (() => {
-    try {
-      const raw = new URLSearchParams(window.location.search).get('spikewidth');
-      const parsed = raw ? Number.parseInt(raw, 10) : Number.NaN;
-      return Number.isFinite(parsed) && parsed >= 280 && parsed <= 1600 ? parsed : 720;
-    } catch {
-      return 720;
-    }
-  })();
   return (
-    <div className="flex flex-col gap-2 p-4" style={{ maxWidth: harnessWidth }}>
+    <div className="flex flex-col gap-2 p-4 max-w-3xl w-full">
       <p className="text-sm text-muted-foreground">
         Fallback spike only: click a cell, double-click/Enter to edit, drag the fill handle. Selection reports below.
       </p>
-      <div style={{ width: harnessWidth, maxWidth: '100%', overflowX: 'auto' }}>
+      <div className="w-full max-w-full overflow-x-auto">
         <RecordsRdgSpike initialRows={seedRows()} columns={COLUMNS} onSelection={setSelectionJson} />
       </div>
       <p data-testid="spike-rdg-selection" className="text-xs text-muted-foreground">selection: {selectionJson}</p>

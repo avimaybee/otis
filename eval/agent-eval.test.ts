@@ -1,7 +1,7 @@
 /**
  * @otis/eval/agent-eval.test
  * Automated offline fixture evaluation test suite (pure policy/schema rule evaluation).
- * In accordance with plans/006-implementation-handoff.md Section 11 & 12.
+ * In accordance with docs/archive/plans/006-implementation-handoff.md Section 11 & 12.
  * NOTE: For composed end-to-end pipeline execution with D1 database state, see `apps/worker/test/agent-composed-eval.integration.test.ts`.
  */
 

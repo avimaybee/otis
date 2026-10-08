@@ -1,7 +1,7 @@
 /**
  * @otis/channels/telegram
  * Telegram update normalization, webhook secret verification, and media inspection.
- * In accordance with docs/contracts.md and plans/004-inbound-routing.md.
+ * In accordance with docs/contracts.md and docs/archive/plans/004-inbound-routing.md.
  */
 
 export interface TelegramUserObject {

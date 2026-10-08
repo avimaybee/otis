@@ -1,0 +1,15 @@
+{
+  "date": "2026-10-07",
+  "sourceHead": "06ee63c",
+  "environment": "local Workers/D1/R2 with a recording fake provider",
+  "liveCapabilityEvidence": false,
+  "openingImages": 1,
+  "nextToolRoundImages": 0,
+  "followupImages": 0,
+  "historicalTextPresent": true,
+  "originalImageStillStored": true,
+  "attachmentReceiptCount": 1,
+  "followupContinuation": null,
+  "diagnosticTestsPassed": 1,
+  "existingTargetedTestsPassed": 19
+}

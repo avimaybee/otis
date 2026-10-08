@@ -1,5 +1,7 @@
 # Live provider evidence — 2026-10-01
 
+> Historical exact-route evidence, retained at this stable path because the provider registry references it. These dated observations do not establish current capability, quality or latency for every model. Use [providers](providers.md) for current configuration and [status](status.md) for implementation and acceptance boundaries. Preserve this report as read-only history.
+
 ## Full capability verification follow-up — 18:55 IST (re-verified with strict validator)
 
 All six operator-selected models from the production registry have completed live synthetic capability verification using the strict tool-call validator and context-preserving loop (`executeSmokeToolLoop`): streaming text, usage reporting, faithful tool invocation with validated arguments, tool-result continuation without argument fabrication, and repeated-prefix comparison.

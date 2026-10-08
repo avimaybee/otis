@@ -1,0 +1,2006 @@
+{
+  "baseline": "2db5344",
+  "date": "2026-10-07",
+  "scope": "Repository-authored Markdown; requirement-domain/source audit, not independent proof of every historical acceptance claim",
+  "files": [
+    {
+      "original": "AGENTS.md",
+      "destination": "AGENTS.md",
+      "snapshot": "docs/archive/baseline-2026-10-07/AGENTS.baseline.md",
+      "disposition": "consolidated/refreshed",
+      "domain": "release",
+      "reviewed_against": [
+        "wrangler.jsonc",
+        "package.json",
+        "migrations",
+        "plans/qa/2026-10-07-docs-tests.json"
+      ],
+      "original_sha256": "fb81bc7dd72f0b98e9c8c16c88577256e720b7931e82b6e8beca43fddb74de1b",
+      "original_lines": 82,
+      "final_sha256": "3fcc35b7728e5c242809873dd820845eb2181245dae8c42eb74684d8e6d11737",
+      "snapshot_sha256": "44f5d320022e7906be3f1e0a670eb1819fb08491b5309b23db47e931e5601548"
+    },
+    {
+      "original": "README.md",
+      "destination": "README.md",
+      "snapshot": "docs/archive/baseline-2026-10-07/README.md",
+      "disposition": "consolidated/refreshed",
+      "domain": "release",
+      "reviewed_against": [
+        "wrangler.jsonc",
+        "package.json",
+        "migrations",
+        "plans/qa/2026-10-07-docs-tests.json"
+      ],
+      "original_sha256": "8f5c68ab34b8881f9152e6475141ce007fe077141adc67a979a4381922d86148",
+      "original_lines": 94,
+      "final_sha256": "d0d0a86bce83c7c1b582ad520149094897597f8e9c13d5d69d61ae17ae38c589",
+      "snapshot_sha256": "a39d29dacf64680a1b91fc416cb06feab73a376a05b89185b3605fd2ceaf9255"
+    },
+    {
+      "original": "architecture.md",
+      "destination": "architecture.md",
+      "snapshot": "docs/archive/baseline-2026-10-07/architecture.md",
+      "disposition": "consolidated/refreshed",
+      "domain": "release",
+      "reviewed_against": [
+        "wrangler.jsonc",
+        "package.json",
+        "migrations",
+        "plans/qa/2026-10-07-docs-tests.json"
+      ],
+      "original_sha256": "2828f258c3360baf4b71e1c46f2776a3d61c2a3f881332c3d93c79cbec9d860e",
+      "original_lines": 315,
+      "final_sha256": "152334f83a337354c670d5c2eb29445da21c0ae7d0f86c4bcab280f8659327c8",
+      "snapshot_sha256": "a133e2c6435e11fa6b8a7d9a18360b9ab4236e68b4f097deef911f6a64090acb"
+    },
+    {
+      "original": "design-tokens.md",
+      "destination": "design-tokens.md",
+      "snapshot": null,
+      "disposition": "retained/current",
+      "domain": "ui",
+      "reviewed_against": [
+        "apps/web/src",
+        "scripts/check-design.mjs",
+        "scripts/check-stories.mjs",
+        "apps/web/test/conversation.test.tsx"
+      ],
+      "original_sha256": "eac54b39e96dc9c424dddd76bb5a32bc47b876c0b073e2d1224dec86f82f10c4",
+      "original_lines": 611,
+      "final_sha256": "eac54b39e96dc9c424dddd76bb5a32bc47b876c0b073e2d1224dec86f82f10c4"
+    },
+    {
+      "original": "design.md",
+      "destination": "design.md",
+      "snapshot": null,
+      "disposition": "retained/current",
+      "domain": "ui",
+      "reviewed_against": [
+        "apps/web/src",
+        "scripts/check-design.mjs",
+        "scripts/check-stories.mjs",
+        "apps/web/test/conversation.test.tsx"
+      ],
+      "original_sha256": "d1f507ac76d90827dd2d76fd56bc0f1975e1387d277691f00b7837f6c3a89e43",
+      "original_lines": 230,
+      "final_sha256": "2e78cafd2a85b73080b6c8506799e1ab8c13837a9a51aa71beb05dcc6299e993"
+    },
+    {
+      "original": "docs/005-live-provider-evidence.md",
+      "destination": "docs/005-live-provider-evidence.md",
+      "snapshot": null,
+      "disposition": "historical/stable registry reference",
+      "domain": "providers",
+      "reviewed_against": [
+        "packages/agent/src/providers",
+        "apps/worker/src/providers/service.ts",
+        "packages/agent/test/provider-registry.test.ts"
+      ],
+      "original_sha256": "2de367b0b5f56038667ef2793ce868a249351acfbc9ed0725435968bf48da02b",
+      "original_lines": 96,
+      "final_sha256": "7672dcd864a0e9622c42bd29191fca91c4bc5f72c73ae334da4b68cbf50188e9"
+    },
+    {
+      "original": "docs/005-provider-audit.md",
+      "destination": "docs/archive/docs/005-provider-audit.md",
+      "snapshot": null,
+      "disposition": "archived/consolidated",
+      "domain": "providers",
+      "reviewed_against": [
+        "packages/agent/src/providers",
+        "apps/worker/src/providers/service.ts",
+        "packages/agent/test/provider-registry.test.ts"
+      ],
+      "original_sha256": "4ed15f867d5311f7d4464a5ad107cea95f5e4fe2526556f664e9e230bf19160b",
+      "original_lines": 124,
+      "final_sha256": "b74efa08bd3e154c7aaee9c23afa49a75461775f68b28b86655d39a64da9eb09"
+    },
+    {
+      "original": "docs/agent-handoff.md",
+      "destination": "docs/archive/docs/agent-handoff.md",
+      "snapshot": null,
+      "disposition": "archived/consolidated",
+      "domain": "release",
+      "reviewed_against": [
+        "wrangler.jsonc",
+        "package.json",
+        "migrations",
+        "plans/qa/2026-10-07-docs-tests.json"
+      ],
+      "original_sha256": "336bb38a9d379c74466573044d5139106a8d5ccce8f28c539142906c673f643e",
+      "original_lines": 75,
+      "final_sha256": "77bbf9f2f1f930036b4add6e3438f4736979ea6e638e7950c5efc65590366ba8"
+    },
+    {
+      "original": "docs/architecture-audit-and-remediation.md",
+      "destination": "docs/archive/docs/architecture-audit-and-remediation.md",
+      "snapshot": null,
+      "disposition": "archived/consolidated",
+      "domain": "release",
+      "reviewed_against": [
+        "wrangler.jsonc",
+        "package.json",
+        "migrations",
+        "plans/qa/2026-10-07-docs-tests.json"
+      ],
+      "original_sha256": "8bc85f3767b898add6625e3a1a5a33960b3889ed05f00501445d7c36e59096e6",
+      "original_lines": 220,
+      "final_sha256": "95e67f7d762bf9d60af3372aed20b9653c6e8fe1cbb7c451be0e632e7cacec1a"
+    },
+    {
+      "original": "docs/browser-review.md",
+      "destination": "docs/archive/docs/browser-review.md",
+      "snapshot": null,
+      "disposition": "archived/consolidated",
+      "domain": "ui",
+      "reviewed_against": [
+        "apps/web/src",
+        "scripts/check-design.mjs",
+        "scripts/check-stories.mjs",
+        "apps/web/test/conversation.test.tsx"
+      ],
+      "original_sha256": "0a95782d73f14674b5b0ad91ce0ae8d2d52164e4ada71de0dc8945a960725af6",
+      "original_lines": 36,
+      "final_sha256": "f8b500756c27ace2fc98b123c933391fef7ef110f6e3bb92a4728298832c9d5a"
+    },
+    {
+      "original": "docs/contracts.md",
+      "destination": "docs/contracts.md",
+      "snapshot": "docs/archive/baseline-2026-10-07/docs/contracts.md",
+      "disposition": "consolidated/refreshed",
+      "domain": "release",
+      "reviewed_against": [
+        "wrangler.jsonc",
+        "package.json",
+        "migrations",
+        "plans/qa/2026-10-07-docs-tests.json"
+      ],
+      "original_sha256": "5fa129fc0c6400cffef53b13f1a0fc5d20291f6ea9c15dacd52ebb63e32f81c1",
+      "original_lines": 260,
+      "final_sha256": "02cd440fe23aed9799c00b7a99628e08f4ceaf08c14996e78e08c4edee3cc2e9",
+      "snapshot_sha256": "7d4b848feceb962a9236551294e5a68a2acb794f76caa9d2726fb4c1f33b4f20"
+    },
+    {
+      "original": "docs/decisions.md",
+      "destination": "docs/decisions.md",
+      "snapshot": "docs/archive/baseline-2026-10-07/docs/decisions.md",
+      "disposition": "consolidated/refreshed",
+      "domain": "release",
+      "reviewed_against": [
+        "wrangler.jsonc",
+        "package.json",
+        "migrations",
+        "plans/qa/2026-10-07-docs-tests.json"
+      ],
+      "original_sha256": "b6698fd00c2cb323168d21c33482cc2b2a3436de47ec88a8353a9319d16ce317",
+      "original_lines": 83,
+      "final_sha256": "f1c527caa1bd1474e1f13915e946bf4d494d4afb703420a7a92f58e0047f2fe5",
+      "snapshot_sha256": "62c24b694f8c23d8f7d4554fff460a8548a0f37e4541b9607eb17bba8ff54e9a"
+    },
+    {
+      "original": "docs/decisions/provider-capabilities.md",
+      "destination": "docs/archive/docs/decisions/provider-capabilities.md",
+      "snapshot": null,
+      "disposition": "archived/consolidated",
+      "domain": "providers",
+      "reviewed_against": [
+        "packages/agent/src/providers",
+        "apps/worker/src/providers/service.ts",
+        "packages/agent/test/provider-registry.test.ts"
+      ],
+      "original_sha256": "4e31cb4cc65144f3392d3746b4916a54420356c31d42ba4b252c11f6fe6828a1",
+      "original_lines": 154,
+      "final_sha256": "f553b2f8a8f2f2b004b077f1bc604775405186b757fe76052458b159e64bf60c"
+    },
+    {
+      "original": "docs/design/approved-additions-2026-10-04.md",
+      "destination": "docs/archive/docs/design/approved-additions-2026-10-04.md",
+      "snapshot": null,
+      "disposition": "archived/consolidated",
+      "domain": "ui",
+      "reviewed_against": [
+        "apps/web/src",
+        "scripts/check-design.mjs",
+        "scripts/check-stories.mjs",
+        "apps/web/test/conversation.test.tsx"
+      ],
+      "original_sha256": "51bfcc13051560e8ac68df619ee7e80701b1fd98a19f52eb9e221d5091ea4929",
+      "original_lines": 56,
+      "final_sha256": "b37e6255bb4f1ba8f743c0ceee9aed71873a72914626485220a00ba5b146f013"
+    },
+    {
+      "original": "docs/reviews/2026-10-04-008/008B.md",
+      "destination": "docs/archive/docs/reviews/2026-10-04-008/008B.md",
+      "snapshot": null,
+      "disposition": "archived/consolidated",
+      "domain": "ui",
+      "reviewed_against": [
+        "apps/web/src",
+        "scripts/check-design.mjs",
+        "scripts/check-stories.mjs",
+        "apps/web/test/conversation.test.tsx"
+      ],
+      "original_sha256": "eb0626b2d1d2fa9cd628a731a15e493df6f8b1056e54f02744435c10158db138",
+      "original_lines": 72,
+      "final_sha256": "e8ecbeaafa15134f3e266a6356c44cbd34cf51277307f470e7958c111a8f4670"
+    },
+    {
+      "original": "docs/reviews/2026-10-04-008/008C.md",
+      "destination": "docs/archive/docs/reviews/2026-10-04-008/008C.md",
+      "snapshot": null,
+      "disposition": "archived/consolidated",
+      "domain": "ui",
+      "reviewed_against": [
+        "apps/web/src",
+        "scripts/check-design.mjs",
+        "scripts/check-stories.mjs",
+        "apps/web/test/conversation.test.tsx"
+      ],
+      "original_sha256": "cc08dccc9e0010799d5a9fb742121dc27643d9fd2b8a61b498132656d17ead73",
+      "original_lines": 64,
+      "final_sha256": "2e391f413c56c475a8a54e3070999ca72760ec254a97d9962a717d368876ad5d"
+    },
+    {
+      "original": "docs/reviews/2026-10-04-008/008D.md",
+      "destination": "docs/archive/docs/reviews/2026-10-04-008/008D.md",
+      "snapshot": null,
+      "disposition": "archived/consolidated",
+      "domain": "ui",
+      "reviewed_against": [
+        "apps/web/src",
+        "scripts/check-design.mjs",
+        "scripts/check-stories.mjs",
+        "apps/web/test/conversation.test.tsx"
+      ],
+      "original_sha256": "46890a39bed68e0dd01a7cf1ce4a3f470b327e252f89c018c34de4a950024288",
+      "original_lines": 57,
+      "final_sha256": "1884de08679659a2c8a9a828d11a7373bc3a53d379a69b605e1908b90cfd3f3f"
+    },
+    {
+      "original": "docs/reviews/2026-10-04-008/REVIEW.md",
+      "destination": "docs/archive/docs/reviews/2026-10-04-008/REVIEW.md",
+      "snapshot": null,
+      "disposition": "archived/consolidated",
+      "domain": "ui",
+      "reviewed_against": [
+        "apps/web/src",
+        "scripts/check-design.mjs",
+        "scripts/check-stories.mjs",
+        "apps/web/test/conversation.test.tsx"
+      ],
+      "original_sha256": "46467a209c7fe6ce38c3684f5493be2532bd3cdc651b8f51b58e738196c30c31",
+      "original_lines": 74,
+      "final_sha256": "2dde5d0c461daf3fd33fffe670632c8261b67690cd744b0b800d94ac7b37fbec"
+    },
+    {
+      "original": "docs/status.md",
+      "destination": "docs/status.md",
+      "snapshot": null,
+      "disposition": "retained/current",
+      "domain": "release",
+      "reviewed_against": [
+        "wrangler.jsonc",
+        "package.json",
+        "migrations",
+        "plans/qa/2026-10-07-docs-tests.json"
+      ],
+      "original_sha256": "baf164e8379c5416115b2371394a77403dcf1303b04cf6f0531c0fb6219713a4",
+      "original_lines": 15,
+      "final_sha256": "3e4f3fd4f1972ba91e21264a8cb14351a29e4fdc60a0adaea0678ade1632838a"
+    },
+    {
+      "original": "docs/verification.md",
+      "destination": "docs/verification.md",
+      "snapshot": "docs/archive/baseline-2026-10-07/docs/verification.md",
+      "disposition": "consolidated/refreshed",
+      "domain": "release",
+      "reviewed_against": [
+        "wrangler.jsonc",
+        "package.json",
+        "migrations",
+        "plans/qa/2026-10-07-docs-tests.json"
+      ],
+      "original_sha256": "5319a9767cc39cc56958b4dcad9d0cf7fa37046f7f0377997db5531228fb537e",
+      "original_lines": 136,
+      "final_sha256": "5e1a68fc41593e2a82f11f311b6b27bed047478ad45d5605ad105339e141f6b9",
+      "snapshot_sha256": "d5214dae061b481fcec3e01d633b16bdb08a60f4de8557575ae9727455ffd68a"
+    },
+    {
+      "original": "plans/001-foundation.md",
+      "destination": "docs/archive/plans/001-foundation.md",
+      "snapshot": null,
+      "disposition": "archived/consolidated",
+      "domain": "release",
+      "reviewed_against": [
+        "wrangler.jsonc",
+        "package.json",
+        "migrations",
+        "plans/qa/2026-10-07-docs-tests.json"
+      ],
+      "original_sha256": "c6e829b688caf6afa2eb7d523fc7cbe3dfc19bc94fe28069edad24ca8c2e07e7",
+      "original_lines": 26,
+      "final_sha256": "77be2fe537e477c9da0951bdeb420c6abf7e0da097f6a35487bb0d8d34d65077",
+      "plan_family": "001",
+      "active_work_list_closed": true,
+      "family_implementation_verdict": "local implementation; browser/clean-install acceptance open",
+      "carried_backlog_ids": [
+        "R14"
+      ]
+    },
+    {
+      "original": "plans/002-ledger.md",
+      "destination": "docs/archive/plans/002-ledger.md",
+      "snapshot": null,
+      "disposition": "archived/consolidated",
+      "domain": "ledger",
+      "reviewed_against": [
+        "packages/ledger/src",
+        "apps/worker/test/ledger.integration.test.ts",
+        "apps/worker/test/ledger-footprint.integration.test.ts"
+      ],
+      "original_sha256": "997f6838f533087e0fa8fe7e96c6aabfed70b633db6535b9887d5f4f99f96466",
+      "original_lines": 143,
+      "final_sha256": "90b0027a1ad61ec9f87828681ba060a099118d5eb1ce818a727333d8d37feede",
+      "plan_family": "002",
+      "active_work_list_closed": true,
+      "family_implementation_verdict": "core local implementation complete; efficiency open",
+      "carried_backlog_ids": [
+        "R09"
+      ]
+    },
+    {
+      "original": "plans/003-identity.md",
+      "destination": "docs/archive/plans/003-identity.md",
+      "snapshot": null,
+      "disposition": "archived/consolidated",
+      "domain": "identity",
+      "reviewed_against": [
+        "packages/identity/src",
+        "apps/worker/test/auth.integration.test.ts",
+        "apps/worker/test/lifecycle.integration.test.ts"
+      ],
+      "original_sha256": "c4dff36f55d819522f90ba62ac894038fb29bd95dfca754350c84741e3a26447",
+      "original_lines": 60,
+      "final_sha256": "b26086d839078fc38e086e41f7c069479c5a5a542ef5cd2b67433c9278e9335c",
+      "plan_family": "003",
+      "active_work_list_closed": true,
+      "family_implementation_verdict": "003A/003B local implementation; recovery/device acceptance partial",
+      "carried_backlog_ids": [
+        "R02",
+        "R09",
+        "R14"
+      ]
+    },
+    {
+      "original": "plans/004-inbound-routing.md",
+      "destination": "docs/archive/plans/004-inbound-routing.md",
+      "snapshot": null,
+      "disposition": "archived/consolidated",
+      "domain": "conversation",
+      "reviewed_against": [
+        "apps/worker/src/inbox/repository.ts",
+        "apps/worker/src/actor/dispatch.ts",
+        "apps/worker/test/conversations.integration.test.ts",
+        "apps/worker/test/actor.integration.test.ts"
+      ],
+      "original_sha256": "e5de30c8e04522dea18692d07a69c405726e4c564b5831a27577d4ec91f2ea48",
+      "original_lines": 133,
+      "final_sha256": "d1b53f7be394f6336bf8cb8f23f95031f143a4e20df51e40e3043a80d7ac36e8",
+      "plan_family": "004",
+      "active_work_list_closed": true,
+      "family_implementation_verdict": "004A/004B local implementation; adjacent publisher/recovery acceptance partial",
+      "carried_backlog_ids": [
+        "R02",
+        "R04",
+        "R14"
+      ]
+    },
+    {
+      "original": "plans/005-implementation-handoff.md",
+      "destination": "docs/archive/plans/005-implementation-handoff.md",
+      "snapshot": null,
+      "disposition": "archived/consolidated",
+      "domain": "providers",
+      "reviewed_against": [
+        "packages/agent/src/providers",
+        "apps/worker/src/providers/service.ts",
+        "packages/agent/test/provider-registry.test.ts"
+      ],
+      "original_sha256": "4c6d7da0c38f478a7e2103bbefd9520389a1c8ca6f54bc8325b7510b9b829463",
+      "original_lines": 190,
+      "final_sha256": "08cf11f9185620f47a02e5a6349220b57f3469330943cfca87bf874c8f1c8b62",
+      "plan_family": "005",
+      "active_work_list_closed": true,
+      "family_implementation_verdict": "adapters and historical route evidence present; accounting/quality partial",
+      "carried_backlog_ids": [
+        "R07",
+        "R13"
+      ]
+    },
+    {
+      "original": "plans/005-provider-spike.md",
+      "destination": "docs/archive/plans/005-provider-spike.md",
+      "snapshot": null,
+      "disposition": "archived/consolidated",
+      "domain": "providers",
+      "reviewed_against": [
+        "packages/agent/src/providers",
+        "apps/worker/src/providers/service.ts",
+        "packages/agent/test/provider-registry.test.ts"
+      ],
+      "original_sha256": "3908a59a1881dd4f9d8a6a788ecd319bc636cbfd28aa467659b8efe295a837a1",
+      "original_lines": 61,
+      "final_sha256": "2cdb99f81fb4f14b987c0e29114811a43d12b8154805281bd416fa83803fb020",
+      "plan_family": "005",
+      "active_work_list_closed": true,
+      "family_implementation_verdict": "adapters and historical route evidence present; accounting/quality partial",
+      "carried_backlog_ids": [
+        "R07",
+        "R13"
+      ]
+    },
+    {
+      "original": "plans/005-review-followup.md",
+      "destination": "docs/archive/plans/005-review-followup.md",
+      "snapshot": null,
+      "disposition": "archived/consolidated",
+      "domain": "providers",
+      "reviewed_against": [
+        "packages/agent/src/providers",
+        "apps/worker/src/providers/service.ts",
+        "packages/agent/test/provider-registry.test.ts"
+      ],
+      "original_sha256": "0912a39fa0a9e04e20ee45b67fb4cdf87df757d47cff8702e227fd2f183c18c9",
+      "original_lines": 251,
+      "final_sha256": "0629b5cdd0f8152d5325d6907f6e430656825926429e3127402c29858df530f2",
+      "plan_family": "005",
+      "active_work_list_closed": true,
+      "family_implementation_verdict": "adapters and historical route evidence present; accounting/quality partial",
+      "carried_backlog_ids": [
+        "R07",
+        "R13"
+      ]
+    },
+    {
+      "original": "plans/005-thinking-controls-handoff.md",
+      "destination": "docs/archive/plans/005-thinking-controls-handoff.md",
+      "snapshot": null,
+      "disposition": "archived/consolidated",
+      "domain": "providers",
+      "reviewed_against": [
+        "packages/agent/src/providers",
+        "apps/worker/src/providers/service.ts",
+        "packages/agent/test/provider-registry.test.ts"
+      ],
+      "original_sha256": "2a5fbef9bcab09df4fea0f34c64e27f04c057ee7daca8edffbc4826bf736d6bd",
+      "original_lines": 174,
+      "final_sha256": "c2e4a9f4038478df21f0c87e12f54b0f33a0d4e4ba54b1082ee577d2077b29a3",
+      "plan_family": "005",
+      "active_work_list_closed": true,
+      "family_implementation_verdict": "adapters and historical route evidence present; accounting/quality partial",
+      "carried_backlog_ids": [
+        "R07",
+        "R13"
+      ]
+    },
+    {
+      "original": "plans/006-agent.md",
+      "destination": "docs/archive/plans/006-agent.md",
+      "snapshot": null,
+      "disposition": "archived/consolidated",
+      "domain": "responses",
+      "reviewed_against": [
+        "packages/agent/src/prompt.ts",
+        "apps/worker/src/agent/context.ts",
+        "apps/worker/src/agent/repository.ts",
+        "apps/worker/test/agent-tools.integration.test.ts"
+      ],
+      "original_sha256": "936843aea0aeb0d7570b2a31f40fff9be7c34145c546c693b7be2feee0171596",
+      "original_lines": 95,
+      "final_sha256": "fa41ea6f39d8b03909a4ba1c81058f0a232bd7d567c3bf5ef10482384016fbca",
+      "plan_family": "006",
+      "active_work_list_closed": true,
+      "family_implementation_verdict": "core loop/memory present; grounding/recovery/quality partial",
+      "carried_backlog_ids": [
+        "R02",
+        "R03",
+        "R04",
+        "R13"
+      ]
+    },
+    {
+      "original": "plans/006-implementation-handoff.md",
+      "destination": "docs/archive/plans/006-implementation-handoff.md",
+      "snapshot": null,
+      "disposition": "archived/consolidated",
+      "domain": "responses",
+      "reviewed_against": [
+        "packages/agent/src/prompt.ts",
+        "apps/worker/src/agent/context.ts",
+        "apps/worker/src/agent/repository.ts",
+        "apps/worker/test/agent-tools.integration.test.ts"
+      ],
+      "original_sha256": "1a2fcfb78450a1a997c19c2b803f37eb8bedfc0ef10bb9a54ca479ec7283fd20",
+      "original_lines": 459,
+      "final_sha256": "fb0cb2b7a7806d4f1b5bf856068425bd5983a33dd29eff10106e334cf1b54aa8",
+      "plan_family": "006",
+      "active_work_list_closed": true,
+      "family_implementation_verdict": "core loop/memory present; grounding/recovery/quality partial",
+      "carried_backlog_ids": [
+        "R02",
+        "R03",
+        "R04",
+        "R13"
+      ]
+    },
+    {
+      "original": "plans/006-review-followup.md",
+      "destination": "docs/archive/plans/006-review-followup.md",
+      "snapshot": null,
+      "disposition": "archived/consolidated",
+      "domain": "responses",
+      "reviewed_against": [
+        "packages/agent/src/prompt.ts",
+        "apps/worker/src/agent/context.ts",
+        "apps/worker/src/agent/repository.ts",
+        "apps/worker/test/agent-tools.integration.test.ts"
+      ],
+      "original_sha256": "1e659a09decbc680d726ddff4171a86d7bd752cf9a273f0104af39593f8868b1",
+      "original_lines": 246,
+      "final_sha256": "8cd87fe7f207b26d290dd03c99718d2f6ac35043eb9400a76528fd048f46ea36",
+      "plan_family": "006",
+      "active_work_list_closed": true,
+      "family_implementation_verdict": "core loop/memory present; grounding/recovery/quality partial",
+      "carried_backlog_ids": [
+        "R02",
+        "R03",
+        "R04",
+        "R13"
+      ]
+    },
+    {
+      "original": "plans/006-review-round2.md",
+      "destination": "docs/archive/plans/006-review-round2.md",
+      "snapshot": null,
+      "disposition": "archived/consolidated",
+      "domain": "responses",
+      "reviewed_against": [
+        "packages/agent/src/prompt.ts",
+        "apps/worker/src/agent/context.ts",
+        "apps/worker/src/agent/repository.ts",
+        "apps/worker/test/agent-tools.integration.test.ts"
+      ],
+      "original_sha256": "7b1a138e10cd18798e849df01eaeda3f5156a76b987c30a26b596e5b7fb3d4fa",
+      "original_lines": 126,
+      "final_sha256": "502ee44c315e9a7830520f4af6b54be34829f7082898b0dc7ebcf05e646d73d7",
+      "plan_family": "006",
+      "active_work_list_closed": true,
+      "family_implementation_verdict": "core loop/memory present; grounding/recovery/quality partial",
+      "carried_backlog_ids": [
+        "R02",
+        "R03",
+        "R04",
+        "R13"
+      ]
+    },
+    {
+      "original": "plans/006-review-round3.md",
+      "destination": "docs/archive/plans/006-review-round3.md",
+      "snapshot": null,
+      "disposition": "archived/consolidated",
+      "domain": "responses",
+      "reviewed_against": [
+        "packages/agent/src/prompt.ts",
+        "apps/worker/src/agent/context.ts",
+        "apps/worker/src/agent/repository.ts",
+        "apps/worker/test/agent-tools.integration.test.ts"
+      ],
+      "original_sha256": "c4baabe55f271fda5a59162f8d3ff3996d4f17cff0534d5f105dde347923a000",
+      "original_lines": 236,
+      "final_sha256": "47e0760ac13528f0f92c1d5bfd5e8ed923792c436bbded0468aeacb47d377d1a",
+      "plan_family": "006",
+      "active_work_list_closed": true,
+      "family_implementation_verdict": "core loop/memory present; grounding/recovery/quality partial",
+      "carried_backlog_ids": [
+        "R02",
+        "R03",
+        "R04",
+        "R13"
+      ]
+    },
+    {
+      "original": "plans/006-review-round4.md",
+      "destination": "docs/archive/plans/006-review-round4.md",
+      "snapshot": null,
+      "disposition": "archived/consolidated",
+      "domain": "responses",
+      "reviewed_against": [
+        "packages/agent/src/prompt.ts",
+        "apps/worker/src/agent/context.ts",
+        "apps/worker/src/agent/repository.ts",
+        "apps/worker/test/agent-tools.integration.test.ts"
+      ],
+      "original_sha256": "4e4755e13c47a5db7f95a330496b4445b644dfd376738f89626dc4a792b433c9",
+      "original_lines": 188,
+      "final_sha256": "5e46bbbce1f04c8977de79678c1ec9c75cbdd99fec025c8a691162cb4f0c335d",
+      "plan_family": "006",
+      "active_work_list_closed": true,
+      "family_implementation_verdict": "core loop/memory present; grounding/recovery/quality partial",
+      "carried_backlog_ids": [
+        "R02",
+        "R03",
+        "R04",
+        "R13"
+      ]
+    },
+    {
+      "original": "plans/006-review-round5.md",
+      "destination": "docs/archive/plans/006-review-round5.md",
+      "snapshot": null,
+      "disposition": "archived/consolidated",
+      "domain": "responses",
+      "reviewed_against": [
+        "packages/agent/src/prompt.ts",
+        "apps/worker/src/agent/context.ts",
+        "apps/worker/src/agent/repository.ts",
+        "apps/worker/test/agent-tools.integration.test.ts"
+      ],
+      "original_sha256": "98d9d1872b7ecd8f3b631b1c5155bc22309515ff603b5c78872a346f7041f968",
+      "original_lines": 152,
+      "final_sha256": "d2a5561405e995b2b52586ef00123ddff74e87119602e69d363665a127ce494e",
+      "plan_family": "006",
+      "active_work_list_closed": true,
+      "family_implementation_verdict": "core loop/memory present; grounding/recovery/quality partial",
+      "carried_backlog_ids": [
+        "R02",
+        "R03",
+        "R04",
+        "R13"
+      ]
+    },
+    {
+      "original": "plans/006-review-round6.md",
+      "destination": "docs/archive/plans/006-review-round6.md",
+      "snapshot": null,
+      "disposition": "archived/consolidated",
+      "domain": "responses",
+      "reviewed_against": [
+        "packages/agent/src/prompt.ts",
+        "apps/worker/src/agent/context.ts",
+        "apps/worker/src/agent/repository.ts",
+        "apps/worker/test/agent-tools.integration.test.ts"
+      ],
+      "original_sha256": "280a380edf3e9b37d6320e780f67e832a344422c80b77ecf1299b4289ce98be6",
+      "original_lines": 98,
+      "final_sha256": "bdb16fe4d0247b071b2ce90179e2877e48c213f877a4fbd0d54a438aff5a4c3b",
+      "plan_family": "006",
+      "active_work_list_closed": true,
+      "family_implementation_verdict": "core loop/memory present; grounding/recovery/quality partial",
+      "carried_backlog_ids": [
+        "R02",
+        "R03",
+        "R04",
+        "R13"
+      ]
+    },
+    {
+      "original": "plans/007-conversation-repair.md",
+      "destination": "docs/archive/plans/007-conversation-repair.md",
+      "snapshot": null,
+      "disposition": "archived/consolidated",
+      "domain": "api",
+      "reviewed_against": [
+        "apps/worker/src/index.ts",
+        "apps/worker/src/routes",
+        "apps/worker/test/chat-api.integration.test.ts"
+      ],
+      "original_sha256": "168ff328456abc91e88d38e2f417142f0900fe23aad65079d64ab11584a2340b",
+      "original_lines": 183,
+      "final_sha256": "3439c64df7ffce41c4310bf8906eb0a434e7afdc1c994d39d74e156e651808c1",
+      "plan_family": "007",
+      "active_work_list_closed": true,
+      "family_implementation_verdict": "APIs/commands/wake present; streaming authority/recovery partial",
+      "carried_backlog_ids": [
+        "R02",
+        "R04",
+        "R05",
+        "R14"
+      ]
+    },
+    {
+      "original": "plans/007-review-round1.md",
+      "destination": "docs/archive/plans/007-review-round1.md",
+      "snapshot": null,
+      "disposition": "archived/consolidated",
+      "domain": "api",
+      "reviewed_against": [
+        "apps/worker/src/index.ts",
+        "apps/worker/src/routes",
+        "apps/worker/test/chat-api.integration.test.ts"
+      ],
+      "original_sha256": "790cd9ebfbdf0c93bda350d8e134ab1a594e7c199aa41af20d7e04c04c4fa8e0",
+      "original_lines": 173,
+      "final_sha256": "c9a7a6610b2aa971b130d5b7b9c1abf2bfc1f46e496b05125344bb24db949566",
+      "plan_family": "007",
+      "active_work_list_closed": true,
+      "family_implementation_verdict": "APIs/commands/wake present; streaming authority/recovery partial",
+      "carried_backlog_ids": [
+        "R02",
+        "R04",
+        "R05",
+        "R14"
+      ]
+    },
+    {
+      "original": "plans/007-review-round2.md",
+      "destination": "docs/archive/plans/007-review-round2.md",
+      "snapshot": null,
+      "disposition": "archived/consolidated",
+      "domain": "api",
+      "reviewed_against": [
+        "apps/worker/src/index.ts",
+        "apps/worker/src/routes",
+        "apps/worker/test/chat-api.integration.test.ts"
+      ],
+      "original_sha256": "fa632f726a2f62c0d94ac37ef01ccad914c5da98b3bc923f8055c93afb8d6b89",
+      "original_lines": 113,
+      "final_sha256": "eedd339849652a11f2ffb4423711320eb61405ff8339d9f303c887a98d38162f",
+      "plan_family": "007",
+      "active_work_list_closed": true,
+      "family_implementation_verdict": "APIs/commands/wake present; streaming authority/recovery partial",
+      "carried_backlog_ids": [
+        "R02",
+        "R04",
+        "R05",
+        "R14"
+      ]
+    },
+    {
+      "original": "plans/007-review-round3.md",
+      "destination": "docs/archive/plans/007-review-round3.md",
+      "snapshot": null,
+      "disposition": "archived/consolidated",
+      "domain": "api",
+      "reviewed_against": [
+        "apps/worker/src/index.ts",
+        "apps/worker/src/routes",
+        "apps/worker/test/chat-api.integration.test.ts"
+      ],
+      "original_sha256": "9e1c2d03655657b835fb6253fd9f4887b043b8385212ecae73ef5fc7c3d36264",
+      "original_lines": 68,
+      "final_sha256": "64c5320697801f37be47126dc8b3c7d759f3ccbfe9229e9ca3c2c21f3012a3a1",
+      "plan_family": "007",
+      "active_work_list_closed": true,
+      "family_implementation_verdict": "APIs/commands/wake present; streaming authority/recovery partial",
+      "carried_backlog_ids": [
+        "R02",
+        "R04",
+        "R05",
+        "R14"
+      ]
+    },
+    {
+      "original": "plans/007-web-chat-api.md",
+      "destination": "docs/archive/plans/007-web-chat-api.md",
+      "snapshot": null,
+      "disposition": "archived/consolidated",
+      "domain": "api",
+      "reviewed_against": [
+        "apps/worker/src/index.ts",
+        "apps/worker/src/routes",
+        "apps/worker/test/chat-api.integration.test.ts"
+      ],
+      "original_sha256": "22091c4dab17575a230b6b6d7ab7f26f97e6d998d769cd736fedaaab810a51e0",
+      "original_lines": 78,
+      "final_sha256": "e24408be6c78afc68c67f6d3d039f0d3310a04eb13dfa641bd37bdff07fd8560",
+      "plan_family": "007",
+      "active_work_list_closed": true,
+      "family_implementation_verdict": "APIs/commands/wake present; streaming authority/recovery partial",
+      "carried_backlog_ids": [
+        "R02",
+        "R04",
+        "R05",
+        "R14"
+      ]
+    },
+    {
+      "original": "plans/008-conversation-ui.md",
+      "destination": "docs/archive/plans/008-conversation-ui.md",
+      "snapshot": null,
+      "disposition": "archived/consolidated",
+      "domain": "ui",
+      "reviewed_against": [
+        "apps/web/src",
+        "scripts/check-design.mjs",
+        "scripts/check-stories.mjs",
+        "apps/web/test/conversation.test.tsx"
+      ],
+      "original_sha256": "b8e717fa43a1b083971e58f60fe3e050fecc6b63fb6cab6f6737529df15283e6",
+      "original_lines": 37,
+      "final_sha256": "fb7b211556148ec57f1b27b2873ce8a918ef9fe6ac2f9acdd1d3cb8628d19405",
+      "plan_family": "008",
+      "active_work_list_closed": true,
+      "family_implementation_verdict": "production UI/state owners present; recovery/device/contract gaps",
+      "carried_backlog_ids": [
+        "R01",
+        "R02",
+        "R06",
+        "R12",
+        "R14"
+      ]
+    },
+    {
+      "original": "plans/008-overnight-review.md",
+      "destination": "docs/archive/plans/008-overnight-review.md",
+      "snapshot": null,
+      "disposition": "archived/consolidated",
+      "domain": "ui",
+      "reviewed_against": [
+        "apps/web/src",
+        "scripts/check-design.mjs",
+        "scripts/check-stories.mjs",
+        "apps/web/test/conversation.test.tsx"
+      ],
+      "original_sha256": "7653c9a74afd1cf06ae28471ccfb7b0dbf3650e03d2ad9cfef17ce889fc506df",
+      "original_lines": 234,
+      "final_sha256": "25fb7503c500362b9b90cec8edaa6214aa4c838e755cc004977ed3591c8ff517",
+      "plan_family": "008",
+      "active_work_list_closed": true,
+      "family_implementation_verdict": "production UI/state owners present; recovery/device/contract gaps",
+      "carried_backlog_ids": [
+        "R01",
+        "R02",
+        "R06",
+        "R12",
+        "R14"
+      ]
+    },
+    {
+      "original": "plans/008-ui-implementation-handoff.md",
+      "destination": "docs/archive/plans/008-ui-implementation-handoff.md",
+      "snapshot": null,
+      "disposition": "archived/consolidated",
+      "domain": "ui",
+      "reviewed_against": [
+        "apps/web/src",
+        "scripts/check-design.mjs",
+        "scripts/check-stories.mjs",
+        "apps/web/test/conversation.test.tsx"
+      ],
+      "original_sha256": "636293dbcac0fd8e5a56f626fa70b07399d25b5df90b95c87239b2dae794fa45",
+      "original_lines": 163,
+      "final_sha256": "36fe7c9175a93e36f887309494bd990cd4d31168ec0581d1f67680d3d4bd1dab",
+      "plan_family": "008",
+      "active_work_list_closed": true,
+      "family_implementation_verdict": "production UI/state owners present; recovery/device/contract gaps",
+      "carried_backlog_ids": [
+        "R01",
+        "R02",
+        "R06",
+        "R12",
+        "R14"
+      ]
+    },
+    {
+      "original": "plans/008C-contract-proposals.md",
+      "destination": "docs/archive/plans/008C-contract-proposals.md",
+      "snapshot": null,
+      "disposition": "archived/consolidated",
+      "domain": "ui",
+      "reviewed_against": [
+        "apps/web/src",
+        "scripts/check-design.mjs",
+        "scripts/check-stories.mjs",
+        "apps/web/test/conversation.test.tsx"
+      ],
+      "original_sha256": "1b71a5b3d14629f0ce7dfa67a34088e078ee780a6cbe470e868d897e6c0bd18d",
+      "original_lines": 150,
+      "final_sha256": "f01cf5286f4d147b4e88b9e1d5b06e81c54bf4da77f1124f66de14623c11a894",
+      "plan_family": "008",
+      "active_work_list_closed": true,
+      "family_implementation_verdict": "production UI/state owners present; recovery/device/contract gaps",
+      "carried_backlog_ids": [
+        "R01",
+        "R02",
+        "R06",
+        "R12",
+        "R14"
+      ]
+    },
+    {
+      "original": "plans/009-telegram.md",
+      "destination": "docs/archive/plans/009-telegram.md",
+      "snapshot": null,
+      "disposition": "archived/consolidated",
+      "domain": "telegram",
+      "reviewed_against": [
+        "apps/worker/src/inbox/telegram.ts",
+        "apps/worker/src/inbox/telegramDelivery.ts",
+        "apps/worker/test/telegram-text.integration.test.ts"
+      ],
+      "original_sha256": "30b5e7bb8b8ec567712fdd192797a014bf76727ddb1d869a13b05dcc142fa19e",
+      "original_lines": 48,
+      "final_sha256": "fa803ca78513c5a927d65fd9c255b06e9142527cd0336f014af680af0dfc0e00",
+      "plan_family": "009",
+      "active_work_list_closed": true,
+      "family_implementation_verdict": "009A local slice present; original native menu/callbacks unimplemented",
+      "carried_backlog_ids": [
+        "R14",
+        "R15"
+      ]
+    },
+    {
+      "original": "plans/009A-first-pass-review.md",
+      "destination": "docs/archive/plans/009A-first-pass-review.md",
+      "snapshot": null,
+      "disposition": "archived/consolidated",
+      "domain": "telegram",
+      "reviewed_against": [
+        "apps/worker/src/inbox/telegram.ts",
+        "apps/worker/src/inbox/telegramDelivery.ts",
+        "apps/worker/test/telegram-text.integration.test.ts"
+      ],
+      "original_sha256": "da658fbcd95ef290a690a7ca243ac97804de53c0f7bd27bf7df9c021b44478d4",
+      "original_lines": 65,
+      "final_sha256": "a6f390ce75772776f05b11309b1d487f9a2ffc6cbdf6f871fb104fb885e92475",
+      "plan_family": "009",
+      "active_work_list_closed": true,
+      "family_implementation_verdict": "009A local slice present; original native menu/callbacks unimplemented",
+      "carried_backlog_ids": [
+        "R14",
+        "R15"
+      ]
+    },
+    {
+      "original": "plans/009A-review-acceptance.md",
+      "destination": "docs/archive/plans/009A-review-acceptance.md",
+      "snapshot": null,
+      "disposition": "archived/consolidated",
+      "domain": "telegram",
+      "reviewed_against": [
+        "apps/worker/src/inbox/telegram.ts",
+        "apps/worker/src/inbox/telegramDelivery.ts",
+        "apps/worker/test/telegram-text.integration.test.ts"
+      ],
+      "original_sha256": "c51e07d8a431088cd16b24cfaba8493a296e0ade3abdb2e05f7ffdb431a51377",
+      "original_lines": 33,
+      "final_sha256": "ba399ba9a17fd6a2a33da5d1718f7acd5ef7ddf0901a11db71322641ea426e77",
+      "plan_family": "009",
+      "active_work_list_closed": true,
+      "family_implementation_verdict": "009A local slice present; original native menu/callbacks unimplemented",
+      "carried_backlog_ids": [
+        "R14",
+        "R15"
+      ]
+    },
+    {
+      "original": "plans/009A-telegram-linking-ux.md",
+      "destination": "docs/archive/plans/009A-telegram-linking-ux.md",
+      "snapshot": null,
+      "disposition": "archived/consolidated",
+      "domain": "telegram",
+      "reviewed_against": [
+        "apps/worker/src/inbox/telegram.ts",
+        "apps/worker/src/inbox/telegramDelivery.ts",
+        "apps/worker/test/telegram-text.integration.test.ts"
+      ],
+      "original_sha256": "c50b623ff96c711cfdac29f01db2bc31f576e8fcab6696551cb9b173e2604de9",
+      "original_lines": 99,
+      "final_sha256": "56b53d5f5310595efd79026e9aa22e024bb10122c915dabc0ae2453bb83c468c",
+      "plan_family": "009",
+      "active_work_list_closed": true,
+      "family_implementation_verdict": "009A local slice present; original native menu/callbacks unimplemented",
+      "carried_backlog_ids": [
+        "R14",
+        "R15"
+      ]
+    },
+    {
+      "original": "plans/009A-text-loop-handoff.md",
+      "destination": "docs/archive/plans/009A-text-loop-handoff.md",
+      "snapshot": null,
+      "disposition": "archived/consolidated",
+      "domain": "telegram",
+      "reviewed_against": [
+        "apps/worker/src/inbox/telegram.ts",
+        "apps/worker/src/inbox/telegramDelivery.ts",
+        "apps/worker/test/telegram-text.integration.test.ts"
+      ],
+      "original_sha256": "49964797688eb919a619bbe1a0a4f845578c6dc418273864fa5ff2d762dacbf4",
+      "original_lines": 131,
+      "final_sha256": "010cdc4de54f4f0d73b5c4ce4f5a1e8b43342726318d7b16697071a1a97926af",
+      "plan_family": "009",
+      "active_work_list_closed": true,
+      "family_implementation_verdict": "009A local slice present; original native menu/callbacks unimplemented",
+      "carried_backlog_ids": [
+        "R14",
+        "R15"
+      ]
+    },
+    {
+      "original": "plans/010-groq-stt-handoff.md",
+      "destination": "docs/archive/plans/010-groq-stt-handoff.md",
+      "snapshot": null,
+      "disposition": "archived/consolidated",
+      "domain": "voice",
+      "reviewed_against": [
+        "apps/worker/src/media",
+        "apps/web/src/api/voiceSessions.ts",
+        "apps/worker/test/voice-media.integration.test.ts"
+      ],
+      "original_sha256": "c9ae36a03c1422842ff3fba6249c190239071b129c278bde39d80b6d483e9849",
+      "original_lines": 112,
+      "final_sha256": "2bffb475c9968f7044676b41e8a6e6c7303a09066366ad69fbbaad01d093842b",
+      "plan_family": "010",
+      "active_work_list_closed": true,
+      "family_implementation_verdict": "source/local voice implementation; exact-device/provider acceptance open",
+      "carried_backlog_ids": [
+        "R07",
+        "R14"
+      ]
+    },
+    {
+      "original": "plans/010-voice-ux-handoff.md",
+      "destination": "docs/archive/plans/010-voice-ux-handoff.md",
+      "snapshot": null,
+      "disposition": "archived/consolidated",
+      "domain": "voice",
+      "reviewed_against": [
+        "apps/worker/src/media",
+        "apps/web/src/api/voiceSessions.ts",
+        "apps/worker/test/voice-media.integration.test.ts"
+      ],
+      "original_sha256": "6cba3e3433992ceb4ee323e3de4d2e9e0b889669870962831a7382532ba9ecad",
+      "original_lines": 33,
+      "final_sha256": "636875f87de558fd219799c0a46e3e5b9a4f7d3454c0473a329aea54ff9d9edd",
+      "plan_family": "010",
+      "active_work_list_closed": true,
+      "family_implementation_verdict": "source/local voice implementation; exact-device/provider acceptance open",
+      "carried_backlog_ids": [
+        "R07",
+        "R14"
+      ]
+    },
+    {
+      "original": "plans/010-voice.md",
+      "destination": "docs/archive/plans/010-voice.md",
+      "snapshot": null,
+      "disposition": "archived/consolidated",
+      "domain": "voice",
+      "reviewed_against": [
+        "apps/worker/src/media",
+        "apps/web/src/api/voiceSessions.ts",
+        "apps/worker/test/voice-media.integration.test.ts"
+      ],
+      "original_sha256": "17520b5cccb82d4c93efd3014e70ace61e1d6e8686c1dc57e1bf3f83350cba2b",
+      "original_lines": 48,
+      "final_sha256": "6732a34b85ef3d010655c751661acf5eefadec552f8e6009eac09cdc4dde4c8e",
+      "plan_family": "010",
+      "active_work_list_closed": true,
+      "family_implementation_verdict": "source/local voice implementation; exact-device/provider acceptance open",
+      "carried_backlog_ids": [
+        "R07",
+        "R14"
+      ]
+    },
+    {
+      "original": "plans/011-briefs.md",
+      "destination": "docs/archive/plans/011-briefs.md",
+      "snapshot": null,
+      "disposition": "archived/consolidated",
+      "domain": "briefs",
+      "reviewed_against": [
+        "apps/worker/src/brief",
+        "apps/worker/test/brief.integration.test.ts",
+        "packages/brief/test/schedule.test.ts"
+      ],
+      "original_sha256": "054aa02ebfd9534d068fbf5745a15d79e8dee12db89661910a50f7afb2c72b6a",
+      "original_lines": 42,
+      "final_sha256": "98bc2b7fa53f5abb87e6993891b58d29a379cc2df27f1772a9e446fff6f5a431",
+      "plan_family": "011",
+      "active_work_list_closed": true,
+      "family_implementation_verdict": "chosen-time daily scheduler present; ranking/action gaps and reminders unimplemented",
+      "carried_backlog_ids": [
+        "R08",
+        "R14"
+      ]
+    },
+    {
+      "original": "plans/012-drafts-sheet.md",
+      "destination": "docs/archive/plans/012-drafts-sheet.md",
+      "snapshot": null,
+      "disposition": "archived/consolidated",
+      "domain": "exports",
+      "reviewed_against": [
+        "packages/sheet/src/index.ts",
+        "packages/commands/src/registry.ts",
+        "packages/identity/src/workspace.ts"
+      ],
+      "original_sha256": "e474d92b4b376109a5e574a6f8cc92b3e6578a0b0235494cb2db9918cb0e1101",
+      "original_lines": 48,
+      "final_sha256": "4595f74bfc0760e6bfa66c30978e378d9af095379e4c45bc91bd51f134f01403",
+      "plan_family": "012",
+      "active_work_list_closed": true,
+      "family_implementation_verdict": "draft operations present; XLSX unimplemented",
+      "carried_backlog_ids": [
+        "R10",
+        "R11"
+      ]
+    },
+    {
+      "original": "plans/013-dogfood-execution-order.md",
+      "destination": "docs/archive/plans/013-dogfood-execution-order.md",
+      "snapshot": null,
+      "disposition": "archived/consolidated",
+      "domain": "release",
+      "reviewed_against": [
+        "wrangler.jsonc",
+        "package.json",
+        "migrations",
+        "plans/qa/2026-10-07-docs-tests.json"
+      ],
+      "original_sha256": "b2c5339576b2728cbf656eaa1e6820608740e418294acc4b96993335946d4460",
+      "original_lines": 81,
+      "final_sha256": "d73ae38dff8d2ec67bc50b5a82e4cf76d9cdc345aa50aa9a5cd56b7682146687",
+      "plan_family": "013",
+      "active_work_list_closed": true,
+      "family_implementation_verdict": "release gate incomplete; export/erasure and actual field proof open",
+      "carried_backlog_ids": [
+        "R11",
+        "R13",
+        "R14"
+      ]
+    },
+    {
+      "original": "plans/013-dogfood-loop-review.md",
+      "destination": "docs/archive/plans/013-dogfood-loop-review.md",
+      "snapshot": null,
+      "disposition": "archived/consolidated",
+      "domain": "release",
+      "reviewed_against": [
+        "wrangler.jsonc",
+        "package.json",
+        "migrations",
+        "plans/qa/2026-10-07-docs-tests.json"
+      ],
+      "original_sha256": "6cdb6a336c6119cd9088dedd5916fd5b0fb99e496672693bd31c1480732a8390",
+      "original_lines": 42,
+      "final_sha256": "965104aa057a5dd8c25cb3940ca2087da9de7849196ff2f8e4288f1888543ac2",
+      "plan_family": "013",
+      "active_work_list_closed": true,
+      "family_implementation_verdict": "release gate incomplete; export/erasure and actual field proof open",
+      "carried_backlog_ids": [
+        "R11",
+        "R13",
+        "R14"
+      ]
+    },
+    {
+      "original": "plans/013-release-readiness.md",
+      "destination": "docs/archive/plans/013-release-readiness.md",
+      "snapshot": null,
+      "disposition": "archived/consolidated",
+      "domain": "release",
+      "reviewed_against": [
+        "wrangler.jsonc",
+        "package.json",
+        "migrations",
+        "plans/qa/2026-10-07-docs-tests.json"
+      ],
+      "original_sha256": "40546a11a011fa51c72a29a8640b0c2beefdc2d0a9b2917f0a24fcb1a897af5c",
+      "original_lines": 55,
+      "final_sha256": "24c024623411d03f281172b6bf76b1c60ecfb9f8ce6be7d208eb4bd1d171a372",
+      "plan_family": "013",
+      "active_work_list_closed": true,
+      "family_implementation_verdict": "release gate incomplete; export/erasure and actual field proof open",
+      "carried_backlog_ids": [
+        "R11",
+        "R13",
+        "R14"
+      ]
+    },
+    {
+      "original": "plans/014-implementation-handoff.md",
+      "destination": "docs/archive/plans/014-implementation-handoff.md",
+      "snapshot": null,
+      "disposition": "archived/consolidated",
+      "domain": "performance",
+      "reviewed_against": [
+        "apps/worker/src/dispatchHint.ts",
+        "apps/worker/src/chat/stream.ts",
+        "apps/worker/src/agent/streamPublish.ts",
+        "apps/worker/test/d1-economics.integration.test.ts"
+      ],
+      "original_sha256": "56930c1c8369b04ba5fd263bf79b8b5e45ff07d15a38f01493df7d6c0cd17862",
+      "original_lines": 128,
+      "final_sha256": "59177548a17ead10fa4e07cb9f795687acf97be9d5b2f4dc830cbd5ef01c52f0",
+      "plan_family": "014",
+      "active_work_list_closed": true,
+      "family_implementation_verdict": "actor-hosted SSE present; remaining transport/authority/cost acceptance partial",
+      "carried_backlog_ids": [
+        "R02",
+        "R05",
+        "R13",
+        "R14"
+      ]
+    },
+    {
+      "original": "plans/014-live-transport-review.md",
+      "destination": "docs/archive/plans/014-live-transport-review.md",
+      "snapshot": null,
+      "disposition": "archived/consolidated",
+      "domain": "performance",
+      "reviewed_against": [
+        "apps/worker/src/dispatchHint.ts",
+        "apps/worker/src/chat/stream.ts",
+        "apps/worker/src/agent/streamPublish.ts",
+        "apps/worker/test/d1-economics.integration.test.ts"
+      ],
+      "original_sha256": "1e5735d438ecea82e4f36bce083cf1830de3d60d8590d6563a300e31efe98ab9",
+      "original_lines": 62,
+      "final_sha256": "1c94869c690856b5c35d0758861c2ca53e579a4900025c57603e1043454d4f7e",
+      "plan_family": "014",
+      "active_work_list_closed": true,
+      "family_implementation_verdict": "actor-hosted SSE present; remaining transport/authority/cost acceptance partial",
+      "carried_backlog_ids": [
+        "R02",
+        "R05",
+        "R13",
+        "R14"
+      ]
+    },
+    {
+      "original": "plans/014-live-transport.md",
+      "destination": "docs/archive/plans/014-live-transport.md",
+      "snapshot": null,
+      "disposition": "archived/consolidated",
+      "domain": "performance",
+      "reviewed_against": [
+        "apps/worker/src/dispatchHint.ts",
+        "apps/worker/src/chat/stream.ts",
+        "apps/worker/src/agent/streamPublish.ts",
+        "apps/worker/test/d1-economics.integration.test.ts"
+      ],
+      "original_sha256": "7be26d590f280496e660605f3b45254e41edeb5be86e6a243f4b7b69dc8ac854",
+      "original_lines": 236,
+      "final_sha256": "731da113adbb02f0362189fcb7c83dba76b7d3643e9eec1dcb2502d26bd1da69",
+      "plan_family": "014",
+      "active_work_list_closed": true,
+      "family_implementation_verdict": "actor-hosted SSE present; remaining transport/authority/cost acceptance partial",
+      "carried_backlog_ids": [
+        "R02",
+        "R05",
+        "R13",
+        "R14"
+      ]
+    },
+    {
+      "original": "plans/015-foundation-efficiency-review.md",
+      "destination": "docs/archive/plans/015-foundation-efficiency-review.md",
+      "snapshot": null,
+      "disposition": "archived/consolidated",
+      "domain": "performance",
+      "reviewed_against": [
+        "apps/worker/src/dispatchHint.ts",
+        "apps/worker/src/chat/stream.ts",
+        "apps/worker/src/agent/streamPublish.ts",
+        "apps/worker/test/d1-economics.integration.test.ts"
+      ],
+      "original_sha256": "0c3ba97bed9dbd7bef15cf6c5e961fec2faebbaace219bf81f48edc018a572c3",
+      "original_lines": 23,
+      "final_sha256": "55f90baf000e3b2e1503fd88870c8db9058c847d74c93d9f3e22976b7c0ae63f",
+      "plan_family": "015",
+      "active_work_list_closed": true,
+      "family_implementation_verdict": "015A.1 and parts of 015B present; reads/guards/retention partial; concurrency optional",
+      "carried_backlog_ids": [
+        "R09",
+        "R13"
+      ]
+    },
+    {
+      "original": "plans/015-foundation-efficiency.md",
+      "destination": "docs/archive/plans/015-foundation-efficiency.md",
+      "snapshot": null,
+      "disposition": "archived/consolidated",
+      "domain": "performance",
+      "reviewed_against": [
+        "apps/worker/src/dispatchHint.ts",
+        "apps/worker/src/chat/stream.ts",
+        "apps/worker/src/agent/streamPublish.ts",
+        "apps/worker/test/d1-economics.integration.test.ts"
+      ],
+      "original_sha256": "78fb402b050d3a45a589805b82f710eee094678a36da6894470ec2bd02335d2d",
+      "original_lines": 136,
+      "final_sha256": "2012f00ccacabfc715e81052026d4279e1cfb4a078ee2ba84a03178ee82d1662",
+      "plan_family": "015",
+      "active_work_list_closed": true,
+      "family_implementation_verdict": "015A.1 and parts of 015B present; reads/guards/retention partial; concurrency optional",
+      "carried_backlog_ids": [
+        "R09",
+        "R13"
+      ]
+    },
+    {
+      "original": "plans/015A1-review-acceptance.md",
+      "destination": "docs/archive/plans/015A1-review-acceptance.md",
+      "snapshot": null,
+      "disposition": "archived/consolidated",
+      "domain": "performance",
+      "reviewed_against": [
+        "apps/worker/src/dispatchHint.ts",
+        "apps/worker/src/chat/stream.ts",
+        "apps/worker/src/agent/streamPublish.ts",
+        "apps/worker/test/d1-economics.integration.test.ts"
+      ],
+      "original_sha256": "2497806a280b3aa55beef3ae71021319988a041e0485a190a99edd7828e33a92",
+      "original_lines": 28,
+      "final_sha256": "f465982ae0453f5aabf69996ecf120a59ca9d7880ae8acf7eb134b282c11a4b3",
+      "plan_family": "015",
+      "active_work_list_closed": true,
+      "family_implementation_verdict": "015A.1 and parts of 015B present; reads/guards/retention partial; concurrency optional",
+      "carried_backlog_ids": [
+        "R09",
+        "R13"
+      ]
+    },
+    {
+      "original": "plans/015A1-review-followup.md",
+      "destination": "docs/archive/plans/015A1-review-followup.md",
+      "snapshot": null,
+      "disposition": "archived/consolidated",
+      "domain": "performance",
+      "reviewed_against": [
+        "apps/worker/src/dispatchHint.ts",
+        "apps/worker/src/chat/stream.ts",
+        "apps/worker/src/agent/streamPublish.ts",
+        "apps/worker/test/d1-economics.integration.test.ts"
+      ],
+      "original_sha256": "d0468beea01417a529cc2dad83e7298d2ff4a080e0eddd4c00e3888365c881fb",
+      "original_lines": 20,
+      "final_sha256": "2979c3d21e6bf433740a4d0f6a07e9c4506e05c0530034ecc71f1dc315768c42",
+      "plan_family": "015",
+      "active_work_list_closed": true,
+      "family_implementation_verdict": "015A.1 and parts of 015B present; reads/guards/retention partial; concurrency optional",
+      "carried_backlog_ids": [
+        "R09",
+        "R13"
+      ]
+    },
+    {
+      "original": "plans/2026-10-04-release-preflight.md",
+      "destination": "docs/archive/plans/2026-10-04-release-preflight.md",
+      "snapshot": null,
+      "disposition": "archived/consolidated",
+      "domain": "release",
+      "reviewed_against": [
+        "wrangler.jsonc",
+        "package.json",
+        "migrations",
+        "plans/qa/2026-10-07-docs-tests.json"
+      ],
+      "original_sha256": "c47cb288368980a449df10a093ef86d8e8404a2ff4bd4b0f92ee5be2d97eab8f",
+      "original_lines": 90,
+      "final_sha256": "445fc9a1eb9d1e63a14181108822b41e49e6608196e87bc979c75ea1594b3373"
+    },
+    {
+      "original": "plans/2026-10-05-saas-ui-ux-transformation-mission.md",
+      "destination": "docs/archive/plans/2026-10-05-saas-ui-ux-transformation-mission.md",
+      "snapshot": null,
+      "disposition": "archived/consolidated",
+      "domain": "ui",
+      "reviewed_against": [
+        "apps/web/src",
+        "scripts/check-design.mjs",
+        "scripts/check-stories.mjs",
+        "apps/web/test/conversation.test.tsx"
+      ],
+      "original_sha256": "f43f2896ad215417c56a23311e04ce916cad3439bc90622b6973b925ccb0b9be",
+      "original_lines": 99,
+      "final_sha256": "d0efde776c162abdeb66bf7b5a6fb1b0589132109553b9c65851ca9c0413f2c9"
+    },
+    {
+      "original": "plans/2026-10-05-sol-frontend-experience-audit.md",
+      "destination": "docs/archive/plans/2026-10-05-sol-frontend-experience-audit.md",
+      "snapshot": null,
+      "disposition": "archived/consolidated",
+      "domain": "ui",
+      "reviewed_against": [
+        "apps/web/src",
+        "scripts/check-design.mjs",
+        "scripts/check-stories.mjs",
+        "apps/web/test/conversation.test.tsx"
+      ],
+      "original_sha256": "c90d1f03ff42520387189580a23149e3320b065e6744ea55763c03982b71bce7",
+      "original_lines": 757,
+      "final_sha256": "cd9ea612a0a6536b8b02b87431f29b18617e618c150f012f31ed2b38a5ca6cd8"
+    },
+    {
+      "original": "plans/2026-10-05-sol-resolution-claim-audit.md",
+      "destination": "docs/archive/plans/2026-10-05-sol-resolution-claim-audit.md",
+      "snapshot": null,
+      "disposition": "archived/consolidated",
+      "domain": "release",
+      "reviewed_against": [
+        "wrangler.jsonc",
+        "package.json",
+        "migrations",
+        "plans/qa/2026-10-07-docs-tests.json"
+      ],
+      "original_sha256": "15c774a9c2f8d8f351ca8b2f89a44679c216fa6c8a23e4221fe181b41d2b7335",
+      "original_lines": 232,
+      "final_sha256": "989bc79a54914a716da8327e6d4de040ed5161f101a621c2408f97c79ce28990"
+    },
+    {
+      "original": "plans/2026-10-05-sol-usefulness-audit.md",
+      "destination": "docs/archive/plans/2026-10-05-sol-usefulness-audit.md",
+      "snapshot": null,
+      "disposition": "archived/consolidated",
+      "domain": "release",
+      "reviewed_against": [
+        "wrangler.jsonc",
+        "package.json",
+        "migrations",
+        "plans/qa/2026-10-07-docs-tests.json"
+      ],
+      "original_sha256": "39c877c095c487336ec18767f518bac5e7628f7e4b253f3d14b97195a5694633",
+      "original_lines": 338,
+      "final_sha256": "dcace015a9fe0709dfa6afcebe35ba3cf115edcac601a011ab6f63fde05e7770"
+    },
+    {
+      "original": "plans/2026-10-06-latency-and-efficiency-audit.md",
+      "destination": "docs/archive/plans/2026-10-06-latency-and-efficiency-audit.md",
+      "snapshot": null,
+      "disposition": "archived/consolidated",
+      "domain": "performance",
+      "reviewed_against": [
+        "apps/worker/src/dispatchHint.ts",
+        "apps/worker/src/chat/stream.ts",
+        "apps/worker/src/agent/streamPublish.ts",
+        "apps/worker/test/d1-economics.integration.test.ts"
+      ],
+      "original_sha256": "4b1d8c16efda9a8bc02bc47d7ee863b575e7e2510a170c830537e0707409f49f",
+      "original_lines": 267,
+      "final_sha256": "4ca909eaa22bd5b188bbb1f0ad4edea08f5d7d61fc947aaf93a9327c5bbba2b5"
+    },
+    {
+      "original": "plans/2026-10-06-telegram-and-model-integration-audit.md",
+      "destination": "docs/archive/plans/2026-10-06-telegram-and-model-integration-audit.md",
+      "snapshot": null,
+      "disposition": "archived/consolidated",
+      "domain": "telegram",
+      "reviewed_against": [
+        "apps/worker/src/inbox/telegram.ts",
+        "apps/worker/src/inbox/telegramDelivery.ts",
+        "apps/worker/test/telegram-text.integration.test.ts"
+      ],
+      "original_sha256": "3e2a797f7363c4923263f185361fe8e5bb55a5bf904db0d6eed46d6d8f05f076",
+      "original_lines": 105,
+      "final_sha256": "ebf5616f73826863f9521dcf70fc419d26762a3a3a59143133e0a98be6dbe9d2"
+    },
+    {
+      "original": "plans/2026-10-07-agent-response-audit.md",
+      "destination": "docs/archive/plans/2026-10-07-agent-response-audit.md",
+      "snapshot": null,
+      "disposition": "archived/consolidated",
+      "domain": "responses",
+      "reviewed_against": [
+        "packages/agent/src/prompt.ts",
+        "apps/worker/src/agent/context.ts",
+        "apps/worker/src/agent/repository.ts",
+        "apps/worker/test/agent-tools.integration.test.ts"
+      ],
+      "original_sha256": "409ce79e8da3da8af0b96a23fba8aae0c6cab5c4266864eab90b63c34877731f",
+      "original_lines": 153,
+      "final_sha256": "3c2a338c32bd21f323ac7cb74a0e5a548017206fcf4ea1d3ceae029e281fd3aa"
+    },
+    {
+      "original": "plans/2026-10-07-codex-style-questions-plan.md",
+      "destination": "docs/archive/plans/2026-10-07-codex-style-questions-plan.md",
+      "snapshot": null,
+      "disposition": "archived/consolidated",
+      "domain": "ui",
+      "reviewed_against": [
+        "apps/web/src",
+        "scripts/check-design.mjs",
+        "scripts/check-stories.mjs",
+        "apps/web/test/conversation.test.tsx"
+      ],
+      "original_sha256": "4e5776c2850bfbcc64a97f58299bcf7d594bf389a64e41cef31ded70c315f80f",
+      "original_lines": 60,
+      "final_sha256": "e5fdb5e55cfa52109eea142021fad09f145c493abb4d0039ab7cca67a3787c06"
+    },
+    {
+      "original": "plans/2026-10-07-compact-ui-plan.md",
+      "destination": "docs/archive/plans/2026-10-07-compact-ui-plan.md",
+      "snapshot": null,
+      "disposition": "archived/consolidated",
+      "domain": "ui",
+      "reviewed_against": [
+        "apps/web/src",
+        "scripts/check-design.mjs",
+        "scripts/check-stories.mjs",
+        "apps/web/test/conversation.test.tsx"
+      ],
+      "original_sha256": "e8ca01ef4a1e304e607e4949b8b8a85ba4142099a5e93e5ad2c7b555455f8d95",
+      "original_lines": 58,
+      "final_sha256": "a65c6d8def6237e540229dc98bc1f45806f8315f47c76b7b755118f1c0e1227e"
+    },
+    {
+      "original": "plans/2026-10-07-conversational-tables-plan.md",
+      "destination": "docs/archive/plans/2026-10-07-conversational-tables-plan.md",
+      "snapshot": null,
+      "disposition": "archived/consolidated",
+      "domain": "responses",
+      "reviewed_against": [
+        "packages/agent/src/prompt.ts",
+        "apps/worker/src/agent/context.ts",
+        "apps/worker/src/agent/repository.ts",
+        "apps/worker/test/agent-tools.integration.test.ts"
+      ],
+      "original_sha256": "d215998e711282c791ee06cd6fcb2f456628a304d44ed12b58ac2e467d116528",
+      "original_lines": 114,
+      "final_sha256": "28ff901c2040564a5a43bd3b0d6dffa7003f0e2c8fcd7d70e9a55f773f3b6a67"
+    },
+    {
+      "original": "plans/2026-10-07-image-context-audit.md",
+      "destination": "docs/archive/plans/2026-10-07-image-context-audit.md",
+      "snapshot": null,
+      "disposition": "archived/consolidated",
+      "domain": "voice",
+      "reviewed_against": [
+        "apps/worker/src/media",
+        "apps/web/src/api/voiceSessions.ts",
+        "apps/worker/test/voice-media.integration.test.ts"
+      ],
+      "original_sha256": "2613253ed203fba1c6af2c5d68786c4c158a61e7439bf83ed22a52e80b5f025b",
+      "original_lines": 54,
+      "final_sha256": "e422cf3a325a9abd7c0d21f36777c71bf55b3f60ed16ee958b5c1208e8301f47"
+    },
+    {
+      "original": "plans/2026-10-07-image-context-repair-plan.md",
+      "destination": "docs/archive/plans/2026-10-07-image-context-repair-plan.md",
+      "snapshot": null,
+      "disposition": "archived/consolidated",
+      "domain": "voice",
+      "reviewed_against": [
+        "apps/worker/src/media",
+        "apps/web/src/api/voiceSessions.ts",
+        "apps/worker/test/voice-media.integration.test.ts"
+      ],
+      "original_sha256": "91dc61e4999661895bfb388d4cda2945aca95085ad6419d749cfc0d92249b5ff",
+      "original_lines": 74,
+      "final_sha256": "db158a0a0efd421b5c1661a89183097ce2e498027f49003e293f6cf4df6c38fc"
+    },
+    {
+      "original": "plans/2026-10-07-ui-and-reply-audit.md",
+      "destination": "docs/archive/plans/2026-10-07-ui-and-reply-audit.md",
+      "snapshot": null,
+      "disposition": "archived/consolidated",
+      "domain": "release",
+      "reviewed_against": [
+        "wrangler.jsonc",
+        "package.json",
+        "migrations",
+        "plans/qa/2026-10-07-docs-tests.json"
+      ],
+      "original_sha256": "48b9857140400294a27e4efa0c7adaeff0e38cd46f6ed052d5b08044a32ebd72",
+      "original_lines": 95,
+      "final_sha256": "cd827a2036a8121ccaf4410237ab85d1c8de762a82b02cd7e6107c3a2568a307"
+    },
+    {
+      "original": "plans/QA-first-runtime-repair-handoff.md",
+      "destination": "docs/archive/plans/QA-first-runtime-repair-handoff.md",
+      "snapshot": null,
+      "disposition": "archived/consolidated",
+      "domain": "release",
+      "reviewed_against": [
+        "wrangler.jsonc",
+        "package.json",
+        "migrations",
+        "plans/qa/2026-10-07-docs-tests.json"
+      ],
+      "original_sha256": "c326b7b230d54a6d8891c3bf03a2f59d0d6cc58883e22e3790acba9a06f1e4f4",
+      "original_lines": 65,
+      "final_sha256": "5a1aa422077589af161f8f9629a9b5f2208d27fbc1f85a0fe4c9ce2c3e90b359"
+    },
+    {
+      "original": "plans/README.md",
+      "destination": "plans/README.md",
+      "snapshot": "docs/archive/baseline-2026-10-07/plans/README.md",
+      "disposition": "consolidated/refreshed",
+      "domain": "release",
+      "reviewed_against": [
+        "wrangler.jsonc",
+        "package.json",
+        "migrations",
+        "plans/qa/2026-10-07-docs-tests.json"
+      ],
+      "original_sha256": "9bb46767539a085e695340dda69f2b3b97a23cda5914ca1f64ff5a6729edbb74",
+      "original_lines": 121,
+      "final_sha256": "bda07206f50732646f54fa6417f4b2f52b66197dfc0b6b34289296b6a262dd21",
+      "snapshot_sha256": "5e7ee8f7540e2d700f6e3a324a8423a207e82b8584cf383c5914ba1e2bca4c24"
+    },
+    {
+      "original": "plans/first-deploy-runbook.md",
+      "destination": "docs/archive/plans/first-deploy-runbook.md",
+      "snapshot": null,
+      "disposition": "archived/consolidated",
+      "domain": "release",
+      "reviewed_against": [
+        "wrangler.jsonc",
+        "package.json",
+        "migrations",
+        "plans/qa/2026-10-07-docs-tests.json"
+      ],
+      "original_sha256": "6ccd1318b633af65c2132e6c48e119e3f08b04cd00b5c9ee00fdb97b183e6a0d",
+      "original_lines": 146,
+      "final_sha256": "4a8688077e3dfa6c82e14708f5ae6cc45fd31185204d74c7f9f14fde5e9d67c3"
+    },
+    {
+      "original": "plans/qa/2026-10-04-antigravity-review.md",
+      "destination": "docs/archive/plans/qa/2026-10-04-antigravity-review.md",
+      "snapshot": null,
+      "disposition": "archived/consolidated",
+      "domain": "release",
+      "reviewed_against": [
+        "wrangler.jsonc",
+        "package.json",
+        "migrations",
+        "plans/qa/2026-10-07-docs-tests.json"
+      ],
+      "original_sha256": "39d357715498aebafc5e593886baedc75a3309cb2be531b5617048d434ad74a4",
+      "original_lines": 73,
+      "final_sha256": "fe48d44ea57ff1a8193f1640c204046a541a28aceb41706249a980d9d29b3514"
+    },
+    {
+      "original": "plans/qa/2026-10-04-browser-access-status.md",
+      "destination": "docs/archive/plans/qa/2026-10-04-browser-access-status.md",
+      "snapshot": null,
+      "disposition": "archived/consolidated",
+      "domain": "ui",
+      "reviewed_against": [
+        "apps/web/src",
+        "scripts/check-design.mjs",
+        "scripts/check-stories.mjs",
+        "apps/web/test/conversation.test.tsx"
+      ],
+      "original_sha256": "f0775bae11d1dd4790306a51889a426c51d2d204acb9bd45b7ae6d3ea705a80f",
+      "original_lines": 14,
+      "final_sha256": "ed8b38b642af06b1d376d08acf050d4a4027003a2d36dfdf47901001451622cd"
+    },
+    {
+      "original": "plans/qa/2026-10-04-stream-economics-check.md",
+      "destination": "docs/archive/plans/qa/2026-10-04-stream-economics-check.md",
+      "snapshot": null,
+      "disposition": "archived/consolidated",
+      "domain": "release",
+      "reviewed_against": [
+        "wrangler.jsonc",
+        "package.json",
+        "migrations",
+        "plans/qa/2026-10-07-docs-tests.json"
+      ],
+      "original_sha256": "379ae4b68e35e8df9e9318945cb2ff710355659d68a1205f9a68b2e25e49d2cf",
+      "original_lines": 25,
+      "final_sha256": "26e170208ce3f0e03d961fe7ddd0585c57d35a076f42d4e6b835efc123e83c80"
+    },
+    {
+      "original": "plans/qa/2026-10-04-voice-brief-review.md",
+      "destination": "docs/archive/plans/qa/2026-10-04-voice-brief-review.md",
+      "snapshot": null,
+      "disposition": "archived/consolidated",
+      "domain": "voice",
+      "reviewed_against": [
+        "apps/worker/src/media",
+        "apps/web/src/api/voiceSessions.ts",
+        "apps/worker/test/voice-media.integration.test.ts"
+      ],
+      "original_sha256": "ea3cce8717695561c98ea9b6d0b0d64b907e688f9afa8311b0c38745c6c81f0d",
+      "original_lines": 34,
+      "final_sha256": "60ac89fd05b90a9f9da4c9c56677f6b8fdd0c482b997a022c62fb03e733aee18"
+    },
+    {
+      "original": "plans/qa/2026-10-07-agent-response-cases.md",
+      "destination": "plans/qa/2026-10-07-agent-response-cases.md",
+      "snapshot": null,
+      "disposition": "retained/current",
+      "domain": "responses",
+      "reviewed_against": [
+        "packages/agent/src/prompt.ts",
+        "apps/worker/src/agent/context.ts",
+        "apps/worker/src/agent/repository.ts",
+        "apps/worker/test/agent-tools.integration.test.ts"
+      ],
+      "original_sha256": "b849d51c29c7a3ed5ca31862f8dd21280592201ee5a73ddcf00917402d0c4fc8",
+      "original_lines": 59,
+      "final_sha256": "b849d51c29c7a3ed5ca31862f8dd21280592201ee5a73ddcf00917402d0c4fc8"
+    },
+    {
+      "original": "plans/qa/browser-acceptance-policy.md",
+      "destination": "docs/archive/plans/qa/browser-acceptance-policy.md",
+      "snapshot": null,
+      "disposition": "archived/consolidated",
+      "domain": "ui",
+      "reviewed_against": [
+        "apps/web/src",
+        "scripts/check-design.mjs",
+        "scripts/check-stories.mjs",
+        "apps/web/test/conversation.test.tsx"
+      ],
+      "original_sha256": "f27b6c8640c37718c03b1e741116705d8bfb9227bdac72ec18a1abf6d9acbfb0",
+      "original_lines": 35,
+      "final_sha256": "49b3a1e622db6d18705d97cad3f73eb90d389821c976c3355b74c04819782350"
+    },
+    {
+      "original": "plans/qa/runtime-repair-browser-retest.md",
+      "destination": "docs/archive/plans/qa/runtime-repair-browser-retest.md",
+      "snapshot": null,
+      "disposition": "archived/consolidated",
+      "domain": "ui",
+      "reviewed_against": [
+        "apps/web/src",
+        "scripts/check-design.mjs",
+        "scripts/check-stories.mjs",
+        "apps/web/test/conversation.test.tsx"
+      ],
+      "original_sha256": "8744d271cac8af0a7b74d2a632b6e7f2e66bb1911bf9527d71572fb6b354b64a",
+      "original_lines": 30,
+      "final_sha256": "0ad742875fa2910e4b5790c154386191fca6e901cb1cfabdaa8ba32b48410498"
+    },
+    {
+      "original": "plans/review-evidence/README.md",
+      "destination": "docs/archive/plans/review-evidence/README.md",
+      "snapshot": null,
+      "disposition": "archived/consolidated",
+      "domain": "release",
+      "reviewed_against": [
+        "wrangler.jsonc",
+        "package.json",
+        "migrations",
+        "plans/qa/2026-10-07-docs-tests.json"
+      ],
+      "original_sha256": "4f4d0d52b8f2fa27f91500cd525a40184c2f611bbde2d9c79d0834014fed01e2",
+      "original_lines": 26,
+      "final_sha256": "3e8e129e578bd1d7e2ab6484c95d547b7f66afefe43138f196dfce1e2a126f42"
+    },
+    {
+      "original": "plans/thinking-controls-review-round1.md",
+      "destination": "docs/archive/plans/thinking-controls-review-round1.md",
+      "snapshot": null,
+      "disposition": "archived/consolidated",
+      "domain": "providers",
+      "reviewed_against": [
+        "packages/agent/src/providers",
+        "apps/worker/src/providers/service.ts",
+        "packages/agent/test/provider-registry.test.ts"
+      ],
+      "original_sha256": "87a55eb08d268430d4c7f277073a0e6857c44763f682115b6c212ec9150e1a0c",
+      "original_lines": 105,
+      "final_sha256": "504dd5de7d1c0d1bbba1025d30371c827adaeb0f6811e09ea1e5660768ad6acb"
+    },
+    {
+      "original": "plans/workspace-memory-cloudflare.md",
+      "destination": "docs/archive/plans/workspace-memory-cloudflare.md",
+      "snapshot": null,
+      "disposition": "archived/consolidated",
+      "domain": "responses",
+      "reviewed_against": [
+        "packages/agent/src/prompt.ts",
+        "apps/worker/src/agent/context.ts",
+        "apps/worker/src/agent/repository.ts",
+        "apps/worker/test/agent-tools.integration.test.ts"
+      ],
+      "original_sha256": "0bd4aaeea70ff5b1e3f9fd64250fdf27e4b6513d2240aeefcdb67d089bb44000",
+      "original_lines": 108,
+      "final_sha256": "8ed8856e51f2898bed01d1f173df244904d272a87e50af6366ce186617488d45"
+    },
+    {
+      "original": "product.md",
+      "destination": "product.md",
+      "snapshot": "docs/archive/baseline-2026-10-07/product.md",
+      "disposition": "consolidated/refreshed",
+      "domain": "release",
+      "reviewed_against": [
+        "wrangler.jsonc",
+        "package.json",
+        "migrations",
+        "plans/qa/2026-10-07-docs-tests.json"
+      ],
+      "original_sha256": "a232753541c29e54b132e78f4eff37309300437d6397a2434c9ea788e8bb3ad8",
+      "original_lines": 606,
+      "final_sha256": "9793a703ce1b7e719ea9bcc1d85b67ba5e2f0f477480e752a6b58038ba9a3a39",
+      "snapshot_sha256": "d56a0c9d46c8616556c627ed544bf9833e94255c7e8dcf594af38d4a139eb983"
+    },
+    {
+      "original": "roadmap.md",
+      "destination": "docs/archive/roadmap.md",
+      "snapshot": null,
+      "disposition": "archived/consolidated",
+      "domain": "release",
+      "reviewed_against": [
+        "wrangler.jsonc",
+        "package.json",
+        "migrations",
+        "plans/qa/2026-10-07-docs-tests.json"
+      ],
+      "original_sha256": "401965481b873413047a8d1be200508f0e98f7062f002cb16eed61d31fd85678",
+      "original_lines": 339,
+      "final_sha256": "6f026b050e5bea2a8a4c98a59072fc55bab53d93d1c07991279adc737658f0b4"
+    }
+  ],
+  "numbered_plan_closure": {
+    "date": "2026-10-07",
+    "sequence": "001–015",
+    "records": 45,
+    "register": "docs/status.md#numbered-plan-closure",
+    "backlog": "plans/README.md#repair-order",
+    "families": [
+      {
+        "family": "001",
+        "records": 1,
+        "verdict": "local implementation; browser/clean-install acceptance open",
+        "carry": [
+          "R14"
+        ]
+      },
+      {
+        "family": "002",
+        "records": 1,
+        "verdict": "core local implementation complete; efficiency open",
+        "carry": [
+          "R09"
+        ]
+      },
+      {
+        "family": "003",
+        "records": 1,
+        "verdict": "003A/003B local implementation; recovery/device acceptance partial",
+        "carry": [
+          "R02",
+          "R09",
+          "R14"
+        ]
+      },
+      {
+        "family": "004",
+        "records": 1,
+        "verdict": "004A/004B local implementation; adjacent publisher/recovery acceptance partial",
+        "carry": [
+          "R02",
+          "R04",
+          "R14"
+        ]
+      },
+      {
+        "family": "005",
+        "records": 4,
+        "verdict": "adapters and historical route evidence present; accounting/quality partial",
+        "carry": [
+          "R07",
+          "R13"
+        ]
+      },
+      {
+        "family": "006",
+        "records": 8,
+        "verdict": "core loop/memory present; grounding/recovery/quality partial",
+        "carry": [
+          "R02",
+          "R03",
+          "R04",
+          "R13"
+        ]
+      },
+      {
+        "family": "007",
+        "records": 5,
+        "verdict": "APIs/commands/wake present; streaming authority/recovery partial",
+        "carry": [
+          "R02",
+          "R04",
+          "R05",
+          "R14"
+        ]
+      },
+      {
+        "family": "008",
+        "records": 4,
+        "verdict": "production UI/state owners present; recovery/device/contract gaps",
+        "carry": [
+          "R01",
+          "R02",
+          "R06",
+          "R12",
+          "R14"
+        ]
+      },
+      {
+        "family": "009",
+        "records": 5,
+        "verdict": "009A local slice present; original native menu/callbacks unimplemented",
+        "carry": [
+          "R14",
+          "R15"
+        ]
+      },
+      {
+        "family": "010",
+        "records": 3,
+        "verdict": "source/local voice implementation; exact-device/provider acceptance open",
+        "carry": [
+          "R07",
+          "R14"
+        ]
+      },
+      {
+        "family": "011",
+        "records": 1,
+        "verdict": "chosen-time daily scheduler present; ranking/action gaps and reminders unimplemented",
+        "carry": [
+          "R08",
+          "R14"
+        ]
+      },
+      {
+        "family": "012",
+        "records": 1,
+        "verdict": "draft operations present; XLSX unimplemented",
+        "carry": [
+          "R10",
+          "R11"
+        ]
+      },
+      {
+        "family": "013",
+        "records": 3,
+        "verdict": "release gate incomplete; export/erasure and actual field proof open",
+        "carry": [
+          "R11",
+          "R13",
+          "R14"
+        ]
+      },
+      {
+        "family": "014",
+        "records": 3,
+        "verdict": "actor-hosted SSE present; remaining transport/authority/cost acceptance partial",
+        "carry": [
+          "R02",
+          "R05",
+          "R13",
+          "R14"
+        ]
+      },
+      {
+        "family": "015",
+        "records": 4,
+        "verdict": "015A.1 and parts of 015B present; reads/guards/retention partial; concurrency optional",
+        "carry": [
+          "R09",
+          "R13"
+        ]
+      }
+    ]
+  }
+}

@@ -2,7 +2,7 @@
  * @otis/contracts/voice
  * Voice/media DTOs for Gate 010: authenticated private upload, validated
  * recording metadata, transcription readiness and workspace STT settings.
- * Defined in docs/contracts.md sections 7 and 13 plus plans/010-groq-stt-handoff.md.
+ * Defined in docs/contracts.md (media/provider boundaries) plus docs/archive/plans/010-groq-stt-handoff.md.
  *
  * The wire contract stays provider-neutral: no client-supplied provider URL,
  * key, or model. The server snapshots the route (native or Groq STT) at

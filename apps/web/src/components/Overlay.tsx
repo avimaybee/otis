@@ -14,15 +14,25 @@ export function Overlay({ label, className = '', onClose, children, initialFocus
   useEffect(() => {
     const previous = document.activeElement as HTMLElement | null;
     const dialog = ref.current;
+    if (!dialog) return;
     nestedRef.current = openOverlays > 0;
-    if (nestedRef.current) dialog?.classList.add('otis-overlay--nested');
+    if (nestedRef.current) dialog.classList.add('otis-overlay--nested');
     openOverlays += 1;
-    dialog?.showModal();
+    dialog.showModal();
     initialFocus?.current?.focus();
 
     const handleClick = (event: MouseEvent) => {
       if (event.target === dialog) {
-        closeRef.current();
+        const rect = dialog.getBoundingClientRect();
+        const isInDialog = (
+          rect.top <= event.clientY &&
+          event.clientY <= rect.top + rect.height &&
+          rect.left <= event.clientX &&
+          event.clientX <= rect.left + rect.width
+        );
+        if (!isInDialog) {
+          closeRef.current();
+        }
       }
     };
     dialog?.addEventListener('click', handleClick);

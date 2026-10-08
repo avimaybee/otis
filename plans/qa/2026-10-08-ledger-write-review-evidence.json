@@ -1,0 +1,56 @@
+{
+  "date": "2026-10-08",
+  "baseline": "45a4fef plus uncommitted R09 implementation",
+  "verdict": "R09 A-C acceptance incomplete; six confirmed findings, seven failing behavior cases",
+  "sourceScope": "Production source preserved; audit probes/evidence and existing status/backlog/plan updated",
+  "reviewedSourceSha256": {
+    "packages/ledger/src/repository/executor.ts": "EC61C82342E6EF2CBCA216A3198EC7908CF5AA14495DB44568A3C6968C154DFE",
+    "packages/ledger/src/repository/queries.ts": "31DA34FBE8AA5863E51011255A0695B136D03E340213A25ED7D60F4DE407F1DF",
+    "packages/ledger/src/commands/setFields.ts": "6CF9B67A4E26AC138E4CBAAC31691A9BF4F1D97FF466E06218FC61A440BDB61B",
+    "apps/worker/src/agent/repository.ts": "76EA1D8F908D055F44193294AF672F8D526F547882E59CF3AFFC954FE849EDCD",
+    "apps/worker/src/actor/dispatch.ts": "8D1D4A948B4EA79A844E6FC135FC1D6EBF32E4D1DB06683228BDB60900DF1797",
+    "apps/worker/src/agent/handler.ts": "B4604F9857F411C8357F60329FD8DCA5B0D51597C39FD8C50A11846031383AE5"
+  },
+  "checks": [
+    {
+      "command": "pnpm exec vitest run --project pure --reporter=dot --silent",
+      "result": "324 passed, 1 skipped",
+      "output": "plans/qa/2026-10-08-ledger-write-review-pure-results.txt"
+    },
+    {
+      "command": "pnpm exec vitest run --project worker apps/worker/test/field-batch.integration.test.ts apps/worker/test/agent-tools.integration.test.ts --reporter=dot",
+      "result": "28 passed, 2 files"
+    },
+    {
+      "command": "pnpm exec vitest run --config plans/qa/2026-10-08-ledger-write-review.vitest.config.ts --reporter=dot",
+      "result": "7 behavior assertions failed, 1 rollback control passed, 8 cases",
+      "output": "plans/qa/2026-10-08-ledger-write-review-results.txt",
+      "venue": "Actual local Workers/D1; synthetic workspace/member/conversation records",
+      "finalRerunIncludes": "Concurrent legacy-decline continuation outbox/source-requeue repair"
+    },
+    {
+      "command": "pnpm exec eslint plans/qa/2026-10-08-ledger-write-review.probe.test.ts plans/qa/2026-10-08-ledger-write-review.vitest.config.ts",
+      "result": "passed, exit 0"
+    },
+    {
+      "command": "node plans/qa/docs-audit.mjs links",
+      "result": "765 links checked, zero broken, exit 0"
+    },
+    {
+      "command": "git diff --check",
+      "result": "passed, exit 0; existing Windows line-ending warnings only"
+    }
+  ],
+  "confirmedObservations": [50, 51, 52, 53, 54, 55],
+  "aliasScan": {
+    "venue": "Actual local D1 meta.rows_read; not production billed usage",
+    "samples": [{ "unrelatedAliases": 10, "rowsRead": 10 }, { "unrelatedAliases": 1000, "rowsRead": 1000 }],
+    "plan": "SEARCH entity_aliases USING INDEX idx_entity_aliases_ws_alias (workspace_id=?)"
+  },
+  "boundaries": [
+    "No production source fix, commit, push, deployment or remote mutation",
+    "Implementation agent's full typecheck/lint/test/build claims not independently rerun",
+    "No production billed-row, Worker CPU, live-provider or end-to-end p50/p95 measurement",
+    "Later source changes require affected-case revalidation"
+  ]
+}

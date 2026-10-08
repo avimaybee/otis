@@ -10,7 +10,7 @@ Read [design-tokens.md](design-tokens.md) in full before changing any visible UI
 
 The image is a miniature. Apply the revised production recipes in token sections 5–8, not screenshot pixels or the old scale multiplier. Its outer frame is the illustration boundary, not a production chat card. Its history block illustrates row treatment; mobile history still opens in a drawer. Desktop still uses sidebar, chat and optional detail. Preserve the charcoal/Highlighter palette and installed Instrument Sans, Bricolage Grotesque and Geist Mono roles.
 
-The [user's Codex question screenshot](plans/qa/2026-10-07-codex-question-reference.png) is the question interaction reference. The [interactive Otis study](plans/qa/otis-compact-question-preview.html) demonstrates the compact composition with fictional content. Its measured geometry and screenshots are proposal evidence, not an implemented production component. Implementation details and unresolved verification are recorded in the [question plan](plans/2026-10-07-codex-style-questions-plan.md) and [compact UI plan](plans/2026-10-07-compact-ui-plan.md).
+The [user's Codex question screenshot](plans/qa/2026-10-07-codex-question-reference.png) is the question interaction reference. The [interactive Otis study](plans/qa/otis-compact-question-preview.html) demonstrates the compact composition with fictional content. Its measured geometry and screenshots are proposal evidence. The production question/composer components now exist; their current evidence and unresolved browser/device verification are recorded in [implementation status](docs/status.md). Historical proposals remain in the [archive](docs/archive/README.md).
 
 The supplementary [Working/Undo reference](docs/design/working-undo-reference.png) and [voice-capture reference](docs/design/voice-capture-reference.png), supplied 2026-10-04, define the compact mobile flow: a small title/workspace header, sparse transcript, expandable activity, ordinary clarification and bottom composer or action sheet. They do not replace the approved visual tokens or authorize their miniature dimensions as production values. Reuse shadcn primitives throughout, with the approved overrides; no parallel custom control system.
 
@@ -20,7 +20,7 @@ The supplementary [Working/Undo reference](docs/design/working-undo-reference.pn
 | Interaction, presentation and fixture inventory | This guide and latest explicit user instructions |
 | Business meaning, clarification, membership, memory and undo scope | [product.md](product.md) |
 | Durable acceptance, authorization, retries and run execution | [architecture.md](architecture.md), [contracts](docs/contracts.md) |
-| Delivery and evidence | [008 handoff](plans/008-ui-implementation-handoff.md), [plans index](plans/README.md), [verification](docs/verification.md) |
+| Delivery and evidence | [implementation status](docs/status.md), [current backlog](plans/README.md), [verification](docs/verification.md) |
 
 If a necessary visual value or element has no approved token/recipe, describe the exact gap and ask Avi before designing it. Routine file organization and test names remain engineering choices. Existing code shows what exists, not what is approved. Historical reviews remain evidence for their recorded version.
 
@@ -41,10 +41,11 @@ The field-use loop is capture, memory, resurfacing, action. Capture must feel sa
 | Teammate conversation | Author visible, full authorized history, no editable composer; return to own chat |
 | History | Own/team chats and search; selected row uses the token recipe |
 | Detail | Inspect source/action/draft; Close restores transcript position |
+| Your information (selected, unimplemented) | Direct editing of shared records and flexible sparse columns/lists; explicit Save, desktop ranges and mobile row forms; same Otis conversation for calculations/tidy |
 | Settings | Personal/shared scope, effective saved values, masked connections and readable model names |
 | Access lost | Stop rendering private transcript, detail, cached messages and audio immediately |
 
-No dashboard, kanban, daily checklist, lead editor, decorative metrics or separate icon rail. Signed-in entry opens the last accessible own chat or a composer-led empty chat, never a Firebase UID/role diagnostic.
+No dashboard, kanban, daily checklist, decorative metrics or separate icon rail. The user-selected information editor is specified below. Signed-in entry opens the last accessible own chat or a composer-led empty chat, never a Firebase UID/role diagnostic.
 
 ## 3. Layout, navigation and touch
 
@@ -96,7 +97,7 @@ Keep the nested disclosure collapsed initially; the user can open it to watch th
 
 Do not render an empty Thinking disclosure when no displayable content arrived. Thinking-effort support, reasoning-token usage and displayable reasoning are different capabilities. A model may support an effort control while returning no public text. Do not switch models, raise effort, add a model call or invent commentary to fill this section. Encrypted thought signatures, hidden prompts, keys and opaque protocol fields never enter public activity. Reasoning text is tentative provider output, not a committed business fact, tool authorization or canonical memory; it has no Undo.
 
-On disconnect/reload, restore the received content from the existing authorized activity snapshot/cursor, without duplicate text or another model request. Preserve useful received content on Stop/failure, clearly marked interrupted where applicable. A bounded display limit must explicitly say when more provider output was omitted; silently dropping everything after a few deltas is unacceptable. Retained Thinking follows the chat's existing workspace-history access rules. Render text safely without raw HTML, automatic embeds or per-token screen-reader announcements. The additive stream contract and implementation sequence are in [contracts section 8](docs/contracts.md#8-activity-envelope) and the [008B handoff](plans/008-ui-implementation-handoff.md#thinking-inside-working).
+On disconnect/reload, restore the received content from the existing authorized activity snapshot/cursor, without duplicate text or another model request. Preserve useful received content on Stop/failure, clearly marked interrupted where applicable. A bounded display limit must explicitly say when more provider output was omitted; silently dropping everything after a few deltas is unacceptable. Retained Thinking follows the chat's existing workspace-history access rules. Render text safely without raw HTML, automatic embeds or per-token screen-reader announcements. The stream boundary is in [contracts](docs/contracts.md#7-activity-and-provider-output); current implementation and remaining publication/recovery work are in [status](docs/status.md).
 
 ### Question panel
 
@@ -175,7 +176,7 @@ Self-host the font families and latin-ext subsets specified in token section 5. 
 
 Assistant paragraphs use text-wrap pretty; titles balance; long names/URLs overflow-wrap anywhere. Use Intl formatting with explicit currency. Romanian RON uses ro-RO. Display times/date separators in the viewer's locale and workspace timezone consistently. Relative deadline interpretation still uses the source member's timezone under the server contract. Store instants UTC.
 
-Transcript is role log with polite announcements of completed new messages only, aria-busy during streaming. Never announce each token or loaded historical pages. The handoff defines its publication boundary. Send and Stop have different aria-labels. Icon-only actions have labels; state and author do not depend on color.
+Transcript is role log with polite announcements of completed new messages only, aria-busy during streaming. Never announce each token or loaded historical pages. The activity contract defines its publication boundary. Send and Stop have different aria-labels. Icon-only actions have labels; state and author do not depend on color.
 
 Dialogs/sheets trap and return focus. Keyboard traversal, IME, 200% zoom, enlarged text, reduced motion and read-only history need actual review. Tooltip text is not the only label.
 
@@ -224,6 +225,18 @@ Follow [token section 12](design-tokens.md#12-visual-review-checklist) at **360�
 
 Every UI increment needs production-component stories, token enforcement, targeted behavior/a11y checks, browser comparison to the reference, and evidence with commit, browser/OS, viewport, story IDs, screenshots, defects and disposition. Use native Codex/Antigravity browser controls, no Playwright. Screenshots and happy-dom geometry do not replace interaction/device evidence.
 
-The current repository has `pnpm check:design`, `pnpm check:stories` and Storybook tooling. The audit's passing inventory/checker runs do not establish this revised target's implementation. Extend actual enforcement and production-component stories for the new recipes; do not loosen checks to excuse mismatches or count a zero-file scan as evidence. Newly required question stories remain explicitly contract-only until implemented. Run the full applicable implementation checks and record identified-build browser comparisons before claiming completion.
+The current repository has `pnpm check:design`, `pnpm check:stories` and Storybook tooling. Passing inventory/checker runs do not establish every revised target's implementation. The free-text question story uses the production panel; seven question recovery/failure stories and other listed future states remain contract-only. Their fixture IDs count toward inventory but not implemented-journey proof. Extend production-component stories rather than loosen checks or count a zero-file scan as evidence. Current verdicts live in [status](docs/status.md); run applicable implementation checks and record identified-build browser comparisons before claiming completion.
 
 Reject separate toolbar strips, rounded sidebar cards, bordered ordinary messages, dead controls, duplicate composer/message variants, persistent desktop timestamps, hidden action-row inflation, decorative motion, arbitrary visual values and false success states. The specified question panel is allowed. Passing a build does not excuse mismatches. Apply this explicit revised direction rather than restoring superseded density rules. Unknown recipes ask; known mismatches get fixed.
+
+## 15. Your information — selected pattern, unimplemented
+
+The user selected an actual editable information page. See the [R16 implementation plan](plans/editable-records.md) for its complete interaction, data and acceptance contract. Its page can use the available content width and a compact grid control row; this does not authorize adding toolbar strips to the chat composer. Reuse the existing sidebar/navigation, shadcn primitives and production conversation/composer/question implementation.
+
+Use simple named lists, Add row/Add column, local Undo/Redo, a changed count and explicit Save/Discard. Desktop supports ranges, clipboard/fill, cell editing and column controls; mobile/list mode uses a shared normal row form. Saved Undo and Restore this value are distinct from local Undo. Keep dirty drafts through navigation/network interruption and preserve newer edits during Save or an incoming Otis patch.
+
+Ask Otis opens the production conversation in a panel/sheet with the selected information as context. A clean saved list may be tidied immediately with history/Undo; a dirty draft is tidied locally and remains unsaved. Calculations and organization are conversational. Source/history, missing values, disputes, conflict and partial-save state must remain intelligible.
+
+Approved colors/fonts/control recipes still govern; grid theme values resolve from existing CSS variables. Proposed records sizing composes the existing scale: 32 px desktop data rows/headers, 48 px mobile row/control reach, 14/20 grid UI, 16/24 form text and tabular numbers. Use neutral cell selection/focus and labeled dirty/error feedback. The approved token file is unchanged in this planning pass; document any required new production recipe with implementation rather than altering tokens to excuse drift.
+
+All proposed records story IDs remain **unimplemented** in the plan. Add their actual production stories and section 13 inventory entries as slices ship; existing checker coverage must not be represented as acceptance of this new page. Native keyboard/a11y and five-width/device evidence remain required.

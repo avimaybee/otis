@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import type { Components } from 'react-markdown';
+import { CheckIcon, CopyIcon } from './icons.js';
 
 /**
  * Tab-separated export for pasting into Sheets. Cells holding tabs,
@@ -43,8 +44,9 @@ export function MarkdownTable({ children }: { children?: ReactNode }) {
   return (
     <div className="otis-mdtable">
       <div className="otis-mdtable__toolbar">
-        <button type="button" className="otis-mdtable__copy" onClick={() => void copy()}>
-          {copied ? 'Copied' : 'Copy table'}
+        <button type="button" className="otis-mdtable__copy gap-1 text-xs" onClick={() => void copy()}>
+          {copied ? <CheckIcon /> : <CopyIcon />}
+          <span>{copied ? 'Copied' : 'Copy table'}</span>
         </button>
       </div>
       {/* eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex -- wide tables scroll inside their region; keyboard users need the region focusable to reach off-screen columns. */}

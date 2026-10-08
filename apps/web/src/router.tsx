@@ -1,21 +1,17 @@
 /**
- * One typed navigation owner for workspace/chat deep links.
+ * One typed navigation owner for workspace/chat and records deep links.
  *
- * The externally usable URL shape is unchanged: `/?workspace=<id>&chat=<id>`
- * with `chat=new` for a new own-chat entry, so shared links and refresh keep
- * working. Router state owns the selected workspace/chat; React Query owns
- * server data; the scoped outbox owns unsent content. No second
- * selected-chat state may disagree with the URL, and no manual
- * pushState/popstate navigation ownership remains beside this router.
- *
- * Route parameters are not authorization: every scoped API request still
- * enforces session/workspace/chat access, a guessed or stale chat ID
- * renders the honest unavailable state, and revocation clears scoped caches.
+ * The externally usable URL shape: `/?workspace=<id>&chat=<id>`
+ * and `/records?workspace=<id>&list=<id>`. Router state owns the selected
+ * workspace/chat/records view; React Query owns server data; the scoped outbox
+ * owns unsent content. No second selected-workspace/chat/list store disagrees
+ * with the URL, and no manual pushState/popstate navigation ownership remains.
  */
 
 import { createContext, useContext } from 'react';
 import { createMemoryHistory, createRootRoute, createRoute, createRouter } from '@tanstack/react-router';
 import { ConversationScreen } from './ConversationScreen.js';
+import { RecordsScreen } from './components/records/RecordsScreen.js';
 
 export interface SessionContextValue {
   userId: string;
@@ -29,7 +25,7 @@ export const SessionContext = createContext<SessionContextValue | null>(null);
 
 function sessionOf(): SessionContextValue {
   const session = useContext(SessionContext);
-  if (!session) throw new Error('Conversation route requires session context.');
+  if (!session) throw new Error('Route requires session context.');
   return session;
 }
 
@@ -47,6 +43,19 @@ export function parseConversationSearch(raw: Record<string, unknown>): Conversat
   const search: ConversationSearch = {};
   if (typeof raw['workspace'] === 'string' && raw['workspace']) search.workspace = raw['workspace'];
   if (typeof raw['chat'] === 'string' && raw['chat']) search.chat = raw['chat'];
+  return search;
+}
+
+/** Search shape for records route. */
+export interface RecordsSearch {
+  workspace?: string;
+  list?: string;
+}
+
+export function parseRecordsSearch(raw: Record<string, unknown>): RecordsSearch {
+  const search: RecordsSearch = {};
+  if (typeof raw['workspace'] === 'string' && raw['workspace']) search.workspace = raw['workspace'];
+  if (typeof raw['list'] === 'string' && raw['list']) search.list = raw['list'];
   return search;
 }
 
@@ -74,6 +83,34 @@ function ConversationRouteView() {
       onNavigate={(workspace, nextChat, replace) =>
         navigate({ to: '/', search: { workspace, chat: nextChat ?? 'new' }, replace: replace ?? false })
       }
+      onNavigateToRecords={workspace =>
+        navigate({ to: '/records', search: { workspace }, replace: false })
+      }
+    />
+  );
+}
+
+function RecordsRouteView() {
+  const search = recordsRoute.useSearch();
+  const navigate = recordsRoute.useNavigate();
+  const session = sessionOf();
+  const fallbackWorkspace = session.workspaces[0]?.id ?? '';
+  const workspaceId = session.workspaces.some(item => item.id === search.workspace) ? search.workspace! : fallbackWorkspace;
+  return (
+    <RecordsScreen
+      workspaceId={workspaceId}
+      listId={search.list ?? null}
+      workspaces={session.workspaces}
+      userId={session.userId}
+      members={session.members}
+      onSignOut={session.onSignOut}
+      onRefreshSession={session.onRefreshSession}
+      onNavigate={(workspace, nextChat, replace) =>
+        navigate({ to: '/', search: { workspace, chat: nextChat ?? 'new' }, replace: replace ?? false })
+      }
+      onNavigateToList={(workspace, listId, replace) =>
+        navigate({ to: '/records', search: { workspace, list: listId }, replace: replace ?? false })
+      }
     />
   );
 }
@@ -85,7 +122,14 @@ export const conversationRoute = createRoute({
   component: ConversationRouteView,
 });
 
-const routeTree = rootRoute.addChildren([conversationRoute]);
+export const recordsRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/records',
+  validateSearch: (search: Record<string, unknown>): RecordsSearch => parseRecordsSearch(search),
+  component: RecordsRouteView,
+});
+
+const routeTree = rootRoute.addChildren([conversationRoute, recordsRoute]);
 
 export function createAppRouter(options?: { history?: ReturnType<typeof createMemoryHistory> }) {
   return createRouter({ routeTree, history: options?.history });

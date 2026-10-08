@@ -1,0 +1,180 @@
+
+ RUN  v4.1.0 D:/vs code/Otis
+
+Using secrets defined in .dev.vars
+stdout | plans/qa/2026-10-08-ledger-write-review.probe.test.ts > mixed receipt replay still parks the existing pending question
+R09_REVIEW mixed_retry {
+  first: [32m'needs_clarification'[39m,
+  retry: [32m'already_applied'[39m,
+  question: [32m'pending'[39m
+}
+
+stdout | plans/qa/2026-10-08-ledger-write-review.probe.test.ts > legacy decline preserves independent phone facts
+R09_REVIEW legacy_decline { resumed: [33mtrue[39m, phone: [1mnull[22m, status: [32m'new'[39m }
+
+xstdout | plans/qa/2026-10-08-ledger-write-review.probe.test.ts > failed legacy confirmation cannot turn a later decline into approval
+R09_REVIEW failed_then_decline {
+  failed: [33mfalse[39m,
+  storedCommand: [32m'set_fields'[39m,
+  storedMissing: [32m'[]'[39m,
+  decline: [33mtrue[39m,
+  status: [32m'warm'[39m
+}
+
+xstdout | plans/qa/2026-10-08-ledger-write-review.probe.test.ts > partial legacy replay uses the revision from an actual committed child
+R09_REVIEW partial_real_commit {
+  first: [32m'applied'[39m,
+  firstRevision: [33m1[39m,
+  retry: [32m'conflict'[39m,
+  error: [32m'revision_conflict'[39m
+}
+
+xstdout | plans/qa/2026-10-08-ledger-write-review.probe.test.ts > alias hydration does not scan unrelated workspace aliases
+R09_REVIEW alias_scan [
+  {
+    aliases: [33m10[39m,
+    read: [33m10[39m,
+    plan: [
+      [32m'SEARCH entity_aliases USING INDEX idx_entity_aliases_ws_alias (workspace_id=?)'[39m
+    ]
+  },
+  {
+    aliases: [33m1000[39m,
+    read: [33m1000[39m,
+    plan: [
+      [32m'SEARCH entity_aliases USING INDEX idx_entity_aliases_ws_alias (workspace_id=?)'[39m
+    ]
+  }
+]
+
+xstdout | plans/qa/2026-10-08-ledger-write-review.probe.test.ts > legacy decline rechecks membership in the committing transaction
+R09_REVIEW revoked_decline { resumed: [33mtrue[39m, question: [32m'cancelled'[39m }
+
+xstdout | plans/qa/2026-10-08-ledger-write-review.probe.test.ts > question-only replay does not reopen an already-declined question
+R09_REVIEW question_after_decline {
+  first: [32m'needs_clarification'[39m,
+  question: [32m'cancelled'[39m,
+  replay: [32m'needs_clarification'[39m
+}
+
+xx·
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 7 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  plans/qa/2026-10-08-ledger-write-review.probe.test.ts > mixed receipt replay still parks the existing pending question
+AssertionError: expected 'already_applied' to be 'needs_clarification' // Object.is equality
+
+Expected: "needs_clarification"
+Received: "already_applied"
+
+ ❯ plans/qa/2026-10-08-ledger-write-review.probe.test.ts:118:25
+    116|     .bind(src.runId).first<{ status: string }>();
+    117|   console.log('R09_REVIEW mixed_retry', { first: first.status, retry: …
+    118|   expect(second.status).toBe('needs_clarification');
+       |                         ^
+    119| });
+    120|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/7]⎯
+
+ FAIL  plans/qa/2026-10-08-ledger-write-review.probe.test.ts > legacy decline preserves independent phone facts
+AssertionError: expected null to be '123' // Object.is equality
+
+- Expected:
+"123"
+
++ Received:
+null
+
+ ❯ plans/qa/2026-10-08-ledger-write-review.probe.test.ts:131:35
+    129|   expect(result.resumed).toBe(true);
+    130|   expect(await status(f)).toBe('new');
+    131|   expect(await field(f, 'phone')).toBe('123');
+       |                                   ^
+    132| });
+    133|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/7]⎯
+
+ FAIL  plans/qa/2026-10-08-ledger-write-review.probe.test.ts > failed legacy confirmation cannot turn a later decline into approval
+AssertionError: expected 'warm' to be 'new' // Object.is equality
+
+Expected: "new"
+Received: "warm"
+
+ ❯ plans/qa/2026-10-08-ledger-write-review.probe.test.ts:168:27
+    166|     storedMissing: stored!.missing_fields, decline: cancelled.resumed,…
+    167|   });
+    168|   expect(await status(f)).toBe('new');
+       |                           ^
+    169|   expect(stored?.operation_payload_json).toBe(l.payload);
+    170| });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/7]⎯
+
+ FAIL  plans/qa/2026-10-08-ledger-write-review.probe.test.ts > partial legacy replay uses the revision from an actual committed child
+AssertionError: expected 'conflict' to be 'applied' // Object.is equality
+
+Expected: "applied"
+Received: "conflict"
+
+ ❯ plans/qa/2026-10-08-ledger-write-review.probe.test.ts:191:25
+    189|   });
+    190|   console.log('R09_REVIEW partial_real_commit', { first: first.status,…
+    191|   expect(result.status).toBe('applied');
+       |                         ^
+    192|   expect(await field(f, 'preferred_language')).toBe('fa');
+    193| });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/7]⎯
+
+ FAIL  plans/qa/2026-10-08-ledger-write-review.probe.test.ts > alias hydration does not scan unrelated workspace aliases
+AssertionError: expected 1000 to be less than or equal to 13
+ ❯ plans/qa/2026-10-08-ledger-write-review.probe.test.ts:230:27
+    228|   }
+    229|   console.log('R09_REVIEW alias_scan', samples);
+    230|   expect(samples[1].read).toBeLessThanOrEqual(samples[0].read + 3);
+       |                           ^
+    231| });
+    232|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[5/7]⎯
+
+ FAIL  plans/qa/2026-10-08-ledger-write-review.probe.test.ts > legacy decline rechecks membership in the committing transaction
+AssertionError: expected 'cancelled' to be 'pending' // Object.is equality
+
+Expected: "pending"
+Received: "cancelled"
+
+ ❯ plans/qa/2026-10-08-ledger-write-review.probe.test.ts:248:21
+    246|     .bind(l.clarId).first<{ status: string }>();
+    247|   console.log('R09_REVIEW revoked_decline', { resumed: result.resumed,…
+    248|   expect(q?.status).toBe('pending');
+       |                     ^
+    249|   expect(result.resumed).toBe(false);
+    250| });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[6/7]⎯
+
+ FAIL  plans/qa/2026-10-08-ledger-write-review.probe.test.ts > question-only replay does not reopen an already-declined question
+AssertionError: expected 'needs_clarification' to be 'already_applied' // Object.is equality
+
+Expected: "already_applied"
+Received: "needs_clarification"
+
+ ❯ plans/qa/2026-10-08-ledger-write-review.probe.test.ts:279:25
+    277|   const replay = await executeAgentTool(params);
+    278|   console.log('R09_REVIEW question_after_decline', { first: first.stat…
+    279|   expect(replay.status).toBe('already_applied');
+       |                         ^
+    280| });
+    281|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[7/7]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  7 failed | 1 passed (8)
+   Start at  15:05:38
+   Duration  7.41s (transform 1.02s, setup 0ms, import 1.71s, tests 4.56s, environment 0ms)
+

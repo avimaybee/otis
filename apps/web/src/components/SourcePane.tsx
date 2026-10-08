@@ -30,22 +30,30 @@ export function SourcePane({ workspaceId, memoryId, onClose, onAccessLost, onOpe
     return () => { cancelled = true; };
   }, [workspaceId, memoryId, retryCount, onAccessLost]);
 
-  return <Overlay label="Original source" className="otis-overlay--settings" onClose={onClose}><section className="otis-settings" aria-label="Original source"><header className="otis-pane-header"><h2 className="text-base font-medium">Source</h2><Button variant="ghost" size="icon" type="button" aria-label="Close source" onClick={onClose}><CloseIcon/></Button></header>
-    {errorType === 'missing' ? (
-      <Alert variant="destructive"><AlertDescription>This source is unavailable. Its content may no longer be retained.</AlertDescription></Alert>
-    ) : errorType === 'network' ? (
-      <div className="flex flex-col gap-2">
-        <Alert variant="destructive"><AlertDescription>Could not load source content. Check connection and try again.</AlertDescription></Alert>
-        <Button variant="outline" size="sm" type="button" onClick={() => setRetryCount(c => c + 1)}>Retry</Button>
+  return <Overlay label="Original source" className="otis-overlay--dialog otis-overlay--wide" onClose={onClose}>
+    <div className="otis-dialog-card otis-dialog-card--wide" aria-label="Original source">
+      <header className="otis-dialog-card__header">
+        <h2 className="text-base font-medium">Source</h2>
+        <Button variant="ghost" size="icon" type="button" aria-label="Close source" onClick={onClose}><CloseIcon/></Button>
+      </header>
+      <div className="otis-dialog-card__body">
+        {errorType === 'missing' ? (
+          <Alert variant="destructive"><AlertDescription>This source is unavailable. Its content may no longer be retained.</AlertDescription></Alert>
+        ) : errorType === 'network' ? (
+          <div className="flex flex-col gap-2">
+            <Alert variant="destructive"><AlertDescription>Could not load source content. Check connection and try again.</AlertDescription></Alert>
+            <Button variant="outline" size="sm" type="button" onClick={() => setRetryCount(c => c + 1)}>Retry</Button>
+          </div>
+        ) : loading || !detail ? (
+          <p role="status" className="text-sm text-muted-foreground">Opening the original source…</p>
+        ) : (
+          <>
+            <div className="otis-detail__section"><div className="mb-2"><Badge variant="outline">Saved context · {detail.memory.provenance === 'inferred' ? 'Inferred, not stated directly' : 'Stated directly'}</Badge></div><p className="otis-turn__body text-base text-foreground">{detail.memory.content}</p></div>
+            <div className="otis-detail__section"><span className="otis-detail__label text-xs">{detail.source?.author_name ?? 'Workspace'} · {formatDayLabel(detail.source?.created_at ?? detail.memory.observed_at)}</span><blockquote className="otis-detail__value text-sm">{detail.source?.text ?? 'The original input is no longer available. This is the retained context record.'}</blockquote></div>
+            {detail.source?.chat_id && <Button variant="outline" size="sm" type="button" className="otis-button self-start mt-2" onClick={() => onOpenChat(detail.source!.chat_id!)}>Open source conversation</Button>}
+          </>
+        )}
       </div>
-    ) : loading || !detail ? (
-      <p role="status" className="text-sm text-muted-foreground">Opening the original source…</p>
-    ) : (
-      <>
-        <div className="otis-detail__section"><div className="mb-2"><Badge variant="outline">Saved context · {detail.memory.provenance === 'inferred' ? 'Inferred, not stated directly' : 'Stated directly'}</Badge></div><p className="otis-turn__body text-base text-foreground">{detail.memory.content}</p></div>
-        <div className="otis-detail__section"><span className="otis-detail__label text-xs">{detail.source?.author_name ?? 'Workspace'} · {formatDayLabel(detail.source?.created_at ?? detail.memory.observed_at)}</span><blockquote className="otis-detail__value text-sm">{detail.source?.text ?? 'The original input is no longer available. This is the retained context record.'}</blockquote></div>
-        {detail.source?.chat_id && <Button variant="outline" size="sm" type="button" className="otis-button self-start mt-2" onClick={() => onOpenChat(detail.source!.chat_id!)}>Open source conversation</Button>}
-      </>
-    )}
-  </section></Overlay>;
+    </div>
+  </Overlay>;
 }

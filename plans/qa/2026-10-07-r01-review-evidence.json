@@ -1,0 +1,28 @@
+{
+  "date": "2026-10-07",
+  "reviewed_commit": "99d587195c519226fa2efe78c1cd427a40085877",
+  "parent_commit": "f73c0a6360c6487b06e534ac98afe8446e10a8cc",
+  "verdict": "Primary staging works. R01 remains incomplete because the old final-return race persists and metadata handling introduces auth/question/readiness regressions.",
+  "verification": {
+    "web_suite": { "passed": 281, "failed": 0, "files": 22, "result": "2026-10-07-r01-web-tests.json" },
+    "commit_pinned_probes": { "passed": 20, "failed": 0, "prior_probes": 13, "new_r01_probes": 7, "result": "2026-10-07-r01-review-tests.json" },
+    "lint": "Review probe/config and all three committed implementation/test files' stdin lint passed. Current-tree lint encountered independently edited unused variables.",
+    "documentation_links": { "checked": 716, "broken": 0 },
+    "diff_check": "Passed.",
+    "initial_probe_setup": "Added monorepo dependency aliases after React/idb-keyval resolution failures; final probe suites loaded and passed."
+  },
+  "findings": [
+    { "priority": "P1", "origin": "pre-existing and retained", "finding": "The actual screen's outbox prune followed by an old final snapshot return removes a newer accepted bubble.", "reviewed_location": "apps/web/src/api/snapshot.ts:125" },
+    { "priority": "P2", "origin": "introduced for activity/questions; pre-existing for runs", "finding": "401 and 403 from all three optional sources are swallowed as successful empty metadata.", "reviewed_location": "apps/web/src/api/snapshot.ts:93" },
+    { "priority": "P2", "origin": "introduced serial requests with retained full-data stream gate", "finding": "Primary now precedes activity/questions, which unnecessarily precede runs. The composer unlocks before SSE subscribes.", "reviewed_location": "apps/web/src/api/snapshot.ts:86" },
+    { "priority": "P2", "origin": "introduced", "finding": "A transient clarification failure and valid pending-run details produce a visible Answer question action that cannot open its panel or retry.", "reviewed_location": "apps/web/src/api/snapshot.ts:96" }
+  ],
+  "boundaries": [
+    "Mocked API/IndexedDB/SSE transport; production screen/query/outbox pruning exercised in mounted cases.",
+    "Green characterization tests reproduce asserted defects rather than approving those behaviors.",
+    "No D1 message deletion or measured latency gain/regression is claimed.",
+    "Independent source edits were preserved and relevant files pinned to the reviewed commit. HEAD advanced independently to 2bfa561; that R02 implementation is outside this verdict.",
+    "No full cross-project suite, typecheck/build/Storybook/native browser/provider checks independently rerun for this review.",
+    "Only review evidence and current status/backlog were edited; no production source edits, subagents, push or deployment."
+  ]
+}

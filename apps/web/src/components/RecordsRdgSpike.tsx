@@ -61,8 +61,9 @@ export function RecordsRdgSpike({
 
   return (
     <div className="flex flex-col gap-4">
-      <div data-testid="spike-rdg-grid" style={{ maxWidth: '100%', overflowX: 'auto' }}>
+      <div data-testid="spike-rdg-grid" className="w-full max-w-full overflow-x-auto">
         <DataGrid
+          className="h-96 w-full"
           columns={gridColumns}
           rows={rows}
           onRowsChange={handleRowsChange}
@@ -73,7 +74,6 @@ export function RecordsRdgSpike({
             return { ...targetRow, [columnKey]: sourceRow[columnKey] ?? '' };
           }}
           rowKeyGetter={(row) => row.id}
-          style={{ blockSize: 400, inlineSize: 720 }}
         />
       </div>
       <SpikeDomTable

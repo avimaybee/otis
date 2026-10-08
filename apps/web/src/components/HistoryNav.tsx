@@ -1,7 +1,7 @@
 import { useEffect, useId, useRef, useState, type ReactNode, type RefObject } from 'react';
 import { Drawer } from 'vaul';
 import type { Chat } from '@otis/contracts';
-import { CloseIcon, ComposeIcon, MoreVerticalIcon, SearchIcon, SettingsIcon } from './icons.js';
+import { CloseIcon, ComposeIcon, MoreVerticalIcon, SearchIcon, SettingsIcon, TableIcon } from './icons.js';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from './ui/dropdown-menu.js';
 import { ChoiceSelect } from './ui/select.js';
 import { Input } from './ui/input.js';
@@ -15,7 +15,8 @@ export interface HistoryNavProps {
       close lifecycle (focus return, exit) runs instead of an abrupt unmount. */
   open?: boolean;
   members?: Record<string, string>; loading?: boolean;
-  onSelectChat: (chatId: string) => void; onNewChat: () => void; onSwitchWorkspace: (workspaceId: string) => void;
+  isRecordsActive?: boolean;
+  onSelectChat: (chatId: string) => void; onNewChat: () => void; onOpenRecords?: () => void; onSwitchWorkspace: (workspaceId: string) => void;
   onOpenSettings: () => void; onOpenSearch?: () => void; onClose?: () => void;
   onLoadMore?: () => void; hasMore?: boolean;
   onRenameChat?: (chatId: string, currentTitle: string) => void;
@@ -32,6 +33,23 @@ export function HistoryNav(props: HistoryNavProps) {
     setQuery('');
     requestAnimationFrame(() => searchButton.current?.focus());
   };
+
+  useEffect(() => {
+    const handleKeyDown = (e: globalThis.KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+        const target = e.target as HTMLElement | null;
+        const isEditing = target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable);
+        if (!isEditing) {
+          e.preventDefault();
+          setSearching(true);
+          requestAnimationFrame(() => input.current?.focus());
+        }
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
+
   const rows = (chats: Chat[], team: boolean) => chats.filter(chat => chat.title.toLocaleLowerCase().includes(query.toLocaleLowerCase())).map(chat => (
     <div key={chat.id} className="relative flex items-center group w-full">
       <button type="button" className="otis-nav__row pr-8" aria-current={chat.id === props.activeChatId ? 'page' : undefined} title={chat.title} onClick={() => props.onSelectChat(chat.id)}>
@@ -63,8 +81,11 @@ export function HistoryNav(props: HistoryNavProps) {
       {props.onCreateWorkspace && <Button variant="ghost" size="sm" type="button" className="text-xs text-muted-foreground hover:text-foreground h-6 px-2 shrink-0" title="Create workspace" aria-label="Create workspace" onClick={props.onCreateWorkspace}>+ New</Button>}
     </div>
     <Button variant="ghost" className="otis-nav__action justify-start text-sm" type="button" onClick={props.onNewChat}><ComposeIcon /><span>New chat</span></Button>
+    {props.onOpenRecords && (
+      <Button variant="ghost" className="otis-nav__action justify-start text-sm" type="button" aria-current={props.isRecordsActive ? 'page' : undefined} onClick={props.onOpenRecords}><TableIcon /><span>Your information</span></Button>
+    )}
     {!searching ? (
-      <Button ref={searchButton} variant="ghost" className="otis-nav__action justify-start text-sm" type="button" aria-expanded={false} onClick={() => { setSearching(true); requestAnimationFrame(() => input.current?.focus()); }}><SearchIcon /><span>Filter loaded chats</span></Button>
+      <Button ref={searchButton} variant="ghost" className="otis-nav__action justify-start text-sm" type="button" aria-expanded={false} onClick={() => { setSearching(true); requestAnimationFrame(() => input.current?.focus()); }}><SearchIcon /><span className="flex-1">Filter loaded chats</span><kbd className="hidden nav:inline text-xs text-subtle border border-border px-1 rounded font-mono">⌘K</kbd></Button>
     ) : (
       <div className="otis-nav__search flex items-center gap-2"><label className="otis-visually-hidden" htmlFor={`${id}-search`}>Filter loaded chats</label><Input ref={input} id={`${id}-search`} type="search" placeholder="Filter loaded chats" value={query} onChange={event => setQuery(event.target.value)} onKeyDown={event => { if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); closeSearch(); } }} className="flex-1" /><Button variant="ghost" size="icon-xs" type="button" aria-label="Close search" onClick={closeSearch}><CloseIcon /></Button></div>
     )}

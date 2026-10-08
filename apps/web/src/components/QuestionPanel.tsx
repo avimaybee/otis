@@ -147,13 +147,16 @@ export function QuestionPanel({ question, draftKey, focusSignal = 0, onSubmit, o
           className="otis-question__answer max-h-36 min-h-6 min-w-0 flex-1 resize-none bg-transparent text-base leading-6 outline-none placeholder:text-muted-foreground"
         />
       </div>
-      <div className="flex items-center justify-end gap-2">
-        <Button variant="ghost" size="sm" type="button" onClick={() => onSkip(question.id)} onKeyDown={escapeToClose}>
-          Skip
-        </Button>
-        <Button size="sm" type="button" disabled={value.trim() === ''} onClick={submit} onKeyDown={escapeToClose}>
-          Send
-        </Button>
+      <div className="flex items-center justify-between gap-2">
+        <span className="text-xs text-subtle hidden nav:inline">Enter to send · Esc to close</span>
+        <div className="flex items-center gap-2 ml-auto">
+          <Button variant="ghost" size="sm" type="button" onClick={() => onSkip(question.id)} onKeyDown={escapeToClose}>
+            Skip
+          </Button>
+          <Button size="sm" type="button" disabled={value.trim() === ''} onClick={submit} onKeyDown={escapeToClose}>
+            Send
+          </Button>
+        </div>
       </div>
     </section>
   );

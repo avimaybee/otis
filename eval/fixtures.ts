@@ -1,7 +1,7 @@
 /**
  * @otis/eval/fixtures
  * Appendix A and expanded Gate 006 evaluation fixtures.
- * In accordance with product.md Appendix A and plans/006-implementation-handoff.md Section 11 (006D).
+ * In accordance with docs/archive/baseline-2026-10-07/product.md Appendix A and docs/archive/plans/006-implementation-handoff.md Section 11 (006D).
  */
 
 import type {

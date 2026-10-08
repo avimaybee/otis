@@ -364,7 +364,7 @@ export function Composer({ disabled, disabledReason, running, commands, models =
           />
         </div>
       ) : (
-        <div className="grid min-h-[76px] grid-cols-[minmax(0,1fr)_auto] items-center gap-1 rounded-2xl bg-card py-2 pr-2 pl-3 nav:flex nav:min-h-[56px]">
+        <div className="grid min-h-[76px] grid-cols-[minmax(0,1fr)_auto] items-center gap-1 rounded-2xl border border-border/40 bg-card py-2 pr-2 pl-3 transition-colors duration-150 focus-within:border-border nav:flex nav:min-h-[56px]">
           <label className="otis-visually-hidden" htmlFor={id}>{placeholder}</label>
           <TextareaAutosize id={id} ref={input} name="message" minRows={1} maxRows={6} className="otis-composer__input col-start-1 max-h-36 min-h-6 w-full min-w-0 flex-1 resize-none bg-transparent text-base leading-6 outline-none placeholder:text-muted-foreground nav:order-1" placeholder={disabled ? disabledReason ?? placeholder : placeholder} autoComplete="off" value={value} disabled={disabled}
             {...(statusText ? { 'aria-describedby': `${id}-status` } : {})} aria-haspopup="listbox" aria-expanded={pickerOpen ? 'true' : undefined} aria-controls={pickerOpen ? `${id}-picker` : undefined} aria-activedescendant={pickerOpen && suggestions[activeIndex] ? `${id}-option-${activeIndex}` : undefined} aria-autocomplete="list"

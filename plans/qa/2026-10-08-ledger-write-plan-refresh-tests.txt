@@ -1,0 +1,85 @@
+
+ RUN  v4.1.0 D:/vs code/Otis
+
+Using secrets defined in .dev.vars
+stdout | plans/qa/2026-10-08-ledger-write-review.probe.test.ts > mixed receipt replay still parks the existing pending question
+R09_REVIEW mixed_retry {
+  first: [32m'needs_clarification'[39m,
+  retry: [32m'needs_clarification'[39m,
+  question: [32m'pending'[39m
+}
+
+·stdout | plans/qa/2026-10-08-ledger-write-review.probe.test.ts > legacy decline preserves independent phone facts
+R09_REVIEW legacy_decline { resumed: [33mtrue[39m, phone: [32m'123'[39m, status: [32m'new'[39m }
+
+·stdout | plans/qa/2026-10-08-ledger-write-review.probe.test.ts > failed legacy confirmation cannot turn a later decline into approval
+R09_REVIEW failed_then_decline {
+  failed: [33mfalse[39m,
+  storedCommand: [90mundefined[39m,
+  storedMissing: [32m'["status_confirmation"]'[39m,
+  decline: [33mtrue[39m,
+  status: [32m'new'[39m
+}
+
+·stdout | plans/qa/2026-10-08-ledger-write-review.probe.test.ts > partial legacy replay uses the revision from an actual committed child
+R09_REVIEW partial_real_commit {
+  first: [32m'applied'[39m,
+  firstRevision: [33m1[39m,
+  retry: [32m'applied'[39m,
+  error: [90mundefined[39m
+}
+
+·stdout | plans/qa/2026-10-08-ledger-write-review.probe.test.ts > alias hydration does not scan unrelated workspace aliases
+R09_REVIEW alias_scan [
+  {
+    aliases: [33m10[39m,
+    read: [33m0[39m,
+    plan: [
+      [32m'SEARCH entity_aliases USING INDEX idx_entity_aliases_ws_alias (workspace_id=?)'[39m
+    ]
+  },
+  {
+    aliases: [33m1000[39m,
+    read: [33m0[39m,
+    plan: [
+      [32m'SEARCH entity_aliases USING INDEX idx_entity_aliases_ws_alias (workspace_id=?)'[39m
+    ]
+  }
+]
+
+·stdout | plans/qa/2026-10-08-ledger-write-review.probe.test.ts > legacy decline rechecks membership in the committing transaction
+R09_REVIEW revoked_decline { resumed: [33mfalse[39m, question: [32m'pending'[39m }
+
+·stdout | plans/qa/2026-10-08-ledger-write-review.probe.test.ts > question-only replay does not reopen an already-declined question
+R09_REVIEW question_after_decline {
+  first: [32m'needs_clarification'[39m,
+  question: [32m'cancelled'[39m,
+  replay: [32m'rejected'[39m
+}
+
+x·
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  plans/qa/2026-10-08-ledger-write-review.probe.test.ts > question-only replay does not reopen an already-declined question
+AssertionError: expected 'rejected' to be 'already_applied' // Object.is equality
+
+Expected: "already_applied"
+Received: "rejected"
+
+ ❯ plans/qa/2026-10-08-ledger-write-review.probe.test.ts:279:25
+    277|   const replay = await executeAgentTool(params);
+    278|   console.log('R09_REVIEW question_after_decline', { first: first.stat…
+    279|   expect(replay.status).toBe('already_applied');
+       |                         ^
+    280| });
+    281|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 7 passed (8)
+   Start at  19:20:13
+   Duration  6.38s (transform 991ms, setup 0ms, import 1.72s, tests 3.46s, environment 0ms)
+

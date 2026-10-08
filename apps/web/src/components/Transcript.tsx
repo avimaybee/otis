@@ -361,7 +361,7 @@ const MessageBody = memo(function MessageBody({ message }: { message: ChatMessag
       </div>
     );
   }
-  return <div className="otis-turn__body text-base text-foreground [&>p+p]:mt-3"><Markdown remarkPlugins={[remarkGfm]} components={markdownComponents} skipHtml disallowedElements={['img']}>{message.content_text}</Markdown></div>;
+  return <div className="otis-turn__body text-base text-foreground"><Markdown remarkPlugins={[remarkGfm]} components={markdownComponents} skipHtml disallowedElements={['img']}>{message.content_text}</Markdown></div>;
 });
 export interface TranscriptProps {
   messages: ChatMessage[]; members: Record<string, string>; currentUserId: string; run?: RunDetailResponse | null; runs?: Record<string, RunDetailResponse>;
@@ -583,7 +583,7 @@ export function Transcript({ messages, members, currentUserId, steps, run, runs 
                 <Markdown remarkPlugins={[remarkGfm]} components={markdownComponents} skipHtml disallowedElements={['img']}>{streamText}</Markdown>
               </div>
             ) : (
-              <div className="otis-turn__body otis-streamed text-base text-foreground [&>p+p]:mt-3" aria-live="off"><Markdown remarkPlugins={[remarkGfm]} components={markdownComponents} skipHtml disallowedElements={['img']}>{streamText}</Markdown></div>
+              <div className="otis-turn__body otis-streamed text-base text-foreground" aria-live="off"><Markdown remarkPlugins={[remarkGfm]} components={markdownComponents} skipHtml disallowedElements={['img']}>{streamText}</Markdown></div>
             ));})()}</>}
           </div>;
         })}

@@ -2,7 +2,7 @@
  * @otis/ledger/test/similarity-and-memory.test.ts
  * Pure unit tests for entity similarity ranking (diacritics, collisions, order-independence)
  * and durable memory commands, reducers, and projection rebuilds.
- * In accordance with plans/006-implementation-handoff.md Section 5, 9, 11 (006A).
+ * In accordance with docs/archive/plans/006-implementation-handoff.md Section 5, 9, 11 (006A).
  */
 
 import { describe, expect, it } from 'vitest';

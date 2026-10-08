@@ -560,17 +560,22 @@ export function SettingsPane({
         </div>
         {isOwner ? (
           <div className="otis-settings__section border-t border-border pt-4 mt-4">
-            <h3 className="text-sm font-medium text-destructive">Danger zone</h3>
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-medium text-destructive">Danger zone</h3>
+              <Badge variant="outline" className="text-xs text-destructive border-border">
+                Irreversible
+              </Badge>
+            </div>
             <p className="otis-detail__label text-xs">Permanently deletes this workspace and all of its conversations, business records, drafts, memory, briefs, reminders, media and ledger history for every member. The erasure itself is logged; no workspace content is kept. This cannot be undone.</p>
             {!confirmDeleteWs ? (
-              <Button variant="outline" size="sm" type="button" className="text-destructive hover:text-destructive mt-2" onClick={() => setConfirmDeleteWs(true)}>
+              <Button variant="outline" size="sm" type="button" className="text-destructive hover:text-destructive mt-2 w-fit" onClick={() => setConfirmDeleteWs(true)}>
                 Delete workspace
               </Button>
             ) : (
-              <div className="flex flex-col gap-2 mt-2">
+              <div className="rounded-lg border border-border bg-card p-3 mt-2 flex flex-col gap-2">
                 <p className="text-xs text-destructive font-medium">Permanently delete &ldquo;{workspaceName}&rdquo;? This cannot be undone.</p>
                 <p className="otis-detail__label text-xs">Download a backup first if you need one — deletion proceeds either way.</p>
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 mt-1">
                   <Button variant="outline" size="sm" type="button" onClick={() => void downloadExport('json')} disabled={Boolean(busy)}>
                     {busy === 'export_json' ? 'Preparing…' : 'Download backup'}
                   </Button>

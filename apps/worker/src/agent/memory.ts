@@ -2,7 +2,7 @@
  * @otis/worker/agent/memory
  * Deterministic extractive memory summarization, asynchronous refresh jobs,
  * and deterministic replay/rebuild of memory projections.
- * In accordance with plans/006-implementation-handoff.md Section 9 & 10.
+ * In accordance with docs/archive/plans/006-implementation-handoff.md Section 9 & 10.
  */
 
 import { rebuildProjections } from '@otis/ledger';

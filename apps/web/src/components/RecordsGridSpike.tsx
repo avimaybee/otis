@@ -163,7 +163,7 @@ export function SpikeDomTable({
   onEdit: (updates: { row: number; col: number; values: string[] }[]) => void;
 }) {
   return (
-    <div style={{ maxWidth: '100%', overflowX: 'auto' }}>
+    <div className="w-full max-w-full overflow-x-auto">
       <table data-testid="spike-dom-table" aria-label="Records, accessible row mode" className="w-fit border-collapse text-sm">
         <thead>
           <tr>
@@ -178,10 +178,10 @@ export function SpikeDomTable({
             <tr key={entry.id}>
               <th scope="row" className="border px-2 py-1 text-left">{rowIndex + 1}</th>
               {columns.map((_, colIndex) => (
-                <td key={colIndex} className="border px-1 py-0.5">
+                <td key={colIndex} className="border px-1 py-1">
                   <input
                     aria-label={`Row ${rowIndex + 1}, ${columns[colIndex]}`}
-                    className="w-full bg-transparent outline-none"
+                    className="w-full bg-transparent focus-visible:ring-1 focus-visible:ring-ring"
                     value={entry.cells[colIndex] ?? ''}
                     onChange={(event) => {
                       onEdit([{ row: rowIndex, col: colIndex, values: [event.target.value] }]);

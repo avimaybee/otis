@@ -3,6 +3,7 @@ import type { TelegramConnectionResponse } from '@otis/contracts';
 import { api, ApiError } from '../api/client.js';
 import { Button } from './ui/button.js';
 import { Alert, AlertDescription } from './ui/alert.js';
+import { Badge } from './ui/badge.js';
 
 /**
  * Guided Telegram connection row for Settings > You (009A linking UX).
@@ -224,7 +225,21 @@ export function TelegramConnection({ workspaceId, workspaceName }: { workspaceId
 
   return (
     <div className="otis-settings__section">
-      <h3 className="text-sm font-medium">Telegram</h3>
+      <div className="flex items-center justify-between">
+        <h3 className="text-sm font-medium">Telegram</h3>
+        <Badge variant={phase.kind === 'connected' ? 'outline' : 'secondary'} className="text-xs">
+          {phase.kind === 'connected' ? (
+            <span className="flex items-center gap-1">
+              <span className="otis-status-dot" aria-hidden="true" />
+              Connected
+            </span>
+          ) : phase.kind === 'loading' || phase.kind === 'preparing' ? (
+            'Checking…'
+          ) : (
+            'Disconnected'
+          )}
+        </Badge>
+      </div>
       {phase.kind === 'loading' && (
         <p role="status" className="text-sm mt-1">
           Checking connection…
