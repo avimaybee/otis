@@ -60,6 +60,8 @@ Latest explicit user instructions resolve older conflicts. This register records
 | D48 | Manual cell/row/column edits collect in a recoverable draft until explicit Save. Local Undo differs from saved ledger Undo; current information and original history remain recoverable. |
 | D49 | Otis applies authorized saved-information cleanup immediately with history/Undo. With an unsaved manual draft, it tidies the draft and the member still clicks Save. This target must be enforced by the server, including legacy write tools. |
 | D50 | Calculations and organization can be requested conversationally. Reuse suitable existing fields, preserve distinctive facts, and retain original values/sources through synthesis or cleanup. |
+| D51 | User selected plans for single-entry correction/removal, a complete client-file experience, richer contacts/lossless merging, linked retained photos/documents/audio, cross-chat search, recurring/conditional follow-ups and actor attribution/private business notes. Prioritize corrections and the client file; verify existing capabilities before adding replacements. |
+| D52 | Explicitly private business notes are readable by their author and current workspace owners, not ordinary teammates. Private capture must protect original input, replies, events, attachments and derived reads; marking an extracted note private cannot hide already-shared chat text. Existing personal preference scope remains separate. |
 
 ## Unresolved or deferred
 

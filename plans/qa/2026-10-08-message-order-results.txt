@@ -1,0 +1,35 @@
+
+ RUN  v4.1.0 D:/vs code/Otis
+
+x··
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  plans/qa/2026-10-08-message-order.probe.test.ts > reported user-bubble ordering > keeps a saved but unseen source above its already received answer
+AssertionError: expected [ 'system', 'member' ] to deeply equal [ 'member', 'system' ]
+
+- Expected
++ Received
+
+  [
+-   "member",
+    "system",
++   "member",
+  ]
+
+ ❯ plans/qa/2026-10-08-message-order.probe.test.ts:28:58
+
+     26|   it('keeps a saved but unseen source above its already received answe…
+     27|     const derived = deriveTranscript([message('ordering-answer', 9)], …
+     28|     expect(derived.messages.map(row => row.author_kind)).toEqual(['mem…
+       |                                                          ^
+     29|     expect(derived.messages[0]?.sequence).toBe(8);
+     30|   });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 2 passed (3)
+   Start at  19:33:16
+   Duration  345ms (transform 55ms, setup 0ms, import 76ms, tests 11ms, environment 0ms)
+

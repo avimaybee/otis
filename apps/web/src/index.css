@@ -64,7 +64,7 @@
 .otis-transcript__inner--empty { min-height: 100%; justify-content: center; }
 .otis-message-group { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
 .otis-turn { position: relative; display: flex; flex-direction: column; gap: 4px; min-width: 0; }
-.otis-turn--member { align-items: flex-end; }
+.otis-turn--member { align-items: flex-end; margin-bottom: 24px; }
 .otis-turn--agent { align-items: flex-start; }
 
 /* Assistant text sits directly on the canvas. Single newlines from the model
@@ -73,10 +73,10 @@
 .otis-turn__body { max-width: 100%; overflow-wrap: anywhere; white-space: pre-line; }
 .otis-turn__body > :first-child { margin-top: 0; }
 .otis-turn__body > :last-child { margin-bottom: 0; }
-.otis-turn__body p, .otis-turn__body ul, .otis-turn__body ol, .otis-turn__body blockquote, .otis-turn__body pre { margin: 0 0 12px; }
+.otis-turn__body p, .otis-turn__body ul, .otis-turn__body ol, .otis-turn__body blockquote, .otis-turn__body pre { margin: 0 0 8px; }
 .otis-turn__body ul, .otis-turn__body ol { padding-left: 16px; }
 .otis-turn__body li { margin: 4px 0; }
-.otis-turn__body li > p { margin: 4px 0; }
+.otis-turn__body li > p { margin: 0 0 4px; }
 .otis-turn__body h1, .otis-turn__body h2, .otis-turn__body h3, .otis-turn__body h4 { margin: 16px 0 8px; font-weight: 500; font-size: inherit; }
 .otis-turn__body blockquote { padding-left: 12px; border-left: 1px solid var(--border); color: var(--muted-foreground); }
 .otis-turn__body code { padding: 4px; border-radius: 4px; background: var(--muted); font-family: var(--font-mono); }
@@ -120,7 +120,8 @@
   .otis-turn--agent .otis-turn__actions { left: 0; }
   .otis-turn:hover .otis-turn__actions, .otis-turn:focus-within .otis-turn__actions { opacity: 1; }
 }
-.otis-msg-action { position: relative; }
+.otis-msg-action { position: relative; color: var(--muted-foreground); transition: color 150ms ease-out, background-color 150ms ease-out; }
+.otis-msg-action:hover { color: var(--foreground); background: var(--accent); }
 @media (hover: none) {
   .otis-msg-action::after { content: ''; position: absolute; inset: -6px; }
 }

@@ -552,12 +552,12 @@ export function Transcript({ messages, members, currentUserId, steps, run, runs 
               <div className="otis-turn__actions">
                 <time className="text-xs text-subtle tabular-nums" dateTime={message.created_at}>{formatClockTime(message.created_at)}</time>
                 {message.content_text && (
-                  <Button variant="ghost" size="icon-xs" type="button" className="otis-msg-action" aria-label={isMember ? 'Copy message' : 'Copy response'} title="Copy" onClick={() => void handleCopy(message.id, message.content_text)}>
+                  <Button variant="ghost" size="icon-xs" type="button" className="otis-msg-action text-muted-foreground hover:text-foreground" aria-label={isMember ? 'Copy message' : 'Copy response'} title="Copy" onClick={() => void handleCopy(message.id, message.content_text)}>
                     {copiedId === message.id ? <CheckIcon /> : <CopyIcon />}
                   </Button>
                 )}
                 {isMember && message.author_user_id === currentUserId && onEditMessage && !message.media_id && (
-                  <Button variant="ghost" size="icon-xs" type="button" className="otis-msg-action" aria-label="Use message as draft" title="Use as draft" onClick={() => onEditMessage(message.content_text)}>
+                  <Button variant="ghost" size="icon-xs" type="button" className="otis-msg-action text-muted-foreground hover:text-foreground" aria-label="Use message as draft" title="Use as draft" onClick={() => onEditMessage(message.content_text)}>
                     <PencilIcon />
                   </Button>
                 )}
