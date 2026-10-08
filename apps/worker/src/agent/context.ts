@@ -160,6 +160,13 @@ export async function getTurnContext(
     db.prepare(
       `SELECT entity_id, alias FROM entity_aliases WHERE workspace_id = ? LIMIT 200`
     ).bind(workspaceId),
+    // Workspace roster for member identity: who is talking and who can be
+    // mentioned. One bounded read in the same roundtrip; display names only.
+    db.prepare(
+      `SELECT u.id, u.display_name FROM users u
+       JOIN workspace_users wu ON wu.user_id = u.id
+       WHERE wu.workspace_id = ? LIMIT 50`
+    ).bind(workspaceId),
   ]);
   const rowsAt = (index: number): Record<string, unknown>[] =>
     ((wave[index] as unknown as { results?: Record<string, unknown>[] }).results ?? []);
@@ -192,7 +199,19 @@ export async function getTurnContext(
     };
   }
 
-  // 3. Recent chat transcript for this chat (excluding duplicate of current message)
+  // 3. Recent chat transcript for this chat (excluding duplicate of current message).
+  // Member identity: the roster (wave index 10) names the speaker. The
+  // acting member's own turns stay bare — they are unambiguous in an own
+  // chat — while any other member's turns carry their display name so the
+  // model never merges two people into one voice.
+  const rosterRows = rowsAt(10) as { id: string; display_name: string }[];
+  const rosterNames = new Map<string, string>();
+  for (const row of rosterRows) {
+    const name = String(row['display_name'] ?? '').trim();
+    if (row['id'] && name && !rosterNames.has(String(row['id']))) {
+      rosterNames.set(String(row['id']), name);
+    }
+  }
   const chatRows = chatId ? rowsAt(2) : [];
 
   const recentMessages = chatRows
@@ -201,15 +220,23 @@ export async function getTurnContext(
       if (params.sourceMessageId && String(r['inbound_message_id'] ?? '') === params.sourceMessageId) return false;
       return true;
     })
-    .map((r) => ({
-      id: String(r['id']),
-      authorKind: r['author_kind'] as 'member' | 'system',
-      authorUserId: r['author_user_id'] ? String(r['author_user_id']) : null,
-      text: String(r['content_text']),
-      sequence: Number(r['sequence']),
-      createdAt: String(r['created_at']),
-      attachments: [] as Array<{ mediaId: string; position: number }>,
-    }))
+    .map((r) => {
+      const authorId = r['author_user_id'] ? String(r['author_user_id']) : null;
+      let text = String(r['content_text']);
+      if (r['author_kind'] === 'member' && authorId && authorId !== actorUserId) {
+        const speaker = rosterNames.get(authorId);
+        if (speaker) text = `${speaker}: ${text}`;
+      }
+      return {
+        id: String(r['id']),
+        authorKind: r['author_kind'] as 'member' | 'system',
+        authorUserId: authorId,
+        text,
+        sequence: Number(r['sequence']),
+        createdAt: String(r['created_at']),
+        attachments: [] as Array<{ mediaId: string; position: number }>,
+      };
+    })
     .reverse();
 
   // 3b. Attachment manifest for the included messages: one bounded query
@@ -527,6 +554,8 @@ export async function getTurnContext(
 
   const dynamicContext: DynamicPromptContext = {
     workspaceName,
+    actingMemberName: rosterNames.get(actorUserId) ?? undefined,
+    workspaceMembers: [...rosterNames.values()],
     actingMemberLanguage: memberPreferences?.preferredLanguage ?? undefined,
     currentTimezone: tz,
     currentDateIso: effectiveNowIso,

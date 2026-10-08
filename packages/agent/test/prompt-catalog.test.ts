@@ -89,4 +89,21 @@ describe('model catalog prompt section', () => {
     });
     expect(prompt).toContain('- [fact] Plain note.');
   });
+
+  it('names the acting member and the roster so teammates are never merged', () => {
+    const prompt = renderSystemPrompt({
+      workspaceName: 'Kerning',
+      actingMemberName: 'Avi',
+      workspaceMembers: ['Avi', 'Hunor'],
+    });
+    expect(prompt).toContain('Current Member: Avi');
+    expect(prompt).toContain('Workspace members: Avi, Hunor');
+    expect(prompt).toContain('never confuse one member for another');
+  });
+
+  it('omits identity lines when the roster is unknown', () => {
+    const prompt = renderSystemPrompt({ workspaceName: 'Kerning' });
+    expect(prompt).not.toContain('Current Member:');
+    expect(prompt).not.toContain('Workspace members:');
+  });
 });

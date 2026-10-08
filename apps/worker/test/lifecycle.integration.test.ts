@@ -13,7 +13,9 @@ import type { HttpErrorResponse } from '@otis/contracts';
 import {
   acceptInvite,
   base64UrlEncode,
+  bootstrapWorkspace,
   createInvite,
+  createWorkspace,
   decryptProviderKey,
   decryptWorkspaceCredential,
   importWrappingKey,
@@ -577,8 +579,30 @@ describe('Worker Lifecycle, Settings & Credentials Integration (workerd)', () =>
     expect(audit?.['scope']).toBe('member');
   });
 
-  it('stores the shared default model and isolates workspaces', async () => {
-    const initial = await SELF.fetch(`http://localhost/api/workspaces/${wsA}/settings`, {
+  it('bootstraps new workspaces with Muse Spark 1.3 as the default model', async () => {
+    const bootstrapped = await bootstrapWorkspace(env.DB, {
+      workspaceId: 'ws-lifecycle-default-a',
+      workspaceName: 'Default Model A',
+      ownerUid: 'fb_lc_default_a',
+      ownerEmail: 'default-a@kerning.test',
+      ownerDisplayName: 'Default A',
+    });
+    const created = await createWorkspace(env.DB, {
+      name: 'Default Model B',
+      ownerUserId: aviId,
+      workspaceId: 'ws-lifecycle-default-b',
+    });
+    void created;
+    for (const ws of ['ws-lifecycle-default-a', 'ws-lifecycle-default-b']) {
+      const row = await env.DB.prepare(`SELECT default_model FROM workspace_settings WHERE workspace_id = ?`)
+        .bind(ws)
+        .first<{ default_model: string | null }>();
+      expect(row?.default_model).toBe('muse-13');
+    }
+    expect(bootstrapped.workspace.id).toBe('ws-lifecycle-default-a');
+  });
+
+  it('stores the shared default model and isolates workspaces', async () => {    const initial = await SELF.fetch(`http://localhost/api/workspaces/${wsA}/settings`, {
       headers: { cookie: aviCookie },
     });
     expect(initial.status).toBe(200);

@@ -180,7 +180,7 @@ export async function bootstrapWorkspace(
     db
       .prepare(
         `INSERT OR IGNORE INTO workspace_settings (workspace_id, default_model, created_at, updated_at)
-         VALUES (?, 'gemini-3.5-flash-lite', ?, ?)`
+         VALUES (?, 'muse-13', ?, ?)`
       )
       .bind(params.workspaceId, nowIso, nowIso),
   ]);
@@ -297,7 +297,7 @@ export async function createWorkspace(
     db
       .prepare(
         `INSERT INTO workspace_settings (workspace_id, default_model, created_at, updated_at)
-         VALUES (?, 'gemini-3.5-flash-lite', ?, ?)`
+         VALUES (?, 'muse-13', ?, ?)`
       )
       .bind(workspaceId, nowIso, nowIso),
     db

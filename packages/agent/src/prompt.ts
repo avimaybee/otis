@@ -47,6 +47,11 @@ Core Business Invariants:
 export interface DynamicPromptContext {
   workspaceName?: string;
   actingMemberName?: string;
+  /**
+   * Bounded workspace roster (display names). Lets the model resolve
+   * mentions of teammates instead of confusing them with the speaker.
+   */
+  workspaceMembers?: string[];
   actingMemberLanguage?: string;
   currentDateIso?: string;
   currentTimezone?: string;
@@ -95,6 +100,9 @@ export function renderSystemPrompt(context?: DynamicPromptContext): string {
     const parts: string[] = [];
     if (context.workspaceName) parts.push(`Workspace: ${context.workspaceName}`);
     if (context.actingMemberName) parts.push(`Current Member: ${context.actingMemberName}`);
+    if (context.workspaceMembers && context.workspaceMembers.length > 0) {
+      parts.push(`Workspace members: ${context.workspaceMembers.join(', ')}. The current member is the person talking to you now; other names are teammates — never confuse one member for another.`);
+    }
     if (context.actingMemberLanguage && context.actingMemberLanguage !== 'auto' && context.actingMemberLanguage !== 'en') {
       parts.push(`Preferred Language: ${context.actingMemberLanguage}`);
     }

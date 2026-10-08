@@ -226,6 +226,30 @@ describe('Turn context batching (workerd)', () => {
     expect(contents).toContain('Overdue invoice');
   });
 
+  it('names the acting member and roster, and labels other members’ turns', async () => {
+    const iso = (day: string) => `${day}T10:00:00.000Z`;
+    await env.DB.prepare(
+      `INSERT INTO chat_messages (id, workspace_id, chat_id, author_user_id, author_kind, channel, content_text, sequence, created_at, updated_at)
+       VALUES (?, ?, ?, ?, 'member', 'web', ?, ?, ?, ?)`,
+    ).bind('cm_ctx_avi_1', ws, chat, aviId, 'I will handle the Cluj visit.', 10, iso('2026-10-07'), iso('2026-10-07')).run();
+    await env.DB.prepare(
+      `INSERT INTO chat_messages (id, workspace_id, chat_id, author_user_id, author_kind, channel, content_text, sequence, created_at, updated_at)
+       VALUES (?, ?, ?, ?, 'member', 'web', ?, ?, ?, ?)`,
+    ).bind('cm_ctx_hunor_1', ws, chat, hunorId, 'I met them yesterday.', 11, iso('2026-10-07'), iso('2026-10-07')).run();
+    const context = await getTurnContext(env.DB, {
+      workspaceId: ws,
+      actorUserId: aviId,
+      chatId: chat,
+      sourceText: 'What did Hunor say?',
+    });
+    expect(context.systemPrompt).toContain('Current Member: Avi');
+    expect(context.systemPrompt).toContain('Workspace members: Avi, Hunor');
+    const texts = context.recentMessages.map((m) => m.text);
+    // Own turns stay bare; a teammate's turn carries their name.
+    expect(texts).toContain('I will handle the Cluj visit.');
+    expect(texts).toContain('Hunor: I met them yesterday.');
+  });
+
   it('enforces the character budget with whole notes, never mid-fact truncation', async () => {
     const iso = (day: string) => `${day}T10:00:00.000Z`;
     await env.DB.prepare(
