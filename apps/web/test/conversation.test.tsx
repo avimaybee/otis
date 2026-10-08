@@ -240,6 +240,16 @@ describe('Clarification dismissal', () => {
     expect(view.host.querySelector('strong')?.textContent).toBe('Offer'); expect(view.host.querySelectorAll('li')).toHaveLength(2);
     expect(view.host.querySelector('img')).toBeNull(); expect(view.host.querySelector('a')?.getAttribute('href')).not.toContain('javascript:'); await view.unmount();
   });
+  it('keeps each streamed thought on its own line instead of gluing after the period', async () => {
+    const view = await mount(<Transcript messages={[message({ id: 'm1', content_text: 'Got it — logging that Cluj meeting for tomorrow.\nLet me pull up what we have got on them.', author_kind: 'system', author_user_id: null })]} members={{}} currentUserId="usr_1" steps={[]} onInspectAction={vi.fn()}/>);
+    // The model's single newline survives Markdown as a soft break in the
+    // DOM; the body recipe renders it as a visual line break.
+    const body = view.host.querySelector('.otis-turn--agent .otis-turn__body');
+    expect(body?.textContent).toContain('Got it — logging that Cluj meeting for tomorrow.\nLet me pull up what we have got on them.');
+    const css = readFileSync(resolve(__dirname, '../src/index.css'), 'utf-8');
+    expect(css).toMatch(/\.otis-turn__body\s*\{[^}]*white-space:\s*pre-line/);
+    await view.unmount();
+  });
   it('renders awaiting input callout for pending clarifications with working reply action', async () => {
     const onReply = vi.fn();
     const view = await mount(

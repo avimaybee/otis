@@ -61,8 +61,10 @@
 .otis-turn--member { align-items: flex-end; }
 .otis-turn--agent { align-items: flex-start; }
 
-/* Assistant text sits directly on the canvas. */
-.otis-turn__body { max-width: 100%; overflow-wrap: anywhere; }
+/* Assistant text sits directly on the canvas. Single newlines from the model
+   render as line breaks (Markdown would otherwise collapse them into the
+   same visual line); member bubbles already preserve them the same way. */
+.otis-turn__body { max-width: 100%; overflow-wrap: anywhere; white-space: pre-line; }
 .otis-turn__body > :first-child { margin-top: 0; }
 .otis-turn__body > :last-child { margin-bottom: 0; }
 .otis-turn__body p, .otis-turn__body ul, .otis-turn__body ol, .otis-turn__body blockquote, .otis-turn__body pre { margin: 0 0 12px; }

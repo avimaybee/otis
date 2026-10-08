@@ -69,6 +69,13 @@ import {
   type ChatSnapshot,
 } from './api/snapshot.js';
 import {
+  clearCurrentUserQuestionState,
+  persistQuestionState,
+  pruneStoredQuestionIds,
+  readQuestionState,
+  selectAutoOpenQuestion,
+} from './api/questionState.js';
+import {
   clearUserQueries,
   clearWorkspaceQueries,
   fetchMoreChats,
@@ -163,7 +170,13 @@ export function ConversationScreen({ workspaceId, chat: routeChat, chatParamPres
   const [loadingOlder, setLoadingOlder] = useState(false);
   const [olderError, setOlderError] = useState<string | null>(null);
   const [followSignal, setFollowSignal] = useState(0);
-  const [replyId, setReplyId] = useState<string | null>(null);  const [dismissedClarificationIds, setDismissedClarificationIds] = useState<string[]>([]);
+  const [replyId, setReplyId] = useState<string | null>(null);
+  // Skip/close defers per device: restored from storage on every chat open
+  // so a deferred question does not auto-open again on revisit. The pending
+  // operation itself stays server-side and reachable via Answer question.
+  const [dismissedClarificationIds, setDismissedClarificationIds] = useState<string[]>(
+    () => readQuestionState('dismissed', userId, workspaceId, activeChatId),
+  );
   const [draftValue, setDraftValue] = useState<string | null>(null);
   const [controlPending, setControlPending] = useState(false);
   const [controlResult, setControlResult] = useState<string | null>(null);
@@ -199,7 +212,7 @@ export function ConversationScreen({ workspaceId, chat: routeChat, chatParamPres
 
   const navigate = useCallback((workspace: string, chat: string | null, replace = false) => {
     if (chat === null) clearPendingNewChat(userId, workspace);
-    controlOperation.current = null; setControlResult(null); epoch.current++; selected.current = { workspace, chat }; setDrawerOpen(false); setSettingsOpen(false); setDetailActionId(null); setSourceId(null); setReplyId(null); setDismissedClarificationIds([]); setDraftValue(null); setError(null); setOlderError(null); setAccessLost(false);
+    controlOperation.current = null; setControlResult(null); epoch.current++; selected.current = { workspace, chat }; setDrawerOpen(false); setSettingsOpen(false); setDetailActionId(null); setSourceId(null); setReplyId(null); setDismissedClarificationIds(readQuestionState('dismissed', userId, workspace, chat)); setDraftValue(null); setError(null); setOlderError(null); setAccessLost(false);
     clearRefreshTimers();
     onNavigate(workspace, chat, replace);
     try { sessionStorage.setItem(`otis:view:${userId}:${workspace}`, chat ?? 'new'); } catch { /* URL remains authoritative */ }
@@ -210,6 +223,7 @@ export function ConversationScreen({ workspaceId, chat: routeChat, chatParamPres
     clearRefreshTimers();
     clearUserQueries(queryClient, userId);
     clearUserOutbox(userId);
+    clearCurrentUserQuestionState(userId);
     void deleteDraftsForUser(userId);
     void deleteVoiceSessionsForUser(userId);
     unregisterFlushOwner(userId);
@@ -261,8 +275,8 @@ export function ConversationScreen({ workspaceId, chat: routeChat, chatParamPres
     selected.current = { workspace: workspaceId, chat: activeChatId };
     clearRefreshTimers();
     setDrawerOpen(false); setSettingsOpen(false); setDetailActionId(null); setSourceId(null);
-    setReplyId(null); setDismissedClarificationIds([]); setDraftValue(null);
-  }, [selectionKey, clearRefreshTimers]);
+    setReplyId(null); setDismissedClarificationIds(readQuestionState('dismissed', userId, workspaceId, activeChatId)); setDraftValue(null);
+  }, [selectionKey, clearRefreshTimers, userId, workspaceId, activeChatId]);
 
   useEffect(() => { if (desktop) setDrawerOpen(false); }, [desktop]);
   useEffect(() => () => clearRefreshTimers(), [clearRefreshTimers]);
@@ -554,25 +568,50 @@ export function ConversationScreen({ workspaceId, chat: routeChat, chatParamPres
   // Skip defers and close hides: neither resolves the question, cancels a
   // run, guesses a business field, or opens another question. No backend
   // Skip command is needed for deferral; the pending callout stays reachable.
+  // The deferral persists per device so reopening the chat does not
+  // auto-open the same question again.
   const dismissQuestion = useCallback((questionId: string) => {
-    setDismissedClarificationIds(ids => (ids.includes(questionId) ? ids : [...ids, questionId]));
+    setDismissedClarificationIds(ids => {
+      if (ids.includes(questionId)) return ids;
+      const next = [...ids, questionId];
+      persistQuestionState('dismissed', userId, workspaceId, activeChatId, next);
+      return next;
+    });
     setReplyId(current => (current === questionId ? null : current));
-  }, []);
+  }, [userId, workspaceId, activeChatId]);
 
   // Fresh arrivals may open the panel once; closing or Skip never rotates
   // through older questions, and an open panel never switches underneath.
+  // Already-surfaced questions are recorded per device so a chat revisit
+  // stays quiet: the transcript callout keeps every pending question
+  // answerable without auto-opening it again.
   const knownQuestionIds = useRef<{ chat: string | null; ids: Set<string> }>({ chat: null, ids: new Set() });
   useEffect(() => {
     const chatKey = activeChatId ?? 'new';
     if (knownQuestionIds.current.chat !== chatKey) knownQuestionIds.current = { chat: chatKey, ids: new Set() };
     const known = knownQuestionIds.current.ids;
-    const fresh = (snapshot?.questions ?? []).filter(question =>
-      question.status === 'pending' && question.answerable_by_caller
-      && !dismissedClarificationIds.includes(question.id) && !known.has(question.id));
-    for (const question of fresh) known.add(question.id);
-    const latest = fresh.length > 0 ? fresh[fresh.length - 1] : undefined;
-    if (replyId === null && latest) setReplyId(latest.id);
-  }, [snapshot, replyId, dismissedClarificationIds, activeChatId]);
+    const pendingIds = (snapshot?.questions ?? [])
+      .filter(question => question.status === 'pending' && question.answerable_by_caller)
+      .map(question => question.id);
+    const seenStored = readQuestionState('seen', userId, workspaceId, activeChatId);
+    const latest = selectAutoOpenQuestion(snapshot?.questions ?? [], replyId, dismissedClarificationIds, known, seenStored);
+    for (const question of (snapshot?.questions ?? [])) {
+      if (question.status === 'pending' && question.answerable_by_caller) known.add(question.id);
+    }
+    // Record every surfaced pending question and drop resolved ones, so
+    // storage stays bounded and revisits stay quiet.
+    const seenNext = [...new Set([...seenStored, ...pendingIds])].slice(-100);
+    const prunedSeen = pruneStoredQuestionIds(seenNext, pendingIds);
+    if (JSON.stringify(prunedSeen) !== JSON.stringify(seenStored.slice(-100))) {
+      persistQuestionState('seen', userId, workspaceId, activeChatId, prunedSeen);
+    }
+    const prunedDismissed = pruneStoredQuestionIds(dismissedClarificationIds, pendingIds);
+    if (prunedDismissed.length !== dismissedClarificationIds.length) {
+      setDismissedClarificationIds(prunedDismissed);
+      persistQuestionState('dismissed', userId, workspaceId, activeChatId, prunedDismissed);
+    }
+    if (latest) setReplyId(latest.id);
+  }, [snapshot, replyId, dismissedClarificationIds, activeChatId, userId, workspaceId]);
 
   // A resolved or superseded question closes its panel instead of accepting
   // a stale answer; the payload guard below is the backstop, not the router.
