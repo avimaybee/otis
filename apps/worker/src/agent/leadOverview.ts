@@ -7,6 +7,9 @@
  * rows is never mistaken for the whole dataset.
  */
 
+import { WORKSPACE_CANONICAL_SQL } from '../entities/canonical.js';
+import { readEffectiveLastContacts } from '../entities/contacts.js';
+import { localDay } from '../entities/work.js';
 export type LeadOverviewColumn = 'status' | 'next_step' | 'due' | 'owner' | 'last_contact';
 
 export const LEAD_OVERVIEW_COLUMNS: readonly LeadOverviewColumn[] = [
@@ -128,7 +131,8 @@ function decodeCursor(cursor: string): [number, string, string, string] | null {
 }
 
 const LEAD_SELECT = `
-  SELECT e.id AS id, e.name AS name, e.status AS status, e.assigned_user_id AS assigned_user_id,
+  SELECT e.id AS id, e.name AS name, CASE WHEN sf.state = 'disputed' THEN 'disputed' ELSE e.status END AS status,
+    CASE WHEN af.state = 'disputed' THEN NULL ELSE e.assigned_user_id END AS assigned_user_id,
     t.id AS task_id, t.title AS task_title, t.due_kind AS due_kind,
     t.due_local_date AS due_local_date, t.due_instant AS due_instant,
     t.due_timezone AS due_timezone, t.snooze_until AS snooze_until,
@@ -142,23 +146,26 @@ const LEAD_SELECT = `
     END AS rank_group,
     COALESCE(t.due_instant, t.due_local_date, '9999-12-31') AS due_sort
   FROM entities e
+  LEFT JOIN entity_state sf ON sf.workspace_id = e.workspace_id AND sf.entity_id = e.id AND sf.field_name = 'status'
+  LEFT JOIN entity_state af ON af.workspace_id = e.workspace_id AND af.entity_id = e.id AND af.field_name = 'assigned_user_id'
   LEFT JOIN (
     SELECT entity_id, id, title, due_kind, due_local_date, due_instant, due_timezone, snooze_until
     FROM (
-      SELECT entity_id, id, title, due_kind, due_local_date, due_instant, due_timezone, snooze_until,
+      SELECT em.entity_id, tasks.id, title, due_kind, due_local_date, due_instant, due_timezone, snooze_until,
         ROW_NUMBER() OVER (
-          PARTITION BY entity_id
+          PARTITION BY em.entity_id
           ORDER BY
             CASE WHEN due_instant IS NOT NULL OR due_local_date IS NOT NULL THEN 0 ELSE 1 END ASC,
             COALESCE(due_instant, due_local_date, '9999-12-31') ASC,
-            id ASC
+            tasks.id ASC
         ) AS rn
-      FROM tasks
-      WHERE workspace_id = :tasksWs AND status = 'open' AND entity_id IS NOT NULL
+      FROM tasks JOIN entity_map em ON em.origin_id = tasks.entity_id
+      WHERE workspace_id = :tasksWs AND status = 'open' AND tasks.entity_id IS NOT NULL
     )
     WHERE rn = 1
   ) t ON t.entity_id = e.id
   WHERE e.workspace_id = :entitiesWs AND e.kind = 'lead'
+    AND NOT EXISTS (SELECT 1 FROM entity_redirects r WHERE r.workspace_id = e.workspace_id AND r.source_entity_id = e.id)
 `;
 
 export async function readLeadOverview(
@@ -197,6 +204,9 @@ export async function readLeadOverview(
     memberTimezone = tzRow?.interpretation_timezone || tzRow?.brief_timezone || null;
   }
   const localDate = localDateInTimezone(nowIso, memberTimezone);
+  const taskZones = (await db.prepare("SELECT DISTINCT due_timezone AS zone FROM tasks WHERE workspace_id = ? AND due_kind = 'date' AND due_timezone IS NOT NULL").bind(args.workspaceId).all<{ zone: string }>()).results ?? [];
+  const literal = (text: string) => `'${text.replaceAll("'", "''")}'`;
+  const days = [...new Set([memberTimezone ?? 'UTC', ...taskZones.map(row => row.zone)])].map(zone => `(${literal(zone)}, ${literal(localDay(nowIso, zone))})`).join(',');
 
   // The ranked subquery exposes bare column names (id, name, status,
   // rank_group, due_sort); the outer query filters and pages on those.
@@ -205,14 +215,14 @@ export async function readLeadOverview(
     `${filters.overdue_only ? ` AND rank_group = 0` : ''}` +
     `${filters.without_next_step ? ` AND task_id IS NULL` : ''}`;
 
-  const rankedSql = `SELECT * FROM (${LEAD_SELECT.replaceAll(':tasksWs', '?')
+  const rankedSql = `${WORKSPACE_CANONICAL_SQL}, local_days(zone, day) AS (VALUES ${days}) SELECT * FROM (${LEAD_SELECT.replaceAll(':tasksWs', '?')
     .replaceAll(':entitiesWs', '?')
     .replaceAll(':nowSnooze', '?')
     .replaceAll(':nowDue', '?')
-    .replaceAll(':localDate', '?')}) AS ranked WHERE 1 = 1${statusClause}${flagClause}`;
+    .replaceAll(':localDate', 'COALESCE((SELECT day FROM local_days ld WHERE ld.zone = t.due_timezone), ?)')}) AS ranked WHERE 1 = 1${statusClause}${flagClause}`;
   // Placeholder order follows the template: snooze now, due-instant now,
   // local date, tasks scope, entities scope, then status filter.
-  const baseBinds: unknown[] = [nowIso, nowIso, localDate, args.workspaceId, args.workspaceId];
+  const baseBinds: unknown[] = [args.workspaceId, args.workspaceId, args.workspaceId, nowIso, nowIso, localDate, args.workspaceId, args.workspaceId];
   if (filters.status) baseBinds.push(filters.status);
 
   // Full-set counts over the filtered set: aggregates only, no row transfer.
@@ -325,77 +335,9 @@ export async function readLeadOverview(
   };
 }
 
-async function readEffectiveContacts(
-  db: D1Database,
-  workspaceId: string,
-  entityIds: string[],
-): Promise<Map<string, string>> {
-  const contacts = new Map<string, string>();
-  for (let i = 0; i < entityIds.length; i += 50) {
-    const chunk = entityIds.slice(i, i + 50);
-    if (chunk.length === 0) continue;
-    const placeholders = chunk.map(() => '?').join(', ');
-    const rows = (
-      await db
-        .prepare(
-          `SELECT entity_id, occurred_at FROM (
-            SELECT entity_id, occurred_at,
-              ROW_NUMBER() OVER (PARTITION BY entity_id ORDER BY occurred_at DESC, id DESC) AS rn
-            FROM events
-            WHERE workspace_id = ? AND entity_id IN (${placeholders})
-              AND (kind IN ('contact', 'message_sent_by_member')
-                OR (kind = 'visit' AND json_extract(payload_json, '$.contact_made') = 1))
-              AND NOT EXISTS (
-                SELECT 1 FROM events AS reverted_by
-                WHERE reverted_by.workspace_id = events.workspace_id
-                  AND reverted_by.reverts_event_id = events.id
-              )
-              -- A superseded head is not current: a live revision points
-              -- at it. Entity correlation keeps the lookup indexed.
-              AND NOT EXISTS (
-                SELECT 1 FROM events AS superseded_by
-                WHERE superseded_by.workspace_id = events.workspace_id
-                  AND superseded_by.entity_id = events.entity_id
-                  AND superseded_by.supersedes_event_id = events.id
-                  AND NOT EXISTS (
-                    SELECT 1 FROM events AS unreverted
-                    WHERE unreverted.workspace_id = superseded_by.workspace_id
-                      AND unreverted.reverts_event_id = superseded_by.id
-                  )
-              )
-              -- A removed interaction is not current either. The root of
-              -- an event is its revision marker, or its own id for legacy
-              -- heads; NULL comparisons never match, so untracked kinds
-              -- (sent drafts) and pre-C1 history keep legacy behavior.
-              AND NOT EXISTS (
-                SELECT 1 FROM events AS removed_by
-                WHERE removed_by.workspace_id = events.workspace_id
-                  AND removed_by.entity_id = events.entity_id
-                  AND removed_by.kind = 'interaction_removed'
-                  AND (
-                    json_extract(removed_by.payload_json, '$.root_event_id') = events.id
-                    OR json_extract(removed_by.payload_json, '$.root_event_id')
-                      = json_extract(events.payload_json, '$.interaction_id')
-                  )
-                  AND NOT EXISTS (
-                    SELECT 1 FROM events AS unremoved
-                    WHERE unremoved.workspace_id = removed_by.workspace_id
-                      AND unremoved.reverts_event_id = removed_by.id
-                  )
-              )
-          ) WHERE rn = 1`,
-        )
-        .bind(workspaceId, ...chunk)
-        .all<{ entity_id: string; occurred_at: string }>()
-    ).results ?? [];
-    for (const row of rows) {
-      if (typeof row.occurred_at !== 'string' || Number.isNaN(Date.parse(row.occurred_at))) continue;
-      contacts.set(String(row.entity_id), String(row.occurred_at));
-    }
-  }
-  return contacts;
+async function readEffectiveContacts(db: D1Database, workspace: string, ids: string[]) {
+  return new Map([...(await readEffectiveLastContacts(db, workspace, ids))].map(([id, contact]) => [id, contact.at]));
 }
-
 async function readOwnerNames(db: D1Database, userIds: string[]): Promise<Map<string, string>> {
   const names = new Map<string, string>();
   const unique = [...new Set(userIds)];

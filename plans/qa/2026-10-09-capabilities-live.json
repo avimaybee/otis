@@ -1,0 +1,43 @@
+{
+  "checked_at": "2026-10-09T05:36:29.564Z",
+  "model": "gemini-3.5-flash-lite",
+  "endpoint": "gemini-interactions",
+  "prompt_version": "2026-10-09-v6",
+  "schema_version": 1,
+  "requests": 1,
+  "limitation": "Provider/prompt checks with supplied synthetic records; not a complete live Worker or physical-device journey.",
+  "results": [
+    {
+      "id": "general-table-coverage",
+      "first_text_ms": 14794.4327,
+      "total_ms": 15536.9304,
+      "text": "Here is the inventory lookup based on the supplied page (showing 5 of 12 total records):\n\n| Name | Location | Status | Price | Special Detail |\n| :--- | :--- | :--- | :--- | :--- |\n| Copper | Cluj | open | €40 | Farsi only |\n| Willow | Timisoara | waiting | *Unknown* | Call after 16:00 |\n| Maple | *Unknown* | disputed | €60 | *Unknown* |\n| Birch | Iasi | complete | €20 | Pickup |\n| Cedar | Sibiu | open | €50 | Delivery |\n\n*Note: This view covers 5 records out of a reported total of 12 (`has_more: true`). Unknown values remain blank or marked as unknown where data was not provided in the source.*",
+      "tool_calls": [],
+      "usage": [
+        {
+          "type": "usage",
+          "usage": {
+            "inputTokens": 8129,
+            "outputTokens": 181,
+            "cacheReadTokens": 0,
+            "cacheWriteTokens": null,
+            "reasoningTokens": 0,
+            "totalTokens": 8310,
+            "cumulative": true
+          }
+        }
+      ],
+      "errors": [],
+      "finish": [
+        {
+          "reason": "success"
+        }
+      ]
+    }
+  ],
+  "manual_review": {
+    "passed": true,
+    "scope": "One supplied inventory page: every saved cell preserved, unknowns disclosed, 5-of-12 coverage correct, no invented page count or logistics; no tool calls or business mutation.",
+    "limitation": "One synthetic live example, not a claim of general answer quality."
+  }
+}

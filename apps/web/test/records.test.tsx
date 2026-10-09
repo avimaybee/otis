@@ -172,7 +172,7 @@ describe('Editable Records UI (R16)', () => {
       askOtisBtn.click();
     });
 
-    expect(view.host.textContent).toContain('I\'m viewing your Leads');
+    expect(view.host.querySelector('.otis-records__ask-pane')?.textContent).toContain('Leads ·');
 
     await view.unmount();
   });

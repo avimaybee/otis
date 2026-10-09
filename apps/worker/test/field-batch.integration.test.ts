@@ -653,9 +653,9 @@ describe('targeted hydration scales with touched rows, not workspace size', () =
     // Same touched rows, same statements: hydration does not grow with the
     // workspace. Field writes load entity + requested fields only.
     expect(largeCounted.counts()).toEqual(smallCounted.counts());
-    // Structural proof for the cost record: one read batch (2 statements)
+    // Structural proof: one read batch (fields, contact and redirect hints)
     // plus one commit batch, independent of workspace size.
-    expect(smallCounted.counts()).toEqual({ prepares: 12, batches: 2 });
+    expect(smallCounted.counts()).toEqual({ prepares: 16, batches: 2 });
 
     const explainCases: { sql: string; binds: string[] }[] = [
       {

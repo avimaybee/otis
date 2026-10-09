@@ -60,6 +60,7 @@ export {
 } from './commands/similarity.js';
 
 // Repository & Transaction Executor
+export { readCurrentInteractions, resolveInteractionEntities } from './repository/interactions.js';
 export {
   executeLedgerCommand,
   resumePendingClarification,
@@ -71,12 +72,19 @@ export {
 export {
   getActionReceipt,
   getActionReceiptsByIds,
-  getEntityInteractions,
   getFieldProjectionState,
   getInteractionProjectionState,
+  getLogEventProjectionState,
   getQuestionByAction,
   getWorkspaceRevision,
   getWorkspaceEvents,
   getWorkspaceActions,
   getWorkspaceProjectionState,
 } from './repository/queries.js';
+export { CURRENT_INTERACTION_COLUMNS, CURRENT_INTERACTION_JOINS, mapCurrentInteraction } from './repository/interactions.js';
+export { handleChangeContact, validContactValue } from './commands/contacts.js';
+export { handleLinkAttachment, handleUnlinkAttachment } from './commands/attachments.js';
+export { handleMergeEntities, previewEntityMerge } from './commands/mergeEntity.js';
+export { getBusinessProjectionState } from './repository/queries.js';
+export { ENTITY_FAMILY_SQL, familyBinds } from './repository/canonical.js';
+export { contactComparison } from './reducers/business.js';

@@ -637,7 +637,7 @@ export async function handleFinalizeVoiceUpload(
   if (row.state !== 'quarantine' || !row.upload_completed_at) {
     return jsonError(409, 'media_not_ready', 'The recording bytes were not received.', requestId);
   }
-  if (row.expires_at <= nowIso) {
+  if ((row.retained !== 1 && row.expires_at <= nowIso)) {
     await markMediaExpired(env.DB, { workspaceId, mediaId, nowIso });
     return jsonError(410, 'audio_expired', 'This recording expired before it was sent.', requestId);
   }
@@ -724,7 +724,7 @@ export async function handleVerifyVoiceFormat(
     return jsonError(404, 'media_not_found', 'Verification sample not found.', requestId);
   }
   const nowIso = new Date().toISOString();
-  if (row.expires_at <= nowIso) {
+  if ((row.retained !== 1 && row.expires_at <= nowIso)) {
     await markMediaExpired(env.DB, { workspaceId, mediaId, nowIso });
     return jsonError(410, 'audio_expired', 'This verification sample expired.', requestId);
   }
@@ -846,7 +846,7 @@ export async function handleGetVoiceMediaStatus(
   if (!row) return jsonError(404, 'media_not_found', 'Recording not found.', requestId);
   const nowIso = new Date().toISOString();
   if (
-    row.expires_at <= nowIso &&
+    (row.retained !== 1 && row.expires_at <= nowIso) &&
     (row.state === 'validated' || row.state === 'transcribing' || row.state === 'ready')
   ) {
     await markMediaExpired(env.DB, { workspaceId, mediaId, nowIso });
@@ -907,7 +907,7 @@ export async function handleGetVoiceMediaContent(
   if (row.state === 'rejected' || row.state === 'deleted') {
     return jsonError(410, 'audio_unavailable', 'This recording is no longer available.', requestId);
   }
-  if (row.state === 'expired' || row.expires_at <= nowIso) {
+  if (row.state === 'expired' || (row.retained !== 1 && row.expires_at <= nowIso)) {
     if (row.state !== 'expired') await markMediaExpired(env.DB, { workspaceId, mediaId, nowIso });
     return jsonError(410, 'audio_expired', 'The recording expired. Its transcript remains readable.', requestId);
   }

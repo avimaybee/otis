@@ -1,0 +1,58 @@
+{
+  "checked_at": "2026-10-09T05:28:57.365Z",
+  "model": "mimo-v2.5",
+  "endpoint": "go-chat-completions",
+  "prompt_version": "2026-10-09-v5",
+  "schema_version": 1,
+  "requests": 2,
+  "limitation": "Provider/prompt checks with supplied synthetic records; not a complete live Worker or physical-device journey.",
+  "results": [
+    {
+      "id": "R45-capabilities",
+      "first_text_ms": null,
+      "total_ms": 45005.2328,
+      "text": "",
+      "tool_calls": [],
+      "usage": [],
+      "errors": [
+        {
+          "type": "error",
+          "error": {
+            "code": "timeout",
+            "message": "Provider request timed out.",
+            "retryable": true,
+            "retryAfterMs": null
+          }
+        }
+      ],
+      "finish": []
+    },
+    {
+      "id": "general-table-coverage",
+      "first_text_ms": 3751.0181000000002,
+      "total_ms": 8435.803300000001,
+      "text": "Here's the supplied page, presented as-is. **Coverage: 5 of 12 rows** — this page is partial (`has_more: true`), so the remaining 7 entries aren't shown and nothing below reflects them.\n\n| Name | Location | Status | Price | Special detail |\n|---------|----------|------------|-------|-----------------|\n| Copper | Cluj | open | €40 | Farsi only |\n| Willow | Timișoara | waiting | Unknown | Call after 16:00 |\n| Maple | Unknown | disputed | €60 | Unknown |\n| Birch | Iași | complete | €20 | Pickup |\n| Cedar | Sibiu | open | €50 | Delivery |\n\n**Quick observations (analysis, not recorded facts):**\n- 2 open, 1 waiting, 1 disputed, 1 complete.\n- Only Copper and Cedar are open with prices listed (€40 and €50).\n- Maple is the one disputed entry — worth resolving before it moves.\n- Willow has a contact constraint (call after 16:00) but no price recorded.\n\nTo fill in the remaining 7 entries, I'd need the next page of this lookup.",
+      "tool_calls": [],
+      "usage": [
+        {
+          "type": "usage",
+          "usage": {
+            "inputTokens": 8640,
+            "outputTokens": 320,
+            "cacheReadTokens": 3072,
+            "cacheWriteTokens": null,
+            "reasoningTokens": 64,
+            "totalTokens": 8960,
+            "cumulative": true
+          }
+        }
+      ],
+      "errors": [],
+      "finish": [
+        {
+          "reason": "success"
+        }
+      ]
+    }
+  ]
+}

@@ -4,6 +4,7 @@
  */
 
 import type { CommandResult, LedgerEvent } from '@otis/contracts';
+import { normalizeInteractionOccurredAt } from '@otis/contracts';
 import type { LedgerCommandContext, LedgerProjectionState, LogEventArgs } from '../types.js';
 import { createLedgerEvent } from './events.js';
 import { validateInteractionPayload } from './interactionPayload.js';
@@ -35,7 +36,9 @@ export function handleLogEvent(
 
   // Validate payload by kind through the shared interaction validator so
   // corrections accept exactly what new logging accepts.
-  const validation = validateInteractionPayload(args.kind, args.payload);
+  const { interaction_id: _dropped, ...freshPayload } = args.payload as Record<string, unknown>;
+  void _dropped;
+  const validation = validateInteractionPayload(args.kind, freshPayload);
   if (!validation.valid) {
     return {
       result: {
@@ -54,14 +57,16 @@ export function handleLogEvent(
   // command may chain onto an existing root, through its validated
   // root/head arguments. The agent schemas reject this key up front; this
   // lower boundary stays safe for every other trusted command caller.
-  const { interaction_id: _dropped, ...freshPayload } = args.payload as Record<string, unknown>;
-  void _dropped;
+  const occurredAt = args.occurred_at === undefined ? undefined : normalizeInteractionOccurredAt(args.occurred_at);
+  if (occurredAt === null) {
+    return { result: { status: 'rejected', error: { code: 'invalid_occurred_at', message: 'Occurred date must be a valid ISO timestamp with a timezone.' } }, events: [] };
+  }
 
   const event = createLedgerEvent(context, nextSequence, {
     entity_id: args.entity_id || null,
     kind: args.kind,
-    payload: freshPayload,
-    occurred_at: args.occurred_at,
+    payload: validation.payload,
+    occurred_at: occurredAt,
     provenance: args.provenance || 'stated',
   });
 

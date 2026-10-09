@@ -1316,6 +1316,59 @@ describe('Ledger Invariants & Pure Reducers', () => {
       expect(preview.affected_event_ids).toHaveLength(1);
       expect(preview.affected_context).toHaveLength(1);
       expect(preview.affected_context[0]!.changes[0]).toContain('note');
+      // The item identifies what will be restored, not merely its kind.
+      expect(preview.affected_context[0]!.changes[0]).toContain('Entry to restore');
+      expect(preview.affected_context[0]!.changes[0]).toContain('occurred');
+    });
+
+    it('names both sides when previewing undo of a correction', () => {
+      const created = handleCreateEntity(dummyContext, fullEmptyState, 1, { name: 'Preview Co' });
+      const logged = handleLogEvent(dummyContext, created.nextState!, 2, {
+        entity_id: null,
+        kind: 'note',
+        payload: { text: 'Original wording' },
+      });
+      const root = logged.events[0]!.id;
+      const revised = handleReviseInteraction(
+        { ...dummyContext, action_id: 'act-rev preview' },
+        logged.nextState!,
+        3,
+        {
+          interaction_id: root,
+          expected_head_event_id: root,
+          kind: 'note',
+          payload: { text: 'Corrected wording' },
+        },
+      );
+      const receipt: ActionReceipt = {
+        id: 'rcpt-rev',
+        workspace_id: 'ws-test',
+        action_id: 'act-rev preview',
+        payload_hash: 'hash',
+        command_name: 'revise_interaction',
+        result_status: 'applied',
+        result_json: '{}',
+        actor_kind: 'member',
+        actor_user_id: 'usr-avi',
+        source_message_id: 'msg-101',
+        source_job_id: null,
+        run_id: 'run-1',
+        step_id: null,
+        committed_revision: 3,
+        created_at: '2026-10-07T10:00:00.000Z',
+      };
+      const preview = computeUndoPreview(
+        'act-rev preview',
+        'single',
+        [receipt],
+        [created.events[0]!, logged.events[0]!, revised.events[0]!],
+        revised.nextState!,
+        3,
+      );
+      expect(preview.affected_context).toHaveLength(1);
+      const change = preview.affected_context[0]!.changes[0]!;
+      expect(change).toContain('Corrected wording');
+      expect(change).toContain('Original wording');
     });
 
     it('flags later revisions as dependents when previewing undo of the original log', () => {

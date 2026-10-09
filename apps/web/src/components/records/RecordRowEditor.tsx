@@ -1,4 +1,6 @@
 import type { RecordColumn, RecordRow, DirtyCellState } from './types.js';
+import { lazy, Suspense, useState } from 'react';
+const EntityFilePane = lazy(() => import('../EntityFile.js').then(m => ({ default: m.EntityFilePane })));
 import {
   Sheet, SheetContent, SheetHeader, SheetTitle, SheetFooter
 } from '../ui/sheet.js';
@@ -12,6 +14,9 @@ import {
 } from '../icons.js';
 
 export interface RecordRowEditorProps {
+  workspaceId?: string;
+  userId?: string;
+  onOpenChat?: (id: string) => void;
   open: boolean;
   onClose: () => void;
   row: RecordRow | null;
@@ -19,10 +24,13 @@ export interface RecordRowEditorProps {
   dirtyCells: Record<string, DirtyCellState>;
   onCellChange: (rowId: string, columnId: string, nextValue: string) => void;
   onDeleteRow?: (rowId: string) => void;
-  onAskOtisAboutRow?: (row: RecordRow) => void;
+  onAskOtisAboutRow?: (row: RecordRow, question?: string) => void;
 }
 
 export function RecordRowEditor({
+  workspaceId,
+  userId,
+  onOpenChat,
   open,
   onClose,
   row,
@@ -32,6 +40,7 @@ export function RecordRowEditor({
   onDeleteRow,
   onAskOtisAboutRow,
 }: RecordRowEditorProps) {
+  const [showFile, setShowFile] = useState(false);
   if (!row) return null;
 
   const primaryCol = columns[0] ?? { id: 'name', name: 'Name' };
@@ -63,6 +72,7 @@ export function RecordRowEditor({
 
         {/* Scrollable form fields */}
         <div className="flex-1 overflow-y-auto p-4 flex flex-col gap-4">
+          {row.source === 'entity' && workspaceId && userId && <section className="space-y-4"><Button variant="outline" onClick={() => setShowFile(v => !v)} aria-expanded={showFile}>{showFile ? 'Close client file' : 'View complete client file'}</Button>{showFile && <Suspense fallback={<p role="status">Opening client file…</p>}><EntityFilePane key={`${workspaceId}:${userId}:${row.id}`} workspaceId={workspaceId} userId={userId} entityId={row.id} onAsk={question => onAskOtisAboutRow?.(row, question)} onOpenChat={onOpenChat}/></Suspense>}</section>}
           {columns.map(col => {
             const val = getEffectiveValue(col.id);
             const dirty = isDirty(col.id);

@@ -40,6 +40,7 @@ export interface AskOtisPaneProps {
   onRefreshSession?: () => Promise<void>;
   chatId?: string | null;
   onSelectChat?: (chatId: string | null) => void;
+  suggestedDraft?: string | null;
 }
 
 export function AskOtisPane(props: AskOtisPaneProps) {
@@ -64,7 +65,7 @@ export function AskOtisPane(props: AskOtisPaneProps) {
       <div className="flex items-center gap-2 px-3 py-2 text-muted-foreground">
         <SparklesIcon />
         <span className="font-medium text-foreground truncate">
-          I&apos;m viewing your {list.name} ({list.rows.length} records{dirtyCount > 0 ? `, ${dirtyCount} unsaved edits` : ''}).
+          {list.name} · {list.rows.length} records{dirtyCount > 0 ? ` · ${dirtyCount} unsaved edits` : ''}
         </span>
       </div>
       {focusedRow && (
@@ -100,6 +101,7 @@ export function AskOtisPane(props: AskOtisPaneProps) {
         embedded={true}
         onClose={onClose}
         headerBanner={headerBanner}
+        suggestedDraft={props.suggestedDraft}
       />
     </aside>
   );

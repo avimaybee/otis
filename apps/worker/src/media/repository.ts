@@ -14,6 +14,9 @@ import type {
 import { VOICE_BOUNDS } from '@otis/contracts';
 
 export interface MediaRow {
+  retained: number;
+  deletion_claimed_at: string | null;
+  filename: string | null;
   id: string;
   workspace_id: string;
   chat_id: string | null;
@@ -113,6 +116,9 @@ export async function loadMediaRow(
   if (!row) return null;
   return {
     id: String(row['id']),
+    retained: Number(row['retained'] ?? 0),
+    deletion_claimed_at: row['deletion_claimed_at'] == null ? null : String(row['deletion_claimed_at']),
+    filename: row['filename'] == null ? null : String(row['filename']),
     workspace_id: String(row['workspace_id']),
     chat_id: row['chat_id'] ? String(row['chat_id']) : null,
     uploader_user_id: String(row['uploader_user_id']),
@@ -635,7 +641,7 @@ export async function markMediaExpired(
   await db
     .prepare(
       `UPDATE media_objects SET state = 'expired', updated_at = ?
-       WHERE id = ? AND workspace_id = ? AND state IN ('validated', 'transcribing', 'ready', 'rejected')`,
+       WHERE id = ? AND workspace_id = ? AND retained = 0 AND state IN ('validated', 'transcribing', 'ready', 'rejected')`,
     )
     .bind(params.nowIso, params.mediaId, params.workspaceId)
     .run();
@@ -660,7 +666,7 @@ export async function listExpiredMedia(
   const { results } = await db
     .prepare(
       `SELECT id, workspace_id, object_key FROM media_objects
-       WHERE expires_at <= ? AND state IN ('validated', 'transcribing', 'ready', 'rejected')
+       WHERE retained = 0 AND ((expires_at <= ? AND state IN ('validated', 'transcribing', 'ready', 'rejected')) OR (state = 'expired' AND deletion_claimed_at IS NOT NULL))
        ORDER BY expires_at ASC LIMIT ?`,
     )
     .bind(nowIso, limit)

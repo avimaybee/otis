@@ -15,6 +15,8 @@ const ALLOWED_CORE_FIELDS = new Set([
   'preferred_language',
   'assigned_user_id',
   'quote',
+  'company',
+  'address',
 ]);
 
 export { ALLOWED_CORE_FIELDS };

@@ -1,0 +1,92 @@
+{
+  "date": "2026-10-08",
+  "baseline": "ecc224601db1b5db65e8edce2f81308f1a48551e",
+  "verdict": "Core C1 source repairs verified locally; production, full-suite and UI/provider acceptance boundaries retained",
+  "authorization": "User explicitly requested direct C1 repairs; no commit/push/deployment authorization",
+  "source_sha256": {
+    "apps/worker/src/agent/handler.ts": "47037f04027685bc0504657178c30771eb219e1970f974545dbc76a5c0fcdd06",
+    "packages/ledger/src/repository/interactions.ts": "84e67ed3fc1da5de3850d9af433fcc8a3c956561be6ffabea17f5fc8d4ec6336",
+    "packages/ledger/src/commands/undo.ts": "c4eac1e7aab9dbf4b87316ac619e751cdd219c2a77f81e1a0af2083097560eab",
+    "packages/ledger/src/commands/interactionPayload.ts": "2131b7244c1f4ca56ac7711644e3c231a6547ec447fe3cb8570b9239f0c60a4b",
+    "apps/worker/src/routes/records.ts": "4340b66d0faeb1ebc8c2cf322cd4c8614337769e95d99e50f228814e8646772b",
+    "packages/ledger/src/reducers/fields.ts": "bd05a2c92a94db650901f142a5e8179c80caedb7f889cc03edaf324f3a6dd1e1",
+    "migrations/0025_interaction_corrections.sql": "e55d9a2b20e3f2078caa853a84a04eb4ce5be8408d93a9e46dea7e05f15f3beb",
+    "packages/ledger/src/repository/queries.ts": "459b165f9043894587bdf6269d58d70bd71d593cece353bfeb5e656d0f9f34bf",
+    "packages/agent/src/prompt.ts": "e8d872d6893463606012d47f41af93ea5a02887b6083d0314064a99f287ddbbe",
+    "packages/ledger/src/repository/executor.ts": "37b96da7a9166e7fce14cc17b8f13e3b33f3962151b705d7f015eb386f5a294b",
+    "packages/contracts/src/index.ts": "82cf6f933947c2879b0fba41b52626cbd23f4ba9c0313ce17d7096c64b59bf16",
+    "packages/contracts/src/interactions.ts": "2672b52e6fa8e3c133e8a03c213783b9286bcd8b468e176079f154b6b09037d5",
+    "packages/ledger/src/commands/logEvent.ts": "c28a4fa6d7ca3d5abd62991836192188270044679823c6d6692d93d71d2d7d29",
+    "packages/ledger/src/index.ts": "85475516461ff4a81ea30b9c330e73f3a0f2b1f73dea0cd8c5c2c1b67bacba83",
+    "packages/ledger/src/reducers/interactions.ts": "5b1c09ba3263d96f021717c63ab85169c372b9535619ffc7636c37dd5fd23186",
+    "packages/agent/src/tools.ts": "aecc8153bfa8ccb24518a5fa87d8ba2fa191b575c4d358a4691173b0e8e2be21",
+    "packages/ledger/src/commands/interactions.ts": "bf096895824c334cffb0b4b99d36be6adcf3185da6acf9d5b13cc12eebc87f81",
+    "packages/ledger/src/types.ts": "6c7ef27e057a594027fae0a959506e3619973e1ff95cb5f7558603858cb03964",
+    "apps/worker/src/agent/repository.ts": "b8e727b2309dec1ceeeb2f30d1696ae6fa266143dfc8cac3239f2752bb3405fc"
+  },
+  "reports": {
+    "tests": {
+      "skipped": 0,
+      "total": 17,
+      "failed": 0,
+      "artifact": "plans/qa/2026-10-08-c1-repair-tests.json",
+      "passed": 17,
+      "failures": []
+    },
+    "full-tests": {
+      "skipped": 10,
+      "total": 1160,
+      "failed": 4,
+      "artifact": "plans/qa/2026-10-08-c1-repair-full-tests.json",
+      "passed": 1146,
+      "failures": [
+        "Gate 006 Composed Pipeline Fixture Evaluations (D1 workerd runtime) A1_price_relief: commits separate offered/expected quotes, leaves status untouched, and requires clarification for missing deadline",
+        "Gate 006 Composed Pipeline Fixture Evaluations (D1 workerd runtime) A9_suffix_undo: executes bare undo in shared chat with prior quote, removes projection row, records revert event, and matches replay",
+        "Gate 006 Composed Pipeline Fixture Evaluations (D1 workerd runtime) A9_explicit_undo: executes explicit undo by action_id in shared chat with prior quote, removes projection row, records revert event, and matches replay",
+        "Gate 006 Composed Pipeline Fixture Evaluations (D1 workerd runtime) A13_memory_lifecycle: remembers note, indexes in FTS, forgets note, and ensures FTS is cleaned up"
+      ]
+    },
+    "targeted-tests": {
+      "skipped": 0,
+      "total": 93,
+      "failed": 0,
+      "artifact": "plans/qa/2026-10-08-c1-repair-targeted-tests.json",
+      "passed": 93,
+      "failures": []
+    }
+  },
+  "checks": {
+    "pnpm check:stories": "passed",
+    "pnpm typecheck": "passed",
+    "pnpm check:design": "passed",
+    "pnpm lint": "passed",
+    "git diff --check": "passed",
+    "pnpm build": "passed including Wrangler dry-run"
+  },
+  "final_full_rerun": {
+    "status": "stalled and verified runner stopped after EnvironmentTeardownError closing RPC while resolve pending",
+    "command": "pnpm test --reporter=json --outputFile=plans/qa/2026-10-08-c1-repair-full-tests.json",
+    "output": "plans/qa/2026-10-08-c1-repair-suite-output.txt",
+    "preserved_report": "Earlier completed full run: 1146 passed / 4 pre-existing composed-eval failures / 10 skipped; not a final-source full-suite pass"
+  },
+  "production_read_only": {
+    "required_before_deploy": [
+      "0023_interaction_state.sql",
+      "0024_interaction_removed_kind.sql",
+      "0025_interaction_corrections.sql"
+    ],
+    "command": "wrangler d1 execute otis-db --remote: d1_migrations latest six and PRAGMA table_info(interaction_state)",
+    "changed_db": false,
+    "interaction_table": "absent",
+    "rows_written": 0,
+    "rows_read": 6,
+    "latest_migration": "0022_member_interpretation_timezone.sql"
+  },
+  "limitations": [
+    "No remote mutation, commit, push, deployment or real lead message",
+    "No live provider/native device verification or measured CPU/billed-row/end-to-end latency claim",
+    "C2 combined file and optional manual file-entry controls remain planned",
+    "Records Save bypasses ledger and skips Notes/Drafts edits; separate R16 blocker",
+    "Four pre-existing composed-eval failures plus final workerd teardown hang remain honestly recorded"
+  ]
+}

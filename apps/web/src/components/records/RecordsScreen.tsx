@@ -113,6 +113,7 @@ export function RecordsScreen(props: RecordsScreenProps) {
   const [isAddListOpen, setIsAddListOpen] = useState(false);
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
   const [isAskOtisOpen, setIsAskOtisOpen] = useState(false);
+  const [suggestedQuestion, setSuggestedQuestion] = useState<string | null>(null);
   const [sidebarChatId, setSidebarChatId] = useState<string | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
@@ -598,6 +599,7 @@ export function RecordsScreen(props: RecordsScreenProps) {
       {/* Desktop Navigation Sidebar */}
       <div className="hidden md:flex md:w-64 md:flex-col md:border-r md:border-sidebar-border bg-sidebar shrink-0">
         <HistoryNav
+          userId={props.userId}
           workspaceName={currentWorkspaceName}
           workspaces={props.workspaces}
           workspaceId={props.workspaceId}
@@ -617,6 +619,7 @@ export function RecordsScreen(props: RecordsScreenProps) {
 
       {/* Mobile Navigation Drawer */}
       <HistoryNav
+        userId={props.userId}
         workspaceName={currentWorkspaceName}
         workspaces={props.workspaces}
         workspaceId={props.workspaceId}
@@ -790,6 +793,7 @@ export function RecordsScreen(props: RecordsScreenProps) {
                 onRefreshSession={props.onRefreshSession}
                 chatId={sidebarChatId}
                 onSelectChat={setSidebarChatId}
+                suggestedDraft={suggestedQuestion}
               />
             </div>
           )}
@@ -798,6 +802,9 @@ export function RecordsScreen(props: RecordsScreenProps) {
 
       {/* Row Editor Sheet */}
       <RecordRowEditor
+        workspaceId={props.workspaceId}
+        userId={props.userId}
+        onOpenChat={id => props.onNavigate(props.workspaceId, id)}
         open={Boolean(selectedRowForEditor)}
         row={selectedRowForEditor}
         columns={effectiveColumns}
@@ -805,7 +812,7 @@ export function RecordsScreen(props: RecordsScreenProps) {
         onClose={() => setSelectedRowForEditor(null)}
         onCellChange={handleCellChange}
         onDeleteRow={handleDeleteRow}
-        onAskOtisAboutRow={() => setIsAskOtisOpen(true)}
+        onAskOtisAboutRow={(row, question) => { setSuggestedQuestion(question ?? `Show me everything on ${row.cells.name ?? row.id}. Read the saved client file and include sources. Client reference: ${row.id}`); setSelectedRowForEditor(null); setIsAskOtisOpen(true); }}
       />
 
       {/* Add Column Dialog */}
@@ -849,6 +856,7 @@ export function RecordsScreen(props: RecordsScreenProps) {
               onRefreshSession={props.onRefreshSession}
               chatId={sidebarChatId}
               onSelectChat={setSidebarChatId}
+                suggestedDraft={suggestedQuestion}
             />
           </div>
         </div>

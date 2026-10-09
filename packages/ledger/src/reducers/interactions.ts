@@ -11,6 +11,7 @@
  */
 
 import type { InteractionState, LedgerEvent, InteractionRemovedPayload } from '@otis/contracts';
+import { normalizeInteractionOccurredAt } from '@otis/contracts';
 
 function rootOf(event: LedgerEvent): string {
   const payload = (event.payload ?? {}) as Record<string, unknown>;
@@ -57,7 +58,7 @@ export function reduceInteractions(
         head_event_id: event.id,
         revision: (existing?.revision ?? 0) + 1,
         state: 'active',
-        occurred_at: event.occurred_at,
+        occurred_at: normalizeInteractionOccurredAt(event.occurred_at) ?? event.occurred_at,
         sequence: event.sequence,
         updated_at: event.recorded_at,
         head_value_json: event.kind === 'quote' ? quoteHeadSnapshot(event) : null,

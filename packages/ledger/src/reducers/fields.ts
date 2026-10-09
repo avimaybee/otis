@@ -3,13 +3,9 @@
  * Reducer for entity_state, core fields, disputes, and conflict resolutions.
  */
 
-import type { EntityStateField, InteractionState, LedgerEvent } from '@otis/contracts';
+import { quoteMajorUnits, type EntityStateField, type InteractionState, type LedgerEvent } from '@otis/contracts';
 
 /** ISO 4217 zero-decimal currencies: the stored amount is already major units. */
-const ZERO_DECIMAL_CURRENCIES = new Set([
-  'BIF', 'CLP', 'DJF', 'GNF', 'JPY', 'KMF', 'KRW', 'MGA',
-  'PYG', 'RWF', 'UGX', 'UYI', 'VND', 'VUV', 'XAF', 'XOF', 'XPF',
-]);
 
 /**
  * Display text for a stored quote. Amounts arrive in integer minor units
@@ -19,9 +15,8 @@ const ZERO_DECIMAL_CURRENCIES = new Set([
  * and no thousands separators are added so the text re-reads unambiguously.
  */
 export function formatQuoteText(amount: number, currency: string, role: string): string {
-  const code = (currency || '').toUpperCase();
-  const major = ZERO_DECIMAL_CURRENCIES.has(code) ? amount : Math.round(amount) / 100;
-  const text = Number.isInteger(major) ? String(major) : String(Math.round(major * 100) / 100);
+  const major = quoteMajorUnits(amount, currency);
+  const text = String(major);
   return `${text} ${currency} (${role})`;
 }
 
@@ -50,16 +45,37 @@ function quoteRootOf(event: LedgerEvent): string {
   return event.id;
 }
 
-/**
- * Head-aware quote reduction: the current `quote` field is recomputed from
- * the active quote roots of the entity, never from one event alone. A
- * root-specific revision replaces only its own root's contribution, so an
- * unrelated dispute survives with its candidate swapped; removing the last
- * active root empties the field instead of leaving a stale value. One
- * distinct value across active heads reads clear; several dispute with
- * their head IDs as candidates. Reductions run interactions-first so the
- * triggering revision or removal is already reflected in the rows.
- */
+interface QuoteAuthority {
+  event_id: string | null;
+  value_text: string | null;
+  value_json: string | null;
+  provenance: EntityStateField['provenance'];
+  covered: Record<string, string | null>;
+  pending_claims?: Array<{ id: string; sequence: number; text: string | null; json: string | null }>;
+}
+
+function rememberQuoteAuthority(
+  fields: Map<string, EntityStateField>,
+  interactions: Map<string, InteractionState>,
+  event: LedgerEvent,
+): void {
+  const key = `${event.entity_id}:quote`;
+  const field = fields.get(key);
+  if (!field || field.state !== 'clear') return;
+  const covered: Record<string, string | null> = {};
+  for (const [root, row] of interactions) {
+    if (row.entity_id === event.entity_id && row.kind === 'quote' && row.state === 'active') {
+      covered[root] = row.head_value_json;
+    }
+  }
+  const authority: QuoteAuthority = {
+    event_id: event.id, value_text: field.value_text, value_json: field.value_json,
+    provenance: field.provenance, covered: Object.fromEntries(Object.entries(covered).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0)),
+  };
+  fields.set(key, { ...field, quote_authority_json: JSON.stringify(authority) });
+}
+
+/** An explicit decision covers existing claims, but a genuinely new/changed claim can dispute it. */
 function recomputeQuoteField(
   fields: Map<string, EntityStateField>,
   interactions: Map<string, InteractionState>,
@@ -67,130 +83,57 @@ function recomputeQuoteField(
 ): void {
   const entityId = event.entity_id;
   if (!entityId) return;
-  const fieldKey = `${entityId}:quote`;
-  const existing = fields.get(fieldKey);
-
-  // Active contributions per root: persisted head snapshots, with the
-  // triggering quote event overlaid for its own root (live targeted loads
-  // still hold the previous head, and replay sees the pre-reduction row).
-  const contributions = new Map<string, { triple: QuoteTriple | null; headId: string; sequence: number }>();
+  const key = `${entityId}:quote`;
+  const existing = fields.get(key);
+  const authority: QuoteAuthority | null = existing?.quote_authority_json
+    ? JSON.parse(existing.quote_authority_json) as QuoteAuthority : null;
+  type Claim = { id: string; sequence: number; text: string | null; json: string | null; valid: boolean; explicit: boolean };
+  const claims: Claim[] = [];
+  if (authority?.event_id) {
+    claims.push({ id: authority.event_id, sequence: -1, text: authority.value_text,
+      json: authority.value_json, valid: true, explicit: true });
+  }
+  for (const claim of authority?.pending_claims ?? []) claims.push({ ...claim, valid: true, explicit: false });
   for (const [root, row] of interactions) {
     if (row.entity_id !== entityId || row.kind !== 'quote' || row.state !== 'active') continue;
-    contributions.set(root, {
-      triple: row.head_value_json ? quoteTripleOf(JSON.parse(row.head_value_json)) : null,
-      headId: row.head_event_id,
-      sequence: row.sequence,
-    });
+    // Descriptions and dates do not change the quote's financial claim.
+    if (authority?.event_id && root in authority.covered && authority.covered[root] === row.head_value_json) continue;
+    const triple = row.head_value_json ? quoteTripleOf(JSON.parse(row.head_value_json)) : null;
+    claims.push({ id: row.head_event_id, sequence: row.sequence,
+      text: triple ? formatQuoteText(triple.amount, triple.currency, triple.role) : null,
+      json: triple ? JSON.stringify(triple) : null, valid: triple !== null, explicit: false });
   }
-  if (event.kind === 'quote') {
-    const payload = (event.payload ?? {}) as Record<string, unknown>;
-    contributions.set(quoteRootOf(event), {
-      triple: quoteTripleOf(payload),
-      headId: event.id,
-      sequence: event.sequence,
-    });
+  // Support direct reducer calls, too: the triggering event is the trusted overlay.
+  if (event.kind === 'quote' && !interactions.has(quoteRootOf(event))) {
+    const triple = quoteTripleOf(event.payload);
+    claims.push({ id: event.id, sequence: event.sequence,
+      text: triple ? formatQuoteText(triple.amount, triple.currency, triple.role) : null,
+      json: triple ? JSON.stringify(triple) : null, valid: triple !== null, explicit: false });
   }
-
-  const distinct = new Map<string, { triple: QuoteTriple | null; headId: string; sequence: number }>();
-  for (const [root, contribution] of contributions) {
-    const key = contribution.triple
-      ? `${contribution.triple.amount}|${contribution.triple.currency}|${contribution.triple.role}`
-      : `unknown:${root}`;
-    if (!distinct.has(key)) distinct.set(key, contribution);
-    else {
-      const kept = distinct.get(key)!;
-      if (contribution.sequence > kept.sequence) distinct.set(key, contribution);
-    }
+  const distinct = new Map<string, Claim>();
+  for (const claim of claims) {
+    const triple = claim.json ? quoteTripleOf(JSON.parse(claim.json)) : null;
+    const valueKey = !claim.valid ? `unknown:${claim.id}` : triple
+      ? `${triple.amount}|${triple.currency}|${triple.role}` : `${claim.text}|${claim.json}`;
+    const prior = distinct.get(valueKey);
+    if (!prior || (!prior.explicit && (claim.explicit || claim.sequence > prior.sequence))) distinct.set(valueKey, claim);
   }
-
-  const revision = (existing?.revision || 0) + 1;
-  if (distinct.size === 0) {
-    // No active quote root: the field goes empty, preserving the last
-    // agreed value for history instead of a stale current claim.
-    fields.set(fieldKey, {
-      id: `${entityId}_quote`,
-      workspace_id: event.workspace_id,
-      entity_id: entityId,
-      field_name: 'quote',
-      state: 'clear',
-      value_text: null,
-      value_json: null,
-      provenance: event.provenance,
-      source_event_id: null,
-      candidate_event_ids: null,
-      last_confirmed_value_text: existing?.last_confirmed_value_text ?? null,
-      last_confirmed_value_json: existing?.last_confirmed_value_json ?? null,
-      revision,
-      updated_at: event.recorded_at,
-    });
-    return;
-  }
-
-  if (distinct.size === 1) {
-    const only = [...distinct.values()][0]!;
-    if (!only.triple) {
-      // A single malformed contribution cannot format a value: keep it
-      // visible as an unresolved candidate rather than inventing text.
-      fields.set(fieldKey, {
-        id: `${entityId}_quote`,
-        workspace_id: event.workspace_id,
-        entity_id: entityId,
-        field_name: 'quote',
-        state: 'disputed',
-        value_text: null,
-        value_json: null,
-        provenance: event.provenance,
-        source_event_id: null,
-        candidate_event_ids: [only.headId],
-        last_confirmed_value_text: existing?.last_confirmed_value_text ?? null,
-        last_confirmed_value_json: existing?.last_confirmed_value_json ?? null,
-        revision,
-        updated_at: event.recorded_at,
-      });
-      return;
-    }
-    const formattedText = formatQuoteText(only.triple.amount, only.triple.currency, only.triple.role);
-    const jsonStr = JSON.stringify(only.triple);
-    fields.set(fieldKey, {
-      id: `${entityId}_quote`,
-      workspace_id: event.workspace_id,
-      entity_id: entityId,
-      field_name: 'quote',
-      state: 'clear',
-      value_text: formattedText,
-      value_json: jsonStr,
-      provenance: event.provenance,
-      source_event_id: only.headId,
-      candidate_event_ids: null,
-      last_confirmed_value_text: formattedText,
-      last_confirmed_value_json: jsonStr,
-      revision,
-      updated_at: event.recorded_at,
-    });
-    return;
-  }
-
-  const candidates = [...contributions.values()]
-    .sort((a, b) => (a.sequence === b.sequence ? (a.headId < b.headId ? -1 : 1) : a.sequence - b.sequence))
-    .map((contribution) => contribution.headId);
-  fields.set(fieldKey, {
-    id: `${entityId}_quote`,
-    workspace_id: event.workspace_id,
-    entity_id: entityId,
-    field_name: 'quote',
-    state: 'disputed',
-    value_text: null,
-    value_json: null,
-    provenance: event.provenance,
-    source_event_id: null,
-    candidate_event_ids: candidates,
-    last_confirmed_value_text: existing?.last_confirmed_value_text ?? null,
-    last_confirmed_value_json: existing?.last_confirmed_value_json ?? null,
-    revision,
-    updated_at: event.recorded_at,
+  const only = distinct.size === 1 ? [...distinct.values()][0]! : null;
+  const clear = distinct.size === 0 || (only?.valid ?? false);
+  fields.set(key, {
+    id: `${entityId}_quote`, workspace_id: event.workspace_id, entity_id: entityId, field_name: 'quote',
+    state: clear ? 'clear' : 'disputed',
+    value_text: clear ? only?.text ?? null : null,
+    value_json: clear ? only?.json ?? null : null,
+    provenance: only?.explicit ? authority!.provenance : event.provenance,
+    source_event_id: clear ? only?.id ?? null : null,
+    candidate_event_ids: clear ? null : claims.sort((a, b) => a.sequence - b.sequence).map((claim) => claim.id),
+    last_confirmed_value_text: clear && only ? only.text : existing?.last_confirmed_value_text ?? null,
+    last_confirmed_value_json: clear && only ? only.json : existing?.last_confirmed_value_json ?? null,
+    revision: (existing?.revision ?? 0) + 1, updated_at: event.recorded_at,
+    quote_authority_json: existing?.quote_authority_json ?? null,
   });
 }
-
 export function reduceFields(
   fields: Map<string, EntityStateField>,
   interactions: Map<string, InteractionState>,
@@ -263,6 +206,17 @@ export function reduceFields(
           }
           candidateSet.add(event.id);
 
+          let quoteAuthorityJson = existing.quote_authority_json ?? null;
+          if (p.field_name === 'quote') {
+            const authority: QuoteAuthority = quoteAuthorityJson ? JSON.parse(quoteAuthorityJson) as QuoteAuthority : {
+              event_id: null, value_text: null, value_json: null, provenance: event.provenance, covered: {},
+            };
+            authority.pending_claims = [...(authority.pending_claims ?? []), {
+              id: event.id, sequence: event.sequence, text: valText, json: valJson,
+            }];
+            quoteAuthorityJson = JSON.stringify(authority);
+          }
+
           fields.set(fieldKey, {
             ...existing,
             state: 'disputed',
@@ -271,6 +225,7 @@ export function reduceFields(
             provenance: event.provenance,
             source_event_id: null,
             candidate_event_ids: Array.from(candidateSet),
+            ...(p.field_name === 'quote' ? { quote_authority_json: quoteAuthorityJson } : {}),
             revision: existing.revision + 1,
             updated_at: event.recorded_at,
           });
@@ -295,6 +250,7 @@ export function reduceFields(
         revision: (existing?.revision || 0) + 1,
         updated_at: event.recorded_at,
       });
+      if (p.field_name === 'quote') rememberQuoteAuthority(fields, interactions, event);
       break;
     }
 
@@ -335,6 +291,7 @@ export function reduceFields(
         revision: (existing?.revision || 0) + 1,
         updated_at: event.recorded_at,
       });
+      if (p.field_name === 'quote') rememberQuoteAuthority(fields, interactions, event);
       break;
     }
   }

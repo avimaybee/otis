@@ -102,6 +102,8 @@ export interface ConversationScreenProps {
   embedded?: boolean;
   onClose?: () => void;
   headerBanner?: React.ReactNode;
+  /** An explicit helper prepares a visible, editable draft; it never sends it. */
+  suggestedDraft?: string | null;
 }
 function safeError(error: unknown, fallback: string) { if (error instanceof ApiError && error.status === 401) return 'Your session has expired. Sign in again.'; if (error instanceof ApiError && error.status === 404) return 'This conversation is unavailable or your access has changed.'; return fallback; }
 /**
@@ -154,7 +156,7 @@ function runKnownQuestion(
   return undefined;
 }
 
-export function ConversationScreen({ workspaceId, chat: routeChat, chatParamPresent, workspaces, userId, members, onSignOut, onNavigate, onNavigateToRecords, onRefreshSession, embedded, onClose, headerBanner }: ConversationScreenProps) {
+export function ConversationScreen({ workspaceId, chat: routeChat, chatParamPresent, workspaces, userId, members, onSignOut, onNavigate, onNavigateToRecords, onRefreshSession, embedded, onClose, headerBanner, suggestedDraft }: ConversationScreenProps) {
   const activeChatId = routeChat;
   const [drawerOpen, setDrawerOpen] = useState(false); const [settingsOpen, setSettingsOpen] = useState(false); const [detailActionId, setDetailActionId] = useState<string | null>(null);
   const [streamStatus, setStreamStatus] = useState<StreamStatus>('idle'); const [error, setError] = useState<string | null>(null); const [accessLost, setAccessLost] = useState(false);
@@ -182,6 +184,7 @@ export function ConversationScreen({ workspaceId, chat: routeChat, chatParamPres
     () => readQuestionState('dismissed', userId, workspaceId, activeChatId),
   );
   const [draftValue, setDraftValue] = useState<string | null>(null);
+  const [suggestionUsed, setSuggestionUsed] = useState<string | null>(null);
   const [controlPending, setControlPending] = useState(false);
   const [controlResult, setControlResult] = useState<string | null>(null);
   const [modelRevision, setModelRevision] = useState(0);
@@ -1203,6 +1206,7 @@ export function ConversationScreen({ workspaceId, chat: routeChat, chatParamPres
   }, [onRefreshSession, navigate]);
 
   const navProps = {
+    userId,
     workspaceId,
     workspaceName,
     workspaces,
@@ -1263,6 +1267,7 @@ export function ConversationScreen({ workspaceId, chat: routeChat, chatParamPres
         )}
       </header>
       {embedded && headerBanner}
+      {suggestedDraft && suggestionUsed !== suggestedDraft && <div className="flex flex-wrap items-center gap-2 px-4 py-2 text-sm"><span className="min-w-0 break-words">{suggestedDraft}</span><Button size="sm" variant="outline" onClick={() => { setDraftValue(suggestedDraft); setSuggestionUsed(suggestedDraft); }}>Use this question</Button></div>}
     {accessLost ? (
       <div className="otis-access"><h2 className="text-xl font-medium">Conversation unavailable</h2><p className="text-sm text-muted-foreground">Your session may have expired or your workspace access has changed. Private content has been closed.</p><Button variant="outline" type="button" onClick={() => location.reload()}>Reload access</Button><Button variant="secondary" type="button" onClick={onSignOut}>Sign out</Button></div>
     ) : workspaceGone ? (

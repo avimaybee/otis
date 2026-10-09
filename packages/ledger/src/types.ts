@@ -4,6 +4,8 @@
  */
 
 import type {
+  CurrentInteraction,
+  EntityContact, EntityRedirect, AttachmentLink, ReminderRule, MediaAnnotation,
   Entity,
   EntityAlias,
   EntityStateField,
@@ -22,6 +24,14 @@ import type {
 } from '@otis/contracts';
 
 export interface LedgerProjectionState {
+  mergeCounts?: Map<string, Record<string, number>>;
+  contacts?: Map<string, EntityContact>;
+  redirects?: Map<string, EntityRedirect>;
+  attachmentLinks?: Map<string, AttachmentLink>;
+  reminderRules?: Map<string, ReminderRule>;
+  mediaAnnotations?: Map<string, MediaAnnotation>;
+  /** Read-only target bodies for conflict recovery and no-op detection; not another projection. */
+  interactionHeads?: Map<string, CurrentInteraction>;
   entities: Map<string, Entity>;
   aliases: Map<string, EntityAlias>; // key: `${workspace_id}:${alias.toLowerCase()}`
   fields: Map<string, EntityStateField>; // key: `${entity_id}:${field_name}`
@@ -137,6 +147,8 @@ export interface SetFieldsArgs {
 export type CoverageScope = 'all' | Set<string>;
 
 export interface ProjectionCoverage {
+  /** Only the trusted new-log footprint permits creating a root. */
+  interactionCreate?: { entity_id: string | null; kind: string };
   entities: CoverageScope;
   aliases: CoverageScope;
   fields: CoverageScope;
@@ -215,6 +227,13 @@ export interface ForgetMemoryArgs {
 }
 
 export interface LedgerCommandContext extends WorkspaceContext {
+  /** Trusted interpretation verdict, never accepted from model arguments. */
+  merge_identity_confirmed?: boolean;
+  /** Derived by the trusted attachment handler; checked again in the commit guard. */
+  required_media_id?: string;
+  /** Trusted guard requirements for a selected file edit, never client authority. */
+  releasing_media_id?: string;
+  correcting_audio_id?: string;
   action_id: string;
   expected_business_revision: number;
   resuming_clarification_id?: string;

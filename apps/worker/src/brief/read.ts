@@ -13,6 +13,8 @@
  */
 
 import type { LocalBriefLead, LocalBriefSchedule, LocalBriefTask } from './types.js';
+import { canonicalEntityMap } from '../entities/canonical.js';
+import { readEffectiveLastContacts } from '../entities/contacts.js';
 
 const READ_LIMIT = 500;
 
@@ -134,7 +136,9 @@ async function readDisputedEntities(db: D1Database, workspaceId: string): Promis
     await db
       .prepare(
         `SELECT DISTINCT entity_id FROM entity_state
-         WHERE workspace_id = ? AND state = 'disputed' LIMIT ${READ_LIMIT}`,
+         WHERE workspace_id = ? AND state = 'disputed'
+           AND NOT EXISTS (SELECT 1 FROM entity_redirects r WHERE r.workspace_id = entity_state.workspace_id AND r.source_entity_id = entity_state.entity_id)
+         LIMIT ${READ_LIMIT}`,
       )
       .bind(workspaceId)
       .all<{ entity_id: string }>()
@@ -179,76 +183,7 @@ export interface BriefCandidates {
  * per entity — no global LIMIT that could drop an entity's contact.
  * Returns the contact instant plus its event id (source reference).
  */
-async function readLastContacts(
-  db: D1Database,
-  workspaceId: string,
-  entityIds: string[],
-): Promise<Map<string, { at: string; eventId: string }>> {
-  const contacts = new Map<string, { at: string; eventId: string }>();
-  const CHUNK = 90;
-  for (let offset = 0; offset < entityIds.length; offset += CHUNK) {
-    const chunk = entityIds.slice(offset, offset + CHUNK);
-    const placeholders = chunk.map(() => '?').join(',');
-    const rows = (
-      await db
-        .prepare(
-          `SELECT entity_id, id, occurred_at FROM (
-             SELECT entity_id, id, occurred_at,
-               ROW_NUMBER() OVER (PARTITION BY entity_id ORDER BY occurred_at DESC, id DESC) AS rn
-             FROM events
-             WHERE workspace_id = ? AND entity_id IN (${placeholders})
-               AND (kind IN ('contact', 'message_sent_by_member')
-                 OR (kind = 'visit' AND json_extract(payload_json, '$.contact_made') = 1))
-               AND NOT EXISTS (
-                 SELECT 1 FROM events AS reverted_by
-                 WHERE reverted_by.workspace_id = events.workspace_id
-                   AND reverted_by.reverts_event_id = events.id
-               )
-               -- A superseded head is not current: a live revision points
-               -- at it. Entity correlation keeps the lookup indexed.
-               AND NOT EXISTS (
-                 SELECT 1 FROM events AS superseded_by
-                 WHERE superseded_by.workspace_id = events.workspace_id
-                   AND superseded_by.entity_id = events.entity_id
-                   AND superseded_by.supersedes_event_id = events.id
-                   AND NOT EXISTS (
-                     SELECT 1 FROM events AS unreverted
-                     WHERE unreverted.workspace_id = superseded_by.workspace_id
-                       AND unreverted.reverts_event_id = superseded_by.id
-                   )
-               )
-               -- A removed interaction is not current either. The root of
-               -- an event is its revision marker, or its own id for legacy
-               -- heads; NULL comparisons never match, so untracked kinds
-               -- (sent drafts) and pre-C1 history keep legacy behavior.
-               AND NOT EXISTS (
-                 SELECT 1 FROM events AS removed_by
-                 WHERE removed_by.workspace_id = events.workspace_id
-                   AND removed_by.entity_id = events.entity_id
-                   AND removed_by.kind = 'interaction_removed'
-                   AND (
-                     json_extract(removed_by.payload_json, '$.root_event_id') = events.id
-                     OR json_extract(removed_by.payload_json, '$.root_event_id')
-                       = json_extract(events.payload_json, '$.interaction_id')
-                   )
-                   AND NOT EXISTS (
-                     SELECT 1 FROM events AS unremoved
-                     WHERE unremoved.workspace_id = removed_by.workspace_id
-                       AND unremoved.reverts_event_id = removed_by.id
-                   )
-               )
-           ) WHERE rn = 1`,
-        )
-        .bind(workspaceId, ...chunk)
-        .all<{ entity_id: string; id: string; occurred_at: string }>()
-    ).results ?? [];
-    for (const row of rows) {
-      if (typeof row.occurred_at !== 'string' || Number.isNaN(Date.parse(row.occurred_at))) continue;
-      contacts.set(String(row.entity_id), { at: String(row.occurred_at), eventId: String(row.id) });
-    }
-  }
-  return contacts;
-}
+const readLastContacts = readEffectiveLastContacts;
 
 export async function readBriefCandidates(
   db: D1Database,
@@ -277,9 +212,10 @@ export async function readBriefCandidates(
       .all<TaskRow>()
   ).results ?? [];
 
+  const taskClients = await canonicalEntityMap(db, workspaceId, taskRows.map(row => row.entity_id).filter((id): id is string => Boolean(id)));
   const tasks: LocalBriefTask[] = taskRows.map((row) => ({
     id: String(row.id),
-    entityId: row.entity_id === null ? null : String(row.entity_id),
+    entityId: row.entity_id === null ? null : taskClients.get(row.entity_id)?.id ?? row.entity_id,
     title: String(row.title),
     status: 'open' as const,
     dueKind:
@@ -297,7 +233,7 @@ export async function readBriefCandidates(
     valueMinor: null,
     currency: null,
     sourceEventId: String(row.source_event_id),
-    disputed: row.entity_id !== null && disputed.has(String(row.entity_id)),
+    disputed: row.entity_id !== null && disputed.has(taskClients.get(row.entity_id)?.id ?? row.entity_id),
   }));
 
   const entityRows = (
@@ -305,6 +241,7 @@ export async function readBriefCandidates(
       .prepare(
         `SELECT id, name, status FROM entities
          WHERE workspace_id = ? AND status IN ('warm', 'hot')
+           AND NOT EXISTS (SELECT 1 FROM entity_redirects r WHERE r.workspace_id = entities.workspace_id AND r.source_entity_id = entities.id)
          -- Hot before warm ('hot' < 'warm' in binary collation) for the same
          -- anti-crowding reason as tasks above; staleness ranking stays in
          -- the kernel, which sees contact dates this query cannot order by.

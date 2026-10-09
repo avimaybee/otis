@@ -6,8 +6,29 @@
  */
 
 import type { LeadStatus } from '@otis/contracts';
+import { MUTATING_TOOL_NAMES } from './tools.js';
 
 export const MAX_UNCONFIRMED_BULK_ENTITIES = 3;
+
+/** A preview or hypothetical identity match is never a merge instruction. */
+export function isExplicitMergeIntent(source: string): boolean {
+  return splitSentences(stripQuotes(source)).some((sentence) => {
+    if (
+      !/\b(?:merge|combine)\b/i.test(sentence) ||
+      NEGATION_PATTERN.test(sentence) ||
+      CONDITIONAL_PATTERN.test(sentence)
+    )
+      return false;
+    if (
+      sentence.includes('?') &&
+      !/\b(?:can|will)\s+you\s+(?:please\s+)?(?:merge|combine)\b/i.test(sentence)
+    )
+      return false;
+    return !/\b(?:explain|describe|preview|should\s+(?:we|i)|what happens|how to)\b/i.test(
+      sentence,
+    );
+  });
+}
 
 /**
  * Checks if the source text contains explicit instruction to mutate lead status.
@@ -29,7 +50,8 @@ function splitSentences(text: string): string[] {
     .filter(Boolean);
 }
 
-const NEGATION_PATTERN = /\b(do\s+not|don't|dont|never|not|didn't|didnt|haven't|havent|hasn't|hasnt|won't|wont|cannot|can't|cant|should\s+not|shouldn't|stop|nu|niciodată|nem|soha)\b/i;
+const NEGATION_PATTERN =
+  /\b(do\s+not|don['’]?t|never|not|didn['’]?t|haven['’]?t|hasn['’]?t|won['’]?t|cannot|can['’]?t|should\s+not|shouldn['’]?t|stop|nu|niciodată|nem|soha)\b/i;
 const CONDITIONAL_PATTERN = /\b(if|whether|dacă|ha|suppose|assuming|maybe|perhaps|could|would)\b/i;
 
 /**
@@ -54,10 +76,18 @@ export function isExplicitStatusIntent(
   const explicitKeywords: Record<LeadStatus, RegExp[]> = {
     won: [/\b(won|deal won|we won|closed won|signed|deal closed|closed the deal)\b/i],
     lost: [/\b(lost|deal lost|closed lost|rejected us|not interested anymore|dropped us)\b/i],
-    cold: [/\b(mark\b.*?\b(as\s+|it\s+)?cold|set\b.*?\b(to\s+|status\s+to\s+)?cold|status\s+is\s+cold|they\s+are\s+cold|they\s+went\s+cold)\b/i],
-    warm: [/\b(mark\b.*?\b(as\s+|it\s+)?warm|set\b.*?\b(to\s+|status\s+to\s+)?warm|status\s+is\s+warm|they\s+are\s+warm)\b/i],
-    hot: [/\b(mark\b.*?\b(as\s+|it\s+)?hot|set\b.*?\b(to\s+|status\s+to\s+)?hot|status\s+is\s+hot|they\s+are\s+hot)\b/i],
-    deprioritized: [/\b(deprioritize|deprioritised|drop them|drop this lead|mark\b.*?\bdeprioritized)\b/i],
+    cold: [
+      /\b(mark\b.*?\b(as\s+|it\s+)?cold|set\b.*?\b(to\s+|status\s+to\s+)?cold|status\s+is\s+cold|they\s+are\s+cold|they\s+went\s+cold)\b/i,
+    ],
+    warm: [
+      /\b(mark\b.*?\b(as\s+|it\s+)?warm|set\b.*?\b(to\s+|status\s+to\s+)?warm|status\s+is\s+warm|they\s+are\s+warm)\b/i,
+    ],
+    hot: [
+      /\b(mark\b.*?\b(as\s+|it\s+)?hot|set\b.*?\b(to\s+|status\s+to\s+)?hot|status\s+is\s+hot|they\s+are\s+hot)\b/i,
+    ],
+    deprioritized: [
+      /\b(deprioritize|deprioritised|drop them|drop this lead|mark\b.*?\bdeprioritized)\b/i,
+    ],
     new: [/\b(mark\b.*?\b(as\s+|it\s+)?new|set\b.*?\b(to\s+|status\s+to\s+)?new)\b/i],
   };
 
@@ -85,8 +115,12 @@ export function isExplicitStatusIntent(
     foundCandidate = true;
 
     // Questions are inquiries, not direct mutation instructions
-    if (sentence.includes('?') || /^(has|have|did|is|are|will|would|could|can)\s+[a-z0-9_-]+\s+/i.test(sentence)) {
-      rejectedReason = 'Source text contains question or inquiry about status, not an explicit instruction.';
+    if (
+      sentence.includes('?') ||
+      /^(has|have|did|is|are|will|would|could|can)\s+[a-z0-9_-]+\s+/i.test(sentence)
+    ) {
+      rejectedReason =
+        'Source text contains question or inquiry about status, not an explicit instruction.';
       continue;
     }
 
@@ -137,7 +171,8 @@ export function isExplicitStatusIntent(
  * clock times are stripped first: "sent it on 2026-10-07" names no
  * recipient, while "sent it to +40 711 222 333" does.
  */
-const DATE_LIKE_PATTERN = /\b\d{4}-\d{2}-\d{2}(?:[T ]\d{2}:\d{2}(?::\d{2})?(?:Z|[+-]\d{2}:?\d{2})?)?\b|\b\d{1,2}:\d{2}(?::\d{2})?\b/g;
+const DATE_LIKE_PATTERN =
+  /\b\d{4}-\d{2}-\d{2}(?:[T ]\d{2}:\d{2}(?::\d{2})?(?:Z|[+-]\d{2}:?\d{2})?)?\b|\b\d{1,2}:\d{2}(?::\d{2})?\b/g;
 const PHONE_LIKE_PATTERN = /\+?\d[\d\s\-().]{5,}\d/g;
 
 function digitsOnly(value: string): string {
@@ -168,7 +203,8 @@ export function sentConfirmationMatchesTarget(
   const sourceNumbers = new Map<string, string>();
   for (const match of scrubbed.matchAll(PHONE_LIKE_PATTERN)) {
     const digits = digitsOnly(match[0]).replace(/^0+/, '');
-    if (digits.length >= 7 && !sourceNumbers.has(digits)) sourceNumbers.set(digits, match[0].trim());
+    if (digits.length >= 7 && !sourceNumbers.has(digits))
+      sourceNumbers.set(digits, match[0].trim());
   }
   if (sourceNumbers.size === 0) return { matches: true };
   for (const candidate of sourceNumbers.keys()) {
@@ -248,7 +284,10 @@ export function isExplicitPromise(sourceText: string): { isPromise: boolean; rea
  * they sent a message. Questions, quotes, conditionals, and negations are
  * rejected; only an explicit member statement confirms.
  */
-export function isExplicitSentConfirmation(sourceText: string): { isConfirmed: boolean; reason?: string } {
+export function isExplicitSentConfirmation(sourceText: string): {
+  isConfirmed: boolean;
+  reason?: string;
+} {
   const unquoted = stripQuotes(sourceText).trim();
   if (!unquoted) {
     return {
@@ -275,13 +314,15 @@ export function isExplicitSentConfirmation(sourceText: string): { isConfirmed: b
 
     // Questions are inquiries, not confirmed actions
     if (sentence.includes('?') || /^(did|have|has|would|could|can)\s+/i.test(sentence)) {
-      rejectedReason = 'Source text is a question, not an explicit confirmation that the message was sent.';
+      rejectedReason =
+        'Source text is a question, not an explicit confirmation that the message was sent.';
       continue;
     }
 
     // Conditional / hypothetical check
     if (CONDITIONAL_PATTERN.test(sLower)) {
-      rejectedReason = 'Source text is conditional or hypothetical, not a completed send confirmation.';
+      rejectedReason =
+        'Source text is conditional or hypothetical, not a completed send confirmation.';
       continue;
     }
 
@@ -312,7 +353,10 @@ export function isExplicitSentConfirmation(sourceText: string): { isConfirmed: b
  * Conditionals and hypotheticals are rejected; negations of the OLD value
  * ("not 400,000") are the essence of a correction and never reject.
  */
-export function isExplicitCorrection(sourceText: string): { isCorrection: boolean; reason?: string } {
+export function isExplicitCorrection(sourceText: string): {
+  isCorrection: boolean;
+  reason?: string;
+} {
   const unquoted = stripQuotes(sourceText).trim();
   if (!unquoted) {
     return {
@@ -341,7 +385,8 @@ export function isExplicitCorrection(sourceText: string): { isCorrection: boolea
 
     // Corrections carry the corrected value: no digits, no guarded round.
     if (!/\d/.test(sentence)) {
-      rejectedReason = 'Correction pattern without a corrected value; needs a follow-up question first.';
+      rejectedReason =
+        'Correction pattern without a corrected value; needs a follow-up question first.';
       continue;
     }
 
@@ -367,9 +412,11 @@ export function isExplicitCorrection(sourceText: string): { isCorrection: boolea
 /**
  * Checks whether an operation exceeds the bulk operation limit (more than 3 distinct target entities).
  */
-export function checkBulkOperationPolicy(
-  targetEntityIds: (string | null | undefined)[],
-): { allowed: boolean; uniqueEntitiesCount: number; requiresConfirmation: boolean } {
+export function checkBulkOperationPolicy(targetEntityIds: (string | null | undefined)[]): {
+  allowed: boolean;
+  uniqueEntitiesCount: number;
+  requiresConfirmation: boolean;
+} {
   const distinct = new Set<string>();
   for (const id of targetEntityIds) {
     if (id && typeof id === 'string' && id.trim()) {
@@ -402,25 +449,13 @@ export function checkUntrustedContentPolicy(
   sourceText?: string,
 ): { allowed: boolean; violation?: string } {
   // If source is forwarded customer text or memory, mutating tools are blocked
-  const mutatingTools = new Set([
-    'upsert_entity',
-    'rename_entity',
-    'delete_entity',
-    'revise_interaction',
-    'remove_interaction',
-    'set_fields',
-    'resolve_conflict',
-    'create_task',
-    'update_task',
-    'draft_message',
-    'update_draft',
-    'mark_message_sent',
-    'remember_context',
-    'update_preference',
-    'forget_memory',
-    'undo',
-    'set_chat_thinking',
-  ]);
+  // Share the actual tool registry so a new writer cannot silently bypass
+  // source trust. log_event deliberately captures a report without granting
+  // the forwarded speaker authority to alter existing records.
+  const mutatingTools = new Set(MUTATING_TOOL_NAMES);
+  mutatingTools.delete('log_event');
+  mutatingTools.add('set_chat_thinking');
+  mutatingTools.add('set_chat_model');
 
   if (sourceTrust !== 'member' && mutatingTools.has(toolName)) {
     return {

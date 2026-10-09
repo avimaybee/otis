@@ -1,3 +1,4 @@
+import { ALL_MIGRATION_SQL } from './migrations.js';
 /**
  * @otis/worker/test/agent-composed-eval.integration.test
  * Composed end-to-end pipeline evaluation on migrated Cloudflare D1.
@@ -9,34 +10,6 @@
 import { describe, it, expect, beforeAll, beforeEach } from 'vitest';
 import { env } from 'cloudflare:test';
 
-// @ts-expect-error vite raw import
-import migration0001Sql from '../../../migrations/0001_identity.sql?raw';
-// @ts-expect-error vite raw import
-import migration0002Sql from '../../../migrations/0002_conversations_sources.sql?raw';
-// @ts-expect-error vite raw import
-import migration0003Sql from '../../../migrations/0003_ledger.sql?raw';
-// @ts-expect-error vite raw import
-import migration0004Sql from '../../../migrations/0004_lifecycle_settings.sql?raw';
-// @ts-expect-error vite raw import
-import migration0005Sql from '../../../migrations/0005_actor_dispatch.sql?raw';
-// @ts-expect-error vite raw import
-import migration0006Sql from '../../../migrations/0006_actor_hardening.sql?raw';
-// @ts-expect-error vite raw import
-import migration0007Sql from '../../../migrations/0007_outbox_claim_owner.sql?raw';
-// @ts-expect-error vite raw import
-import migration0008Sql from '../../../migrations/0008_memory_and_agent_runs.sql?raw';
-// @ts-expect-error vite raw import
-import migration0009Sql from '../../../migrations/0009_thinking_controls.sql?raw';
-// @ts-expect-error vite raw import
-import migration0017Sql from '../../../migrations/0017_task_markers.sql?raw';
-// @ts-expect-error vite raw import
-import migration0022Sql from '../../../migrations/0022_member_interpretation_timezone.sql?raw';
-// @ts-expect-error vite raw import
-import migration0023Sql from '../../../migrations/0023_interaction_state.sql?raw';
-// @ts-expect-error vite raw import
-import migration0012Sql from '../../../migrations/0012_voice_media.sql?raw';
-// @ts-expect-error vite raw import
-import migration0015Sql from '../../../migrations/0015_message_image_attachments.sql?raw';
 
 import { AgentHandler } from '../src/agent/handler.js';
 import { dispatchOutboxItem } from '../src/actor/dispatch.js';
@@ -95,22 +68,7 @@ describe('Gate 006 Composed Pipeline Fixture Evaluations (D1 workerd runtime)', 
   }
 
   beforeAll(async () => {
-    for (const sql of [
-      migration0001Sql,
-      migration0002Sql,
-      migration0003Sql,
-      migration0004Sql,
-      migration0005Sql,
-      migration0006Sql,
-      migration0007Sql,
-      migration0008Sql,
-      migration0009Sql,
-      migration0012Sql,
-      migration0015Sql,
-      migration0017Sql,
-      migration0022Sql,
-      migration0023Sql,
-    ]) {
+    for (const sql of ALL_MIGRATION_SQL) {
       for (const stmt of splitSqlStatements(sql)) {
         await env.DB.prepare(stmt).run();
       }

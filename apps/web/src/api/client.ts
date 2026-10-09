@@ -70,7 +70,7 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   if (init.method && init.method !== 'GET') {
     headers.set(AUTH_BOUNDS.CSRF_HEADER, '1');
   }
-  if (init.body) headers.set('Content-Type', 'application/json');
+  if (init.body && !headers.has('Content-Type')) headers.set('Content-Type', 'application/json');
 
   const controller = new AbortController();
   const timeoutId = setTimeout(() => {
@@ -138,6 +138,20 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
 }
 
 export const api = {
+  entityFile: (workspace: string, entity: string, options: { section?: import('@otis/contracts').EntityFileSection; cursor?: string; order?: string; limit?: number; author_user_id?: string; from?: string; to?: string; include_removed?: boolean; interaction_id?: string } = {}, signal?: AbortSignal) => {
+    const query = new URLSearchParams(); for (const [k, v] of Object.entries(options)) if (v !== undefined) query.set(k, String(v));
+    return request<import('@otis/contracts').EntityFile | import('@otis/contracts').EntityFileSectionResponse>(`/api/workspaces/${encodeURIComponent(workspace)}/entities/${encodeURIComponent(entity)}/file?${query}`, { signal });
+  },
+  entityAction: (workspace: string, entity: string, payload: { command: string; args: unknown; operation_id: string; expected_revision: number }, userId: string) => request<import('@otis/contracts').CommandResult>(`/api/workspaces/${encodeURIComponent(workspace)}/entities/${encodeURIComponent(entity)}/actions`, { method: 'POST', headers: { 'x-expected-user-id': userId }, body: JSON.stringify(payload) }),
+  workspaceSource: (workspace: string, source: string, signal?: AbortSignal) => request<import('@otis/contracts').WorkspaceMessageSource>(`/api/workspaces/${encodeURIComponent(workspace)}/sources/${encodeURIComponent(source)}`, { signal }),
+  followUps: (workspace: string, cursor?: string, signal?: AbortSignal) => request<import('@otis/contracts').FollowUpPage>(`/api/workspaces/${encodeURIComponent(workspace)}/followups${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ''}`, { signal }),
+  followUpAction: (workspace: string, payload: { args: unknown; operation_id: string; expected_revision: number }, userId: string) => request<import('@otis/contracts').CommandResult>(`/api/workspaces/${encodeURIComponent(workspace)}/followups`, { method: 'POST', headers: { 'x-expected-user-id': userId }, body: JSON.stringify(payload) }),
+  searchWorkspaceHistory: (workspace: string, options: import('@otis/contracts').SearchWorkspaceHistoryArgs, signal?: AbortSignal) => {
+    const query = new URLSearchParams(); for (const [k, v] of Object.entries(options)) if (v !== undefined) query.set(k === 'query' ? 'q' : k, String(v));
+    return request<import('@otis/contracts').HistorySearchResponse>(`/api/workspaces/${encodeURIComponent(workspace)}/history/search?${query}`, { signal });
+  },
+  uploadDocument: (workspace: string, file: File, uploadId: string, userId: string) => request<{ media_id: string; filename: string; extraction_state: string }>(`/api/workspaces/${encodeURIComponent(workspace)}/documents/uploads`, { method: 'POST', headers: { 'Content-Type': 'application/pdf', 'x-filename': encodeURIComponent(file.name), 'x-upload-id': uploadId, 'x-expected-user-id': userId }, body: file }),
+  retryDocument: (workspace: string, mediaId: string, userId: string) => request<{ media_id: string; state: string }>(`/api/workspaces/${encodeURIComponent(workspace)}/documents/${encodeURIComponent(mediaId)}/retry`, { method: 'POST', headers: { 'x-expected-user-id': userId } }),
   me: () => request<{ user: { id: string; display_name: string | null }; workspaces: { id: string; name: string; role: string }[] }>('/api/me'),
 
   listChats: (workspaceId: string, filter: 'mine' | 'team' = 'mine', cursor?: string, signal?: AbortSignal) =>

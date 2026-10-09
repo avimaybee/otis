@@ -151,7 +151,8 @@ describe('lead overview read (workerd)', () => {
     const first = await readLeadOverview(E.DB, { workspaceId: WS, nowIso: NOW, limit: 10 });
     expect(first.counts.total).toBe(30);
     expect(Object.values(first.counts.by_status).reduce((a, b) => a + b, 0)).toBe(30);
-    expect(first.counts.by_status['hot']).toBe(5);
+    expect(first.counts.by_status['hot']).toBe(4);
+    expect(first.counts.by_status['disputed']).toBe(1);
     expect(first.rows).toHaveLength(10);
     expect(first.page.has_more).toBe(true);
     expect(first.page.next_cursor).toBeTruthy();

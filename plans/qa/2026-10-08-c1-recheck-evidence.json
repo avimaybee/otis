@@ -1,0 +1,173 @@
+{
+  "date": "2026-10-08",
+  "baseline": "ecc2246; production C1 files committed, two implementation test files modified independently",
+  "verdict": "C1 not accepted: first-review controls repaired, second source review identifies durable Undo, explicit quote resolution, current-reader, timestamp, validation, migration-snapshot and hydration gaps",
+  "method": "Direct inspection of commands/contracts, typed tools/policy/repository dispatch, hydration selection/coverage, quote/lifecycle/rebuild reducers, guarded projection writer, Undo preview and actual commit callers, forward migration SQL and current agent/brief/overview/records consumers. D1 probes corroborate source-derived counterexamples.",
+  "source_sha256": {
+    "packages/ledger/src/commands/logEvent.ts": "55546b9351ea5942710a7dacd886f51056dc94e4a0ddd503b18a06b431839c24",
+    "apps/worker/src/brief/read.ts": "ef4dbc81972605b029fe8895de1e99e21677ae0c96b3d130c3d658a624dac8e1",
+    "packages/agent/src/prompt.ts": "da638649ef3a44760a6c0d6835a8a8561e2fffae18de0ca9e24c8e252587ecf0",
+    "packages/ledger/src/reducers/rebuild.ts": "97b43cf3128d344550f5a48f2bbda493405bd6d15bd71e00b7c665941e63107b",
+    "migrations/0023_interaction_state.sql": "b8837e99a83ece628ca335330d6420fc762c06e13857bae1375e285bba475efe",
+    "packages/ledger/src/commands/setField.ts": "fa60df38b971910b3536a3daeaebf65603dbe8bcb9cf80461fe3c453052dd998",
+    "packages/ledger/src/types.ts": "525004c52a4c10addbf5baeb30ee5f7ddc44ae2168add9acceb364e7e80edaa3",
+    "packages/ledger/src/commands/undo.ts": "3f55364194316f64792412ca58be17a8add2e0188750161f4565b500f795fe1a",
+    "apps/worker/src/routes/records.ts": "0845026fd430aa504288d6e0ab0c9a0df896f807d8a4abf08202dfe653267d43",
+    "packages/ledger/src/commands/deleteEntity.ts": "e8a6a441d1532783c341e8f8e1d61268fc0c22c7b5d887c569ab8e68888410b1",
+    "apps/worker/src/agent/repository.ts": "3827d9a1c34b6e453b6f9fc75a60a0d180001ad2a510f9230a3c799bb9d0c91e",
+    "apps/worker/src/routes/actions.ts": "af2a372108810eca3549d44171d8facb72ffaa31a1e471c7b05823d87dd585b6",
+    "apps/worker/src/agent/handler.ts": "b4604f9857f411c8357f60329fd8dca5b0d51597c39fd8c50a11846031383ae5",
+    "packages/ledger/src/repository/executor.ts": "3c4cb3f957470e5a5ad5bf76fee40acef6f421f0326e135d87076d419f09e362",
+    "packages/ledger/src/repository/queries.ts": "1aa70aa35030af24855d145adac95dc5d0ea1fde0ca2cf7c512771f990f5dd9d",
+    "packages/ledger/src/commands/setFields.ts": "05d55df99dfe19b5cb1ddb8dcbb01faf6b4da62096b93b9e1f889fecb0f5516d",
+    "packages/agent/src/tools.ts": "9e31797627229535f1284d47dc8434ba31511e6b77d8acaf015c9af44a3799fb",
+    "packages/contracts/src/index.ts": "7de6a77b195b54af1a1780b2dd651cbd2a0ec38c45b9e998c6b697c8b5eeebba",
+    "packages/ledger/src/commands/interactions.ts": "6ca7f1423a103b4291d263938e16485d0d939a3aaa71f3130932c6c97abc12f5",
+    "packages/ledger/src/reducers/interactions.ts": "7fc3ec0bbfa325f10846f3f30fc8a03564cd805988fa78f4d5028bf17b030751",
+    "packages/ledger/src/commands/resolveConflict.ts": "c3bdc7c9f102b73f393285abb38ed67ccc29ab6d1225efbe0accce3b686d7d4c",
+    "packages/ledger/src/commands/events.ts": "660f63368ab12c8e4fc1c5b7b4126b4022594240b547f5a6595fa9e4d6200d25",
+    "migrations/0024_interaction_removed_kind.sql": "28fd5d73c5b818a91a2272c17a1f5350150415d26e8623d8456f39a45abeb064",
+    "packages/ledger/src/reducers/fields.ts": "cc58076a1ff8362ec46e68e500229fd35f23b58d7a592b0e3a66b2e1e447ff21",
+    "packages/ledger/src/index.ts": "9866226e18235c42d9dfee26b1a53cf85f4af2fac40eec80ba8279a3e375e619",
+    "packages/agent/src/policy.ts": "6a59d8449ff5eea20a8437b9218d3bb046099265b50ae9d9306b588b9e1a2ddb",
+    "packages/ledger/src/commands/interactionPayload.ts": "2f2bfab4d3e0dd4ab744959fe99d2fb29145f72c03cf2bc250b229e14b40708e",
+    "apps/worker/src/agent/leadOverview.ts": "098bac77d07c29f3ef0aadbf9f8b8191325cfc2f3ccfe542605021bea528003a"
+  },
+  "source_drift_after_probe": [],
+  "checks": [
+    {
+      "command": "pnpm exec vitest run --config plans/qa/2026-10-08-c1-review.vitest.config.ts --reporter=json --outputFile=plans/qa/2026-10-08-c1-recheck-tests.json",
+      "exit_code": 1,
+      "passed": 9,
+      "failed": 8,
+      "first_review_controls": {
+        "passed": 9,
+        "failed": 0
+      },
+      "second_review_counterexamples": {
+        "passed": 0,
+        "failed": 8
+      },
+      "cases": [
+        {
+          "title": "C1 first-review semantic controls preserves occurrence when only quote content changes",
+          "status": "passed",
+          "failure": null
+        },
+        {
+          "title": "C1 first-review semantic controls rejects impossible calendar dates without changing the head",
+          "status": "passed",
+          "failure": null
+        },
+        {
+          "title": "C1 first-review semantic controls excludes a removed only quote from current field state",
+          "status": "passed",
+          "failure": null
+        },
+        {
+          "title": "C1 first-review semantic controls does not resolve another active quote claim by editing one root",
+          "status": "passed",
+          "failure": null
+        },
+        {
+          "title": "C1 first-review semantic controls drops removed contact from both overview and brief last-contact reads",
+          "status": "passed",
+          "failure": null
+        },
+        {
+          "title": "C1 first-review semantic controls does not let lower-level logging replace a different client root",
+          "status": "passed",
+          "failure": null
+        },
+        {
+          "title": "C1 first-review semantic controls does not backfill a legacy root after its client was deleted",
+          "status": "passed",
+          "failure": null
+        },
+        {
+          "title": "C1 first-review semantic controls includes the restored entry in removal Undo preview",
+          "status": "passed",
+          "failure": null
+        },
+        {
+          "title": "C1 first-review semantic controls control: rejects a stale head after a valid correction",
+          "status": "passed",
+          "failure": null
+        },
+        {
+          "title": "C1 second source-review counterexamples removes persisted lifecycle rows when an original log is actually undone",
+          "status": "failed",
+          "failure": "AssertionError: expected { live: true, replay: false } to deeply equal { live: false, replay: false }"
+        },
+        {
+          "title": "C1 second source-review counterexamples does not mistake an earlier revision for a later Undo dependency",
+          "status": "failed",
+          "failure": "AssertionError: expected 'needs_clarification' to be 'applied' // Object.is equality"
+        },
+        {
+          "title": "C1 second source-review counterexamples does not let an already-undone descendant block its original entry",
+          "status": "failed",
+          "failure": "AssertionError: expected 'needs_clarification' to be 'applied' // Object.is equality"
+        },
+        {
+          "title": "C1 second source-review counterexamples preserves a resolved quote when removing a duplicate active quote",
+          "status": "failed",
+          "failure": "AssertionError: expected 'disputed' to be 'clear' // Object.is equality"
+        },
+        {
+          "title": "C1 second source-review counterexamples rejects a non-ISO occurrence instead of persisting sortable-looking text",
+          "status": "failed",
+          "failure": "AssertionError: expected 'applied' to be 'rejected' // Object.is equality"
+        },
+        {
+          "title": "C1 second source-review counterexamples normalizes valid zoned occurrences before last-contact ranking",
+          "status": "failed",
+          "failure": "AssertionError: expected '2026-09-21T00:00:00+14:00' to be '2026-09-20T12:00:00.000Z' // Object.is equality"
+        },
+        {
+          "title": "C1 second source-review counterexamples backfills legacy quote snapshots in the same shape as replay",
+          "status": "failed",
+          "failure": "AssertionError: expected { Object (amount, currency, ...) } to deeply equal { Object (amount, currency, ...) }"
+        },
+        {
+          "title": "C1 second source-review counterexamples requires the same valid contact channel for a correction as for new logging",
+          "status": "failed",
+          "failure": "AssertionError: expected { toolAccepted: true, …(1) } to deeply equal { toolAccepted: false, …(1) }"
+        }
+      ]
+    },
+    {
+      "command": "pnpm exec eslint plans/qa/2026-10-08-c1-review.probe.test.ts plans/qa/2026-10-08-c1-review.vitest.config.ts",
+      "exit_code": 0
+    }
+  ],
+  "boundaries": [
+    "Production source preserved; edits limited to existing status/backlog/capability handoff and local QA evidence/probes.",
+    "The local ledger fixture uses trusted member/source commands without a dispatched run/fence; probes establish shared ledger behavior, not complete real-provider/chat/teammate acceptance.",
+    "Backfill probe executes actual 0023 SQL on a legacy-equivalent original quote, not a fully populated old-version deployment.",
+    "Tool schemas/policy/dispatch are present. Current note read and concrete conflict/head recovery remain incomplete; raw events are legitimate explicit history.",
+    "No full application typecheck/lint/test/build, live model/provider, native browser/device, remote migration-state or production row/CPU/latency checks were run.",
+    "0024 is unchanged; no specific data-loss defect is asserted. Populated foreign-key/FTS/rollback proof remains unverified.",
+    "Historical first-review JSON receipts and output were absent from the checkout and restored from this chat's retained audit data. Historical results were not overwritten with current results.",
+    "No source implementation, commit, push, deployment or remote data action."
+  ],
+  "source_drift_on_final_comparison": [],
+  "artifact_verification": {
+    "documentation_links": {
+      "checked": 797,
+      "broken": 0,
+      "command": "node plans/qa/docs-audit.mjs links",
+      "exit_code": 0
+    },
+    "documentation_consistency": {
+      "files": 6,
+      "whitespace_conflicts_fences": "passed",
+      "maintained_c1_review_sections": 1,
+      "exit_code": 0
+    },
+    "tracked_diff_check": {
+      "command": "git diff --check -- docs/status.md plans/README.md plans/business-memory-capabilities.md",
+      "exit_code": 0
+    }
+  }
+}

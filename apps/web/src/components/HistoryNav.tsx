@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState, type ReactNode, type RefObject } from 'react';
+import { lazy, Suspense, useEffect, useId, useRef, useState, type ReactNode, type RefObject } from 'react';
 import { Drawer } from 'vaul';
 import type { Chat } from '@otis/contracts';
 import { CloseIcon, ComposeIcon, MoreVerticalIcon, SearchIcon, SettingsIcon, TableIcon } from './icons.js';
@@ -7,8 +7,11 @@ import { ChoiceSelect } from './ui/select.js';
 import { Input } from './ui/input.js';
 import { Button } from './ui/button.js';
 import { useOverlayHistory } from './overlay-history.js';
+const WorkspaceHistorySearch = lazy(() => import('./WorkspaceHistorySearch.js').then(m => ({ default: m.WorkspaceHistorySearch })));
+const FollowUps = lazy(() => import('./FollowUps.js').then(m => ({ default: m.FollowUps })));
 
 export interface HistoryNavProps {
+  userId?: string;
   workspaceName: string; workspaces: { id: string; name: string }[]; workspaceId: string;
   ownChats: Chat[]; teamChats: Chat[]; activeChatId: string | null; variant: 'sidebar' | 'drawer';
   /** Controlled drawer state; the Vaul drawer stays mounted so its graceful
@@ -24,6 +27,8 @@ export interface HistoryNavProps {
   onCreateWorkspace?: () => void;
 }
 export function HistoryNav(props: HistoryNavProps) {
+  const [workspaceSearchOpen, setWorkspaceSearchOpen] = useState(false);
+  const [followUpsOpen, setFollowUpsOpen] = useState(false);
   const [searching, setSearching] = useState(false); const [query, setQuery] = useState('');
   const input = useRef<HTMLInputElement>(null); const id = useId();
   const closeButton = useRef<HTMLButtonElement>(null);
@@ -81,6 +86,10 @@ export function HistoryNav(props: HistoryNavProps) {
       {props.onCreateWorkspace && <Button variant="ghost" size="sm" type="button" className="text-xs text-muted-foreground hover:text-foreground h-6 px-2 shrink-0" title="Create workspace" aria-label="Create workspace" onClick={props.onCreateWorkspace}>+ New</Button>}
     </div>
     <Button variant="ghost" className="otis-nav__action justify-start text-sm" type="button" onClick={props.onNewChat}><ComposeIcon /><span>New chat</span></Button>
+    <Button variant="ghost" className="otis-nav__action justify-start text-sm" type="button" onClick={() => setWorkspaceSearchOpen(true)}><SearchIcon /><span>Search conversations</span></Button>
+    {props.userId && <Button variant="ghost" className="otis-nav__action justify-start text-sm" type="button" onClick={() => setFollowUpsOpen(true)}><span>Your follow-ups</span></Button>}
+    {followUpsOpen && props.userId && <Suspense fallback={<p role="status" className="px-4 text-sm">Opening follow-ups…</p>}><FollowUps key={`${props.userId}:${props.workspaceId}`} workspaceId={props.workspaceId} userId={props.userId} open onClose={() => setFollowUpsOpen(false)}/></Suspense>}
+    {workspaceSearchOpen && <Suspense fallback={<p role="status" className="px-4 text-sm">Opening search…</p>}><WorkspaceHistorySearch key={props.workspaceId} workspaceId={props.workspaceId} members={props.members} open={workspaceSearchOpen} onClose={() => setWorkspaceSearchOpen(false)} onOpenChat={props.onSelectChat}/></Suspense>}
     {props.onOpenRecords && (
       <Button variant="ghost" className="otis-nav__action justify-start text-sm" type="button" aria-current={props.isRecordsActive ? 'page' : undefined} onClick={props.onOpenRecords}><TableIcon /><span>Your information</span></Button>
     )}

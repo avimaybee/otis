@@ -24,7 +24,7 @@ import { loadInferenceImageBytes, type ImageDetail } from '../media/renditions.j
 import { publishAgentActivity } from './activity.js';
 import { liveChatBus } from '../chat/liveBus.js';
 import { StreamPublisher, createThinkingBudget, type SharedThinkingBudget } from './streamPublish.js';
-import { getWorkspaceRevision } from '@otis/ledger';
+import { getWorkspaceRevision, resolveInteractionEntities } from '@otis/ledger';
 import {
   AgentStreamError,
   checkBulkOperationPolicy,
@@ -32,6 +32,7 @@ import {
   createInitialProgress,
   getOrderedToolDeclarations,
   isExplicitCorrection,
+  MUTATING_TOOL_NAMES,
   PRODUCTION_REGISTRY,
   PROMPT_VERSION,
   runAppliedBusinessMutation,
@@ -65,6 +66,7 @@ export interface AgentLimitsConfig {
 }
 
 interface ImageAttachmentRow {
+  retained?: number;
   id: string;
   object_key: string;
   format: string | null;
@@ -98,7 +100,7 @@ async function hydrateImageAttachments(args: {
       const consumable =
         (row.format === 'image/jpeg' || row.format === 'image/png' || row.format === 'image/webp') &&
         row.state === 'validated' &&
-        row.expires_at > args.nowIso;
+        (row.retained === 1 || row.expires_at > args.nowIso);
       if (!consumable) {
         workerFailure('agent', 'skipping unconsumable image attachment', {
           workspaceId: args.workspaceId,
@@ -713,7 +715,7 @@ export class AgentHandler implements TurnHandler {
               const historicalRows = (
                 await ctx.db
                   .prepare(
-                    `SELECT m.id, m.object_key, m.format, m.content_type, m.state, m.expires_at, m.byte_size
+                    `SELECT m.id, m.object_key, m.format, m.content_type, m.state, m.expires_at, m.retained, m.byte_size
                      FROM media_objects m
                      WHERE m.workspace_id = ? AND m.id IN (${placeholders})`,
                   )
@@ -823,7 +825,7 @@ export class AgentHandler implements TurnHandler {
           try {
             const attached = await ctx.db
               .prepare(
-                `SELECT m.id, m.object_key, m.format, m.content_type, m.state, m.expires_at, m.byte_size
+                `SELECT m.id, m.object_key, m.format, m.content_type, m.state, m.expires_at, m.retained, m.byte_size
                  FROM message_image_attachments a
                  JOIN media_objects m ON m.id = a.media_id
                  JOIN chat_messages cm ON cm.id = a.chat_message_id
@@ -928,7 +930,7 @@ export class AgentHandler implements TurnHandler {
             const viewedRows = (
               await ctx.db
                 .prepare(
-                  `SELECT m.id, m.object_key, m.format, m.content_type, m.state, m.expires_at, m.byte_size
+                  `SELECT m.id, m.object_key, m.format, m.content_type, m.state, m.expires_at, m.retained, m.byte_size
                    FROM media_objects m
                    WHERE m.workspace_id = ? AND m.id IN (${placeholders})`,
                 )
@@ -1288,10 +1290,33 @@ export class AgentHandler implements TurnHandler {
 
         // Bulk operations check across proposed calls (F08)
         if (collectedRound.toolCalls.length > 0) {
-          const targetEntities = collectedRound.toolCalls.map((c) => {
+          const proposedWrites = collectedRound.toolCalls.filter(call => MUTATING_TOOL_NAMES.has(call.name));
+          const rootTargets = proposedWrites
+            .filter((call) => call.name === 'revise_interaction' || call.name === 'remove_interaction')
+            .map((call) => (call.args as Record<string, unknown> | null)?.['interaction_id'])
+            .filter((id): id is string => typeof id === 'string');
+          const interactionEntities = await resolveInteractionEntities(ctx.db, ctx.workspaceId, rootTargets);
+          const indirectTargets: { call: AssistantCall; table: string; key: string; id: string }[] = [];
+          for (const call of proposedWrites) {
+            const a = call.args as Record<string, unknown> | null;
+            const target = call.name === 'update_task' ? ['tasks', 'id', a?.['task_id']]
+              : ['update_draft', 'mark_message_sent'].includes(call.name) ? ['draft_projections', 'id', a?.['draft_id']]
+              : call.name === 'unlink_attachment' ? ['attachment_links', 'id', a?.['link_id']]
+              : call.name === 'change_reminder_rule' ? ['reminder_rules', 'id', a?.['rule_id']]
+              : null;
+            if (target && typeof target[2] === 'string') indirectTargets.push({ call, table: String(target[0]), key: String(target[1]), id: target[2] });
+          }
+          const indirectRows = indirectTargets.length ? await ctx.db.batch(indirectTargets.map(t =>
+            ctx.db.prepare(`SELECT entity_id FROM ${t.table} WHERE workspace_id = ? AND ${t.key} = ?`).bind(ctx.workspaceId, t.id))) : [];
+          const indirectEntities = new Map(indirectTargets.map((t, i) => [t.call, (indirectRows[i]?.results?.[0] as { entity_id?: string } | undefined)?.entity_id]));
+          const targetEntities = proposedWrites.flatMap((c) => {
             const a = c.args as Record<string, unknown> | null;
-            return (a?.name as string) ?? (a?.entity_id as string) ?? null;
-          }).filter(Boolean) as string[];
+            if (c.name === 'merge_entities') return [a?.['source_entity_id'], a?.['target_entity_id']];
+            if (c.name === 'revise_interaction' || c.name === 'remove_interaction') {
+              return [typeof a?.['interaction_id'] === 'string' ? interactionEntities.get(a['interaction_id']) : null];
+            }
+            return [a?.['entity_id'] ?? indirectEntities.get(c) ?? (c.name === 'upsert_entity' ? a?.['name'] : null)];
+          }).filter((value): value is string => typeof value === 'string' && Boolean(value));
 
           const approvedScope = new Set(progress.approvedBulkScope || []);
           const unapprovedEntities = targetEntities.filter((e) => !approvedScope.has(e));
@@ -1497,6 +1522,7 @@ export class AgentHandler implements TurnHandler {
             // Execute through repository
             result = await executeAgentTool({
               db: ctx.db,
+              storage: this.options?.storage,
               workspaceId: ctx.workspaceId,
               actorUserId,
               runId: ctx.runId,

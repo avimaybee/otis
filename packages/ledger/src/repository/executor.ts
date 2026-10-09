@@ -18,14 +18,21 @@ import type {
   Task,
 } from '@otis/contracts';
 import type { LedgerCommandContext, LedgerProjectionState, CoverageScope, ProjectionCoverage } from '../types.js';
+import { handleLinkAttachment, handleUnlinkAttachment, handleUpdateAttachment } from '../commands/attachments.js';
+import { handleChangeReminderRule } from '../commands/reminderRules.js';
 import { FULL_PROJECTION_COVERAGE } from '../types.js';
-import { getActionReceipt, getEntityInteractions, getFieldProjectionState, getInteractionProjectionState, getWorkspaceProjectionState, getWorkspaceRevision } from './queries.js';
+import { expandCanonicalProjectionState, getActionReceipt, getBusinessProjectionState, getEntityInteractions, getFieldProjectionState, getInteractionProjectionState, getLogEventProjectionState, getWorkspaceProjectionState, getWorkspaceRevision } from './queries.js';
+import { businessDetailStatements, hydrateBusinessDetails } from './business.js';
+import { ENTITY_FAMILY_SQL, familyBinds } from './canonical.js';
+import { reduceBusinessDetails } from '../reducers/business.js';
+import { handleChangeContact } from '../commands/contacts.js';
+import { handleMergeEntities } from '../commands/mergeEntity.js';
 import { handleCreateEntity } from '../commands/createEntity.js';
 import { handleRenameEntity } from '../commands/renameEntity.js';
 import { handleDeleteEntity } from '../commands/deleteEntity.js';
 import { handleReviseInteraction, handleRemoveInteraction } from '../commands/interactions.js';
 import { handleSetField } from '../commands/setField.js';
-import { handleSetFields, normalizeStatusResumeAnswer } from '../commands/setFields.js';
+import { handleSetFields, normalizeStatusResumeAnswer, STATUS_CONFIRM_WORDS, STATUS_DECLINE_WORDS } from '../commands/setFields.js';
 import { handleCreateTask, handleUpdateTask } from '../commands/tasks.js';
 import { handleLogEvent } from '../commands/logEvent.js';
 import { handleRecordDraft } from '../commands/recordDraft.js';
@@ -64,6 +71,12 @@ export type CommandHandler<TArgs> = (
 export type AnyCommandHandler = CommandHandler<any>;
 
 export const DEFAULT_COMMAND_HANDLERS: Record<string, AnyCommandHandler> = {
+  change_contact: handleChangeContact,
+  merge_entities: handleMergeEntities,
+  link_attachment: handleLinkAttachment,
+  unlink_attachment: handleUnlinkAttachment,
+  update_attachment: handleUpdateAttachment,
+  change_reminder_rule: handleChangeReminderRule,
   create_entity: handleCreateEntity,
   rename_entity: handleRenameEntity,
   delete_entity: handleDeleteEntity,
@@ -185,6 +198,13 @@ function createGuardStatement(
                 AND rs.run_id = ?
                 AND rs.workspace_id = w.id
             ))
+            AND (? IS NULL OR EXISTS (SELECT 1 FROM media_objects m WHERE m.workspace_id = w.id AND m.id = ?
+              AND m.state IN ('validated', 'ready', 'transcribing') AND m.deletion_claimed_at IS NULL
+              AND (m.retained = 1 OR m.expires_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))))
+            AND (? IS NULL OR NOT EXISTS (SELECT 1 FROM attachment_links l WHERE l.workspace_id = w.id AND l.media_id = ? AND l.state = 'active'))
+            AND (? IS NULL OR EXISTS (SELECT 1 FROM media_objects m JOIN media_transcriptions t ON t.workspace_id = m.workspace_id AND t.media_id = m.id
+              WHERE m.workspace_id = w.id AND m.id = ? AND m.content_type LIKE 'audio/%'
+                AND t.state = 'ready' AND t.transcript_text IS NOT NULL))
             -- 7. Daily action limit validation (if max_daily_actions provided):
             -- the trusted batch cost counts with the same aborting guard, so
             -- a multi-field commit exceeding remaining capacity rolls back.
@@ -238,6 +258,12 @@ function createGuardStatement(
       context.step_id || '',
       context.run_id || '',
       // 7 (daily quota):
+      context.required_media_id ?? null,
+      context.required_media_id ?? '',
+      context.releasing_media_id ?? null,
+      context.releasing_media_id ?? '',
+      context.correcting_audio_id ?? null,
+      context.correcting_audio_id ?? '',
       context.max_daily_actions !== undefined ? context.max_daily_actions : null,
       new Date().toISOString().slice(0, 10),
       Number.isInteger(actionCost) && (actionCost as number) >= 0 ? (actionCost as number) : 1,
@@ -546,7 +572,7 @@ function fpField(f: EntityStateField): string {
   return fpValues([
     f.id, f.workspace_id, f.entity_id, f.field_name, f.state, f.value_text ?? null, f.value_json ?? null,
     f.provenance, f.source_event_id ?? null, candidates, f.last_confirmed_value_text ?? null,
-    f.last_confirmed_value_json ?? null, f.revision, f.updated_at,
+    f.last_confirmed_value_json ?? null, f.revision, f.updated_at, f.quote_authority_json ?? null,
   ]);
 }
 
@@ -771,6 +797,45 @@ function fieldFootprintFor(
 }
 
 /**
+ * Bounds assertion for the interaction collection. Changed and deleted
+ * keys must sit inside the loaded coverage like every other collection,
+ * but created keys follow one explicit allowance: a new log is the only
+ * writer that creates roots, and its root must belong to the entity the
+ * footprint loaded (or be entity-less when the log has no entity). Any
+ * other created root — or a root for an entity outside coverage — is a
+ * violation, so a partial state can never smuggle foreign lifecycle rows.
+ */
+function checkInteractions(
+  coverage: ProjectionCoverage,
+  before: ProjectionSnapshots,
+  next: LedgerProjectionState,
+  violations: string[],
+): void {
+  const scope = coverage.interactions;
+  const snap = before.interactions.records;
+  const values = next.interactions;
+  if (scope === 'all') return;
+  for (const [key, value] of values) {
+    // Loaded keys may change freely: that is what coverage grants.
+    if (scope.has(key)) continue;
+    const prior = snap.get(key);
+    if (!prior) {
+      // Created key: allowed only for the footprint's own entity scope.
+      const allowed = coverage.interactionCreate;
+      const covered = allowed && (value.entity_id ?? null) === allowed.entity_id && value.kind === allowed.kind;
+      if (!covered) violations.push(`created interaction '${key}' outside loaded coverage`);
+      continue;
+    }
+    if (prior.fingerprint !== fpInteraction(value)) {
+      violations.push(`changed interaction '${key}' outside loaded coverage`);
+    }
+  }
+  for (const key of snap.keys()) {
+    if (!scope.has(key) && !values.has(key)) violations.push(`deleted interaction '${key}' outside loaded coverage`);
+  }
+}
+
+/**
  * Trusted footprint selection for C1 targeted hydration. Matches the actual
  * registered revise/remove handler identity, never the caller's
  * command-name string. Returns null for anything unrecognized so hydration
@@ -786,6 +851,26 @@ function interactionFootprintFor(
   const record = (args ?? {}) as Record<string, unknown>;
   if (typeof record['interaction_id'] !== 'string' || !record['interaction_id']) return null;
   return { rootId: record['interaction_id'] };
+}
+
+/**
+ * Trusted footprint selection for new log_event writes. Matches the actual
+ * registered handler identity, never the caller's command-name string. A
+ * new log reads the scoped entity plus active quote siblings when the
+ * entry is a quote; everything else stays unloaded. Returns null for
+ * anything unrecognized so hydration stays fail-open to full state.
+ */
+function logEventFootprintFor(
+  handler: CommandHandler<unknown>,
+  args: unknown,
+): { entityId: string | null; kind: string } | null {
+  if (handler !== (handleLogEvent as AnyCommandHandler)) return null;
+  const record = (args ?? {}) as Record<string, unknown>;
+  const kind = record['kind'];
+  if (typeof kind !== 'string' || !['note', 'visit', 'contact', 'quote'].includes(kind)) return null;
+  const entityId = record['entity_id'];
+  if (entityId !== undefined && entityId !== null && (typeof entityId !== 'string' || !entityId)) return null;
+  return { entityId: typeof entityId === 'string' && entityId ? entityId : null, kind };
 }
 
 /**
@@ -823,7 +908,7 @@ function coverageViolations(
   check('entity', coverage.entities, before.entities.records, next.entities, fpEntity);
   check('alias', coverage.aliases, before.aliases.records, next.aliases, fpAlias);
   check('field', coverage.fields, before.fields.records, next.fields, fpField);
-  check('interaction', coverage.interactions, before.interactions.records, next.interactions, fpInteraction);
+  checkInteractions(coverage, before, next, violations);
   check('task', coverage.tasks, before.tasks.records, next.tasks, fpTask);
   check('draft', coverage.drafts, before.drafts.records, next.drafts, fpDraft);
   check('memory entry', coverage.memoryEntries, before.memoryEntries.records, next.memoryEntries, fpMemory);
@@ -1074,47 +1159,100 @@ export async function executeLedgerCommand<TArgs>(
     ...context,
     source_channel: effectiveChannel,
     chat_id: effectiveChatId || undefined,
+    required_media_id: handler === (handleLinkAttachment as AnyCommandHandler) || handler === (handleUpdateAttachment as AnyCommandHandler) ? (args as { media_id: string }).media_id : undefined,
+    releasing_media_id: handler === (handleUpdateAttachment as AnyCommandHandler) && (args as { retention?: string }).retention === 'release' ? (args as { media_id: string }).media_id : undefined,
+    correcting_audio_id: handler === (handleUpdateAttachment as AnyCommandHandler) && (args as { transcript?: unknown }).transcript !== undefined ? (args as { media_id: string }).media_id : undefined,
   };
 
   // 5. Load current projection state and execute pure domain command.
-  // Trusted field handlers hydrate only their target entity, requested
-  // fields and the entity's aliases in one read batch; every other handler
-  // keeps the full workspace load. The immutable snapshot is captured
-  // BEFORE the handler: reducers may mutate the shared objects in place or
-  // shallow-copy the maps, so the commit diff below compares post-handler
-  // values against these strings, never against the (possibly mutated)
-  // currentState objects.
+  // Recognized handlers hydrate explicit footprints: trusted field writers
+  // load their entity and requested fields; revise/remove load their root
+  // plus active quote siblings when recompute needs them; new logs load
+  // their entity plus active quote siblings for quote entries. Everything
+  // Unknown/custom handlers, including Undo, take complete state. Known
+  // unrelated writers skip interactions; deletion loads its own entity's
+  // rows. The immutable snapshot is captured BEFORE the handler:
+  // reducers may mutate the shared objects in place or shallow-copy the
+  // maps, so the commit diff below compares post-handler values against
+  // these strings, never against the (possibly mutated) currentState
+  // objects.
   const footprint = fieldFootprintFor(handler as CommandHandler<unknown>, args);
   const interactionFootprint = footprint
     ? null
     : interactionFootprintFor(handler as CommandHandler<unknown>, args);
-  const targeted = footprint
+  const logFootprint = footprint || interactionFootprint
+    ? null
+    : logEventFootprintFor(handler as CommandHandler<unknown>, args);
+  const businessIds = handler === (handleChangeContact as AnyCommandHandler) ? [(args as { entity_id: string }).entity_id]
+    : handler === (handleMergeEntities as AnyCommandHandler) ? [(args as { source_entity_id: string }).source_entity_id, (args as { target_entity_id: string }).target_entity_id] : null;
+  let ruleState: { state: LedgerProjectionState; coverage: ProjectionCoverage } | null = null;
+  if (handler === (handleChangeReminderRule as AnyCommandHandler)) {
+    const ruleArgs = args as { rule_id?: string; entity_id?: string | null };
+    const row = ruleArgs.rule_id ? await db.prepare('SELECT * FROM reminder_rules WHERE workspace_id = ? AND user_id = ? AND id = ?').bind(context.workspace_id, context.actor.user_id ?? '', ruleArgs.rule_id).first<Record<string, unknown>>() : null;
+    const entityId = ruleArgs.entity_id === undefined ? row?.entity_id : ruleArgs.entity_id;
+    ruleState = await getFieldProjectionState(db, context.workspace_id, String(entityId ?? '__workspace_rule__'), []);
+    ruleState.state.reminderRules = new Map(row ? [[String(row.id), { ...row, spec: JSON.parse(String(row.spec_json)) } as unknown as import('@otis/contracts').ReminderRule]] : []);
+  }
+  let attachmentEntity: string | null = null;
+  if (handler === (handleLinkAttachment as AnyCommandHandler) || handler === (handleUpdateAttachment as AnyCommandHandler)) attachmentEntity = (args as { entity_id: string }).entity_id;
+  if (handler === (handleUnlinkAttachment as AnyCommandHandler)) attachmentEntity = (await db.prepare('SELECT entity_id FROM attachment_links WHERE workspace_id = ? AND id = ?').bind(context.workspace_id, (args as { link_id: string }).link_id).first<{ entity_id: string }>())?.entity_id ?? '__missing__';
+  const attachmentState = attachmentEntity ? await getFieldProjectionState(db, context.workspace_id, attachmentEntity, []) : null;
+  if (attachmentState) {
+    await hydrateBusinessDetails(db, context.workspace_id, attachmentState.state, [attachmentEntity!], ['attachment_links']);
+    const rootId = (args as { interaction_id?: string }).interaction_id;
+    if (rootId) {
+      const root = await getInteractionProjectionState(db, context.workspace_id, rootId);
+      attachmentState.state.interactions = root.state.interactions;
+      attachmentState.coverage.interactions = root.coverage.interactions;
+    }
+  }
+  const targeted = ruleState ?? attachmentState ?? (businessIds ? await getBusinessProjectionState(db, context.workspace_id, businessIds, handler === (handleMergeEntities as AnyCommandHandler)) : footprint
     ? await getFieldProjectionState(db, context.workspace_id, footprint.entityId, footprint.fieldNames)
     : interactionFootprint
       ? await getInteractionProjectionState(db, context.workspace_id, interactionFootprint.rootId)
-      : null;
-  const currentState = targeted?.state ?? (await getWorkspaceProjectionState(db, context.workspace_id, { includeInteractions: false }));
-  // Deletion drops the doomed entity's lifecycle rows, and log_event/resolve_conflict
-  // need the entity's active interactions to correctly compute quotes/disputes.
-  // Merge exactly those (indexed, entity-scoped) before the snapshot.
-  if (
-    !targeted &&
-    (handler === (handleDeleteEntity as AnyCommandHandler) ||
-      handler === (handleLogEvent as AnyCommandHandler) ||
-      handler === (handleResolveConflict as AnyCommandHandler))
-  ) {
-    const record = (args ?? {}) as Record<string, unknown>;
-    if (typeof record['entity_id'] === 'string' && record['entity_id']) {
-      for (const [key, row] of await getEntityInteractions(db, context.workspace_id, record['entity_id'])) {
-        currentState.interactions.set(key, row);
-      }
+      : logFootprint
+        ? await getLogEventProjectionState(
+          db,
+          context.workspace_id,
+          logFootprint.entityId,
+          logFootprint.kind,
+        )
+        : null);
+  // Only known handlers can opt out of lifecycle hydration. Unknown/custom
+  // handlers (including the Undo closure) always receive the complete state.
+  const registeredHandler = Object.values(DEFAULT_COMMAND_HANDLERS).includes(handler);
+  let currentState = targeted?.state ?? (await getWorkspaceProjectionState(db, context.workspace_id, {
+    includeInteractions: !registeredHandler,
+  }));
+  if (!targeted && handler === (handleDeleteEntity as AnyCommandHandler)) {
+    const entityId = (args as { entity_id?: unknown } | null)?.entity_id;
+    if (typeof entityId === 'string') {
+      currentState.interactions = await getEntityInteractions(db, context.workspace_id, entityId);
+      try { await hydrateBusinessDetails(db, context.workspace_id, currentState, [entityId]); }
+      catch (error) { if (!String(error).includes('no such table')) throw error; }
+      if (currentState.redirects?.size) currentState = await getWorkspaceProjectionState(db, context.workspace_id);
     }
   }
+  if (footprint?.fieldNames.includes('phone') && !currentState.contacts) {
+    try { await hydrateBusinessDetails(db, context.workspace_id, currentState, [footprint.entityId], ['entity_contacts']); }
+    catch (error) { if (!String(error).includes('no such table')) throw error; }
+  }
   const coverage: ProjectionCoverage = targeted?.coverage ?? FULL_PROJECTION_COVERAGE;
+  const forwardedEntity = footprint?.entityId ?? logFootprint?.entityId ?? [...currentState.interactions.values()].find(i => i.root_event_id === interactionFootprint?.rootId)?.entity_id;
+  if (targeted && !businessIds && forwardedEntity) await expandCanonicalProjectionState(db, context.workspace_id, currentState, coverage, forwardedEntity,
+    footprint?.fieldNames ?? (logFootprint?.kind === 'quote' || [...currentState.interactions.values()].some(i => i.root_event_id === interactionFootprint?.rootId && i.kind === 'quote') ? ['quote'] : []));
   const beforeSnapshot = snapshotProjections(currentState);
   const beforeMemoryFlags = snapMemoryFlags(currentState);
+  const beforeBusiness: LedgerProjectionState = { ...currentState,
+    contacts: currentState.contacts && new Map([...currentState.contacts].map(([id, row]) => [id, { ...row }])),
+    redirects: currentState.redirects && new Map([...currentState.redirects].map(([id, row]) => [id, { ...row }])),
+    attachmentLinks: currentState.attachmentLinks && new Map([...currentState.attachmentLinks].map(([id, row]) => [id, { ...row }])),
+    mediaAnnotations: currentState.mediaAnnotations && new Map([...currentState.mediaAnnotations].map(([id, row]) => [id, { ...row }])),
+    reminderRules: currentState.reminderRules && new Map([...currentState.reminderRules].map(([id, row]) => [id, { ...row }])),
+  };
   const nextSeq = wsMeta.last_event_sequence + 1;
   const { result, events, nextState, actionCost } = handler(resolvedContext, currentState, nextSeq, args);
+  if (nextState) for (const event of events) reduceBusinessDetails(nextState, event);
   const batchCost = Number.isInteger(actionCost) && (actionCost as number) >= 0 ? (actionCost as number) : 1;
 
   // Targeted loads must stay inside their footprint: anything outside the
@@ -1225,7 +1363,37 @@ export async function executeLedgerCommand<TArgs>(
     }
   }
 
-  // 7. If the command resulted in non-applied status (rejection/conflict) without mutations, return immediately
+  // No-effect successes still pin the logical action and its immutable payload.
+  // Otherwise an identical edit could later reuse its ID to write different facts.
+  if (result.status === 'already_applied' && events.length === 0) {
+    const noEffectResult = { ...result, action_id: context.action_id, committed_revision: wsMeta.business_revision };
+    const guardId = `guard_${crypto.randomUUID()}`;
+    const statements: D1PreparedStatement[] = [];
+    if (options?.extrasBeforeGuard && extraStatements?.length) statements.push(...extraStatements);
+    statements.push(createGuardStatement(db, guardId, resolvedContext, 0));
+    if (!options?.extrasBeforeGuard && extraStatements?.length) statements.push(...extraStatements);
+    statements.push(db.prepare(
+      `INSERT INTO action_receipts (
+         id, workspace_id, action_id, payload_hash, command_name, result_status, result_json,
+         actor_kind, actor_user_id, source_message_id, source_job_id, run_id, step_id,
+         committed_revision, created_at
+       ) VALUES (?, ?, ?, ?, ?, 'already_applied', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).bind(
+      `rcpt_${crypto.randomUUID()}`, context.workspace_id, context.action_id, payloadHash, commandName,
+      JSON.stringify(noEffectResult), context.actor.kind, context.actor.user_id || null,
+      context.source_message_id || null, context.source_job_id || null, context.run_id || null,
+      context.step_id || null, wsMeta.business_revision, now,
+    ));
+    statements.push(db.prepare('DELETE FROM ledger_guards WHERE id = ?').bind(guardId));
+    try {
+      await db.batch(statements);
+      return noEffectResult;
+    } catch (err) {
+      return handleBatchError(err, db, resolvedContext, 0);
+    }
+  }
+
+  // 7. Rejections/conflicts without mutations return immediately.
   if (result.status !== 'applied' || events.length === 0 || !nextState) {
     return result;
   }
@@ -1462,6 +1630,11 @@ export async function executeLedgerCommand<TArgs>(
     committed_revision: committedRevision,
   };
 
+  statements.push(...businessDetailStatements(db, beforeBusiness, nextState));
+  const reminderEntities = new Set(events.filter(e => ['quote', 'contact', 'visit', 'message_sent_by_member', 'interaction_removed', 'entity_merged', 'revert'].includes(e.kind) && e.entity_id).map(e => e.entity_id!));
+  for (const entityId of reminderEntities) statements.push(db.prepare(`${ENTITY_FAMILY_SQL} UPDATE reminder_rule_cursors SET dirty = 1
+    WHERE rule_id IN (SELECT id FROM reminder_rules WHERE workspace_id = ? AND entity_id IN (SELECT id FROM family) AND status = 'active' AND json_extract(spec_json, '$.kind') = 'after_quote') AND dirty = 0`).bind(...familyBinds(context.workspace_id, entityId), context.workspace_id));
+
   // Step 4: Insert action receipt
   statements.push(
     db
@@ -1552,8 +1725,8 @@ export async function executeLedgerCommand<TArgs>(
           `INSERT INTO entity_state (
              id, workspace_id, entity_id, field_name, state, value_text, value_json,
              provenance, source_event_id, candidate_event_ids_json, last_confirmed_value_text,
-             last_confirmed_value_json, revision, updated_at
-           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             last_confirmed_value_json, revision, updated_at, quote_authority_json
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
            ON CONFLICT(workspace_id, entity_id, field_name) DO UPDATE SET
              state = excluded.state,
              value_text = excluded.value_text,
@@ -1564,7 +1737,8 @@ export async function executeLedgerCommand<TArgs>(
              last_confirmed_value_text = excluded.last_confirmed_value_text,
              last_confirmed_value_json = excluded.last_confirmed_value_json,
              revision = excluded.revision,
-             updated_at = excluded.updated_at`
+             updated_at = excluded.updated_at,
+             quote_authority_json = excluded.quote_authority_json`
         )
         .bind(
           field.id,
@@ -1581,6 +1755,7 @@ export async function executeLedgerCommand<TArgs>(
           field.last_confirmed_value_json || null,
           field.revision,
           field.updated_at,
+          field.quote_authority_json ?? null,
         )
     );
   }
@@ -2185,6 +2360,13 @@ export async function resumePendingClarification(
   }
 
   // Merge strictly bounded fields into original validated args
+  if (pendingOp.command_name === 'merge_entities') {
+    const decision = String(resolved['merge_identity'] ?? '').trim().toLowerCase();
+    if (STATUS_DECLINE_WORDS.has(decision)) return { status: 'rejected', error: { code: 'cancelled_by_member', message: 'The files stay separate.' } };
+    if (!STATUS_CONFIRM_WORDS.has(decision)) return { status: 'rejected', error: { code: 'answer_ambiguous', message: 'Confirm the same client, or cancel.' } };
+    delete resolved['merge_identity'];
+    allowedMissingFields = allowedMissingFields.filter(field => field !== 'merge_identity');
+  }
   const mergedArgs: Record<string, unknown> = { ...pendingOp.args };
   for (const key of allowedMissingFields) {
     if (resolved[key] !== undefined) {

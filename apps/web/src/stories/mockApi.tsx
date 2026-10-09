@@ -11,6 +11,8 @@ export interface MockRoute {
   match: (url: string, method: string) => boolean;
   status?: number;
   body?: unknown;
+  blob?: Blob;
+  response?: (url: string, method: string) => Response;
   hang?: boolean;
   networkError?: boolean;
 }
@@ -33,7 +35,8 @@ export function installMockFetch(routes: MockRoute[]): void {
     if (!route) return jsonResponse({ error: { code: 'not_found', message: 'No story mock for this request.' } }, 404);
     if (route.hang) return new Promise<Response>(() => {});
     if (route.networkError) throw new TypeError('Storybook synthetic network failure.');
-    return jsonResponse(route.body ?? {}, route.status ?? 200);
+    if (route.response) return route.response(url, method);
+    return route.blob ? new Response(route.blob, { status: route.status ?? 200, headers: { 'Content-Type': route.blob.type } }) : jsonResponse(route.body ?? {}, route.status ?? 200);
   }) as typeof fetch;
 }
 

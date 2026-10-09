@@ -22,8 +22,11 @@ import {
 import { handleGetChatDetail, handleGetMessages } from './routes/chat.js';
 import { handleExportWorkspace } from './routes/exports.js';
 import { handleGetRecords, handleSaveRecords } from './routes/records.js';
+import { handleEntityFileAction, handleGetEntityFile } from './routes/entities.js';
+import { handleFollowUps } from './routes/followups.js';
 import { handleGetActivity } from './routes/activity.js';
-import { handleGetMemorySource } from './routes/sources.js';
+import { handleGetMemorySource, handleGetWorkspaceSource, handleSearchWorkspaceHistory } from './routes/sources.js';
+import { backfillConversationSearch } from './conversationSearch.js';
 import {
   handleGetAction,
   handleUndoPreview,
@@ -59,9 +62,11 @@ import { createActivityStream } from './chat/stream.js';
 import { processMemoryRefreshJobs } from './agent/memory.js';
 import { processScheduledDailyBriefs } from './brief/cron.js';
 import { processDueReminders } from './reminders/service.js';
+import { processReminderRules } from './reminders/rules.js';
 import { handleVoiceMediaRoute } from './media/routes.js';
 import { processTranscriptionJobs, scheduleNextTranscriptionWake, type TranscriptionProcessResult } from './media/transcription.js';
 import { cleanupExpiredMedia } from './media/cleanup.js';
+import { handleUploadDocument, handleRetryDocument, processDocumentExtractions, type MarkdownBinding } from './media/documents.js';
 import {
   handleAcceptInvite,
   handleCreateInvite,
@@ -88,6 +93,7 @@ import { jsonError, jsonSuccess } from './middleware/errors.js';
 import { workerDebug } from './observability.js';
 
 export interface Env {
+  AI?: MarkdownBinding;
   DB: D1Database;
   STORAGE?: R2Bucket;
   /** Cloudflare Images binding for standard inference renditions; code-only until the account enables it. */
@@ -537,6 +543,14 @@ export default {
       }
 
       // 4b. Workspace records route: /api/workspaces/:workspaceId/records
+      const historySearchMatch = url.pathname.match(/^\/api\/workspaces\/([^/]+)\/history\/search$/);
+      const followUpsMatch = url.pathname.match(/^\/api\/workspaces\/([^/]+)\/followups$/);
+      if (followUpsMatch && ['GET', 'POST'].includes(request.method)) return await handleFollowUps(request, env, decodeURIComponent(followUpsMatch[1]!), requestId);
+      if (historySearchMatch && request.method === 'GET') return await handleSearchWorkspaceHistory(request, env, decodeURIComponent(historySearchMatch[1]!), requestId);
+      const workspaceSourceMatch = url.pathname.match(/^\/api\/workspaces\/([^/]+)\/sources\/([^/]+)$/);
+      if (workspaceSourceMatch && request.method === 'GET') return await handleGetWorkspaceSource(request, env, decodeURIComponent(workspaceSourceMatch[1]!), decodeURIComponent(workspaceSourceMatch[2]!), requestId);
+      const entityFileMatch = url.pathname.match(/^\/api\/workspaces\/([^/]+)\/entities\/([^/]+)\/file$/);
+      if (entityFileMatch && request.method === 'GET') return await handleGetEntityFile(request, env, decodeURIComponent(entityFileMatch[1]!), decodeURIComponent(entityFileMatch[2]!), requestId);
       const recordsMatch = url.pathname.match(/^\/api\/workspaces\/([^/]+)\/records$/);
       if (recordsMatch) {
         const workspaceId = recordsMatch[1];
@@ -906,6 +920,12 @@ export default {
         return jsonError(405, 'method_not_allowed', 'Method not allowed.', requestId);
       }
 
+      const documentUpload = /^\/api\/workspaces\/([^/]+)\/documents\/uploads$/.exec(url.pathname);
+      const documentRetry = /^\/api\/workspaces\/([^/]+)\/documents\/([^/]+)\/retry$/.exec(url.pathname);
+      if (documentRetry && request.method === 'POST') return await handleRetryDocument(request, env, decodeURIComponent(documentRetry[1]!), decodeURIComponent(documentRetry[2]!), requestId);
+      const fileAction = /^\/api\/workspaces\/([^/]+)\/entities\/([^/]+)\/actions$/.exec(url.pathname);
+      if (fileAction && request.method === 'POST') return await handleEntityFileAction(request, env, decodeURIComponent(fileAction[1]!), decodeURIComponent(fileAction[2]!), requestId);
+      if (documentUpload && request.method === 'POST') return await handleUploadDocument(request, env, decodeURIComponent(documentUpload[1]!), requestId);
       // 12c. Voice media surface: private upload claims, byte transport,
       // finalize/status, streaming reads and shared voice settings. Mounted
       // once; every route re-checks current membership itself and the outer
@@ -940,7 +960,17 @@ export default {
    * needs recovery), then requeues stale work and dispatches a bounded slice.
    */
   async scheduled(_event: ScheduledEvent, env: Env): Promise<void> {
+    if (_event.cron === '* * * * *') {
+      const now = new Date().toISOString();
+      // Keep quote discovery plus two deliveries within D1's 50-query
+      // Free invocation bound, including first-chat provisioning/Telegram.
+      await processReminderRules(env.DB, now, 1);
+      await processDueReminders(env.DB, now, { limit: 2 });
+      return;
+    }
+    await processDocumentExtractions(env).catch(() => console.error('Document extraction recovery failed.'));
     workerDebug('cron', 'scheduled sweep starting', {});
+    try { await backfillConversationSearch(env.DB); } catch (error) { console.error('History index recovery failed:', error instanceof Error ? error.message : 'unknown error'); }
 
     // Voice transcription recovery: queue wake-ups advance due jobs promptly;
     // this bounded pass is the backstop for a workspace whose wake-up was
@@ -1029,11 +1059,8 @@ export default {
       console.error('scheduled daily brief sweep failed:', err);
     }
 
-    try {
-      await processDueReminders(env.DB, new Date().toISOString());
-    } catch (err) {
-      console.error('scheduled reminder sweep failed:', err);
-    }
+    // The dedicated minute pass owns reminders; don't repeat their reads
+    // and deliveries inside the already busy maintenance invocation.
 
     // Housekeeping: bounded prune of legacy guard rows left by earlier migrations
     try {
@@ -1084,6 +1111,11 @@ export default {
     for (const message of batch.messages) {
       const kind = message.body?.kind;
       const workspaceId = message.body?.workspace_id;
+
+      if (kind === 'document_extract' && typeof workspaceId === 'string') {
+        await processDocumentExtractions(env, workspaceId, typeof message.body.job_id === 'string' ? message.body.job_id : undefined);
+        continue;
+      }
 
       if (kind === 'telegram_delivery') {
         const scopeId = typeof workspaceId === 'string' && workspaceId ? workspaceId : undefined;

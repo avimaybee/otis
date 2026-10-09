@@ -11,6 +11,7 @@
 import { jsonError, jsonSuccess } from '../middleware/errors.js';
 import { readJsonBody, requireWorkspaceScope } from './scope.js';
 import type { Env } from '../index.js';
+import { formatQuoteText, readCurrentInteractions } from '@otis/ledger';
 
 export interface RecordColumn {
   id: string;
@@ -62,19 +63,31 @@ export async function handleGetRecords(
   // 1. Fetch workspace users to resolve assignee IDs to display names
   const usersResult = await env.DB.prepare(
     `SELECT u.id, u.display_name FROM users u JOIN workspace_users wu ON wu.user_id = u.id WHERE wu.workspace_id = ?`,
-  ).bind(workspaceId).all<{ id: string; display_name: string | null }>();
+  )
+    .bind(workspaceId)
+    .all<{ id: string; display_name: string | null }>();
   const memberMap: Record<string, string> = {};
   for (const u of usersResult.results || []) {
     memberMap[u.id] = u.display_name || 'Teammate';
   }
 
   // 2. Fetch entities & their current projection state
-  const [entitiesResult, fieldsResult, tasksResult, draftsResult, eventsResult, receiptsResult] =
-    await Promise.all([
-      env.DB.prepare(
-        `SELECT id, name, kind, status, assigned_user_id, created_at, updated_at
+  const [
+    entitiesResult,
+    fieldsResult,
+    tasksResult,
+    draftsResult,
+    eventsResult,
+    receiptsResult,
+    redirectsResult,
+    contactsResult,
+  ] = await Promise.all([
+    env.DB.prepare(
+      `SELECT id, name, kind, status, assigned_user_id, created_at, updated_at
          FROM entities WHERE workspace_id = ? ORDER BY created_at ASC`,
-      ).bind(workspaceId).all<{
+    )
+      .bind(workspaceId)
+      .all<{
         id: string;
         name: string;
         kind: string;
@@ -83,21 +96,26 @@ export async function handleGetRecords(
         created_at: string;
         updated_at: string;
       }>(),
-      env.DB.prepare(
-        `SELECT entity_id, field_name, value_text, value_json, provenance, updated_at
+    env.DB.prepare(
+      `SELECT entity_id, field_name, state, value_text, value_json, provenance, updated_at
          FROM entity_state WHERE workspace_id = ?`,
-      ).bind(workspaceId).all<{
+    )
+      .bind(workspaceId)
+      .all<{
         entity_id: string;
         field_name: string;
+        state: string;
         value_text: string | null;
         value_json: string | null;
         provenance: string;
         updated_at: string;
       }>(),
-      env.DB.prepare(
-        `SELECT id, entity_id, title, assignee_user_id, status, due_kind, due_local_date, due_instant, due_timezone, snooze_until, created_at, updated_at
+    env.DB.prepare(
+      `SELECT id, entity_id, title, assignee_user_id, status, due_kind, due_local_date, due_instant, due_timezone, snooze_until, created_at, updated_at
          FROM tasks WHERE workspace_id = ? ORDER BY created_at ASC`,
-      ).bind(workspaceId).all<{
+    )
+      .bind(workspaceId)
+      .all<{
         id: string;
         entity_id: string | null;
         title: string;
@@ -111,10 +129,12 @@ export async function handleGetRecords(
         created_at: string;
         updated_at: string;
       }>(),
-      env.DB.prepare(
-        `SELECT id, entity_id, channel, recipient_address, content_text, updated_at
+    env.DB.prepare(
+      `SELECT id, entity_id, channel, recipient_address, content_text, updated_at
          FROM draft_projections WHERE workspace_id = ? ORDER BY updated_at DESC`,
-      ).bind(workspaceId).all<{
+    )
+      .bind(workspaceId)
+      .all<{
         id: string;
         entity_id: string | null;
         channel: string;
@@ -122,35 +142,43 @@ export async function handleGetRecords(
         content_text: string;
         updated_at: string;
       }>(),
-      env.DB.prepare(
-        `SELECT id, sequence, entity_id, actor_kind, actor_user_id, kind, payload_json, occurred_at, recorded_at, action_id, created_at
-         FROM events WHERE workspace_id = ? AND kind IN ('note', 'visit', 'contact', 'quote') ORDER BY sequence DESC LIMIT 50`,
-      ).bind(workspaceId).all<{
-        id: string;
-        sequence: number;
-        entity_id: string | null;
-        actor_kind: string;
-        actor_user_id: string | null;
-        kind: string;
-        payload_json: string;
-        occurred_at: string;
-        recorded_at: string;
-        action_id: string;
-        created_at: string;
-      }>(),
-      env.DB.prepare(
-        `SELECT action_id, command_name, result_status, result_json, created_at
+    readCurrentInteractions(env.DB, workspaceId, { limit: 50 }).then((page) => ({
+      results: page.rows,
+      has_more: page.has_more,
+    })),
+    env.DB.prepare(
+      `SELECT action_id, command_name, result_status, result_json, created_at
          FROM action_receipts WHERE workspace_id = ? ORDER BY created_at DESC LIMIT 20`,
-      ).bind(workspaceId).all<{
+    )
+      .bind(workspaceId)
+      .all<{
         action_id: string;
         command_name: string;
         result_status: string;
         result_json: string;
         created_at: string;
       }>(),
-    ]);
+    env.DB.prepare(
+      'SELECT source_entity_id, target_entity_id FROM entity_redirects WHERE workspace_id = ?',
+    )
+      .bind(workspaceId)
+      .all<{ source_entity_id: string; target_entity_id: string }>(),
+    env.DB.prepare(
+      "SELECT entity_id, value, is_primary, state FROM entity_contacts WHERE workspace_id = ? AND method = 'phone' AND state != 'removed'",
+    )
+      .bind(workspaceId)
+      .all<{ entity_id: string; value: string; is_primary: number; state: string }>(),
+  ]);
 
-  const rawEntities = entitiesResult.results || [];
+  const redirects = new Map(
+    (redirectsResult.results ?? []).map((r) => [r.source_entity_id, r.target_entity_id]),
+  );
+  const canonical = (id: string) => {
+    for (let depth = 0; depth < 32 && redirects.has(id); depth++) id = redirects.get(id)!;
+    return id;
+  };
+  const allEntities = entitiesResult.results || [];
+  const rawEntities = allEntities.filter((e) => canonical(e.id) === e.id);
   const rawFields = fieldsResult.results || [];
   const rawTasks = tasksResult.results || [];
   const rawDrafts = draftsResult.results || [];
@@ -158,14 +186,17 @@ export async function handleGetRecords(
   const rawReceipts = receiptsResult.results || [];
 
   // Group entity state fields by entity_id
-  const fieldsByEntity = new Map<string, Array<{ field_name: string; value: string; provenance?: string }>>();
+  const fieldsByEntity = new Map<
+    string,
+    Array<{ field_name: string; value: string; provenance?: string }>
+  >();
   for (const f of rawFields) {
     let list = fieldsByEntity.get(f.entity_id);
     if (!list) {
       list = [];
       fieldsByEntity.set(f.entity_id, list);
     }
-    let val = f.value_text ?? '';
+    let val = f.state === 'disputed' ? 'Disputed' : (f.value_text ?? '');
     if (!val && f.value_json) {
       try {
         const parsed = JSON.parse(f.value_json);
@@ -179,8 +210,16 @@ export async function handleGetRecords(
 
   // Name map for linking entities
   const entityNameMap: Record<string, string> = {};
-  for (const e of rawEntities) {
-    entityNameMap[e.id] = e.name;
+  const canonicalNames = new Map(rawEntities.map((entity) => [entity.id, entity.name]));
+  for (const e of allEntities) {
+    entityNameMap[e.id] = canonicalNames.get(canonical(e.id)) ?? e.name;
+  }
+  const phones = new Map<string, typeof contactsResult.results>();
+  for (const contact of contactsResult.results ?? []) {
+    const id = canonical(contact.entity_id),
+      group = phones.get(id) ?? [];
+    group.push(contact);
+    phones.set(id, group);
   }
 
   // 3. Assemble Leads list
@@ -203,14 +242,14 @@ export async function handleGetRecords(
   }
 
   const buildEntityRows = (entities: typeof rawEntities): RecordRow[] => {
-    return entities.map(e => {
+    return entities.map((e) => {
       const cells: Record<string, string> = {
         name: e.name,
         status: e.status,
         phone: '',
         language: '',
         value: '',
-        assignee: e.assigned_user_id ? memberMap[e.assigned_user_id] ?? 'Teammate' : '',
+        assignee: e.assigned_user_id ? (memberMap[e.assigned_user_id] ?? 'Teammate') : '',
         access: '',
         notes: '',
       };
@@ -218,16 +257,38 @@ export async function handleGetRecords(
       const fieldItems = fieldsByEntity.get(e.id) || [];
       for (const item of fieldItems) {
         if (item.field_name === 'phone') cells.phone = item.value;
-        else if (item.field_name === 'preferred_language' || item.field_name === 'language') cells.language = item.value;
-        else if (item.field_name === 'quote' || item.field_name === 'deal_value' || item.field_name === 'value') {
-          cells.value = item.value.startsWith('$') ? item.value : `$${item.value}`;
-        } else if (item.field_name === 'access' || item.field_name === 'access_instructions') cells.access = item.value;
+        else if (item.field_name === 'assigned_user_id')
+          cells.assignee = item.value === 'Disputed' ? 'Disputed' : (memberMap[item.value] ?? '');
+        else if (item.field_name === 'preferred_language' || item.field_name === 'language')
+          cells.language = item.value;
+        else if (
+          item.field_name === 'quote' ||
+          item.field_name === 'deal_value' ||
+          item.field_name === 'value'
+        ) {
+          cells.value = item.value;
+        } else if (item.field_name === 'access' || item.field_name === 'access_instructions')
+          cells.access = item.value;
         else if (item.field_name === 'notes') cells.notes = item.value;
         else cells[item.field_name] = item.value;
 
         if (item.provenance) {
           prov[item.field_name] = item.provenance;
         }
+      }
+      const contacts = phones.get(e.id);
+      if (contacts?.length) {
+        const primaries = contacts.filter(
+          (contact) => contact.state === 'active' && contact.is_primary,
+        );
+        cells.phone =
+          primaries.length === 1
+            ? primaries[0]!.value
+            : contacts.length === 1 && contacts[0]!.state === 'active'
+              ? contacts[0]!.value
+              : contacts.some((contact) => contact.state === 'disputed')
+                ? 'Disputed'
+                : 'Multiple contacts';
       }
       return {
         id: e.id,
@@ -238,7 +299,7 @@ export async function handleGetRecords(
     });
   };
 
-  const leadRows = buildEntityRows(rawEntities.filter(e => !e.kind || e.kind === 'lead'));
+  const leadRows = buildEntityRows(rawEntities.filter((e) => !e.kind || e.kind === 'lead'));
 
   const leadColumns: RecordColumn[] = [
     { id: 'name', name: 'Lead name', type: 'text', width: 200, isCore: true },
@@ -261,51 +322,74 @@ export async function handleGetRecords(
   for (const fName of extraFieldNames) {
     leadColumns.push({
       id: fName,
-      name: fName.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()),
+      name: fName.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase()),
       type: 'text',
       width: 160,
     });
   }
 
   // 4. Assemble Tasks list
-  const taskRows: RecordRow[] = rawTasks.map(t => ({
+  const taskRows: RecordRow[] = rawTasks.map((t) => ({
     id: t.id,
     source: 'custom',
     cells: {
       title: t.title,
       status: t.status,
-      due: t.due_local_date || t.due_instant || (t.snooze_until ? `Snoozed until ${t.snooze_until}` : ''),
-      assignee: t.assignee_user_id ? memberMap[t.assignee_user_id] ?? 'Teammate' : '',
-      entity: t.entity_id ? entityNameMap[t.entity_id] ?? '' : '',
+      due:
+        t.due_local_date ||
+        t.due_instant ||
+        (t.snooze_until ? `Snoozed until ${t.snooze_until}` : ''),
+      assignee: t.assignee_user_id ? (memberMap[t.assignee_user_id] ?? 'Teammate') : '',
+      entity: t.entity_id ? (entityNameMap[t.entity_id] ?? '') : '',
     },
   }));
 
   const taskColumns: RecordColumn[] = [
     { id: 'title', name: 'Task', type: 'text', width: 260, isCore: true },
-    { id: 'status', name: 'Status', type: 'status', width: 120, isCore: true, options: ['open', 'done', 'cancelled'] },
+    {
+      id: 'status',
+      name: 'Status',
+      type: 'status',
+      width: 120,
+      isCore: true,
+      options: ['open', 'done', 'cancelled'],
+    },
     { id: 'due', name: 'Due date', type: 'date', width: 140 },
     { id: 'assignee', name: 'Assignee', type: 'text', width: 140 },
     { id: 'entity', name: 'Related record', type: 'text', width: 180 },
   ];
 
   // 5. Assemble Notes & interactions list
-  const noteRows: RecordRow[] = rawEvents.map(ev => {
+  const noteRows: RecordRow[] = rawEvents.map((ev) => {
     let summary = '';
     try {
-      const p = JSON.parse(ev.payload_json);
-      summary = p.text || p.summary || p.notes || p.description || ev.kind;
+      const p = ev.payload;
+      summary = String(p['text'] || p['summary'] || p['notes'] || p['description'] || ev.kind);
+      if (
+        ev.kind === 'quote' &&
+        typeof p['amount'] === 'number' &&
+        typeof p['currency'] === 'string' &&
+        typeof p['role'] === 'string'
+      ) {
+        const quote = formatQuoteText(p['amount'], p['currency'], p['role']);
+        summary = summary === 'quote' ? quote : `${quote} · ${summary}`;
+      }
     } catch {
       summary = ev.kind;
     }
     return {
-      id: ev.id,
+      id: ev.interaction_id,
       source: 'custom',
       cells: {
-        date: ev.occurred_at || ev.recorded_at || ev.created_at,
+        date: ev.occurred_at,
         type: ev.kind,
         summary,
-        entity: ev.entity_id ? entityNameMap[ev.entity_id] ?? '' : '',
-        actor: ev.actor_user_id ? memberMap[ev.actor_user_id] ?? 'Teammate' : (ev.actor_kind === 'system' ? 'Otis' : ''),
+        entity: ev.entity_id ? (entityNameMap[ev.entity_id] ?? '') : '',
+        actor: ev.actor_user_id
+          ? (memberMap[ev.actor_user_id] ?? 'Teammate')
+          : ev.actor_kind === 'system'
+            ? 'Otis'
+            : '',
       },
     };
   });
@@ -319,14 +403,14 @@ export async function handleGetRecords(
   ];
 
   // 6. Assemble Drafts list
-  const draftRows: RecordRow[] = rawDrafts.map(d => ({
+  const draftRows: RecordRow[] = rawDrafts.map((d) => ({
     id: d.id,
     source: 'custom',
     cells: {
       channel: d.channel,
       recipient: d.recipient_address || '',
       content: d.content_text,
-      entity: d.entity_id ? entityNameMap[d.entity_id] ?? '' : '',
+      entity: d.entity_id ? (entityNameMap[d.entity_id] ?? '') : '',
     },
   }));
 
@@ -338,11 +422,11 @@ export async function handleGetRecords(
   ];
 
   const customLists: RecordList[] = [];
-  const entityKinds = new Set(rawEntities.map(e => e.kind).filter(Boolean));
+  const entityKinds = new Set(rawEntities.map((e) => e.kind).filter(Boolean));
   for (const kind of entityKinds) {
     if (kind === 'lead') continue;
-    const kindEntities = rawEntities.filter(e => e.kind === kind);
-    const kindName = kind.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+    const kindEntities = rawEntities.filter((e) => e.kind === kind);
+    const kindName = kind.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
     customLists.push({
       id: kind,
       name: kindName,
@@ -370,7 +454,9 @@ export async function handleGetRecords(
     {
       id: 'notes',
       name: 'Notes & interactions',
-      description: 'Notes, calls, visits and quotes captured in conversation.',
+      description: eventsResult.has_more
+        ? 'Latest 50 current notes, calls, visits and quotes.'
+        : 'Current notes, calls, visits and quotes captured in conversation.',
       columns: noteColumns,
       rows: noteRows,
     },
@@ -386,7 +472,7 @@ export async function handleGetRecords(
 
   // History entries from action receipts
   const historyItems: Record<string, RecordHistoryItem[]> = {
-    leads: rawReceipts.map(r => {
+    leads: rawReceipts.map((r) => {
       let desc = r.command_name.replace(/_/g, ' ');
       try {
         const parsed = JSON.parse(r.result_json);
@@ -421,7 +507,9 @@ export async function handleSaveRecords(
   workspaceId: string,
   requestId: string,
 ): Promise<Response> {
-  const scope = await requireWorkspaceScope(request, env.DB, workspaceId, requestId, { csrf: true });
+  const scope = await requireWorkspaceScope(request, env.DB, workspaceId, requestId, {
+    csrf: true,
+  });
   if (scope instanceof Response) return scope;
 
   const parsed = await readJsonBody(request);
@@ -448,10 +536,12 @@ export async function handleSaveRecords(
   const [usersResult, entitiesResult] = await Promise.all([
     env.DB.prepare(
       `SELECT u.id, u.display_name FROM users u JOIN workspace_users wu ON wu.user_id = u.id WHERE wu.workspace_id = ?`,
-    ).bind(workspaceId).all<{ id: string; display_name: string | null }>(),
-    env.DB.prepare(
-      `SELECT id, name FROM entities WHERE workspace_id = ?`,
-    ).bind(workspaceId).all<{ id: string; name: string }>(),
+    )
+      .bind(workspaceId)
+      .all<{ id: string; display_name: string | null }>(),
+    env.DB.prepare(`SELECT id, name FROM entities WHERE workspace_id = ?`)
+      .bind(workspaceId)
+      .all<{ id: string; name: string }>(),
   ]);
 
   const userNameToId: Record<string, string> = {};
@@ -475,13 +565,22 @@ export async function handleSaveRecords(
     for (const delId of body.deletedRowIds) {
       if (isTask) {
         stmts.push(
-          env.DB.prepare(`DELETE FROM tasks WHERE workspace_id = ? AND id = ?`).bind(workspaceId, delId),
+          env.DB.prepare(`DELETE FROM tasks WHERE workspace_id = ? AND id = ?`).bind(
+            workspaceId,
+            delId,
+          ),
         );
         affectedCount++;
       } else if (!isDraft && !isNotes) {
         stmts.push(
-          env.DB.prepare(`DELETE FROM entities WHERE workspace_id = ? AND id = ?`).bind(workspaceId, delId),
-          env.DB.prepare(`DELETE FROM entity_state WHERE workspace_id = ? AND entity_id = ?`).bind(workspaceId, delId),
+          env.DB.prepare(`DELETE FROM entities WHERE workspace_id = ? AND id = ?`).bind(
+            workspaceId,
+            delId,
+          ),
+          env.DB.prepare(`DELETE FROM entity_state WHERE workspace_id = ? AND entity_id = ?`).bind(
+            workspaceId,
+            delId,
+          ),
         );
         affectedCount++;
       }
@@ -494,7 +593,9 @@ export async function handleSaveRecords(
       if (isTask) {
         const taskId = row.id || `tsk_${crypto.randomUUID()}`;
         const title = row.cells.title?.trim() || 'New task';
-        const status = ['open', 'done', 'cancelled'].includes(row.cells.status || '') ? row.cells.status : 'open';
+        const status = ['open', 'done', 'cancelled'].includes(row.cells.status || '')
+          ? row.cells.status
+          : 'open';
         const dueVal = row.cells.due?.trim() || '';
         let dueKind: 'date' | 'instant' | null = null;
         let dueLocalDate: string | null = null;
@@ -544,7 +645,12 @@ export async function handleSaveRecords(
             workspaceId,
             entityId,
             scope.user.id,
-            JSON.stringify({ title, status, due_local_date: dueLocalDate, due_instant: dueInstant }),
+            JSON.stringify({
+              title,
+              status,
+              due_local_date: dueLocalDate,
+              due_instant: dueInstant,
+            }),
             now,
             now,
             msgId,
@@ -577,7 +683,9 @@ export async function handleSaveRecords(
       } else if (!isDraft && !isNotes) {
         const entityId = row.id;
         const name = row.cells.name?.trim() || 'New record';
-        const status = ['new', 'warm', 'hot', 'won', 'cold', 'lost', 'deprioritized'].includes(row.cells.status || '')
+        const status = ['new', 'warm', 'hot', 'won', 'cold', 'lost', 'deprioritized'].includes(
+          row.cells.status || '',
+        )
           ? row.cells.status
           : 'new';
 
@@ -592,7 +700,8 @@ export async function handleSaveRecords(
         // Store custom / core fields in entity_state
         for (const [colId, val] of Object.entries(row.cells)) {
           if (colId === 'name' || colId === 'status' || !val) continue;
-          const fieldKey = colId === 'language' ? 'preferred_language' : (colId === 'value' ? 'quote' : colId);
+          const fieldKey =
+            colId === 'language' ? 'preferred_language' : colId === 'value' ? 'quote' : colId;
           stmts.push(
             env.DB.prepare(
               `INSERT INTO entity_state (id, workspace_id, entity_id, field_name, state, value_text, provenance, revision, updated_at)
@@ -611,28 +720,25 @@ export async function handleSaveRecords(
     for (const [cellKey, dirty] of Object.entries(body.dirtyCells)) {
       const [rowId, colId] = cellKey.split(':');
       if (!rowId || !colId || !dirty) continue;
-      const cellVal = typeof dirty.currentValue === 'string' ? dirty.currentValue : String(dirty.currentValue ?? '');
+      const cellVal =
+        typeof dirty.currentValue === 'string'
+          ? dirty.currentValue
+          : String(dirty.currentValue ?? '');
 
       if (isTask) {
         if (colId === 'title') {
           stmts.push(
-            env.DB.prepare(`UPDATE tasks SET title = ?, updated_at = ? WHERE workspace_id = ? AND id = ?`).bind(
-              cellVal,
-              now,
-              workspaceId,
-              rowId,
-            ),
+            env.DB.prepare(
+              `UPDATE tasks SET title = ?, updated_at = ? WHERE workspace_id = ? AND id = ?`,
+            ).bind(cellVal, now, workspaceId, rowId),
           );
           affectedCount++;
         } else if (colId === 'status') {
           const status = ['open', 'done', 'cancelled'].includes(cellVal) ? cellVal : 'open';
           stmts.push(
-            env.DB.prepare(`UPDATE tasks SET status = ?, updated_at = ? WHERE workspace_id = ? AND id = ?`).bind(
-              status,
-              now,
-              workspaceId,
-              rowId,
-            ),
+            env.DB.prepare(
+              `UPDATE tasks SET status = ?, updated_at = ? WHERE workspace_id = ? AND id = ?`,
+            ).bind(status, now, workspaceId, rowId),
           );
           affectedCount++;
         } else if (colId === 'due') {
@@ -655,54 +761,49 @@ export async function handleSaveRecords(
           );
           affectedCount++;
         } else if (colId === 'assignee') {
-          const assigneeId = cellVal.trim() ? (userNameToId[cellVal.trim().toLowerCase()] ?? null) : null;
+          const assigneeId = cellVal.trim()
+            ? (userNameToId[cellVal.trim().toLowerCase()] ?? null)
+            : null;
           stmts.push(
-            env.DB.prepare(`UPDATE tasks SET assignee_user_id = ?, updated_at = ? WHERE workspace_id = ? AND id = ?`).bind(
-              assigneeId,
-              now,
-              workspaceId,
-              rowId,
-            ),
+            env.DB.prepare(
+              `UPDATE tasks SET assignee_user_id = ?, updated_at = ? WHERE workspace_id = ? AND id = ?`,
+            ).bind(assigneeId, now, workspaceId, rowId),
           );
           affectedCount++;
         } else if (colId === 'entity') {
-          const entityId = cellVal.trim() ? (entityNameToId[cellVal.trim().toLowerCase()] ?? null) : null;
+          const entityId = cellVal.trim()
+            ? (entityNameToId[cellVal.trim().toLowerCase()] ?? null)
+            : null;
           stmts.push(
-            env.DB.prepare(`UPDATE tasks SET entity_id = ?, updated_at = ? WHERE workspace_id = ? AND id = ?`).bind(
-              entityId,
-              now,
-              workspaceId,
-              rowId,
-            ),
+            env.DB.prepare(
+              `UPDATE tasks SET entity_id = ?, updated_at = ? WHERE workspace_id = ? AND id = ?`,
+            ).bind(entityId, now, workspaceId, rowId),
           );
           affectedCount++;
         }
       } else if (!isDraft && !isNotes) {
         if (colId === 'name') {
           stmts.push(
-            env.DB.prepare(`UPDATE entities SET name = ?, updated_at = ? WHERE workspace_id = ? AND id = ?`).bind(
-              cellVal,
-              now,
-              workspaceId,
-              rowId,
-            ),
+            env.DB.prepare(
+              `UPDATE entities SET name = ?, updated_at = ? WHERE workspace_id = ? AND id = ?`,
+            ).bind(cellVal, now, workspaceId, rowId),
           );
           affectedCount++;
         } else if (colId === 'status') {
-          const status = ['new', 'warm', 'hot', 'won', 'cold', 'lost', 'deprioritized'].includes(cellVal)
+          const status = ['new', 'warm', 'hot', 'won', 'cold', 'lost', 'deprioritized'].includes(
+            cellVal,
+          )
             ? cellVal
             : 'new';
           stmts.push(
-            env.DB.prepare(`UPDATE entities SET status = ?, updated_at = ? WHERE workspace_id = ? AND id = ?`).bind(
-              status,
-              now,
-              workspaceId,
-              rowId,
-            ),
+            env.DB.prepare(
+              `UPDATE entities SET status = ?, updated_at = ? WHERE workspace_id = ? AND id = ?`,
+            ).bind(status, now, workspaceId, rowId),
           );
           affectedCount++;
         } else {
-          const fieldKey = colId === 'language' ? 'preferred_language' : (colId === 'value' ? 'quote' : colId);
+          const fieldKey =
+            colId === 'language' ? 'preferred_language' : colId === 'value' ? 'quote' : colId;
           stmts.push(
             env.DB.prepare(
               `INSERT INTO entity_state (id, workspace_id, entity_id, field_name, state, value_text, provenance, revision, updated_at)
@@ -727,7 +828,9 @@ export async function handleSaveRecords(
         `rcpt_${crypto.randomUUID()}`,
         workspaceId,
         actionId,
-        JSON.stringify({ summary: `Saved ${affectedCount} change(s) to ${listId} in business memory` }),
+        JSON.stringify({
+          summary: `Saved ${affectedCount} change(s) to ${listId} in business memory`,
+        }),
         scope.user.id,
         now,
       ),

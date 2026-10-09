@@ -1,0 +1,143 @@
+{
+  "checked_at": "2026-10-09T06:07:50.938Z",
+  "model": "gemini-3.5-flash-lite",
+  "endpoint": "gemini-interactions",
+  "prompt_version": "2026-10-09-v6",
+  "schema_version": 1,
+  "requests": 2,
+  "limitation": "Provider/prompt checks with supplied synthetic records; not a complete live Worker or physical-device journey.",
+  "results": [
+    {
+      "id": "R41-cross-chat-promises",
+      "fixture": {
+        "request": "What did we promise Bluebird in any chat last month? Use the retrieved sources, identify who said what, and be clear about search coverage. No changes.",
+        "history": [
+          {
+            "role": "assistant",
+            "toolCalls": [
+              {
+                "id": "search",
+                "name": "search_workspace_history",
+                "arguments": "{\"query\":\"Bluebird\",\"from\":\"2026-09-01T00:00:00Z\",\"to\":\"2026-10-01T00:00:00Z\",\"mode\":\"chronological\"}"
+              }
+            ]
+          },
+          {
+            "role": "tool",
+            "toolCallId": "search",
+            "name": "search_workspace_history",
+            "text": "{\"status\":\"applied\",\"action_id\":\"search\",\"data\":{\"version\":1,\"items\":[{\"message_id\":\"promise\",\"inbound_message_id\":null,\"chat_id\":\"sales-september\",\"chat_title\":\"sales-september\",\"author_user_id\":\"nora\",\"author_name\":\"Nora\",\"source_kind\":\"member\",\"recorded_at\":\"2026-09-04T09:00:00Z\",\"sequence\":1,\"excerpt\":\"I promised Bluebird a revised quote by 10 September. We did not agree a discount.\",\"source_available\":true},{\"message_id\":\"negation\",\"inbound_message_id\":null,\"chat_id\":\"stock-september\",\"chat_title\":\"stock-september\",\"author_user_id\":\"owen\",\"author_name\":\"Owen\",\"source_kind\":\"member\",\"recorded_at\":\"2026-09-12T09:00:00Z\",\"sequence\":2,\"excerpt\":\"We have not promised Friday delivery to Bluebird; awaiting stock confirmation.\",\"source_available\":true},{\"message_id\":\"suggestion\",\"inbound_message_id\":null,\"chat_id\":\"sales-september\",\"chat_title\":\"sales-september\",\"author_user_id\":null,\"author_name\":\"Otis\",\"source_kind\":\"otis\",\"recorded_at\":\"2026-09-15T09:00:00Z\",\"sequence\":3,\"excerpt\":\"Draft suggestion: offer a 20% discount if approved.\",\"source_available\":true}],\"total\":8,\"has_more\":true,\"next_cursor\":\"synthetic-next\",\"coverage\":{\"mode\":\"chronological\",\"bounded\":true,\"index_complete\":false}}}"
+          },
+          {
+            "role": "assistant",
+            "toolCalls": [
+              {
+                "id": "read-promise",
+                "name": "read_source",
+                "arguments": "{\"source_id\":\"promise\"}"
+              }
+            ]
+          },
+          {
+            "role": "tool",
+            "toolCallId": "read-promise",
+            "name": "read_source",
+            "text": "{\"status\":\"applied\",\"action_id\":\"read-promise\",\"data\":{\"id\":\"promise\",\"chat_id\":\"sales-september\",\"author_name\":\"Nora\",\"author_user_id\":\"nora\",\"text\":\"I promised Bluebird a revised quote by 10 September. We did not agree a discount.\",\"recorded_at\":\"2026-09-04T09:00:00Z\",\"channel\":\"web\",\"sequence\":1,\"context\":[]}}"
+          },
+          {
+            "role": "assistant",
+            "toolCalls": [
+              {
+                "id": "read-negation",
+                "name": "read_source",
+                "arguments": "{\"source_id\":\"negation\"}"
+              }
+            ]
+          },
+          {
+            "role": "tool",
+            "toolCallId": "read-negation",
+            "name": "read_source",
+            "text": "{\"status\":\"applied\",\"action_id\":\"read-negation\",\"data\":{\"id\":\"negation\",\"chat_id\":\"stock-september\",\"author_name\":\"Owen\",\"author_user_id\":\"owen\",\"text\":\"We have not promised Friday delivery to Bluebird; awaiting stock confirmation.\",\"recorded_at\":\"2026-09-12T09:00:00Z\",\"channel\":\"web\",\"sequence\":2,\"context\":[]}}"
+          },
+          {
+            "role": "assistant",
+            "toolCalls": [
+              {
+                "id": "read-suggestion",
+                "name": "read_source",
+                "arguments": "{\"source_id\":\"suggestion\"}"
+              }
+            ]
+          },
+          {
+            "role": "tool",
+            "toolCallId": "read-suggestion",
+            "name": "read_source",
+            "text": "{\"status\":\"applied\",\"action_id\":\"read-suggestion\",\"data\":{\"id\":\"suggestion\",\"chat_id\":\"sales-september\",\"author_name\":\"Otis\",\"author_user_id\":null,\"text\":\"Draft suggestion: offer a 20% discount if approved.\",\"recorded_at\":\"2026-09-15T09:00:00Z\",\"channel\":\"web\",\"sequence\":3,\"context\":[]}}"
+          }
+        ]
+      },
+      "first_text_ms": null,
+      "total_ms": 4296.5841,
+      "text": "",
+      "tool_calls": [],
+      "usage": [],
+      "errors": [
+        {
+          "type": "error",
+          "error": {
+            "code": "invalid_request",
+            "message": "Gemini request failed (400).",
+            "retryable": false,
+            "retryAfterMs": null,
+            "status": 400
+          }
+        }
+      ],
+      "finish": []
+    },
+    {
+      "id": "R36-current-quotes-and-attribution",
+      "fixture": {
+        "request": "Using the retrieved Cedar file, compare the current offered quote, expected budget and ownership. Who recorded and corrected the quote? State any coverage limits. No changes.",
+        "history": [
+          {
+            "role": "assistant",
+            "toolCalls": [
+              {
+                "id": "file",
+                "name": "query",
+                "arguments": "{\"resource\":\"entity_file\",\"entity_id\":\"cedar\"}"
+              }
+            ]
+          },
+          {
+            "role": "tool",
+            "toolCallId": "file",
+            "name": "query",
+            "text": "{\"status\":\"applied\",\"action_id\":\"file\",\"data\":{\"version\":1,\"entity\":{\"id\":\"cedar\",\"name\":\"Cedar Works\",\"kind\":\"lead\",\"status\":\"warm\",\"assigned_user_id\":null,\"assigned_name\":null,\"aliases\":[],\"merged_from\":[]},\"as_of_business_revision\":5,\"facts\":{\"items\":[{\"field\":\"assigned_to\",\"origin_entity_id\":\"cedar\",\"value\":null,\"state\":\"disputed\",\"revision\":2,\"candidate_event_ids\":[\"owner-nora\",\"owner-owen\"],\"source\":{\"event_id\":\"owner-owen\",\"message_id\":\"owner-source\",\"actor_user_id\":\"owen\",\"actor_name\":\"Owen\",\"recorded_at\":\"2026-09-22T09:00:00Z\",\"channel\":\"web\"}}],\"total\":1,\"has_more\":false,\"next_cursor\":null,\"availability\":\"available\"},\"quotes\":{\"items\":[{\"interaction_id\":\"quote\",\"head_event_id\":\"quote-correction\",\"entity_id\":\"cedar\",\"entity_name\":\"Cedar Works\",\"kind\":\"quote\",\"revision\":2,\"occurred_at\":\"2026-09-20T09:00:00Z\",\"sequence\":3,\"payload\":{\"amount\":50000,\"currency\":\"EUR\",\"role\":\"offered\"},\"actor_kind\":\"member\",\"actor_user_id\":\"nora\",\"actor_name\":\"Nora\",\"channel\":\"web\",\"source_message_id\":\"correction-source\",\"recorded_at\":\"2026-09-21T09:00:00Z\",\"provenance\":\"stated\",\"original_actor_user_id\":\"owen\",\"original_actor_name\":\"Owen\",\"original_source_message_id\":\"quote-source\",\"original_recorded_at\":\"2026-09-20T09:00:00Z\"},{\"interaction_id\":\"budget\",\"head_event_id\":\"budget\",\"entity_id\":\"cedar\",\"entity_name\":\"Cedar Works\",\"kind\":\"quote\",\"revision\":1,\"occurred_at\":\"2026-09-20T09:00:00Z\",\"sequence\":3,\"payload\":{\"amount\":90000,\"currency\":\"EUR\",\"role\":\"expected\"},\"actor_kind\":\"member\",\"actor_user_id\":\"owen\",\"actor_name\":\"Owen\",\"channel\":\"web\",\"source_message_id\":\"budget-source\",\"recorded_at\":\"2026-09-20T09:00:00Z\",\"provenance\":\"stated\",\"original_actor_user_id\":\"owen\",\"original_actor_name\":\"Owen\",\"original_source_message_id\":\"quote-source\",\"original_recorded_at\":\"2026-09-20T09:00:00Z\"}],\"total\":2,\"has_more\":false,\"next_cursor\":null,\"availability\":\"available\"},\"timeline\":{\"items\":[{\"interaction_id\":\"quote\",\"head_event_id\":\"quote-correction\",\"entity_id\":\"cedar\",\"entity_name\":\"Cedar Works\",\"kind\":\"quote\",\"revision\":2,\"occurred_at\":\"2026-09-20T09:00:00Z\",\"sequence\":3,\"payload\":{\"amount\":50000,\"currency\":\"EUR\",\"role\":\"offered\"},\"actor_kind\":\"member\",\"actor_user_id\":\"nora\",\"actor_name\":\"Nora\",\"channel\":\"web\",\"source_message_id\":\"correction-source\",\"recorded_at\":\"2026-09-21T09:00:00Z\",\"provenance\":\"stated\",\"original_actor_user_id\":\"owen\",\"original_actor_name\":\"Owen\",\"original_source_message_id\":\"quote-source\",\"original_recorded_at\":\"2026-09-20T09:00:00Z\"},{\"interaction_id\":\"budget\",\"head_event_id\":\"budget\",\"entity_id\":\"cedar\",\"entity_name\":\"Cedar Works\",\"kind\":\"quote\",\"revision\":1,\"occurred_at\":\"2026-09-20T09:00:00Z\",\"sequence\":3,\"payload\":{\"amount\":90000,\"currency\":\"EUR\",\"role\":\"expected\"},\"actor_kind\":\"member\",\"actor_user_id\":\"owen\",\"actor_name\":\"Owen\",\"channel\":\"web\",\"source_message_id\":\"budget-source\",\"recorded_at\":\"2026-09-20T09:00:00Z\",\"provenance\":\"stated\",\"original_actor_user_id\":\"owen\",\"original_actor_name\":\"Owen\",\"original_source_message_id\":\"quote-source\",\"original_recorded_at\":\"2026-09-20T09:00:00Z\"}],\"total\":5,\"has_more\":true,\"next_cursor\":\"synthetic-next\",\"availability\":\"available\"},\"notes\":{\"items\":[],\"total\":3,\"has_more\":true,\"next_cursor\":\"synthetic-next\",\"availability\":\"available\"},\"tasks\":{\"items\":[],\"total\":0,\"has_more\":false,\"next_cursor\":null,\"availability\":\"available\"},\"contacts\":{\"items\":[],\"total\":0,\"has_more\":false,\"next_cursor\":null,\"availability\":\"available\"},\"drafts\":{\"items\":[],\"total\":0,\"has_more\":false,\"next_cursor\":null,\"availability\":\"available\"},\"memory\":{\"items\":[],\"total\":0,\"has_more\":false,\"next_cursor\":null,\"availability\":\"available\"},\"attachments\":{\"items\":[],\"total\":0,\"has_more\":false,\"next_cursor\":null,\"availability\":\"available\"},\"reminders\":{\"items\":[],\"total\":0,\"has_more\":false,\"next_cursor\":null,\"availability\":\"available\"},\"last_contact\":\"2026-09-24T09:00:00Z\",\"coverage\":{\"bounded\":true,\"partial_sections\":[\"timeline\",\"notes\"],\"unavailable_sections\":[]}}}"
+          }
+        ]
+      },
+      "first_text_ms": null,
+      "total_ms": 4324.6676,
+      "text": "",
+      "tool_calls": [],
+      "usage": [],
+      "errors": [
+        {
+          "type": "error",
+          "error": {
+            "code": "invalid_request",
+            "message": "Gemini request failed (400).",
+            "retryable": false,
+            "retryAfterMs": null,
+            "status": 400
+          }
+        }
+      ],
+      "finish": []
+    }
+  ]
+}

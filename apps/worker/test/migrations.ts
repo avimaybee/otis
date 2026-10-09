@@ -46,6 +46,16 @@ import sql21 from '../../../migrations/0022_member_interpretation_timezone.sql?r
 import sql22 from '../../../migrations/0023_interaction_state.sql?raw';
 // @ts-expect-error Vite raw SQL import
 import sql23 from '../../../migrations/0024_interaction_removed_kind.sql?raw';
+// @ts-expect-error Vite raw SQL import
+import sql24 from '../../../migrations/0025_interaction_corrections.sql?raw';
+// @ts-expect-error Vite raw SQL import
+import sql25 from '../../../migrations/0026_business_capabilities.sql?raw';
+// @ts-expect-error Vite raw SQL import
+import sql26 from '../../../migrations/0027_conversation_search.sql?raw';
+// @ts-expect-error Vite raw SQL import
+import sql27 from '../../../migrations/0028_documents_and_rule_delivery.sql?raw';
+// @ts-expect-error Vite raw SQL import
+import sql28 from '../../../migrations/0029_attachment_annotations.sql?raw';
 export async function applyMigrationSql(db: D1Database, sql: string) {
   let statement = ''; let trigger = false;
   const run = async (stmt: string) => { await db.prepare(stmt).run(); };
@@ -57,7 +67,7 @@ export async function applyMigrationSql(db: D1Database, sql: string) {
   }
   if (statement.trim()) await run(statement);
 }
-export const ALL_MIGRATION_SQL = [sql0, sql1, sql2, sql3, sql4, sql5, sql6, sql7, sql8, sql9, sql10, sql11, sql12, sql13, sql14, sql15, sql16, sql17, sql18, sql19, sql20, sql21, sql22, sql23];
+export const ALL_MIGRATION_SQL = [sql0, sql1, sql2, sql3, sql4, sql5, sql6, sql7, sql8, sql9, sql10, sql11, sql12, sql13, sql14, sql15, sql16, sql17, sql18, sql19, sql20, sql21, sql22, sql23, sql24, sql25, sql26, sql27, sql28];
 export async function applyMigrations(db: D1Database) {
   for (const sql of ALL_MIGRATION_SQL) {
     await applyMigrationSql(db, sql);

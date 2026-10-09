@@ -1,0 +1,122 @@
+{
+  "date": "2026-10-08",
+  "baseline": "32fd9e5 plus the uncommitted C1 implementation",
+  "verdict": "C1 foundation present; acceptance rejected until the semantic defects and conversational/current-read integration are repaired",
+  "method": "Direct source trace from commands through targeted/full hydration, reducers, transaction writes, migration SQL, agent dispatch, current readers and Undo preview; focused D1 probes confirm specific source-derived counterexamples",
+  "source_sha256": {
+    "packages/ledger/src/reducers/interactions.ts": "9a9f0625d6e0b71c1b580aa69037ec1a79b3ae41a7b9feefb43c8ec958604ee7",
+    "packages/contracts/src/index.ts": "8eb864ebf45a8647c53d549993e462ab00af5f71f06bcdbdfe92ff32837640f6",
+    "migrations/0023_interaction_state.sql": "1301ab96aaed24b0392eab810c2fd497af5d3b95fac3fcfa54ee50225075bd73",
+    "apps/worker/src/agent/repository.ts": "6a887e98a51f1145d2e200ead67a4c26f3c9ab4cd45b0e4ffef7efb3f13268e9",
+    "packages/ledger/src/commands/logEvent.ts": "6b4f154fb516c2a88ecf59b22a5945472de6f1561018b92ba34918b8329a5a8e",
+    "apps/worker/src/brief/read.ts": "1f7dc960db370a213ea23417f10daa5ea4f650ea3b0ab545749a7f989a682693",
+    "packages/ledger/src/repository/queries.ts": "730e8b16ebcea5e0dd0ea18327e1fc42adbede2b46d8aeec804c8629f0f5d3f8",
+    "packages/ledger/src/commands/interactions.ts": "03b64e1c709aa1c3c805779d09688cd0b0f9af438de26eab31fd3511369f54ce",
+    "packages/ledger/src/repository/executor.ts": "bfce0a20db1e4b6fb0a6a28d6873ee9af049d40931cf1f2f5400d4fd11a765c7",
+    "packages/ledger/src/commands/undo.ts": "0e8573a48eecdb9d34122cbb25a6258ac8692a635c9830759a965a3dfa062a77",
+    "migrations/0024_interaction_removed_kind.sql": "28fd5d73c5b818a91a2272c17a1f5350150415d26e8623d8456f39a45abeb064",
+    "packages/ledger/src/reducers/fields.ts": "94b7d56ecaf959d87ae6084815deb2098a92664abdfac42cfd1363582ff1ca4b",
+    "packages/ledger/src/commands/interactionPayload.ts": "2f2bfab4d3e0dd4ab744959fe99d2fb29145f72c03cf2bc250b229e14b40708e",
+    "packages/ledger/src/reducers/rebuild.ts": "f7ae0a0d09c953571d4700d65166fbe6442d82d7203327aa27a5e10291cf4d28",
+    "apps/worker/src/agent/leadOverview.ts": "9467ad6f39ae7d2e7e374a1f21553bb701a0ab3090283eff6de6dafd89bf1bb0",
+    "packages/agent/src/tools.ts": "2505a93f101b903a106f5b8ea214babf8667d0a78435ec320725468bc345c1ae"
+  },
+  "checks": [
+    {
+      "command": "pnpm exec vitest run packages/ledger/test/pure.test.ts apps/worker/test/interactions.integration.test.ts --reporter=dot --silent",
+      "exit_code": 0,
+      "passed": 52,
+      "failed": 0,
+      "files": 2,
+      "evidence": "2026-10-08-c1-implementation-tests.txt"
+    },
+    {
+      "command": "pnpm exec vitest run --config plans/qa/2026-10-08-c1-review.vitest.config.ts --reporter=json --outputFile=plans/qa/2026-10-08-c1-review-tests.json",
+      "exit_code": 1,
+      "passed": 1,
+      "failed": 8,
+      "evidence": "2026-10-08-c1-review-tests.json",
+      "cases": [
+        {
+          "title": "C1 source-derived semantic audit preserves occurrence when only quote content changes",
+          "status": "failed",
+          "failure": "AssertionError: expected '2026-10-08T15:23:39.096Z' to be '2026-09-01T10:00:00.000Z' // Object.is equality"
+        },
+        {
+          "title": "C1 source-derived semantic audit rejects impossible calendar dates without changing the head",
+          "status": "failed",
+          "failure": "AssertionError: expected 'applied' to be 'rejected' // Object.is equality"
+        },
+        {
+          "title": "C1 source-derived semantic audit excludes a removed only quote from current field state",
+          "status": "failed",
+          "failure": "AssertionError: expected { live: '450 EUR (offered)', …(1) } to deeply equal { live: null, replay: null }"
+        },
+        {
+          "title": "C1 source-derived semantic audit does not resolve another active quote claim by editing one root",
+          "status": "failed",
+          "failure": "AssertionError: expected 'clear' to be 'disputed' // Object.is equality"
+        },
+        {
+          "title": "C1 source-derived semantic audit drops removed contact from both overview and brief last-contact reads",
+          "status": "failed",
+          "failure": "AssertionError: expected { …(2) } to deeply equal { …(2) }"
+        },
+        {
+          "title": "C1 source-derived semantic audit does not let lower-level logging replace a different client root",
+          "status": "failed",
+          "failure": "AssertionError: expected { …(10) } to match object { …(3) }"
+        },
+        {
+          "title": "C1 source-derived semantic audit does not backfill a legacy root after its client was deleted",
+          "status": "failed",
+          "failure": "AssertionError: expected { live: true, replay: false } to deeply equal { live: false, replay: false }"
+        },
+        {
+          "title": "C1 source-derived semantic audit includes the restored entry in removal Undo preview",
+          "status": "failed",
+          "failure": "AssertionError: expected [] to have a length of 1 but got +0"
+        },
+        {
+          "title": "C1 source-derived semantic audit control: rejects a stale head after a valid correction",
+          "status": "passed",
+          "failure": null
+        }
+      ]
+    }
+  ],
+  "boundaries": [
+    "Production source was not edited; other sessions' changes were preserved.",
+    "The reserved-root probe verifies that current registered agent validation rejects the marker; the remaining defect is at direct ledger/replay boundaries.",
+    "The deleted-entity probe executes actual 0023 SQL over legacy-equivalent append-only history in local D1; a clean pre-0023 populated migration journey is still an acceptance gate.",
+    "No claim of an Undo commit failure: the reproduced defect concerns its concrete affected-entry preview; actual guarded C1 Undo remains unverified.",
+    "No full typecheck, full lint, full application suite, build, native browser/device, live provider or production billing/CPU/latency verification was run.",
+    "No specific data-loss defect was established in 0024; populated foreign-key, FTS and failure-rollback proof remains required.",
+    "No commit, push, deployment or remote data operation."
+  ],
+  "verification": {
+    "reviewed_source_files": 16,
+    "source_drift_on_final_hash_comparison": [],
+    "scoped_eslint": {
+      "command": "pnpm exec eslint plans/qa/2026-10-08-c1-review.probe.test.ts plans/qa/2026-10-08-c1-review.vitest.config.ts",
+      "exit_code": 0
+    },
+    "documentation_links": {
+      "command": "node plans/qa/docs-audit.mjs links",
+      "checked": 792,
+      "broken": 0,
+      "exit_code": 0
+    },
+    "documentation_consistency": {
+      "files": 6,
+      "whitespace_conflicts_and_fences": "passed",
+      "c1_review_section_count": 1,
+      "exit_code": 0
+    },
+    "tracked_diff_check": {
+      "command": "git diff --check",
+      "exit_code": 0,
+      "note": "Git emitted line-ending conversion warnings for concurrent Windows working-copy files, with no whitespace errors."
+    }
+  }
+}

@@ -16,6 +16,7 @@ import type {
   RemoveInteractionResult,
   ReviseInteractionResult,
 } from '@otis/contracts';
+import { normalizeInteractionOccurredAt } from '@otis/contracts';
 import type {
   LedgerCommandContext,
   LedgerProjectionState,
@@ -28,20 +29,6 @@ import { formatQuoteText, reduceFields } from '../reducers/fields.js';
 import { reduceInteractions } from '../reducers/interactions.js';
 
 const MAX_REASON_CHARS = 500;
-
-function isValidOccurredAt(value: unknown): value is string {
-  if (typeof value !== 'string' || value.length === 0 || Number.isNaN(Date.parse(value))) return false;
-  // Date.parse rolls impossible calendar dates forward (2026-02-30
-  // becomes March 2), so an ISO date prefix must round-trip exactly.
-  const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(value);
-  if (!match) return true;
-  const year = Number(match[1]);
-  const month = Number(match[2]);
-  const day = Number(match[3]);
-  if (month < 1 || month > 12 || day < 1) return false;
-  const daysInMonth = new Date(Date.UTC(year, month, 0)).getUTCDate();
-  return day <= daysInMonth;
-}
 
 function changeSummary(
   kind: string,
@@ -104,6 +91,8 @@ export function handleReviseInteraction(
           code: 'head_conflict',
           message: `Interaction '${args.interaction_id}' changed since the confirmed edit: expected head '${args.expected_head_event_id}'.`,
         },
+        data: { event_id: row.head_event_id, interaction_id: row.root_event_id, head_event_id: row.head_event_id,
+          current: state.interactionHeads?.get(row.root_event_id) },
       },
       events: [],
     };
@@ -137,7 +126,7 @@ export function handleReviseInteraction(
   }
 
   // The replacement payload passes exactly the same validation as new
-  // logging; a model-supplied root marker is ignored and rebound below.
+  // logging; model-supplied linkage is rejected and the root is server-bound.
   const validation = validateInteractionPayload(args.kind, args.payload);
   if (!validation.valid) {
     return {
@@ -145,7 +134,8 @@ export function handleReviseInteraction(
       events: [],
     };
   }
-  if (args.occurred_at !== undefined && !isValidOccurredAt(args.occurred_at)) {
+  const occurredAt = args.occurred_at === undefined ? row.occurred_at : normalizeInteractionOccurredAt(args.occurred_at);
+  if (occurredAt === null) {
     return {
       result: {
         status: 'rejected',
@@ -158,10 +148,18 @@ export function handleReviseInteraction(
     };
   }
 
-  const payload = { ...(args.payload as Record<string, unknown>), interaction_id: row.root_event_id };
+  const payload = { ...validation.payload, interaction_id: row.root_event_id };
+  const head = state.interactionHeads?.get(row.root_event_id);
+  const previous = head ? validateInteractionPayload(row.kind, head.payload) : null;
+  const comparable = (value: Record<string, unknown>) => JSON.stringify(Object.entries(value).sort(([a], [b]) => a.localeCompare(b)));
+  if (previous?.valid && comparable(previous.payload) === comparable(validation.payload) &&
+      (normalizeInteractionOccurredAt(row.occurred_at) ?? row.occurred_at) === occurredAt) {
+    return { result: { status: 'already_applied', action_id: context.action_id,
+      summary: 'Entry already has this content and occurrence date.',
+      data: { event_id: row.head_event_id, interaction_id: row.root_event_id, head_event_id: row.head_event_id } }, events: [] };
+  }
   // An omitted date keeps the head's occurrence: a content-only correction
   // must never silently move the original entry to today.
-  const occurredAt = args.occurred_at ?? row.occurred_at;
   const event = createLedgerEvent(context, nextSequence, {
     entity_id: row.entity_id,
     kind: args.kind,
@@ -234,6 +232,8 @@ export function handleRemoveInteraction(
           code: 'head_conflict',
           message: `Interaction '${args.interaction_id}' changed since the confirmed removal: expected head '${args.expected_head_event_id}'.`,
         },
+        data: { event_id: row.head_event_id, interaction_id: row.root_event_id, head_event_id: row.head_event_id,
+          current: state.interactionHeads?.get(row.root_event_id) },
       },
       events: [],
     };

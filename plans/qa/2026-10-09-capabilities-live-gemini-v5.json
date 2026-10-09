@@ -1,0 +1,69 @@
+{
+  "checked_at": "2026-10-09T05:33:57.349Z",
+  "model": "gemini-3.5-flash-lite",
+  "endpoint": "gemini-interactions",
+  "prompt_version": "2026-10-09-v5",
+  "schema_version": 1,
+  "requests": 2,
+  "limitation": "Provider/prompt checks with supplied synthetic records; not a complete live Worker or physical-device journey.",
+  "results": [
+    {
+      "id": "R45-capabilities",
+      "first_text_ms": 12211.068200000002,
+      "total_ms": 15818.7265,
+      "text": "Based on how the current harness and tools operate, there are a few practical capabilities that would make day-to-day execution sharper and reduce friction. \n\nHere is what would genuinely help from a tooling and integration standpoint:\n\n### 1. Batch Entity Updates & Multi-Client Operations\n* **Current state:** `set_fields` operates atomically on a single entity, and multi-step workflows require sequential tool calls per client.\n* **What would help:** A batch or transactional capability for updating multiple client records or tasks simultaneously (e.g., bulk status updates across a filtered lead view or applying tags across a cohort). Right now, sweeping pipeline adjustments mean iterating client by client.\n\n### 2. Richer Relationship & Dependency Graphing for Entities\n* **Current state:** Entities are connected via individual notes, shared workspace memory, or fuzzy searches, but there's no native first-class edge between distinct entities (e.g., linking a subsidiary to a parent company, or associating specific secondary contacts with a corporate account without relying entirely on entity notes).\n* **What would help:** First-class relationship links between entities (`parent_company`, `subsidiary`, `partner`, `employee_of`) queryable directly via entity files, which would make cross-account reasoning much more structured.\n\n### 3. Native File Parsing & Direct Attachment Search\n* **Current state:** PDFs and images can be attached, inspected via `read_document` (for bounded text sections), and viewed via `view_image`, but searching across the *unstructured content* of all attached documents across the workspace requires knowing which entity holds them or pulling explicit text snippets into memory.\n* **What would help:** Full-text indexing across all attached documents and PDFs workspace-wide, allowing queries like *\"Find every contract mention of SLA terms across all client files\"* rather than needing to navigate entity by entity.\n\n### 4. Advanced Recurring Reminder/Follow-up Triggers\n* **Current state:** Reminders support one-off delivery or specific recurring rules (`weekly` and `after_quote` with elapsed hours/days and `if_no_contact` conditions).\n* **What would help:** More flexible trigger conditions tied directly to entity activity states—for example, automatic follow-up rules triggered when a client's status changes, or when a specific interaction type (like a site visit) hasn't been logged within a rolling window.\n\n---\n\nThe core architecture—atomic record safeguards, strict event history auditing, and clean separation of drafts, memory, and interactions—provides a solid foundation. These additions would mostly bridge the gap between single-client precision and broader workspace-level orchestration.",
+      "tool_calls": [],
+      "usage": [
+        {
+          "type": "usage",
+          "usage": {
+            "inputTokens": 7956,
+            "outputTokens": 552,
+            "cacheReadTokens": 0,
+            "cacheWriteTokens": null,
+            "reasoningTokens": 0,
+            "totalTokens": 8508,
+            "cumulative": true
+          }
+        }
+      ],
+      "errors": [],
+      "finish": [
+        {
+          "reason": "success"
+        }
+      ]
+    },
+    {
+      "id": "general-table-coverage",
+      "first_text_ms": 9110.209200000001,
+      "total_ms": 10548.2361,
+      "text": "| Item | Location | Status | Price | Detail |\n| :--- | :--- | :--- | :--- | :--- |\n| Copper | Cluj | open | €40 | Farsi only |\n| Willow | Timisoara | waiting | Unknown | Call after 16:00 |\n| Maple | Unknown | disputed | €60 | Unknown |\n| Birch | Iasi | complete | €20 | Pickup |\n| Cedar | Sibiu | open | €50 | Delivery |\n\n*Note: Showing page 1 of 5 (5 items displayed out of 12 total; further records remain available on subsequent pages).*",
+      "tool_calls": [],
+      "usage": [
+        {
+          "type": "usage",
+          "usage": {
+            "inputTokens": 8094,
+            "outputTokens": 139,
+            "cacheReadTokens": 0,
+            "cacheWriteTokens": null,
+            "reasoningTokens": 0,
+            "totalTokens": 8233,
+            "cumulative": true
+          }
+        }
+      ],
+      "errors": [],
+      "finish": [
+        {
+          "reason": "success"
+        }
+      ]
+    }
+  ],
+  "manual_review": {
+    "R45-capabilities": "Pass: identified existing single-client atomic fields, PDF reads and current rule types separately from proposed cross-client batching/relationships/document indexing/other triggers. No mutations.",
+    "general-table-coverage": "Fail: factual cells preserved but page count was fabricated from row count. v6 guidance and follow-up probe repair this boundary."
+  }
+}

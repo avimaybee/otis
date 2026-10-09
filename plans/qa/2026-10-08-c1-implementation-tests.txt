@@ -1,0 +1,8 @@
+Historical first C1 review: recorded command output restored from this chat's prior audit after its QA artifacts disappeared from the checkout. This is not a new verification run.
+
+Command: pnpm exec vitest run packages/ledger/test/pure.test.ts apps/worker/test/interactions.integration.test.ts --reporter=dot --silent
+Exit code: 0
+Test Files  2 passed (2)
+Tests       52 passed (52)
+Start at    20:38:06
+Duration    4.01s (transform 1.39s, setup 0ms, import 2.12s, tests 1.55s, environment 0ms)

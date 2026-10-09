@@ -218,6 +218,9 @@ Each ID is a story using production components, not a separately styled mock. Gr
 | voice/permission, voice/recording, voice/interrupted, voice/review, voice/upload, voice/transcribing, voice/uncertain, voice/expired | Voice lifecycle |
 | voice/recording-during-work, voice/amount-confirmation | Screenshot composition, separate capture/run Stop, server-supplied clarification choices |
 | table/compare, table/timeline, table/action-plan, table/long-cells, table/missing-values, table/multiple, table/streaming | Model-composed tables for any subject, shared shell, scroll confinement, working copy |
+| file/current, file/entries, file/contacts, file/quotes, file/attachments, file/history, file/edit-conflict, file/unavailable | Production client-file sections, bounded coverage, original/correction attribution, explicit editing, conflict recovery and retained originals |
+| history/search, history/no-matches, history/search-failed | Production workspace search, filters, sourced matches and retry (interactive synthetic API fixtures) |
+| followup/active, followup/paused, followup/empty, gallery/unavailable | Production own follow-ups and private-original unavailable state, source, explicit controls and retry |
 
 ## 14. Acceptance and process
 
@@ -229,7 +232,7 @@ The current repository has `pnpm check:design`, `pnpm check:stories` and Storybo
 
 Reject separate toolbar strips, rounded sidebar cards, bordered ordinary messages, dead controls, duplicate composer/message variants, persistent desktop timestamps, hidden action-row inflation, decorative motion, arbitrary visual values and false success states. The specified question panel is allowed. Passing a build does not excuse mismatches. Apply this explicit revised direction rather than restoring superseded density rules. Unknown recipes ask; known mismatches get fixed.
 
-## 15. Your information — selected pattern, unimplemented
+## 15. Your information — selected pattern, partial implementation
 
 The user selected an actual editable information page. See the [R16 implementation plan](plans/editable-records.md) for its complete interaction, data and acceptance contract. Its page can use the available content width and a compact grid control row; this does not authorize adding toolbar strips to the chat composer. Reuse the existing sidebar/navigation, shadcn primitives and production conversation/composer/question implementation.
 
@@ -239,4 +242,14 @@ Ask Otis opens the production conversation in a panel/sheet with the selected in
 
 Approved colors/fonts/control recipes still govern; grid theme values resolve from existing CSS variables. Proposed records sizing composes the existing scale: 32 px desktop data rows/headers, 48 px mobile row/control reach, 14/20 grid UI, 16/24 form text and tabular numbers. Use neutral cell selection/focus and labeled dirty/error feedback. The approved token file is unchanged in this planning pass; document any required new production recipe with implementation rather than altering tokens to excuse drift.
 
-All proposed records story IDs remain **unimplemented** in the plan. Add their actual production stories and section 13 inventory entries as slices ship; existing checker coverage must not be represented as acceptance of this new page. Native keyboard/a11y and five-width/device evidence remain required.
+Records Save remains a separate unaccepted writer under [R16](plans/editable-records.md). C2–Q supplies the optional complete client file within the existing row inspector, workspace conversation search and own follow-up controls. Their production fixtures are listed above. Native keyboard/a11y and five-width/device evidence remain required; passing fixture inventory is not acceptance of Records Save.
+
+## 16. Client files, sources and follow-ups
+
+Client inspection stays optional beside conversational work. One file includes current information, contact methods, next steps, quotes, notes/timeline, linked files, drafts, saved context and the current member's follow-up rules. Each section states loaded and total counts and independently pages; History includes superseded/removed/undone reports. Keep readable authors/times and separate original and correction sources. Filters explicitly apply to the active section and reset on refreshed revisions.
+
+Edit an entry/contact/transcript in a titled dialog with explicit Save, preserving the proposed edit when the request fails. A changed entry requires comparing the current saved head and choosing whether to use it or apply the draft to that version. Selected-entry Save never saves unrelated grid drafts. Every saved action exposes the existing Review / Undo flow.
+
+Files open one private original at a time, loading on selection and cancelling/releasing local previews on close or navigation. Keep original voice audio and transcription together; corrections are sourced overlays. Removing a link preserves history/originals. Explicit release requires removing every active client link and discloses its 14-day grace period. PDFs display extraction state and retain a usable original when text is unavailable.
+
+Search conversations has explicit Search, optional author/date/evidence filters, matched counts, sources and chronological paging. Distinguish member wording from Otis/system evidence. Your follow-ups shows only that member's requested recurring rules, readable schedule/timezone/channel and actual next/last occurrence, with Pause, Resume, Cancel, sources and saved Undo. Scheduling remains conversational.

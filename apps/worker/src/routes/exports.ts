@@ -51,6 +51,13 @@ export interface WorkspaceExport {
   media_objects: unknown[];
   media_transcriptions: unknown[];
   message_image_attachments: unknown[];
+  interaction_state: unknown[];
+  entity_contacts: unknown[];
+  entity_redirects: unknown[];
+  attachment_links: unknown[];
+  reminder_rules: unknown[];
+  document_extractions: unknown[];
+  media_annotations: unknown[];
 }
 
 /**
@@ -131,9 +138,16 @@ export async function handleExportWorkspace(
     reminders: sections.reminders,
     system_jobs: sections.systemJobs,
     outbox: sections.outbox,
-    media_objects: [...sections.mediaObjects, ...sections.mediaObjectsV2],
+    media_objects: [...sections.mediaObjects, ...sections.mediaObjectsV2].map(({ object_key: _key, upload_token_hash: _ticket, upload_token_expires_at: _expiry, ...media }) => ({ ...media, original_url: `/api/workspaces/${encodeURIComponent(workspaceId)}/media/${encodeURIComponent(String(media.id))}` })),
     media_transcriptions: sections.mediaTranscriptions,
     message_image_attachments: sections.messageAttachments,
+    interaction_state: sections.interactions ?? [],
+    entity_contacts: sections.contacts ?? [],
+    entity_redirects: sections.redirects ?? [],
+    attachment_links: sections.attachmentLinks ?? [],
+    reminder_rules: sections.reminderRules ?? [],
+    document_extractions: (sections.documentExtractions ?? []).map(({ result_key: _key, ...extraction }) => extraction),
+    media_annotations: sections.mediaAnnotations ?? [],
   };
 
   return jsonSuccess(document, 200, {
@@ -142,6 +156,13 @@ export async function handleExportWorkspace(
   });
 }
 export interface ExportSections {
+  interactions?: Record<string, unknown>[];
+  contacts?: Record<string, unknown>[];
+  redirects?: Record<string, unknown>[];
+  attachmentLinks?: Record<string, unknown>[];
+  reminderRules?: Record<string, unknown>[];
+  documentExtractions?: Record<string, unknown>[];
+  mediaAnnotations?: Record<string, unknown>[];
   users: Record<string, unknown>[];
   memberships: Record<string, unknown>[];
   settings: Record<string, unknown>[];
@@ -245,7 +266,13 @@ export async function collectWorkspaceExportSections(
     // Pre-images migration databases simply have no v2 inventory.
   }
 
+  const detailTables = ['interaction_state', 'entity_contacts', 'entity_redirects', 'attachment_links', 'reminder_rules', 'document_extractions', 'media_annotations'];
+  const present = new Set((await db.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all<{ name: string }>()).results.map(r => r.name));
+  const available = detailTables.filter(table => present.has(table));
+  const details = available.length ? await db.batch(available.map(table => q(`SELECT * FROM ${table} WHERE workspace_id = ?`))) : [];
+  const detail = (table: string) => (details[available.indexOf(table)]?.results ?? []) as Record<string, unknown>[];
   return {
+    interactions: detail('interaction_state'), contacts: detail('entity_contacts'), redirects: detail('entity_redirects'), attachmentLinks: detail('attachment_links'), reminderRules: detail('reminder_rules'), documentExtractions: detail('document_extractions'), mediaAnnotations: detail('media_annotations'),
     users: rowsAt(0),
     memberships: rowsAt(1),
     settings: rowsAt(2),
@@ -317,7 +344,9 @@ export function workspaceExportToSheets(
   };
   const entityName = (entityId: unknown): string | null => {
     if (typeof entityId !== 'string' || !entityId) return null;
-    const entity = sections.entities.find((row) => row['id'] === entityId);
+    let current = entityId;
+    for (let depth = 0; depth < 32; depth++) { const redirect = sections.redirects?.find(r => r.source_entity_id === current); if (!redirect) break; current = String(redirect.target_entity_id); }
+    const entity = sections.entities.find((row) => row['id'] === current);
     const name = entity?.['name'];
     return typeof name === 'string' ? name : null;
   };
@@ -420,5 +449,10 @@ export function workspaceExportToSheets(
       ]),
     },
   ];
+  for (const [name, rows] of [['Contacts', sections.contacts], ['Combined clients', sections.redirects], ['File links', sections.attachmentLinks], ['Follow-up rules', sections.reminderRules], ['Document text inventory', sections.documentExtractions]] as const) {
+    if (!rows?.length) continue;
+    const headers = Object.keys(rows[0]!);
+    sheets.push({ name, headers, rows: rows.map(row => headers.map(key => cellText(row[key]))) });
+  }
   return { sheets, filename: `otis-export-${workspaceId}-${exportedAt.slice(0, 10)}.xlsx` };
 }

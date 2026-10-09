@@ -1110,9 +1110,10 @@ describe('End-to-End UI to Backend Flow Verification', () => {
       <RouteShell onSignOut={onSignOut} />
     );
 
-    // Wait for async load to reject
+    // Wait for the query observer to publish the rejection; one microtask
+    // does not flush TanStack's scheduled notification under full-suite load.
     await React.act(async () => {
-      await Promise.resolve();
+      await vi.waitFor(() => expect(view.host.textContent).toContain('Conversation unavailable'));
     });
 
     // Content should transition to access lost view

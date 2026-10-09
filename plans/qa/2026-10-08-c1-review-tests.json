@@ -1,0 +1,164 @@
+{
+  "numTotalTestSuites": 2,
+  "numPassedTestSuites": 0,
+  "numFailedTestSuites": 2,
+  "numPendingTestSuites": 0,
+  "numTotalTests": 9,
+  "numPassedTests": 1,
+  "numFailedTests": 8,
+  "numPendingTests": 0,
+  "numTodoTests": 0,
+  "snapshot": {
+    "added": 0,
+    "failure": false,
+    "filesAdded": 0,
+    "filesRemoved": 0,
+    "filesRemovedList": [],
+    "filesUnmatched": 0,
+    "filesUpdated": 0,
+    "matched": 0,
+    "total": 0,
+    "unchecked": 0,
+    "uncheckedKeysByFile": [],
+    "unmatched": 0,
+    "updated": 0,
+    "didUpdate": false
+  },
+  "startTime": 1791473015533,
+  "success": false,
+  "testResults": [
+    {
+      "assertionResults": [
+        {
+          "ancestorTitles": [
+            "C1 source-derived semantic audit"
+          ],
+          "fullName": "C1 source-derived semantic audit preserves occurrence when only quote content changes",
+          "status": "failed",
+          "title": "preserves occurrence when only quote content changes",
+          "duration": 124,
+          "failureMessages": [
+            "AssertionError: expected '2026-10-08T15:23:39.096Z' to be '2026-09-01T10:00:00.000Z' // Object.is equality\n    at D:/vs code/Otis/plans/qa/2026-10-08-c1-review.probe.test.ts:85:54\n    at D:/vs code/Otis/node_modules/.pnpm/@vitest+runner@4.1.0/node_modules/@vitest/runner/dist/index.js:1258:20"
+          ],
+          "meta": {},
+          "tags": []
+        },
+        {
+          "ancestorTitles": [
+            "C1 source-derived semantic audit"
+          ],
+          "fullName": "C1 source-derived semantic audit rejects impossible calendar dates without changing the head",
+          "status": "failed",
+          "title": "rejects impossible calendar dates without changing the head",
+          "duration": 59,
+          "failureMessages": [
+            "AssertionError: expected 'applied' to be 'rejected' // Object.is equality\n    at D:/vs code/Otis/plans/qa/2026-10-08-c1-review.probe.test.ts:94:28\n    at D:/vs code/Otis/node_modules/.pnpm/@vitest+runner@4.1.0/node_modules/@vitest/runner/dist/index.js:1258:20"
+          ],
+          "meta": {},
+          "tags": []
+        },
+        {
+          "ancestorTitles": [
+            "C1 source-derived semantic audit"
+          ],
+          "fullName": "C1 source-derived semantic audit excludes a removed only quote from current field state",
+          "status": "failed",
+          "title": "excludes a removed only quote from current field state",
+          "duration": 109,
+          "failureMessages": [
+            "AssertionError: expected { live: '450 EUR (offered)', …(1) } to deeply equal { live: null, replay: null }\n    at D:/vs code/Otis/plans/qa/2026-10-08-c1-review.probe.test.ts:108:72\n    at D:/vs code/Otis/node_modules/.pnpm/@vitest+runner@4.1.0/node_modules/@vitest/runner/dist/index.js:1258:20"
+          ],
+          "meta": {},
+          "tags": []
+        },
+        {
+          "ancestorTitles": [
+            "C1 source-derived semantic audit"
+          ],
+          "fullName": "C1 source-derived semantic audit does not resolve another active quote claim by editing one root",
+          "status": "failed",
+          "title": "does not resolve another active quote claim by editing one root",
+          "duration": 143,
+          "failureMessages": [
+            "AssertionError: expected 'clear' to be 'disputed' // Object.is equality\n    at D:/vs code/Otis/plans/qa/2026-10-08-c1-review.probe.test.ts:123:26\n    at D:/vs code/Otis/node_modules/.pnpm/@vitest+runner@4.1.0/node_modules/@vitest/runner/dist/index.js:1258:20"
+          ],
+          "meta": {},
+          "tags": []
+        },
+        {
+          "ancestorTitles": [
+            "C1 source-derived semantic audit"
+          ],
+          "fullName": "C1 source-derived semantic audit drops removed contact from both overview and brief last-contact reads",
+          "status": "failed",
+          "title": "drops removed contact from both overview and brief last-contact reads",
+          "duration": 145,
+          "failureMessages": [
+            "AssertionError: expected { …(2) } to deeply equal { …(2) }\n    at D:/vs code/Otis/plans/qa/2026-10-08-c1-review.probe.test.ts:137:77\n    at D:/vs code/Otis/node_modules/.pnpm/@vitest+runner@4.1.0/node_modules/@vitest/runner/dist/index.js:1258:20"
+          ],
+          "meta": {},
+          "tags": []
+        },
+        {
+          "ancestorTitles": [
+            "C1 source-derived semantic audit"
+          ],
+          "fullName": "C1 source-derived semantic audit does not let lower-level logging replace a different client root",
+          "status": "failed",
+          "title": "does not let lower-level logging replace a different client root",
+          "duration": 151,
+          "failureMessages": [
+            "AssertionError: expected { …(10) } to match object { …(3) }\n(7 matching properties omitted from actual)\n    at Proxy.<anonymous> (D:/vs code/Otis/node_modules/.pnpm/@vitest+expect@4.1.0/node_modules/@vitest/expect/dist/index.js:1278:10)\n    at Proxy.<anonymous> (D:/vs code/Otis/node_modules/.pnpm/@vitest+expect@4.1.0/node_modules/@vitest/expect/dist/index.js:1151:15)\n    at Proxy.methodWrapper (D:/vs code/Otis/node_modules/.pnpm/chai@6.2.2/node_modules/chai/index.js:1700:25)\n    at D:/vs code/Otis/plans/qa/2026-10-08-c1-review.probe.test.ts:151:41\n    at D:/vs code/Otis/node_modules/.pnpm/@vitest+runner@4.1.0/node_modules/@vitest/runner/dist/index.js:1258:20"
+          ],
+          "meta": {},
+          "tags": []
+        },
+        {
+          "ancestorTitles": [
+            "C1 source-derived semantic audit"
+          ],
+          "fullName": "C1 source-derived semantic audit does not backfill a legacy root after its client was deleted",
+          "status": "failed",
+          "title": "does not backfill a legacy root after its client was deleted",
+          "duration": 145,
+          "failureMessages": [
+            "AssertionError: expected { live: true, replay: false } to deeply equal { live: false, replay: false }\n    at D:/vs code/Otis/plans/qa/2026-10-08-c1-review.probe.test.ts:166:8\n    at D:/vs code/Otis/node_modules/.pnpm/@vitest+runner@4.1.0/node_modules/@vitest/runner/dist/index.js:1258:20"
+          ],
+          "meta": {},
+          "tags": []
+        },
+        {
+          "ancestorTitles": [
+            "C1 source-derived semantic audit"
+          ],
+          "fullName": "C1 source-derived semantic audit includes the restored entry in removal Undo preview",
+          "status": "failed",
+          "title": "includes the restored entry in removal Undo preview",
+          "duration": 71,
+          "failureMessages": [
+            "AssertionError: expected [] to have a length of 1 but got +0\n    at Proxy.<anonymous> (D:/vs code/Otis/node_modules/.pnpm/@vitest+expect@4.1.0/node_modules/@vitest/expect/dist/index.js:1384:20)\n    at Proxy.<anonymous> (D:/vs code/Otis/node_modules/.pnpm/@vitest+expect@4.1.0/node_modules/@vitest/expect/dist/index.js:1151:15)\n    at Proxy.methodWrapper (D:/vs code/Otis/node_modules/.pnpm/chai@6.2.2/node_modules/chai/index.js:1700:25)\n    at D:/vs code/Otis/plans/qa/2026-10-08-c1-review.probe.test.ts:178:38\n    at D:/vs code/Otis/node_modules/.pnpm/@vitest+runner@4.1.0/node_modules/@vitest/runner/dist/index.js:1258:20"
+          ],
+          "meta": {},
+          "tags": []
+        },
+        {
+          "ancestorTitles": [
+            "C1 source-derived semantic audit"
+          ],
+          "fullName": "C1 source-derived semantic audit control: rejects a stale head after a valid correction",
+          "status": "passed",
+          "title": "control: rejects a stale head after a valid correction",
+          "duration": 72,
+          "failureMessages": [],
+          "meta": {},
+          "tags": []
+        }
+      ],
+      "startTime": 1791473018993,
+      "endTime": 1791473020012,
+      "status": "failed",
+      "message": "",
+      "name": "D:/vs code/Otis/plans/qa/2026-10-08-c1-review.probe.test.ts"
+    }
+  ]
+}

@@ -1,0 +1,43 @@
+{
+  "checked_at": "2026-10-09T06:01:45.548Z",
+  "source": "Cloudflare managed Markdown conversion REST API",
+  "synthetic_only": true,
+  "deployment": false,
+  "preflight": [
+    {
+      "path_kind": "account_discovery",
+      "status": 403,
+      "success": false,
+      "error_codes": [
+        9109
+      ]
+    },
+    {
+      "path_kind": "markdown_supported",
+      "status": 200,
+      "success": true,
+      "error_codes": [],
+      "pdf_advertised": true
+    }
+  ],
+  "results": [
+    {
+      "name": "synthetic-quote.pdf",
+      "format": "markdown",
+      "tokens": 68,
+      "data": "# synthetic-quote.pdf\n## Metadata\n- PDFFormatVersion=1.4\n- IsLinearized=false\n- IsAcroFormPresent=false\n- IsXFAPresent=false\n- IsCollectionPresent=false\n- IsSignaturesPresent=false\n\n\n\n## Contents\n### Page 1\nSynthetic Otis QA\nQuote: EUR 500\nCopper quantity 2 price EUR 40\n\n"
+    },
+    {
+      "name": "synthetic-malformed.pdf",
+      "format": "error",
+      "error": "Invalid PDF: Invalid PDF structure."
+    }
+  ],
+  "total_ms": 537.2046999999998,
+  "status": 200,
+  "success": true,
+  "error_codes": [],
+  "valid_text_preserved": true,
+  "malformed_rejected": true,
+  "limitation": "Direct managed service check with ASCII text and malformed synthetic PDFs; does not prove Worker binding, scanned/non-Latin/table fidelity or production end-to-end behavior."
+}

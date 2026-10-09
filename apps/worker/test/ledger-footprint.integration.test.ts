@@ -1,3 +1,4 @@
+import { ALL_MIGRATION_SQL } from './migrations.js';
 /**
  * 015A.1 changed-only ledger projection persistence.
  *
@@ -17,24 +18,6 @@
  */
 import { describe, it, expect, beforeAll } from 'vitest';
 import { env } from 'cloudflare:test';
-// @ts-expect-error vite raw import
-import migration0001Sql from '../../../migrations/0001_identity.sql?raw';
-// @ts-expect-error vite raw import
-import migration0002Sql from '../../../migrations/0002_conversations_sources.sql?raw';
-// @ts-expect-error vite raw import
-import migration0003Sql from '../../../migrations/0003_ledger.sql?raw';
-// @ts-expect-error vite raw import
-import migration0004Sql from '../../../migrations/0004_lifecycle_settings.sql?raw';
-// @ts-expect-error vite raw import
-import migration0005Sql from '../../../migrations/0005_actor_dispatch.sql?raw';
-// @ts-expect-error vite raw import
-import migration0006Sql from '../../../migrations/0006_actor_hardening.sql?raw';
-// @ts-expect-error vite raw import
-import migration0007Sql from '../../../migrations/0007_outbox_claim_owner.sql?raw';
-// @ts-expect-error vite raw import
-import migration0008Sql from '../../../migrations/0008_memory_and_agent_runs.sql?raw';
-// @ts-expect-error vite raw import
-import migration0009Sql from '../../../migrations/0009_thinking_controls.sql?raw';
 import {
   executeLedgerCommand,
   getWorkspaceRevision,
@@ -268,17 +251,7 @@ async function seedWorkspace(prefix: string, workspaceId: string, count: number)
 }
 
 beforeAll(async () => {
-  for (const sql of [
-    migration0001Sql,
-    migration0002Sql,
-    migration0003Sql,
-    migration0004Sql,
-    migration0005Sql,
-    migration0006Sql,
-    migration0007Sql,
-    migration0008Sql,
-    migration0009Sql,
-  ]) {
+  for (const sql of ALL_MIGRATION_SQL) {
     for (const stmt of splitSqlStatements(sql)) {
       await env.DB.prepare(stmt).run();
     }

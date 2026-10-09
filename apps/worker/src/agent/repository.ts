@@ -1,3 +1,5 @@
+import { isExplicitMergeIntent } from '@otis/agent';
+import { readFollowUps } from '../entities/followups.js';
 /**
  * @otis/worker/agent/repository
  * Guarded execution bridge mapping agent tools to ledger commands,
@@ -5,7 +7,22 @@
  * In accordance with docs/archive/plans/006-implementation-handoff.md Section 4 & 5.
  */
 
-import type { CommandResult, LeadStatus } from '@otis/contracts';
+import type {
+  ChangeContactArgs,
+  CommandResult,
+  LeadStatus,
+  MergeEntitiesArgs,
+  SearchWorkspaceHistoryArgs,
+} from '@otis/contracts';
+import { readDocument } from '../media/documents.js';
+import {
+  canonicalEntityId,
+  canonicalEntityMap,
+  ENTITY_FAMILY_SQL,
+  familyBinds,
+} from '../entities/canonical.js';
+import { readWork } from '../entities/work.js';
+import { readChatAttachments } from '../entities/attachments.js';
 import {
   checkUntrustedContentPolicy,
   isExplicitPromise,
@@ -47,12 +64,16 @@ import {
 } from '@otis/agent';
 import {
   DEFAULT_COMMAND_HANDLERS,
+  contactComparison,
   executeLedgerCommand,
   getActionReceiptsByIds,
   getQuestionByAction,
   getWorkspaceActions,
   getWorkspaceEvents,
+  getBusinessProjectionState,
+  previewEntityMerge,
   handleUndoCommit,
+  readCurrentInteractions,
   rankEntityMatches,
   type LedgerCommandContext,
 } from '@otis/ledger';
@@ -61,13 +82,16 @@ import { executeCommand, resolveModelAlias } from '../routes/commands.js';
 import { getChat } from '../inbox/repository.js';
 import { sanitizeFtsQuery } from './context.js';
 import { readLeadOverview, type LeadOverviewColumn } from './leadOverview.js';
+import { FileReadError, readEntityFile } from '../entities/file.js';
 import {
-  cancelReminder,
-  createReminder,
-  updateReminder,
-} from '../reminders/service.js';
+  HistoryReadError,
+  readWorkspaceMessageSource,
+  searchWorkspaceHistory,
+} from '../conversationSearch.js';
+import { cancelReminder, createReminder, updateReminder } from '../reminders/service.js';
 
 export interface ExecuteAgentToolParams {
+  storage?: R2Bucket;
   db: D1Database;
   workspaceId: string;
   actorUserId: string;
@@ -85,9 +109,7 @@ export interface ExecuteAgentToolParams {
   maxDailyActions?: number;
 }
 
-export async function executeAgentTool(
-  params: ExecuteAgentToolParams,
-): Promise<CommandResult> {
+export async function executeAgentTool(params: ExecuteAgentToolParams): Promise<CommandResult> {
   const {
     db,
     workspaceId,
@@ -126,7 +148,10 @@ export async function executeAgentTool(
     return {
       status: 'rejected',
       action_id: actionId,
-      error: { code: 'policy_violation', message: untrustedRes.violation || 'Untrusted content cannot perform mutations.' },
+      error: {
+        code: 'policy_violation',
+        message: untrustedRes.violation || 'Untrusted content cannot perform mutations.',
+      },
     };
   }
 
@@ -145,14 +170,20 @@ export async function executeAgentTool(
     });
   }
 
-  let effectiveExpectedRevision = expectedBusinessRevision;
-  if (effectiveExpectedRevision === undefined) {
-    const wsRow = await db
-      .prepare(`SELECT business_revision FROM workspaces WHERE id = ?`)
-      .bind(workspaceId)
-      .first<{ business_revision: number }>();
-    effectiveExpectedRevision = wsRow?.business_revision ?? 0;
-  }
+  const wsRow = await db
+    .prepare(
+      `SELECT w.business_revision FROM workspaces w JOIN workspace_users member
+    ON member.workspace_id = w.id AND member.user_id = ? WHERE w.id = ?`,
+    )
+    .bind(actorUserId, workspaceId)
+    .first<{ business_revision: number }>();
+  if (!wsRow)
+    return {
+      status: 'rejected',
+      action_id: actionId,
+      error: { code: 'access_lost', message: 'Workspace access is no longer available.' },
+    };
+  const effectiveExpectedRevision = expectedBusinessRevision ?? wsRow.business_revision;
 
   // Common ledger context
   const ledgerContext: LedgerCommandContext = {
@@ -179,26 +210,28 @@ export async function executeAgentTool(
       const likePattern = `%${queryTrim}%`;
 
       // Bounded candidate retrieval (SOL-22): prioritize matches and bound to 100 max
-      const entitiesRows = (
-        await db
-          .prepare(
-            `SELECT id, name FROM entities WHERE workspace_id = ? AND (name LIKE ? OR id = ?) LIMIT 100`
-          )
-          .bind(workspaceId, likePattern, queryTrim)
-          .all<{ id: string; name: string }>()
-      ).results || [];
+      const entitiesRows =
+        (
+          await db
+            .prepare(
+              `SELECT id, name FROM entities WHERE workspace_id = ? AND (name LIKE ? OR id = ?) LIMIT 100`,
+            )
+            .bind(workspaceId, likePattern, queryTrim)
+            .all<{ id: string; name: string }>()
+        ).results || [];
 
       const candidateEntities = entitiesRows;
       if (candidateEntities.length < 25) {
-        const fallbackRows = (
-          await db
-            .prepare(
-              `SELECT id, name FROM entities WHERE workspace_id = ? ORDER BY updated_at DESC LIMIT 50`
-            )
-            .bind(workspaceId)
-            .all<{ id: string; name: string }>()
-        ).results || [];
-        const seenIds = new Set(candidateEntities.map(r => r.id));
+        const fallbackRows =
+          (
+            await db
+              .prepare(
+                `SELECT id, name FROM entities WHERE workspace_id = ? ORDER BY updated_at DESC LIMIT 50`,
+              )
+              .bind(workspaceId)
+              .all<{ id: string; name: string }>()
+          ).results || [];
+        const seenIds = new Set(candidateEntities.map((r) => r.id));
         for (const row of fallbackRows) {
           if (!seenIds.has(row.id)) {
             candidateEntities.push(row);
@@ -207,48 +240,81 @@ export async function executeAgentTool(
         }
       }
 
-      const aliasesRows = (
-        await db
-          .prepare(
-            `SELECT id, entity_id, alias FROM entity_aliases WHERE workspace_id = ? AND (alias LIKE ? OR entity_id = ?) LIMIT 100`
-          )
-          .bind(workspaceId, likePattern, queryTrim)
-          .all<{ id: string; entity_id: string; alias: string }>()
-      ).results || [];
+      const aliasesRows =
+        (
+          await db
+            .prepare(
+              `SELECT id, entity_id, alias FROM entity_aliases WHERE workspace_id = ? AND (alias LIKE ? OR entity_id = ?) LIMIT 100`,
+            )
+            .bind(workspaceId, likePattern, queryTrim)
+            .all<{ id: string; entity_id: string; alias: string }>()
+        ).results || [];
 
       const matchResult = rankEntityMatches(feArgs.query, candidateEntities, aliasesRows);
-      const candidates = feArgs.limit ? matchResult.candidates.slice(0, feArgs.limit) : matchResult.candidates;
+      const canonicalMatches = await canonicalEntityMap(
+        db,
+        workspaceId,
+        matchResult.candidates.map((c) => c.id),
+      );
+      const seenCanonical = new Set<string>();
+      const deduplicated = matchResult.candidates.filter((c) => {
+        const id = canonicalMatches.get(c.id)?.id;
+        if (!id || seenCanonical.has(id)) return false;
+        seenCanonical.add(id);
+        return true;
+      });
+      const candidates = feArgs.limit ? deduplicated.slice(0, feArgs.limit) : deduplicated;
+      for (const candidate of candidates)
+        Object.assign(candidate, {
+          origin_entity_id: candidate.id,
+          canonical_id: canonicalMatches.get(candidate.id)!.id,
+          canonical_name: canonicalMatches.get(candidate.id)!.name,
+        });
 
       if (candidates.length > 0) {
-        const entIds = candidates.map((c) => c.id);
+        const entIds = candidates.map((c) => canonicalMatches.get(c.id)!.id);
         const placeholders = entIds.map(() => '?').join(',');
-        const fieldRows = (await db.prepare(
-          `SELECT entity_id, field_name, state, value_text, value_json, provenance, revision, updated_at, candidate_event_ids_json, last_confirmed_value_text
+        const fieldRows =
+          (
+            await db
+              .prepare(
+                `SELECT entity_id, field_name, state, value_text, value_json, provenance, revision, updated_at, candidate_event_ids_json, last_confirmed_value_text
            FROM entity_state
-           WHERE workspace_id = ? AND entity_id IN (${placeholders})`
-        ).bind(workspaceId, ...entIds).all<{
-          entity_id: string;
-          field_name: string;
-          state: string;
-          value_text: string | null;
-          value_json: string | null;
-          provenance: string;
-          revision: number;
-          updated_at: string;
-          candidate_event_ids_json: string | null;
-          last_confirmed_value_text: string | null;
-        }>()).results || [];
+           WHERE workspace_id = ? AND entity_id IN (${placeholders})`,
+              )
+              .bind(workspaceId, ...entIds)
+              .all<{
+                entity_id: string;
+                field_name: string;
+                state: string;
+                value_text: string | null;
+                value_json: string | null;
+                provenance: string;
+                revision: number;
+                updated_at: string;
+                candidate_event_ids_json: string | null;
+                last_confirmed_value_text: string | null;
+              }>()
+          ).results || [];
 
         const fieldsByEntity: Record<string, Record<string, unknown>> = {};
         for (const fr of fieldRows) {
           const entityFields = fieldsByEntity[fr.entity_id] ?? (fieldsByEntity[fr.entity_id] = {});
           let val: unknown = fr.value_text;
           if (fr.value_json) {
-            try { val = JSON.parse(fr.value_json); } catch { /* keep text */ }
+            try {
+              val = JSON.parse(fr.value_json);
+            } catch {
+              /* keep text */
+            }
           }
           let candIds: unknown = undefined;
           if (fr.candidate_event_ids_json) {
-            try { candIds = JSON.parse(fr.candidate_event_ids_json); } catch { candIds = undefined; }
+            try {
+              candIds = JSON.parse(fr.candidate_event_ids_json);
+            } catch {
+              candIds = undefined;
+            }
           }
           entityFields[fr.field_name] = {
             state: fr.state,
@@ -262,10 +328,14 @@ export async function executeAgentTool(
         }
 
         for (const cand of candidates) {
-          (cand as unknown as Record<string, unknown>).fields = fieldsByEntity[cand.id] || {};
+          (cand as unknown as Record<string, unknown>).fields =
+            fieldsByEntity[canonicalMatches.get(cand.id)!.id] || {};
         }
         if (matchResult.bestMatch) {
-          (matchResult.bestMatch as unknown as Record<string, unknown>).fields = fieldsByEntity[matchResult.bestMatch.id] || {};
+          (matchResult.bestMatch as unknown as Record<string, unknown>).fields =
+            fieldsByEntity[
+              canonicalMatches.get(matchResult.bestMatch.id)?.id ?? matchResult.bestMatch.id
+            ] || {};
         }
       }
 
@@ -274,23 +344,165 @@ export async function executeAgentTool(
         action_id: actionId,
         data: {
           candidates,
-          bestMatch: matchResult.bestMatch,
-          isAmbiguous: matchResult.isAmbiguous,
-          ambiguityReason: matchResult.ambiguityReason,
+          bestMatch: matchResult.bestMatch
+            ? candidates.find(
+                (c) =>
+                  canonicalMatches.get(c.id)?.id ===
+                  canonicalMatches.get(matchResult.bestMatch!.id)?.id,
+              )
+            : undefined,
+          isAmbiguous: candidates.length > 1 && matchResult.isAmbiguous,
+          ambiguityReason: candidates.length > 1 ? matchResult.ambiguityReason : undefined,
         },
       };
     }
 
+    case 'search_workspace_history': {
+      try {
+        return {
+          status: 'applied',
+          action_id: actionId,
+          data: await searchWorkspaceHistory(
+            db,
+            workspaceId,
+            actorUserId,
+            args as SearchWorkspaceHistoryArgs,
+          ),
+        };
+      } catch (error) {
+        if (!(error instanceof HistoryReadError)) throw error;
+        return {
+          status: 'rejected',
+          action_id: actionId,
+          error: { code: error.code, message: error.message },
+        };
+      }
+    }
+    case 'read_source': {
+      try {
+        return {
+          status: 'applied',
+          action_id: actionId,
+          data: await readWorkspaceMessageSource(
+            db,
+            workspaceId,
+            actorUserId,
+            (args as { source_id: string }).source_id,
+          ),
+        };
+      } catch (error) {
+        if (!(error instanceof HistoryReadError)) throw error;
+        return { status: 'rejected', error: { code: error.code, message: error.message } };
+      }
+    }
+    case 'read_document': {
+      try {
+        return {
+          status: 'applied',
+          action_id: actionId,
+          data: await readDocument(
+            { DB: db, STORAGE: params.storage },
+            workspaceId,
+            actorUserId,
+            args as { media_id: string; cursor?: string; limit?: number },
+          ),
+        };
+      } catch (error) {
+        return {
+          status: 'rejected',
+          error: {
+            code: 'document_unavailable',
+            message: error instanceof Error ? error.message : 'Document unavailable.',
+          },
+        };
+      }
+    }
     case 'query': {
       const qArgs = args as QueryToolArgs;
+      if (qArgs.resource === 'merge_preview') {
+        const member = await db
+          .prepare('SELECT 1 FROM workspace_users WHERE workspace_id = ? AND user_id = ?')
+          .bind(workspaceId, actorUserId)
+          .first();
+        if (!member)
+          return { status: 'rejected', error: { code: 'not_found', message: 'Files not found.' } };
+        const { state } = await getBusinessProjectionState(
+          db,
+          workspaceId,
+          [qArgs.filters!.entity_id!, qArgs.filters!.target_entity_id!],
+          true,
+        );
+        const preview = previewEntityMerge(
+          state,
+          qArgs.filters!.entity_id!,
+          qArgs.filters!.target_entity_id!,
+        );
+        return preview
+          ? {
+              status: 'applied',
+              action_id: actionId,
+              data: { ...preview, expected_revision: effectiveExpectedRevision },
+            }
+          : {
+              status: 'rejected',
+              error: {
+                code: 'invalid_merge',
+                message: 'Choose two different clients in this workspace.',
+              },
+            };
+      }
+      if (qArgs.resource === 'entity_file') {
+        try {
+          return {
+            status: 'applied',
+            action_id: actionId,
+            data: await readEntityFile(db, workspaceId, actorUserId, qArgs.filters!.entity_id!, {
+              author_user_id: qArgs.filters?.author_user_id,
+              from: qArgs.filters?.from,
+              to: qArgs.filters?.to,
+              include_removed: qArgs.filters?.include_removed,
+              section: qArgs.section,
+              order: qArgs.order as 'occurred' | 'recorded' | undefined,
+              limit: qArgs.limit,
+              cursor: qArgs.cursor,
+            }),
+          };
+        } catch (error) {
+          if (!(error instanceof FileReadError)) throw error;
+          return {
+            status: 'rejected',
+            action_id: actionId,
+            error: { code: error.code, message: error.message },
+          };
+        }
+      }
+      if (qArgs.resource === 'interactions') {
+        const data = await readCurrentInteractions(db, workspaceId, {
+          entity_id: qArgs.filters?.entity_id,
+          interaction_id: qArgs.filters?.interaction_id,
+          kind: qArgs.filters?.kind as 'note' | 'visit' | 'contact' | 'quote' | undefined,
+          text: qArgs.filters?.text,
+          limit: qArgs.limit,
+          cursor: qArgs.cursor,
+          author_user_id: qArgs.filters?.author_user_id,
+          from: qArgs.filters?.from,
+          to: qArgs.filters?.to,
+        });
+        return { status: 'applied', action_id: actionId, data };
+      }
       const limit = qArgs.limit || 25;
 
       if (qArgs.resource === 'entities') {
-        let sql = `SELECT id, name, kind, status, assigned_user_id, created_at, updated_at FROM entities WHERE workspace_id = ?`;
+        let sql = `SELECT id, name, kind, CASE WHEN (SELECT state FROM entity_state f WHERE f.workspace_id = entities.workspace_id AND f.entity_id = entities.id AND f.field_name = 'status') = 'disputed' THEN 'disputed' ELSE COALESCE((SELECT value_text FROM entity_state f WHERE f.workspace_id = entities.workspace_id AND f.entity_id = entities.id AND f.field_name = 'status'), status) END AS status,
+          CASE WHEN (SELECT state FROM entity_state f WHERE f.workspace_id = entities.workspace_id AND f.entity_id = entities.id AND f.field_name = 'assigned_user_id') = 'disputed' THEN NULL ELSE assigned_user_id END AS assigned_user_id,
+          CASE WHEN (SELECT state FROM entity_state f WHERE f.workspace_id = entities.workspace_id AND f.entity_id = entities.id AND f.field_name = 'assigned_user_id') = 'disputed' THEN 'Disputed' ELSE (SELECT display_name FROM users WHERE id = entities.assigned_user_id) END AS assigned_name,
+          created_at, updated_at FROM entities WHERE workspace_id = ? AND NOT EXISTS (SELECT 1 FROM entity_redirects redirect WHERE redirect.workspace_id = entities.workspace_id AND redirect.source_entity_id = entities.id)`;
         const binds: unknown[] = [workspaceId];
         if (qArgs.filters?.entity_id) {
           sql += ` AND id = ?`;
-          binds.push(qArgs.filters.entity_id);
+          binds.push(
+            (await canonicalEntityId(db, workspaceId, qArgs.filters.entity_id)) ?? '__missing__',
+          );
         }
         if (qArgs.filters?.kind) {
           sql += ` AND kind = ?`;
@@ -298,10 +510,12 @@ export async function executeAgentTool(
         }
         if (qArgs.filters?.entity_status) {
           sql += ` AND status = ?`;
+          sql += ` AND COALESCE((SELECT state FROM entity_state f WHERE f.workspace_id = entities.workspace_id AND f.entity_id = entities.id AND f.field_name = 'status'), 'clear') != 'disputed'`;
           binds.push(qArgs.filters.entity_status);
         }
         if (qArgs.filters?.assignee_user_id) {
           sql += ` AND assigned_user_id = ?`;
+          sql += ` AND COALESCE((SELECT state FROM entity_state f WHERE f.workspace_id = entities.workspace_id AND f.entity_id = entities.id AND f.field_name = 'assigned_user_id'), 'clear') != 'disputed'`;
           binds.push(qArgs.filters.assignee_user_id);
         }
         if (qArgs.cursor) {
@@ -310,37 +524,58 @@ export async function executeAgentTool(
         }
         sql += ` ORDER BY id ASC LIMIT ?`;
         binds.push(limit);
-        const rows = (await db.prepare(sql).bind(...binds).all()).results || [];
+        const rows =
+          (
+            await db
+              .prepare(sql)
+              .bind(...binds)
+              .all()
+          ).results || [];
         if (rows.length > 0) {
           const entityIds = rows.map((r) => String(r.id));
           const placeholders = entityIds.map(() => '?').join(',');
-          const fieldRows = (await db.prepare(
-            `SELECT entity_id, field_name, state, value_text, value_json, provenance, revision, updated_at, candidate_event_ids_json, last_confirmed_value_text
+          const fieldRows =
+            (
+              await db
+                .prepare(
+                  `SELECT entity_id, field_name, state, value_text, value_json, provenance, revision, updated_at, candidate_event_ids_json, last_confirmed_value_text
              FROM entity_state
-             WHERE workspace_id = ? AND entity_id IN (${placeholders})`
-          ).bind(workspaceId, ...entityIds).all<{
-            entity_id: string;
-            field_name: string;
-            state: string;
-            value_text: string | null;
-            value_json: string | null;
-            provenance: string;
-            revision: number;
-            updated_at: string;
-            candidate_event_ids_json: string | null;
-            last_confirmed_value_text: string | null;
-          }>()).results || [];
+             WHERE workspace_id = ? AND entity_id IN (${placeholders})`,
+                )
+                .bind(workspaceId, ...entityIds)
+                .all<{
+                  entity_id: string;
+                  field_name: string;
+                  state: string;
+                  value_text: string | null;
+                  value_json: string | null;
+                  provenance: string;
+                  revision: number;
+                  updated_at: string;
+                  candidate_event_ids_json: string | null;
+                  last_confirmed_value_text: string | null;
+                }>()
+            ).results || [];
 
           const fieldsByEntity: Record<string, Record<string, unknown>> = {};
           for (const fr of fieldRows) {
-            const entityFields = fieldsByEntity[fr.entity_id] ?? (fieldsByEntity[fr.entity_id] = {});
+            const entityFields =
+              fieldsByEntity[fr.entity_id] ?? (fieldsByEntity[fr.entity_id] = {});
             let val: unknown = fr.value_text;
             if (fr.value_json) {
-              try { val = JSON.parse(fr.value_json); } catch { /* keep text */ }
+              try {
+                val = JSON.parse(fr.value_json);
+              } catch {
+                /* keep text */
+              }
             }
             let candIds: unknown = undefined;
             if (fr.candidate_event_ids_json) {
-              try { candIds = JSON.parse(fr.candidate_event_ids_json); } catch { candIds = undefined; }
+              try {
+                candIds = JSON.parse(fr.candidate_event_ids_json);
+              } catch {
+                candIds = undefined;
+              }
             }
             entityFields[fr.field_name] = {
               state: fr.state,
@@ -361,6 +596,27 @@ export async function executeAgentTool(
       }
 
       if (qArgs.resource === 'tasks') {
+        if (qArgs.order === 'overdue_first' || qArgs.filters?.overdue_only) {
+          try {
+            return {
+              status: 'applied',
+              action_id: actionId,
+              data: await readWork(db, workspaceId, actorUserId, {
+                filters: qArgs.filters,
+                limit: qArgs.limit,
+                cursor: qArgs.cursor,
+              }),
+            };
+          } catch (error) {
+            return {
+              status: 'rejected',
+              error: {
+                code: 'invalid_work_page',
+                message: error instanceof Error ? error.message : 'Work unavailable.',
+              },
+            };
+          }
+        }
         let sql = `SELECT id, entity_id, title, assignee_user_id, status, due_kind, due_local_date, due_instant, due_timezone, snooze_until, revision, created_at, updated_at FROM tasks WHERE workspace_id = ?`;
         const binds: unknown[] = [workspaceId];
         if (qArgs.filters?.task_status) {
@@ -368,8 +624,8 @@ export async function executeAgentTool(
           binds.push(qArgs.filters.task_status);
         }
         if (qArgs.filters?.entity_id) {
-          sql += ` AND entity_id = ?`;
-          binds.push(qArgs.filters.entity_id);
+          sql = `${ENTITY_FAMILY_SQL} ${sql} AND entity_id IN (SELECT id FROM family)`;
+          binds.unshift(...familyBinds(workspaceId, qArgs.filters.entity_id));
         }
         if (qArgs.filters?.assignee_user_id) {
           sql += ` AND assignee_user_id = ?`;
@@ -389,31 +645,65 @@ export async function executeAgentTool(
         }
         sql += ` ORDER BY id ASC LIMIT ?`;
         binds.push(limit);
-        const rows = (await db.prepare(sql).bind(...binds).all()).results || [];
+        const rows =
+          (
+            await db
+              .prepare(sql)
+              .bind(...binds)
+              .all()
+          ).results || [];
         return { status: 'applied', action_id: actionId, data: rows };
       }
 
       if (qArgs.resource === 'events') {
-        let sql = `SELECT id, sequence, entity_id, kind, payload_json, occurred_at, recorded_at, channel, provenance FROM events WHERE workspace_id = ?`;
+        let sql = `SELECT e.id, e.sequence, e.entity_id, e.kind, e.payload_json, e.occurred_at,
+          e.recorded_at, e.channel, e.provenance, e.actor_user_id, u.display_name AS actor_name, e.source_message_id,
+          e.supersedes_event_id, e.reverts_event_id,
+          i.root_event_id AS interaction_id, i.head_event_id AS current_head_event_id,
+          i.state AS interaction_state,
+          EXISTS (SELECT 1 FROM events r WHERE r.workspace_id = e.workspace_id AND r.kind = 'revert'
+            AND (r.reverts_event_id = e.id OR json_extract(r.payload_json, '$.target_event_id') = e.id)) AS is_reverted
+          FROM events e LEFT JOIN users u ON u.id = e.actor_user_id LEFT JOIN interaction_state i ON i.workspace_id = e.workspace_id
+            AND i.root_event_id = CASE WHEN e.kind = 'interaction_removed' THEN json_extract(e.payload_json, '$.root_event_id')
+              WHEN e.kind IN ('note', 'visit', 'contact', 'quote') THEN COALESCE(json_extract(e.payload_json, '$.interaction_id'), e.id) ELSE NULL END
+          WHERE e.workspace_id = ?`;
         const binds: unknown[] = [workspaceId];
         if (qArgs.filters?.entity_id) {
-          sql += ` AND entity_id = ?`;
-          binds.push(qArgs.filters.entity_id);
+          sql = `${ENTITY_FAMILY_SQL} ${sql} AND e.entity_id IN (SELECT id FROM family)`;
+          binds.unshift(...familyBinds(workspaceId, qArgs.filters.entity_id));
         }
         if (qArgs.filters?.event_kind) {
-          sql += ` AND kind = ?`;
+          sql += ` AND e.kind = ?`;
           binds.push(qArgs.filters.event_kind);
+        }
+        if (qArgs.filters?.author_user_id) {
+          sql += ' AND e.actor_user_id = ?';
+          binds.push(qArgs.filters.author_user_id);
+        }
+        if (qArgs.filters?.from) {
+          sql += ' AND e.occurred_at >= ?';
+          binds.push(qArgs.filters.from);
+        }
+        if (qArgs.filters?.to) {
+          sql += ' AND e.occurred_at < ?';
+          binds.push(qArgs.filters.to);
         }
         if (qArgs.cursor) {
           const seq = Number(qArgs.cursor);
           if (!Number.isNaN(seq)) {
-            sql += ` AND sequence < ?`;
+            sql += ` AND e.sequence < ?`;
             binds.push(seq);
           }
         }
-        sql += ` ORDER BY sequence DESC LIMIT ?`;
+        sql += ` ORDER BY e.sequence DESC LIMIT ?`;
         binds.push(limit);
-        const rows = (await db.prepare(sql).bind(...binds).all()).results || [];
+        const rows =
+          (
+            await db
+              .prepare(sql)
+              .bind(...binds)
+              .all()
+          ).results || [];
         return { status: 'applied', action_id: actionId, data: rows };
       }
 
@@ -421,8 +711,8 @@ export async function executeAgentTool(
         let sql = `SELECT id, entity_id, channel, recipient_address, content_text, status, revision, created_at, updated_at FROM draft_projections WHERE workspace_id = ?`;
         const binds: unknown[] = [workspaceId];
         if (qArgs.filters?.entity_id) {
-          sql += ` AND entity_id = ?`;
-          binds.push(qArgs.filters.entity_id);
+          sql = `${ENTITY_FAMILY_SQL} ${sql} AND entity_id IN (SELECT id FROM family)`;
+          binds.unshift(...familyBinds(workspaceId, qArgs.filters.entity_id));
         }
         if (qArgs.cursor) {
           sql += ` AND id > ?`;
@@ -430,40 +720,88 @@ export async function executeAgentTool(
         }
         sql += ` ORDER BY id ASC LIMIT ?`;
         binds.push(limit);
-        const rows = (await db.prepare(sql).bind(...binds).all()).results || [];
+        const rows =
+          (
+            await db
+              .prepare(sql)
+              .bind(...binds)
+              .all()
+          ).results || [];
         return { status: 'applied', action_id: actionId, data: rows };
       }
 
       if (qArgs.resource === 'attachments') {
-        // Retained conversation images for this chat, newest first. Metadata
-        // only: media/source IDs plus a short source-text excerpt so the
-        // model can pick what to view. Bytes stay in R2 until view_image.
-        if (!chatId) {
-          return { status: 'rejected', action_id: actionId, error: { code: 'missing_chat', message: 'Attachments can only be listed inside a conversation.' } };
-        }
-        let sql = `SELECT a.media_id AS media_id, a.chat_message_id AS chat_message_id,
-            cm.sequence AS sequence, a.position AS position, m.format AS format,
-            m.created_at AS created_at, SUBSTR(cm.content_text, 1, 160) AS excerpt
-          FROM message_image_attachments a
-          JOIN chat_messages cm ON cm.id = a.chat_message_id
-          JOIN media_objects m ON m.id = a.media_id
-          WHERE a.workspace_id = ? AND cm.workspace_id = ? AND cm.chat_id = ?`;
-        const binds: unknown[] = [workspaceId, workspaceId, chatId];
-        if (qArgs.filters?.text) {
-          sql += ` AND cm.content_text LIKE ?`;
-          binds.push(`%${qArgs.filters.text}%`);
-        }
-        if (qArgs.cursor) {
-          const seq = Number(qArgs.cursor);
-          if (!Number.isNaN(seq)) {
-            sql += ` AND cm.sequence < ?`;
-            binds.push(seq);
+        if (qArgs.filters?.entity_id) {
+          try {
+            return {
+              status: 'applied',
+              action_id: actionId,
+              data: await readEntityFile(db, workspaceId, actorUserId, qArgs.filters.entity_id, {
+                include_removed: qArgs.filters?.include_removed,
+                section: 'attachments',
+                limit: qArgs.limit,
+                cursor: qArgs.cursor,
+              }),
+            };
+          } catch (error) {
+            return {
+              status: 'rejected',
+              error: {
+                code: 'attachments_unavailable',
+                message: error instanceof Error ? error.message : 'Files unavailable.',
+              },
+            };
           }
         }
-        sql += ` ORDER BY cm.sequence DESC, a.position ASC LIMIT ?`;
-        binds.push(limit);
-        const rows = (await db.prepare(sql).bind(...binds).all()).results || [];
-        return { status: 'applied', action_id: actionId, data: rows };
+        if (!chatId) {
+          return {
+            status: 'rejected',
+            action_id: actionId,
+            error: {
+              code: 'missing_chat',
+              message: 'Attachments can only be listed inside a conversation.',
+            },
+          };
+        }
+        try {
+          return {
+            status: 'applied',
+            action_id: actionId,
+            data: await readChatAttachments(db, workspaceId, actorUserId, chatId, {
+              ...qArgs.filters,
+              limit: qArgs.limit,
+              cursor: qArgs.cursor,
+            }),
+          };
+        } catch (error) {
+          return {
+            status: 'rejected',
+            error: {
+              code: 'invalid_attachment_page',
+              message: error instanceof Error ? error.message : 'Files unavailable.',
+            },
+          };
+        }
+      }
+      if (qArgs.resource === 'followups') {
+        try {
+          return {
+            status: 'applied',
+            action_id: actionId,
+            data: await readFollowUps(db, workspaceId, actorUserId, {
+              limit: qArgs.limit,
+              cursor: qArgs.cursor,
+            }),
+          };
+        } catch (error) {
+          return {
+            status: 'rejected',
+            error: {
+              code: 'followups_unavailable',
+              message: error instanceof Error ? error.message : 'Follow-ups unavailable.',
+            },
+          };
+        }
       }
 
       if (qArgs.resource === 'lead_overview') {
@@ -485,7 +823,11 @@ export async function executeAgentTool(
         return { status: 'applied', action_id: actionId, data: page };
       }
 
-      return { status: 'rejected', action_id: actionId, error: { code: 'invalid_resource', message: `Unknown resource '${qArgs.resource}'.` } };
+      return {
+        status: 'rejected',
+        action_id: actionId,
+        error: { code: 'invalid_resource', message: `Unknown resource '${qArgs.resource}'.` },
+      };
     }
 
     case 'view_image': {
@@ -495,20 +837,28 @@ export async function executeAgentTool(
       // the next provider request. No ledger event, no chat message.
       const vArgs = args as ViewImageToolArgs;
       if (!chatId) {
-        return { status: 'rejected', action_id: actionId, error: { code: 'missing_chat', message: 'Images can only be viewed inside a conversation.' } };
+        return {
+          status: 'rejected',
+          action_id: actionId,
+          error: {
+            code: 'missing_chat',
+            message: 'Images can only be viewed inside a conversation.',
+          },
+        };
       }
       const imageRow = await db
         .prepare(
-          `SELECT a.media_id AS media_id, a.chat_message_id AS chat_message_id,
+          `SELECT m.id AS media_id, a.chat_message_id AS chat_message_id,
               cm.sequence AS sequence, m.format AS format, m.state AS state,
-              m.expires_at AS expires_at, SUBSTR(cm.content_text, 1, 160) AS excerpt
-           FROM message_image_attachments a
-           JOIN chat_messages cm ON cm.id = a.chat_message_id
-           JOIN media_objects m ON m.id = a.media_id
-           WHERE a.workspace_id = ? AND a.media_id = ? AND cm.workspace_id = ? AND cm.chat_id = ?
+              m.expires_at AS expires_at, m.retained, SUBSTR(cm.content_text, 1, 160) AS excerpt
+           FROM media_objects m
+           LEFT JOIN message_image_attachments a ON a.media_id = m.id AND a.workspace_id = m.workspace_id
+           LEFT JOIN chat_messages cm ON cm.id = a.chat_message_id AND cm.workspace_id = m.workspace_id
+           WHERE m.workspace_id = ? AND m.id = ? AND (cm.chat_id = ? OR EXISTS (SELECT 1 FROM attachment_links l WHERE l.media_id = m.id AND l.workspace_id = m.workspace_id AND l.state = 'active'))
+             AND EXISTS (SELECT 1 FROM workspace_users member WHERE member.workspace_id = m.workspace_id AND member.user_id = ?)
            LIMIT 1`,
         )
-        .bind(workspaceId, vArgs.media_id, workspaceId, chatId)
+        .bind(workspaceId, vArgs.media_id, chatId, actorUserId)
         .first<{
           media_id: string;
           chat_message_id: string;
@@ -516,15 +866,26 @@ export async function executeAgentTool(
           format: string | null;
           state: string;
           expires_at: string;
+          retained: number;
           excerpt: string | null;
         }>();
       if (!imageRow) {
-        return { status: 'rejected', action_id: actionId, error: { code: 'unknown_image', message: 'No such image in this conversation. List retained images with the attachments query first.' } };
+        return {
+          status: 'rejected',
+          action_id: actionId,
+          error: {
+            code: 'unknown_image',
+            message:
+              'No such image in this conversation. List retained images with the attachments query first.',
+          },
+        };
       }
       const readable =
-        (imageRow.format === 'image/jpeg' || imageRow.format === 'image/png' || imageRow.format === 'image/webp') &&
+        (imageRow.format === 'image/jpeg' ||
+          imageRow.format === 'image/png' ||
+          imageRow.format === 'image/webp') &&
         imageRow.state === 'validated' &&
-        imageRow.expires_at > new Date().toISOString();
+        (imageRow.retained === 1 || imageRow.expires_at > new Date().toISOString());
       if (!readable) {
         return {
           status: 'rejected',
@@ -553,6 +914,7 @@ export async function executeAgentTool(
     case 'search_memory': {
       const smArgs = args as SearchMemoryToolArgs;
       const limit = smArgs.limit || 12;
+      const entitySubject = smArgs.subject_id && smArgs.scope === 'entity';
 
       const ftsQuery = sanitizeFtsQuery(smArgs.query);
       let rows: Record<string, unknown>[] = [];
@@ -561,7 +923,7 @@ export async function executeAgentTool(
         // Suppressed entries never surface, and another member's private
         // notes never surface: both predicates live inside the query so the
         // LIMIT applies to visible rows, not rows discarded afterwards.
-        let ftsSql = `
+        let ftsSql = `${entitySubject ? ENTITY_FAMILY_SQL : ''}
           SELECT m.id, m.scope, m.subject_id, m.category, m.content, m.status, m.observed_at, m.created_at, m.business_revision
           FROM memory_entries_fts f
           JOIN memory_entries m ON m.id = f.entry_id
@@ -570,23 +932,41 @@ export async function executeAgentTool(
             AND (m.scope != 'member_in_workspace' OR m.subject_id = ?)
             AND memory_entries_fts MATCH ?
         `;
-        const ftsBinds: unknown[] = [workspaceId, actorUserId, ftsQuery];
+        const ftsBinds: unknown[] = [
+          ...(entitySubject ? familyBinds(workspaceId, smArgs.subject_id!) : []),
+          workspaceId,
+          actorUserId,
+          ftsQuery,
+        ];
         if (smArgs.scope) {
           ftsSql += ` AND m.scope = ?`;
           ftsBinds.push(smArgs.scope);
         }
         if (smArgs.subject_id) {
-          ftsSql += ` AND m.subject_id = ?`;
-          ftsBinds.push(smArgs.subject_id);
+          ftsSql += entitySubject
+            ? ' AND m.subject_id IN (SELECT id FROM family)'
+            : ' AND m.subject_id = ?';
+          if (!entitySubject) ftsBinds.push(smArgs.subject_id);
         }
         ftsSql += ` ORDER BY m.observed_at DESC LIMIT ?`;
         ftsBinds.push(limit);
 
         try {
-          rows = (await db.prepare(ftsSql).bind(...ftsBinds).all()).results || [];
+          rows =
+            (
+              await db
+                .prepare(ftsSql)
+                .bind(...ftsBinds)
+                .all()
+            ).results || [];
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
-          if (msg.includes('fts5') || msg.includes('syntax') || msg.includes('no such table') || msg.includes('MATCH')) {
+          if (
+            msg.includes('fts5') ||
+            msg.includes('syntax') ||
+            msg.includes('no such table') ||
+            msg.includes('MATCH')
+          ) {
             rows = [];
           } else {
             throw err;
@@ -596,26 +976,39 @@ export async function executeAgentTool(
 
       // If FTS returned 0 rows or query was not FTS-compatible, fall back to LIKE search
       if (rows.length === 0) {
-        let likeSql = `
+        let likeSql = `${entitySubject ? ENTITY_FAMILY_SQL : ''}
           SELECT id, scope, subject_id, category, content, status, observed_at, created_at, business_revision
           FROM memory_entries
           WHERE workspace_id = ? AND status = 'active' AND content LIKE ?
             AND NOT EXISTS (SELECT 1 FROM memory_suppressions s WHERE s.workspace_id = memory_entries.workspace_id AND s.target_memory_id = memory_entries.id)
             AND (scope != 'member_in_workspace' OR subject_id = ?)
         `;
-        const likeBinds: unknown[] = [workspaceId, `%${smArgs.query.trim()}%`, actorUserId];
+        const likeBinds: unknown[] = [
+          ...(entitySubject ? familyBinds(workspaceId, smArgs.subject_id!) : []),
+          workspaceId,
+          `%${smArgs.query.trim()}%`,
+          actorUserId,
+        ];
         if (smArgs.scope) {
           likeSql += ` AND scope = ?`;
           likeBinds.push(smArgs.scope);
         }
         if (smArgs.subject_id) {
-          likeSql += ` AND subject_id = ?`;
-          likeBinds.push(smArgs.subject_id);
+          likeSql += entitySubject
+            ? ' AND subject_id IN (SELECT id FROM family)'
+            : ' AND subject_id = ?';
+          if (!entitySubject) likeBinds.push(smArgs.subject_id);
         }
         likeSql += ` ORDER BY observed_at DESC LIMIT ?`;
         likeBinds.push(limit);
 
-        rows = (await db.prepare(likeSql).bind(...likeBinds).all()).results || [];
+        rows =
+          (
+            await db
+              .prepare(likeSql)
+              .bind(...likeBinds)
+              .all()
+          ).results || [];
       }
 
       return { status: 'applied', action_id: actionId, data: rows };
@@ -626,9 +1019,11 @@ export async function executeAgentTool(
       const row = await db
         .prepare(
           `SELECT id, scope, subject_id, category, content, status, provenance, source_event_id, source_message_id, author_user_id, observed_at, created_at, business_revision
-           FROM memory_entries WHERE workspace_id = ? AND id = ?`
+           FROM memory_entries WHERE workspace_id = ? AND id = ?
+             AND (scope != 'member_in_workspace' OR subject_id = ?)
+             AND EXISTS (SELECT 1 FROM workspace_users WHERE workspace_id = memory_entries.workspace_id AND user_id = ?)`,
         )
-        .bind(workspaceId, gmArgs.memory_id)
+        .bind(workspaceId, gmArgs.memory_id, actorUserId, actorUserId)
         .first();
 
       if (!row) {
@@ -654,7 +1049,7 @@ export async function executeAgentTool(
       }
       const suppressed = await db
         .prepare(
-          `SELECT 1 FROM memory_suppressions WHERE workspace_id = ? AND target_memory_id = ?`
+          `SELECT 1 FROM memory_suppressions WHERE workspace_id = ? AND target_memory_id = ?`,
         )
         .bind(workspaceId, gmArgs.memory_id)
         .first();
@@ -692,23 +1087,29 @@ export async function executeAgentTool(
         return {
           status: 'rejected',
           action_id: actionId,
-          error: { code: 'not_found', message: `Chat '${targetChatId}' not found in this workspace.` },
+          error: {
+            code: 'not_found',
+            message: `Chat '${targetChatId}' not found in this workspace.`,
+          },
         };
       }
       const limit = rhArgs.limit ?? 20;
-      const rows = (await db
-        .prepare(
-          `SELECT id, author_kind, author_user_id, content_text, run_id, sequence, created_at
+      const rows =
+        (
+          await db
+            .prepare(
+              `SELECT id, author_kind, author_user_id, content_text, run_id, sequence, created_at
            FROM chat_messages
            WHERE workspace_id = ? AND chat_id = ? ${rhArgs.before_sequence ? 'AND sequence < ?' : ''}
-           ORDER BY sequence DESC LIMIT ?`
-        )
-        .bind(
-          ...(rhArgs.before_sequence
-            ? [workspaceId, targetChatId, rhArgs.before_sequence, limit] as unknown[]
-            : [workspaceId, targetChatId, limit] as unknown[]),
-        )
-        .all<Record<string, unknown>>()).results || [];
+           ORDER BY sequence DESC LIMIT ?`,
+            )
+            .bind(
+              ...(rhArgs.before_sequence
+                ? ([workspaceId, targetChatId, rhArgs.before_sequence, limit] as unknown[])
+                : ([workspaceId, targetChatId, limit] as unknown[])),
+            )
+            .all<Record<string, unknown>>()
+        ).results || [];
       const messages = [...rows].reverse();
       const oldest = messages.length > 0 ? Number(messages[0]!['sequence']) : null;
       return {
@@ -758,9 +1159,10 @@ export async function executeAgentTool(
         status: 'applied',
         action_id: actionId,
         data: { reminder_id: created.reminder.id, remind_at: created.reminder.remind_at },
-        summary: created.status === 'already'
-          ? 'Reminder already set for that time.'
-          : `Reminder set for ${created.reminder.remind_at}.`,
+        summary:
+          created.status === 'already'
+            ? 'Reminder already set for that time.'
+            : `Reminder set for ${created.reminder.remind_at}.`,
       };
     }
 
@@ -810,26 +1212,33 @@ export async function executeAgentTool(
         status: 'applied',
         action_id: actionId,
         data: { reminder_id: cancelled.reminder.id },
-        summary: cancelled.status === 'already' ? 'Reminder was already cancelled.' : 'Reminder cancelled.',
+        summary:
+          cancelled.status === 'already'
+            ? 'Reminder was already cancelled.'
+            : 'Reminder cancelled.',
       };
     }
 
     // --- Preference Tool ---
-    case 'update_preference': {      const upArgs = args as UpdatePreferenceToolArgs;
+    case 'update_preference': {
+      const upArgs = args as UpdatePreferenceToolArgs;
       try {
         const updated = await setMemberSettings(db, {
           workspaceId,
           userId: actorUserId,
           actorUserId,
           input: upArgs,
-          fencedContext: (runId && fence !== undefined) ? {
-            runId,
-            stepId,
-            fence,
-            actionId,
-            sourceMessageId,
-            maxDailyActions: params.maxDailyActions,
-          } : undefined,
+          fencedContext:
+            runId && fence !== undefined
+              ? {
+                  runId,
+                  stepId,
+                  fence,
+                  actionId,
+                  sourceMessageId,
+                  maxDailyActions: params.maxDailyActions,
+                }
+              : undefined,
         });
         return {
           status: 'applied',
@@ -874,13 +1283,20 @@ export async function executeAgentTool(
            WHERE c.id = ? AND c.workspace_id = ?`,
         )
         .bind(chatId, workspaceId)
-        .first<{ author_user_id: string; model_override: string | null; default_model: string | null }>();
+        .first<{
+          author_user_id: string;
+          model_override: string | null;
+          default_model: string | null;
+        }>();
 
       if (!chatRow || chatRow.author_user_id !== actorUserId) {
         return {
           status: 'rejected',
           action_id: actionId,
-          error: { code: 'unauthorized', message: 'Only the chat author can configure thinking controls for this conversation.' },
+          error: {
+            code: 'unauthorized',
+            message: 'Only the chat author can configure thinking controls for this conversation.',
+          },
         };
       }
 
@@ -912,7 +1328,10 @@ export async function executeAgentTool(
         return {
           status: 'rejected',
           action_id: actionId,
-          error: { code: 'unsupported', message: `${entry.displayName} has no adjustable thinking control. It uses provider default.` },
+          error: {
+            code: 'unsupported',
+            message: `${entry.displayName} has no adjustable thinking control. It uses provider default.`,
+          },
         };
       }
 
@@ -920,17 +1339,25 @@ export async function executeAgentTool(
         return {
           status: 'rejected',
           action_id: actionId,
-          error: { code: 'unverified', message: `Thinking controls have not been verified for ${entry.displayName}. It uses provider default.` },
+          error: {
+            code: 'unverified',
+            message: `Thinking controls have not been verified for ${entry.displayName}. It uses provider default.`,
+          },
         };
       }
 
-      const choice = entry.thinking.choices.find((c) => c.id.toLowerCase() === stArgs.level.toLowerCase());
+      const choice = entry.thinking.choices.find(
+        (c) => c.id.toLowerCase() === stArgs.level.toLowerCase(),
+      );
       if (!choice) {
         const available = entry.thinking.choices.map((c) => c.label).join(', ');
         return {
           status: 'rejected',
           action_id: actionId,
-          error: { code: 'invalid_choice', message: `Unknown thinking level '${stArgs.level}'. Available choices for ${entry.displayName}: ${available}.` },
+          error: {
+            code: 'invalid_choice',
+            message: `Unknown thinking level '${stArgs.level}'. Available choices for ${entry.displayName}: ${available}.`,
+          },
         };
       }
 
@@ -967,14 +1394,19 @@ export async function executeAgentTool(
         return {
           status: 'rejected',
           action_id: actionId,
-          error: { code: 'unauthorized', message: 'Only the chat author can configure the model for this conversation.' },
+          error: {
+            code: 'unauthorized',
+            message: 'Only the chat author can configure the model for this conversation.',
+          },
         };
       }
 
       const rawInput = smArgs.model.trim();
       if (rawInput.toLowerCase() === 'default') {
         await db
-          .prepare(`UPDATE chats SET model_override = NULL, updated_at = ? WHERE id = ? AND workspace_id = ?`)
+          .prepare(
+            `UPDATE chats SET model_override = NULL, updated_at = ? WHERE id = ? AND workspace_id = ?`,
+          )
           .bind(new Date().toISOString(), chatId, workspaceId)
           .run();
         return {
@@ -995,7 +1427,9 @@ export async function executeAgentTool(
       }
 
       await db
-        .prepare(`UPDATE chats SET model_override = ?, updated_at = ? WHERE id = ? AND workspace_id = ?`)
+        .prepare(
+          `UPDATE chats SET model_override = ?, updated_at = ? WHERE id = ? AND workspace_id = ?`,
+        )
         .bind(entry.commandKey, new Date().toISOString(), chatId, workspaceId)
         .run();
 
@@ -1020,11 +1454,16 @@ export async function executeAgentTool(
         return {
           status: 'rejected',
           action_id: actionId,
-          error: { code: 'unauthorized', message: 'Only the chat author can execute commands in this conversation.' },
+          error: {
+            code: 'unauthorized',
+            message: 'Only the chat author can execute commands in this conversation.',
+          },
         };
       }
 
-      const cmdText = ecArgs.command_text.startsWith('/') ? ecArgs.command_text : `/${ecArgs.command_text}`;
+      const cmdText = ecArgs.command_text.startsWith('/')
+        ? ecArgs.command_text
+        : `/${ecArgs.command_text}`;
       const outcome = await executeCommand(
         { db, workspaceId, userId: actorUserId, surface: 'web' },
         chatRow,
@@ -1035,13 +1474,22 @@ export async function executeAgentTool(
         for (const effect of outcome.effects) {
           if (effect.type === 'set_chat_model') {
             await db
-              .prepare(`UPDATE chats SET model_override = ?, updated_at = ? WHERE id = ? AND workspace_id = ?`)
+              .prepare(
+                `UPDATE chats SET model_override = ?, updated_at = ? WHERE id = ? AND workspace_id = ?`,
+              )
               .bind(effect.commandKey, new Date().toISOString(), effect.chatId, workspaceId)
               .run();
           } else if (effect.type === 'set_chat_thinking') {
             await db
-              .prepare(`UPDATE chats SET thinking_override_json = ?, updated_at = ? WHERE id = ? AND workspace_id = ?`)
-              .bind(effect.thinkingOverride ? JSON.stringify(effect.thinkingOverride) : null, new Date().toISOString(), effect.chatId, workspaceId)
+              .prepare(
+                `UPDATE chats SET thinking_override_json = ?, updated_at = ? WHERE id = ? AND workspace_id = ?`,
+              )
+              .bind(
+                effect.thinkingOverride ? JSON.stringify(effect.thinkingOverride) : null,
+                new Date().toISOString(),
+                effect.chatId,
+                workspaceId,
+              )
               .run();
           }
         }
@@ -1089,26 +1537,28 @@ export async function executeAgentTool(
       const likePattern = `%${nameTrim}%`;
 
       // Match first to avoid near-duplicates (SOL-22 bounded candidates)
-      const entitiesRows = (
-        await db
-          .prepare(
-            `SELECT id, name FROM entities WHERE workspace_id = ? AND (name LIKE ? OR id = ?) LIMIT 100`
-          )
-          .bind(workspaceId, likePattern, nameTrim)
-          .all<{ id: string; name: string }>()
-      ).results || [];
+      const entitiesRows =
+        (
+          await db
+            .prepare(
+              `SELECT id, name FROM entities WHERE workspace_id = ? AND (name LIKE ? OR id = ?) LIMIT 100`,
+            )
+            .bind(workspaceId, likePattern, nameTrim)
+            .all<{ id: string; name: string }>()
+        ).results || [];
 
       const candidateEntities = entitiesRows;
       if (candidateEntities.length < 25) {
-        const fallbackRows = (
-          await db
-            .prepare(
-              `SELECT id, name FROM entities WHERE workspace_id = ? ORDER BY updated_at DESC LIMIT 50`
-            )
-            .bind(workspaceId)
-            .all<{ id: string; name: string }>()
-        ).results || [];
-        const seenIds = new Set(candidateEntities.map(r => r.id));
+        const fallbackRows =
+          (
+            await db
+              .prepare(
+                `SELECT id, name FROM entities WHERE workspace_id = ? ORDER BY updated_at DESC LIMIT 50`,
+              )
+              .bind(workspaceId)
+              .all<{ id: string; name: string }>()
+          ).results || [];
+        const seenIds = new Set(candidateEntities.map((r) => r.id));
         for (const row of fallbackRows) {
           if (!seenIds.has(row.id)) {
             candidateEntities.push(row);
@@ -1117,14 +1567,15 @@ export async function executeAgentTool(
         }
       }
 
-      const aliasesRows = (
-        await db
-          .prepare(
-            `SELECT id, entity_id, alias FROM entity_aliases WHERE workspace_id = ? AND (alias LIKE ? OR entity_id = ?) LIMIT 100`
-          )
-          .bind(workspaceId, likePattern, nameTrim)
-          .all<{ id: string; entity_id: string; alias: string }>()
-      ).results || [];
+      const aliasesRows =
+        (
+          await db
+            .prepare(
+              `SELECT id, entity_id, alias FROM entity_aliases WHERE workspace_id = ? AND (alias LIKE ? OR entity_id = ?) LIMIT 100`,
+            )
+            .bind(workspaceId, likePattern, nameTrim)
+            .all<{ id: string; entity_id: string; alias: string }>()
+        ).results || [];
 
       const matchRes = rankEntityMatches(ueArgs.name, candidateEntities, aliasesRows);
       if (matchRes.bestMatch) {
@@ -1292,7 +1743,9 @@ export async function executeAgentTool(
 
       if (committedChildIndexes.size === childItems.length && childItems.length > 0) {
         const committedRevision = Math.max(
-          ...[...committedChildIndexes].map((i) => receiptByActionId.get(childActionIds[i]!)!.committed_revision),
+          ...[...committedChildIndexes].map(
+            (i) => receiptByActionId.get(childActionIds[i]!)!.committed_revision,
+          ),
         );
         return {
           status: 'applied',
@@ -1309,7 +1762,9 @@ export async function executeAgentTool(
         // teammate change and conflicts instead of silently rebasing.
         // Sequential by necessity, never claimed atomic.
         const matchedMaxRev = Math.max(
-          ...[...committedChildIndexes].map((i) => receiptByActionId.get(childActionIds[i]!)!.committed_revision),
+          ...[...committedChildIndexes].map(
+            (i) => receiptByActionId.get(childActionIds[i]!)!.committed_revision,
+          ),
         );
         const liveRevRow = await db
           .prepare(`SELECT business_revision FROM workspaces WHERE id = ?`)
@@ -1362,9 +1817,10 @@ export async function executeAgentTool(
             return {
               ...res,
               action_id: actionId,
-              summary: appliedFieldNames.length > 0
-                ? `Applied fields [${appliedFieldNames.join(', ')}] (including previously committed work), but failed on '${item.field_name}': ${res.error?.message ?? res.summary}`
-                : (res.error?.message ?? res.summary),
+              summary:
+                appliedFieldNames.length > 0
+                  ? `Applied fields [${appliedFieldNames.join(', ')}] (including previously committed work), but failed on '${item.field_name}': ${res.error?.message ?? res.summary}`
+                  : (res.error?.message ?? res.summary),
             };
           }
         }
@@ -1435,6 +1891,35 @@ export async function executeAgentTool(
       return batchRes;
     }
 
+    case 'change_contact':
+      return executeLedgerCommand(
+        db,
+        ledgerContext,
+        'change_contact',
+        args as ChangeContactArgs,
+        DEFAULT_COMMAND_HANDLERS['change_contact']!,
+      );
+    case 'link_attachment':
+    case 'unlink_attachment':
+    case 'update_attachment':
+    case 'change_reminder_rule':
+      return executeLedgerCommand(
+        db,
+        ledgerContext,
+        toolName,
+        args,
+        DEFAULT_COMMAND_HANDLERS[toolName]!,
+      );
+    case 'merge_entities': {
+      const explicit = isExplicitMergeIntent(sourceText);
+      return executeLedgerCommand(
+        db,
+        { ...ledgerContext, merge_identity_confirmed: explicit },
+        'merge_entities',
+        args as MergeEntitiesArgs,
+        DEFAULT_COMMAND_HANDLERS['merge_entities']!,
+      );
+    }
     case 'resolve_conflict': {
       const rcArgs = args as ResolveConflictToolArgs;
       return executeLedgerCommand(
@@ -1480,7 +1965,53 @@ export async function executeAgentTool(
 
     case 'draft_message': {
       const dmArgs = args as DraftMessageToolArgs;
-      const dispute = await checkDraftDisputedValues(db, workspaceId, dmArgs.entity_id ?? null, dmArgs.content);
+      const canonical = dmArgs.entity_id
+        ? await canonicalEntityId(db, workspaceId, dmArgs.entity_id)
+        : null;
+      if (dmArgs.entity_id) {
+        const contacts =
+          (
+            await db
+              .prepare(
+                `${ENTITY_FAMILY_SQL} SELECT id, method, value, is_primary, state FROM entity_contacts WHERE workspace_id = ? AND entity_id IN (SELECT id FROM family) AND state != 'removed'`,
+              )
+              .bind(...familyBinds(workspaceId, dmArgs.entity_id), workspaceId)
+              .all<{
+                id: string;
+                method: string;
+                value: string;
+                is_primary: number;
+                state: string;
+              }>()
+          ).results ?? [];
+        const relevant = contacts.filter((c) =>
+          dmArgs.channel === 'email' ? c.method === 'email' : c.method === 'phone',
+        );
+        const selected = dmArgs.recipient
+          ? relevant.find(
+              (c) =>
+                contactComparison(c.method as 'phone' | 'email', c.value) ===
+                contactComparison(c.method as 'phone' | 'email', dmArgs.recipient!),
+            )
+          : undefined;
+        const primaries = relevant.filter((c) => c.is_primary && c.state === 'active');
+        if (
+          selected?.state === 'disputed' ||
+          (relevant.length > 1 &&
+            (!selected ||
+              (!sourceText.includes(selected.value) &&
+                (primaries.length !== 1 || primaries[0]!.id !== selected.id))))
+        )
+          return {
+            status: 'needs_clarification',
+            clarification: {
+              prompt: 'Which contact should this draft be addressed to?',
+              missing_fields: ['recipient'],
+              candidates: relevant.filter((c) => c.state === 'active').map((c) => c.value),
+            },
+          };
+      }
+      const dispute = await checkDraftDisputedValues(db, workspaceId, canonical, dmArgs.content);
       if (dispute.inDispute) {
         return {
           status: 'needs_clarification',
@@ -1515,7 +2046,12 @@ export async function executeAgentTool(
           .prepare(`SELECT entity_id FROM draft_projections WHERE workspace_id = ? AND id = ?`)
           .bind(workspaceId, udArgs.draft_id)
           .first<{ entity_id: string | null }>();
-        const dispute = await checkDraftDisputedValues(db, workspaceId, existingDraft?.entity_id ?? null, udArgs.content);
+        const dispute = await checkDraftDisputedValues(
+          db,
+          workspaceId,
+          existingDraft?.entity_id ?? null,
+          udArgs.content,
+        );
         if (dispute.inDispute) {
           return {
             status: 'needs_clarification',
@@ -1563,11 +2099,17 @@ export async function executeAgentTool(
       // The confirmation must not name a different recipient than the
       // draft's: a mismatched target is about another send. A missing draft
       // is left for the ledger command's own not_found rejection.
-      const draftTarget = await db.prepare(
-        `SELECT recipient_address FROM draft_projections WHERE workspace_id = ? AND id = ?`,
-      ).bind(workspaceId, mmsArgs.draft_id).first<{ recipient_address: string | null }>();
+      const draftTarget = await db
+        .prepare(
+          `SELECT recipient_address FROM draft_projections WHERE workspace_id = ? AND id = ?`,
+        )
+        .bind(workspaceId, mmsArgs.draft_id)
+        .first<{ recipient_address: string | null }>();
       if (draftTarget) {
-        const targetCheck = sentConfirmationMatchesTarget(sourceText, draftTarget.recipient_address);
+        const targetCheck = sentConfirmationMatchesTarget(
+          sourceText,
+          draftTarget.recipient_address,
+        );
         if (!targetCheck.matches) {
           return {
             status: 'needs_clarification',
@@ -1627,20 +2169,22 @@ export async function executeAgentTool(
         // Resolve latest action by this member in this chat
         let eligibleActionIds: Set<string> | null = null;
         if (chatId) {
-          const chatRuns = (
-            await db
-              .prepare(`SELECT id FROM agent_runs WHERE workspace_id = ? AND chat_id = ?`)
-              .bind(workspaceId, chatId)
-              .all<{ id: string }>()
-          ).results || [];
+          const chatRuns =
+            (
+              await db
+                .prepare(`SELECT id FROM agent_runs WHERE workspace_id = ? AND chat_id = ?`)
+                .bind(workspaceId, chatId)
+                .all<{ id: string }>()
+            ).results || [];
           const runIdSet = new Set(chatRuns.map((r) => r.id));
 
-          const chatMsgs = (
-            await db
-              .prepare(`SELECT id FROM messages_in WHERE workspace_id = ? AND chat_id = ?`)
-              .bind(workspaceId, chatId)
-              .all<{ id: string }>()
-          ).results || [];
+          const chatMsgs =
+            (
+              await db
+                .prepare(`SELECT id FROM messages_in WHERE workspace_id = ? AND chat_id = ?`)
+                .bind(workspaceId, chatId)
+                .all<{ id: string }>()
+            ).results || [];
           const msgIdSet = new Set(chatMsgs.map((m) => m.id));
 
           eligibleActionIds = new Set(
@@ -1649,7 +2193,8 @@ export async function executeAgentTool(
                 (a) =>
                   a.actor_user_id === actorUserId &&
                   a.result_status === 'applied' &&
-                  ((a.run_id && runIdSet.has(a.run_id)) || (a.source_message_id && msgIdSet.has(a.source_message_id))),
+                  ((a.run_id && runIdSet.has(a.run_id)) ||
+                    (a.source_message_id && msgIdSet.has(a.source_message_id))),
               )
               .map((a) => a.action_id),
           );
@@ -1665,7 +2210,10 @@ export async function executeAgentTool(
           return {
             status: 'rejected',
             action_id: actionId,
-            error: { code: 'no_actions_to_undo', message: 'No eligible actions to undo in current chat.' },
+            error: {
+              code: 'no_actions_to_undo',
+              message: 'No eligible actions to undo in current chat.',
+            },
           };
         }
         targetActionId = eligible[eligible.length - 1]!.action_id;
@@ -1681,7 +2229,8 @@ export async function executeAgentTool(
           client_operation_id: actionId,
           expected_revision: effectiveExpectedRevision,
         },
-        (ctx, state, seq, undoReq) => handleUndoCommit(ctx, allEvents, allActions, state, seq, undoReq),
+        (ctx, state, seq, undoReq) =>
+          handleUndoCommit(ctx, allEvents, allActions, state, seq, undoReq),
         undefined,
         { deferRunTransition: true },
       );
@@ -1702,12 +2251,26 @@ async function checkDraftDisputedValues(
   entityId: string | null,
   draftContent: string,
 ): Promise<{ inDispute: boolean; fieldName?: string; disputedValues?: string[] }> {
+  if (entityId) entityId = await canonicalEntityId(db, workspaceId, entityId);
   const query = entityId
-    ? db.prepare(`SELECT field_name, candidate_event_ids_json, last_confirmed_value_text FROM entity_state WHERE workspace_id = ? AND entity_id = ? AND state = 'disputed'`).bind(workspaceId, entityId)
-    : db.prepare(`SELECT field_name, candidate_event_ids_json, last_confirmed_value_text FROM entity_state WHERE workspace_id = ? AND state = 'disputed'`).bind(workspaceId);
-  const disputedRows = (
-    await query.all<{ field_name: string; candidate_event_ids_json: string | null; last_confirmed_value_text: string | null }>()
-  ).results || [];
+    ? db
+        .prepare(
+          `SELECT field_name, candidate_event_ids_json, last_confirmed_value_text FROM entity_state WHERE workspace_id = ? AND entity_id = ? AND state = 'disputed'`,
+        )
+        .bind(workspaceId, entityId)
+    : db
+        .prepare(
+          `SELECT field_name, candidate_event_ids_json, last_confirmed_value_text FROM entity_state WHERE workspace_id = ? AND state = 'disputed'`,
+        )
+        .bind(workspaceId);
+  const disputedRows =
+    (
+      await query.all<{
+        field_name: string;
+        candidate_event_ids_json: string | null;
+        last_confirmed_value_text: string | null;
+      }>()
+    ).results || [];
 
   for (const row of disputedRows) {
     const candidateIds: string[] = row.candidate_event_ids_json
@@ -1718,14 +2281,15 @@ async function checkDraftDisputedValues(
 
     if (candidateIds.length > 0) {
       const placeholders = candidateIds.map(() => '?').join(',');
-      const candidateEvents = (
-        await db
-          .prepare(
-            `SELECT kind, payload_json FROM events WHERE workspace_id = ? AND id IN (${placeholders})`,
-          )
-          .bind(workspaceId, ...candidateIds)
-          .all<{ kind: string; payload_json: string }>()
-      ).results || [];
+      const candidateEvents =
+        (
+          await db
+            .prepare(
+              `SELECT kind, payload_json FROM events WHERE workspace_id = ? AND id IN (${placeholders})`,
+            )
+            .bind(workspaceId, ...candidateIds)
+            .all<{ kind: string; payload_json: string }>()
+        ).results || [];
 
       for (const evt of candidateEvents) {
         try {

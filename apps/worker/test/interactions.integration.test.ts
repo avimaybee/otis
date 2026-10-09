@@ -8,13 +8,17 @@ import {
   handleLogEvent,
   handleRemoveInteraction,
   handleReviseInteraction,
+  handleUndoCommit,
   rebuildProjections,
+  getWorkspaceActions,
   getWorkspaceEvents,
   getWorkspaceProjectionState,
   type LedgerCommandContext,
 } from '@otis/ledger';
 import { readLeadOverview } from '../src/agent/leadOverview.js';
 import { readBriefCandidates } from '../src/brief/read.js';
+import { executeAgentTool } from '../src/agent/repository.js';
+import { runAppliedBusinessMutation } from '@otis/agent';
 
 /**
  * C1 single-interaction revision/removal on workerd D1. Migrations 0023
@@ -176,6 +180,9 @@ beforeAll(async () => {
   ).bind(WS, OWNER, '2026-09-03T10:00:00.000Z', NOW, NOW).run();
 
   await applyMigrationSql(env.DB, ALL_MIGRATION_SQL[22]!);
+  // The remaining command tests run on the full schema, including the
+  // quote-authority column the current projection reads and writes.
+  await applyMigrationSql(env.DB, ALL_MIGRATION_SQL[24]!);
   await env.DB.prepare(`UPDATE workspaces SET last_event_sequence = 3 WHERE id = ?`).bind(WS).run();
 });
 
@@ -216,6 +223,9 @@ describe('C1 migration 0024', () => {
 });
 
 describe('C1 revise and remove on D1', () => {
+  beforeAll(async () => {
+    for (const sql of ALL_MIGRATION_SQL.slice(25)) await applyMigrationSql(env.DB, sql);
+  });
   it('commits revise, revise and remove with receipts and live equal to rebuild', async () => {
     const rev0 = await revision();
     const create = await executeLedgerCommand(
@@ -305,10 +315,11 @@ describe('C1 revise and remove on D1', () => {
       handleReviseInteraction,
     );
     expect(rev.status).toBe('applied');
-    // Targeted hydration (row, then entity, field and same-kind siblings in
-    // one batch) plus one atomic commit batch: no full-workspace scan
-    // regardless of workspace size.
-    // 16 prepares: 4 command reads, 4 targeted-hydration reads, 8 commit
+    // Targeted hydration (row, then entity in one batch — non-quote edits
+    // load no siblings) plus one atomic commit batch: no full-workspace
+    // scan regardless of workspace size.
+    // 16 prepares: 4 command reads, 4 targeted-hydration reads (including
+    // an indexed redirect hint in the existing batch), 8 commit
     // statements (guard, event, receipt, quota, workspace, interaction row,
     // chat cursor, run activity).
     expect(counted.counts().batches).toBe(2);
@@ -523,6 +534,280 @@ describe('C1 revise and remove on D1', () => {
     expect(overview.rows.find((row) => row.lead_id === entityId)?.last_contact_at).toBe(OLD_CONTACT);
     const brief = await readBriefCandidates(env.DB, WS, OWNER);
     expect(brief.leads.find((row) => row.entityId === entityId)?.lastContactAt).toBe(OLD_CONTACT);
+    expect(await liveEqualsRebuild()).toBe(true);
+  });
+
+  it('revises and removes one interaction through agent tools with head and policy guards', async () => {
+    let rev = await revision();
+    const tool = (actionId: string, toolName: string, toolArgs: unknown, extra?: Record<string, unknown>) =>
+      executeAgentTool({
+        db: env.DB,
+        workspaceId: WS,
+        actorUserId: OWNER,
+        runId: 'run-interact-1',
+        fence: 1,
+        expectedBusinessRevision: rev,
+        actionId,
+        sourceMessageId: 'msg_interact_owner',
+        chatId: 'chat-interact-1',
+        toolName,
+        toolArgs,
+        ...extra,
+      });
+
+    // A smuggled root marker in a new log is rejected at the tool boundary.
+    const smuggled = await tool('act_tools_smuggle', 'log_event', {
+      kind: 'note',
+      payload: { text: 'hi', interaction_id: 'evt_other' },
+    });
+    expect(smuggled.status).toBe('rejected');
+
+    const logged = await tool('act_tools_c1_log', 'log_event', {
+      kind: 'note',
+      payload: { text: 'Original entry' },
+    });
+    expect(logged.status).toBe('applied');
+    rev = logged.committed_revision!;
+    const root = (logged.data as { event_id: string }).event_id;
+
+    // Forwarded text can never revise: the untrusted-content block holds.
+    const forwarded = await tool(
+      'act_tools_c1_fwd',
+      'revise_interaction',
+      {
+        interaction_id: root,
+        expected_head_event_id: root,
+        kind: 'note',
+        payload: { text: 'Forwarded edit' },
+      },
+      { sourceTrust: 'forwarded_client', sourceText: 'please change the note' },
+    );
+    expect(forwarded.status).toBe('rejected');
+    expect(forwarded.error?.code).toBe('policy_violation');
+
+    const revised = await tool('act_tools_c1_rev', 'revise_interaction', {
+      interaction_id: root,
+      expected_head_event_id: root,
+      kind: 'note',
+      payload: { text: 'Corrected entry' },
+    });
+    expect(revised.status).toBe('applied');
+    expect((revised.data as { head_event_id: string }).head_event_id).not.toBe(root);
+    rev = revised.committed_revision!;
+    const head = (revised.data as { head_event_id: string }).head_event_id;
+
+    const current = await tool('act_tools_c1_current', 'query', {
+      resource: 'interactions', filters: { interaction_id: root },
+    });
+    expect(current.status).toBe('applied');
+    expect(current.data).toMatchObject({ rows: [{ interaction_id: root, head_event_id: head,
+      payload: { text: 'Corrected entry' }, actor_user_id: OWNER }], has_more: false });
+    const history = await tool('act_tools_c1_history', 'query', { resource: 'events', filters: { event_kind: 'note' } });
+    expect(history.status).toBe('applied');
+    expect((history.data as Record<string, unknown>[]).find(row => row['id'] === root)).toMatchObject({
+      interaction_id: root, current_head_event_id: head, interaction_state: 'active', is_reverted: 0,
+    });
+
+    // A stale head conflicts instead of overwriting the correction.
+    const stale = await tool('act_tools_c1_stale', 'remove_interaction', {
+      interaction_id: root,
+      expected_head_event_id: root,
+    });
+    expect(stale.status).toBe('conflict');
+    expect(stale.error?.code).toBe('head_conflict');
+
+    const removed = await tool('act_tools_c1_rem', 'remove_interaction', {
+      interaction_id: root,
+      expected_head_event_id: head,
+      reason: 'duplicate entry',
+    });
+    expect(removed.status).toBe('applied');
+    expect(removed.summary).toContain('Removed note');
+
+    // The run acted: the correction guard sees applied business mutations.
+    expect(
+      runAppliedBusinessMutation([
+        { name: 'revise_interaction', result: { status: revised.status } },
+        { name: 'remove_interaction', result: { status: removed.status } },
+      ]),
+    ).toBe(true);
+    expect(await liveEqualsRebuild()).toBe(true);
+  });
+});
+
+describe('C1 Undo persistence and selection on D1', () => {
+  let undoSeq = 0;
+  async function undo(
+    actionId: string,
+    mode: 'single' | 'from_here' = 'single',
+    overrides?: Partial<LedgerCommandContext>,
+  ) {
+    undoSeq += 1;
+    const allEvents = await getWorkspaceEvents(env.DB, WS);
+    const allActions = await getWorkspaceActions(env.DB, WS);
+    const rev = await revision();
+    const tag = `undo${undoSeq}`;
+    return executeLedgerCommand(
+      env.DB,
+      makeContext(`act_c1_${tag}`, rev, overrides),
+      'undo',
+      { action_id: actionId, mode, client_operation_id: `cop_${tag}`, expected_revision: rev },
+      (c, s, seq, req) => handleUndoCommit(c, allEvents, allActions, s, seq, req),
+    );
+  }
+
+  async function logNote(actionId: string, text: string) {
+    const res = await executeLedgerCommand(
+      env.DB, makeContext(actionId, await revision()), 'log_event',
+      { entity_id: null, kind: 'note', payload: { text } },
+      handleLogEvent,
+    );
+    expect(res.status).toBe('applied');
+    return (res.data as { event_id: string }).event_id;
+  }
+
+  it('removes the persisted lifecycle row when an original log is undone', async () => {
+    const root = await logNote('act_c1_undo_log', 'Undo this entry');
+    expect(await interactionRow(root)).not.toBeNull();
+    const undone = await undo('act_c1_undo_log');
+    expect(undone.status).toBe('applied');
+    expect(await interactionRow(root)).toBeNull();
+    expect(await liveEqualsRebuild()).toBe(true);
+  });
+
+  it('falls back to the earlier head when the latest revision is undone', async () => {
+    const root = await logNote('act_c1_undo_chain', 'Original');
+    const first = await executeLedgerCommand(
+      env.DB, makeContext('act_c1_undo_rev1', await revision()), 'revise_interaction',
+      { interaction_id: root, expected_head_event_id: root, kind: 'note', payload: { text: 'First correction' } },
+      handleReviseInteraction,
+    );
+    expect(first.status).toBe('applied');
+    const head1 = (first.data as { head_event_id: string }).head_event_id;
+    const second = await executeLedgerCommand(
+      env.DB, makeContext('act_c1_undo_rev2', await revision()), 'revise_interaction',
+      { interaction_id: root, expected_head_event_id: head1, kind: 'note', payload: { text: 'Second correction' } },
+      handleReviseInteraction,
+    );
+    expect(second.status).toBe('applied');
+    // The earlier correction is an ancestor, not a later dependent.
+    const undone = await undo('act_c1_undo_rev2');
+    expect(undone.status).toBe('applied');
+    expect(await interactionRow(root)).toMatchObject({ head_event_id: head1, state: 'active' });
+    expect(await liveEqualsRebuild()).toBe(true);
+  });
+
+  it('undoes a revision and then its already-undone original without blocking', async () => {
+    const root = await logNote('act_c1_undo_desc', 'Original');
+    const changed = await executeLedgerCommand(
+      env.DB, makeContext('act_c1_undo_chg', await revision()), 'revise_interaction',
+      { interaction_id: root, expected_head_event_id: root, kind: 'note', payload: { text: 'Correction' } },
+      handleReviseInteraction,
+    );
+    expect(changed.status).toBe('applied');
+    expect((await undo('act_c1_undo_chg')).status).toBe('applied');
+    expect((await undo('act_c1_undo_desc')).status).toBe('applied');
+    expect(await interactionRow(root)).toBeNull();
+    expect(await liveEqualsRebuild()).toBe(true);
+  });
+
+  it('restores the revision head when a removal after revisions is undone', async () => {
+    const root = await logNote('act_c1_undo_rm_log', 'Original');
+    const changed = await executeLedgerCommand(
+      env.DB, makeContext('act_c1_undo_rm_rev', await revision()), 'revise_interaction',
+      { interaction_id: root, expected_head_event_id: root, kind: 'note', payload: { text: 'Correction' } },
+      handleReviseInteraction,
+    );
+    const head = (changed.data as { head_event_id: string }).head_event_id;
+    const removed = await executeLedgerCommand(
+      env.DB, makeContext('act_c1_undo_rm_rem', await revision()), 'remove_interaction',
+      { interaction_id: root, expected_head_event_id: head },
+      handleRemoveInteraction,
+    );
+    expect(removed.status).toBe('applied');
+    expect((await undo('act_c1_undo_rm_rem')).status).toBe('applied');
+    expect(await interactionRow(root)).toMatchObject({ head_event_id: head, state: 'active' });
+    expect(await liveEqualsRebuild()).toBe(true);
+  });
+
+  it('restores entity lifecycle rows when entity deletion is undone', async () => {
+    const create = await executeLedgerCommand(
+      env.DB, makeContext('act_c1_undo_ent', await revision()), 'create_entity',
+      { name: 'Undo Lead' }, handleCreateEntity,
+    );
+    expect(create.status).toBe('applied');
+    const entityRow = await env.DB.prepare(`SELECT id FROM entities WHERE workspace_id = ? AND name = ?`)
+      .bind(WS, 'Undo Lead').first<{ id: string }>();
+    const logged = await executeLedgerCommand(
+      env.DB, makeContext('act_c1_undo_ent_log', await revision()), 'log_event',
+      { entity_id: entityRow!.id, kind: 'visit', payload: { summary: 'Only visit', contact_made: true } },
+      handleLogEvent,
+    );
+    const root = (logged.data as { event_id: string }).event_id;
+    const deleted = await executeLedgerCommand(
+      env.DB, makeContext('act_c1_undo_ent_del', await revision()), 'delete_entity',
+      { entity_id: entityRow!.id, confirm: 'yes' }, handleDeleteEntity,
+    );
+    expect(deleted.status).toBe('applied');
+    expect(await interactionRow(root)).toBeNull();
+    expect((await undo('act_c1_undo_ent_del')).status).toBe('applied');
+    expect(await interactionRow(root)).toMatchObject({ head_event_id: root, state: 'active' });
+    expect(await liveEqualsRebuild()).toBe(true);
+  });
+
+  it('reverts a from_here chain while leaving unrelated teammate work intact', async () => {
+    await env.DB.prepare(
+      `INSERT OR IGNORE INTO workspace_users (workspace_id, user_id, role, joined_at, created_at, updated_at)
+       VALUES (?, ?, 'member', ?, ?, ?)`,
+    ).bind(WS, TEAMMATE, NOW, NOW, NOW).run();
+    const root = await logNote('act_c1_undo_fh_log', 'Chain entry');
+    const changed = await executeLedgerCommand(
+      env.DB, makeContext('act_c1_undo_fh_rev', await revision()), 'revise_interaction',
+      { interaction_id: root, expected_head_event_id: root, kind: 'note', payload: { text: 'Chain correction' } },
+      handleReviseInteraction,
+    );
+    expect(changed.status).toBe('applied');
+    // Teammate work in another run is outside the from_here scope.
+    const tmLog = await executeLedgerCommand(
+      env.DB,
+      makeContext('act_c1_undo_fh_tm', await revision(), {
+        actor: { kind: 'member', user_id: TEAMMATE },
+        source_message_id: 'msg_interact_tm',
+        run_id: 'run-interact-tm',
+      }),
+      'log_event',
+      { entity_id: null, kind: 'note', payload: { text: 'Teammate entry' } },
+      handleLogEvent,
+    );
+    expect(tmLog.status).toBe('applied');
+    const tmRoot = (tmLog.data as { event_id: string }).event_id;
+    const undone = await undo('act_c1_undo_fh_log', 'from_here');
+    expect(undone.status).toBe('applied');
+    expect(await interactionRow(root)).toBeNull();
+    expect(await interactionRow(tmRoot)).toMatchObject({ head_event_id: tmRoot, state: 'active' });
+    expect(await liveEqualsRebuild()).toBe(true);
+  });
+
+  it('asks before undoing an original with a genuinely later teammate revision', async () => {
+    await env.DB.prepare(
+      `INSERT OR IGNORE INTO workspace_users (workspace_id, user_id, role, joined_at, created_at, updated_at)
+       VALUES (?, ?, 'member', ?, ?, ?)`,
+    ).bind(WS, TEAMMATE, NOW, NOW, NOW).run();
+    const root = await logNote('act_c1_undo_dep_log', 'Original');
+    const tmRev = await executeLedgerCommand(
+      env.DB,
+      makeContext('act_c1_undo_dep_tm', await revision(), {
+        actor: { kind: 'member', user_id: TEAMMATE },
+        source_message_id: 'msg_interact_tm',
+        run_id: 'run-interact-tm',
+      }),
+      'revise_interaction',
+      { interaction_id: root, expected_head_event_id: root, kind: 'note', payload: { text: 'Teammate correction' } },
+      handleReviseInteraction,
+    );
+    expect(tmRev.status).toBe('applied');
+    const preview = await undo('act_c1_undo_dep_log');
+    expect(preview.status).toBe('needs_clarification');
     expect(await liveEqualsRebuild()).toBe(true);
   });
 });

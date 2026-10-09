@@ -18,6 +18,7 @@
 import { readTargetChat, readTelegramLink } from '../brief/read.js';
 import { BRIEF_TELEGRAM_INSTALLATION_DEFAULT } from '../brief/service.js';
 import { buildTelegramDeliveryStatements } from '../inbox/telegramDelivery.js';
+import { ENTITY_FAMILY_SQL, familyBinds } from '../entities/canonical.js';
 
 export interface ReminderRow {
   id: string;
@@ -31,6 +32,11 @@ export interface ReminderRow {
   channel: 'web' | 'telegram';
   status: 'pending' | 'sent' | 'cancelled' | 'failed';
   last_error: string | null;
+  rule_id: string | null;
+  rule_revision: number | null;
+  interaction_id: string | null;
+  head_event_id: string | null;
+  updated_at: string;
 }
 
 export interface CreateReminderParams {
@@ -89,6 +95,11 @@ function toRow(r: Record<string, unknown>): ReminderRow {
     channel: r['channel'] === 'telegram' ? 'telegram' : 'web',
     status: r['status'] as ReminderRow['status'],
     last_error: r['last_error'] ? String(r['last_error']) : null,
+    rule_id: r.rule_id ? String(r.rule_id) : null,
+    rule_revision: r.rule_revision == null ? null : Number(r.rule_revision),
+    interaction_id: r.interaction_id ? String(r.interaction_id) : null,
+    head_event_id: r.head_event_id ? String(r.head_event_id) : null,
+    updated_at: String(r.updated_at),
   };
 }
 
@@ -278,7 +289,7 @@ async function deliverReminder(
   reminder: ReminderRow,
   nowIso: string,
   telegramInstallationId: string,
-): Promise<'delivered' | 'failed'> {
+): Promise<'delivered' | 'failed' | 'cancelled'> {
   const chatId = await resolveDeliveryChat(db, reminder, nowIso);
   const messageId = `msg_rem_${reminder.id}`;
   const activityId = `act_rem_${reminder.id}`;
@@ -296,7 +307,20 @@ async function deliverReminder(
     .bind(messageId)
     .first();
   if (!existing) {
+    const guardId = `reminder_delivery_${crypto.randomUUID()}`;
+    const rule = reminder.rule_id ? await db.prepare('SELECT entity_id FROM reminder_rules WHERE workspace_id = ? AND id = ?').bind(reminder.workspace_id, reminder.rule_id).first<{ entity_id: string | null }>() : null;
     const statements: D1PreparedStatement[] = [
+      db.prepare(`${ENTITY_FAMILY_SQL} INSERT INTO ledger_guards(id, guard_ok) VALUES (?, (SELECT 1 FROM reminders pending
+        WHERE pending.id = ? AND pending.workspace_id = ? AND pending.user_id = ? AND pending.status = 'pending'
+        AND pending.text = ? AND pending.remind_at = ?
+        AND EXISTS (SELECT 1 FROM workspace_users m WHERE m.workspace_id = pending.workspace_id AND m.user_id = pending.user_id)
+        AND (pending.rule_id IS NULL OR EXISTS (SELECT 1 FROM reminder_rules r WHERE r.id = pending.rule_id AND r.workspace_id = pending.workspace_id AND r.user_id = pending.user_id AND r.status = 'active' AND r.revision = pending.rule_revision
+          AND (pending.interaction_id IS NULL OR EXISTS (SELECT 1 FROM interaction_state quote WHERE quote.workspace_id = pending.workspace_id AND quote.root_event_id = pending.interaction_id AND quote.head_event_id = pending.head_event_id AND quote.state = 'active' AND json_extract(quote.head_value_json, '$.role') = json_extract(r.spec_json, '$.role')
+            AND (json_extract(r.spec_json, '$.if_no_contact') != 1 OR (
+              NOT EXISTS (SELECT 1 FROM interaction_state contact JOIN events ce ON ce.id = contact.head_event_id AND ce.workspace_id = contact.workspace_id WHERE contact.workspace_id = pending.workspace_id AND contact.entity_id IN (SELECT id FROM family) AND contact.state = 'active' AND contact.occurred_at >= quote.occurred_at AND (contact.kind = 'contact' OR contact.kind = 'visit' AND json_extract(ce.payload_json, '$.contact_made') = 1))
+              AND NOT EXISTS (SELECT 1 FROM events sent WHERE sent.workspace_id = pending.workspace_id AND sent.entity_id IN (SELECT id FROM family) AND sent.kind = 'message_sent_by_member' AND sent.occurred_at >= quote.occurred_at AND NOT EXISTS (SELECT 1 FROM events reverted WHERE reverted.workspace_id = sent.workspace_id AND reverted.kind = 'revert' AND (reverted.reverts_event_id = sent.id OR json_extract(reverted.payload_json, '$.target_event_id') = sent.id)))
+            )))))
+        )))`).bind(...familyBinds(reminder.workspace_id, rule?.entity_id ?? '__none__'), guardId, reminder.id, reminder.workspace_id, reminder.user_id, reminder.text, reminder.remind_at),
       db.prepare(
         `INSERT OR IGNORE INTO system_jobs (id, workspace_id, job_kind, status, scheduled_at, attempt_count, max_attempts, created_at, updated_at)
          VALUES (?, ?, 'reminder', 'succeeded', ?, 1, 3, ?, ?)`,
@@ -350,6 +374,9 @@ async function deliverReminder(
         );
       }
     }
+    statements.push(db.prepare("UPDATE reminders SET status = 'sent', updated_at = ? WHERE id = ? AND workspace_id = ? AND status = 'pending'").bind(nowIso, reminder.id, reminder.workspace_id));
+    if (reminder.rule_id) statements.push(db.prepare('UPDATE reminder_rule_cursors SET last_delivered_at = ? WHERE workspace_id = ? AND rule_id = ? AND rule_revision = ?').bind(nowIso, reminder.workspace_id, reminder.rule_id, reminder.rule_revision));
+    statements.push(db.prepare('DELETE FROM ledger_guards WHERE id = ?').bind(guardId));
     try {
       await db.batch(statements);
     } catch (err) {
@@ -360,7 +387,13 @@ async function deliverReminder(
         .prepare(`SELECT id FROM chat_messages WHERE id = ?`)
         .bind(messageId)
         .first();
-      if (!raced) throw err;
+      if (!raced) {
+        if (String(err).includes('guard_ok')) {
+          await db.prepare("UPDATE reminders SET status = 'cancelled', last_error = 'Follow-up changed or its condition was satisfied.', updated_at = ? WHERE id = ? AND status = 'pending' AND text = ? AND remind_at = ?").bind(nowIso, reminder.id, reminder.text, reminder.remind_at).run();
+          return 'cancelled';
+        }
+        throw err;
+      }
     }
   }
   const marked = await db
@@ -420,24 +453,21 @@ export async function processDueReminders(
       // payload ids (a concurrent persist collides on PK and collapses into
       // the sent marker) and the conditional sent mark below — exactly one
       // message ever persists per reminder.
-      const claimed = await db
-        .prepare(`UPDATE reminders SET updated_at = ? WHERE id = ? AND status = 'pending'`)
-        .bind(nowIso, reminder.id)
-        .run();
-      if ((claimed.meta.changes ?? 0) !== 1) continue;
       const outcome = await deliverReminder(db, reminder, nowIso, installationId);
       if (outcome === 'delivered') {
         result.delivered++;
+      } else if (outcome === 'cancelled') {
+        result.cancelled++;
       } else {
         await db
-          .prepare(`UPDATE reminders SET status = 'failed', last_error = ?, updated_at = ? WHERE id = ?`)
+          .prepare(`UPDATE reminders SET status = 'failed', last_error = ?, updated_at = ? WHERE id = ? AND status = 'pending'`)
           .bind('Delivery did not settle.', nowIso, reminder.id)
           .run();
         result.failed++;
       }
     } catch (err) {
       await db
-        .prepare(`UPDATE reminders SET status = 'failed', last_error = ?, updated_at = ? WHERE id = ?`)
+        .prepare(`UPDATE reminders SET status = 'failed', last_error = ?, updated_at = ? WHERE id = ? AND status = 'pending'`)
         .bind(err instanceof Error ? err.message.slice(0, 500) : 'Delivery failed.', nowIso, reminder.id)
         .run();
       result.failed++;

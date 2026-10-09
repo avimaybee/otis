@@ -9,6 +9,10 @@
 export * from './chat.js';
 export * from './voice.js';
 export * from './media.js';
+export * from './interactions.js';
+export * from './business.js';
+export * from './history.js';
+export * from './reminderRules.js';
 
 // --- Base Result & Error Types ---
 
@@ -651,6 +655,12 @@ export type LedgerEventKind =
   | 'memory_forgotten'
   | 'entity_deleted'
   | 'interaction_removed'
+  | 'contact_changed'
+  | 'entity_merged'
+  | 'attachment_linked'
+  | 'attachment_unlinked'
+  | 'reminder_rule_changed'
+  | 'attachment_updated'
   | 'revert';
 
 export type Provenance = 'stated' | 'inferred';
@@ -762,6 +772,7 @@ export interface ReviseInteractionResult {
   event_id: string;
   interaction_id: string;
   head_event_id: string;
+  current?: import('./interactions.js').CurrentInteraction;
 }
 
 /** Result data for a successful `remove_interaction` commit. */
@@ -769,6 +780,7 @@ export interface RemoveInteractionResult {
   event_id: string;
   interaction_id: string;
   head_event_id: string;
+  current?: import('./interactions.js').CurrentInteraction;
 }
 
 export interface LedgerEvent<T = unknown> {
@@ -829,6 +841,8 @@ export interface EntityStateField {
   last_confirmed_value_json?: string | null;
   revision: number;
   updated_at: string;
+  /** Quote-only, replay-derived explicit decision and the claims it considered. */
+  quote_authority_json?: string | null;
 }
 
 export interface Task {
@@ -1048,3 +1062,5 @@ export const DOMAIN_BOUNDS = {
   EXPORT_RETENTION_HOURS: 24,
   DOWNLOAD_TICKET_TTL_SECONDS: 15 * 60, // 15 minutes
 } as const;
+export * from './entityFile.js';
+export * from './money.js';

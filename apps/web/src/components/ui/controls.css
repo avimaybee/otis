@@ -161,6 +161,19 @@
 @media (prefers-reduced-motion: reduce) { .otis-spinner { animation: none; } }
 
 /* Copy confirmations only. */
+/* Optional file editors/viewers reuse the approved wide dialog's viewport cap.
+   The original's viewport bound leaves the source and navigation in reach. */
+[data-slot="dialog-content"].otis-file-dialog {
+  width: min(600px, calc(100vw - 32px));
+  max-width: none;
+  max-height: min(85dvh, 640px);
+  overflow-y: auto;
+}
+.otis-file-original {
+  width: 100%;
+  height: min(520px, 45dvh);
+  object-fit: contain;
+}
 .otis-toast { --normal-bg: var(--popover); --normal-text: var(--popover-foreground); --normal-border: var(--border); }
 .otis-member-avatar { display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; border-radius: 9999px; background: var(--accent); border: 1px solid var(--border); color: var(--muted-foreground); flex-shrink: 0; }
 .otis-status-dot { display: inline-block; width: 6px; height: 6px; border-radius: 9999px; background-color: var(--success); flex-shrink: 0; }

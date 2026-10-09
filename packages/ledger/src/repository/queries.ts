@@ -16,6 +16,9 @@ import type {
   Task,
 } from '@otis/contracts';
 import type { LedgerProjectionState, ProjectionCoverage } from '../types.js';
+import { CURRENT_INTERACTION_COLUMNS, CURRENT_INTERACTION_JOINS, mapCurrentInteraction } from './interactions.js';
+import { hydrateBusinessDetails } from './business.js';
+import { ENTITY_FAMILY_SQL, familyBinds } from './canonical.js';
 
 export async function getWorkspaceRevision(
   db: D1Database,
@@ -176,6 +179,8 @@ function mapAliasRow(r: Record<string, unknown>): EntityAlias {
 }
 
 function mapInteractionRow(r: Record<string, unknown>): InteractionState {
+  const raw = r['head_value_json'] ? JSON.parse(String(r['head_value_json'])) as Record<string, unknown> : null;
+  const valid = raw && typeof raw['amount'] === 'number' && typeof raw['currency'] === 'string' && typeof raw['role'] === 'string';
   return {
     workspace_id: String(r['workspace_id']),
     root_event_id: String(r['root_event_id']),
@@ -187,7 +192,7 @@ function mapInteractionRow(r: Record<string, unknown>): InteractionState {
     occurred_at: String(r['occurred_at']),
     sequence: Number(r['sequence']),
     updated_at: String(r['updated_at']),
-    head_value_json: r['head_value_json'] ? String(r['head_value_json']) : null,
+    head_value_json: valid ? JSON.stringify({ amount: raw['amount'], currency: raw['currency'], role: raw['role'] }) : null,
   };
 }
 
@@ -213,6 +218,7 @@ function mapFieldRow(r: Record<string, unknown>): EntityStateField {
       : null,
     revision: Number(r['revision']),
     updated_at: String(r['updated_at']),
+    ...(r['field_name'] === 'quote' ? { quote_authority_json: r['quote_authority_json'] ? String(r['quote_authority_json']) : null } : {}),
   };
 }
 
@@ -223,7 +229,7 @@ const ALIAS_COLUMNS =
 const FIELD_COLUMNS =
   `id, workspace_id, entity_id, field_name, state, value_text, value_json,
    provenance, source_event_id, candidate_event_ids_json, last_confirmed_value_text,
-   last_confirmed_value_json, revision, updated_at`;
+   last_confirmed_value_json, revision, updated_at, quote_authority_json`;
 
 const INTERACTION_COLUMNS =
   `workspace_id, root_event_id, entity_id, kind, head_event_id, revision,
@@ -424,11 +430,10 @@ export async function getWorkspaceProjectionState(
     if (!String(err).includes('no such table')) throw err;
   }
 
-  // Interaction lifecycle rows are opt-in on the full loader: ordinary
-  // writes hydrate them scoped (or not at all) through the executor, so a
-  // full-workspace interaction scan plus fingerprinting never rides along
-  // on every command. Direct readers keep the complete view by default.
   if (options?.includeInteractions === false) return state;
+  // The default is complete for unknown/custom handlers, especially Undo,
+  // which must see every existing row to persist replay's deletions.
+  // The executor opts known unrelated writers out by handler identity.
   try {
     const interactionRows = (
       await db
@@ -444,6 +449,8 @@ export async function getWorkspaceProjectionState(
     if (!String(err).includes('no such table')) throw err;
   }
 
+  try { await hydrateBusinessDetails(db, workspaceId, state); }
+  catch (error) { if (!String(error).includes('no such table')) throw error; }
   return state;
 }
 
@@ -456,6 +463,74 @@ export async function getWorkspaceProjectionState(
  * every field write with the workspace. An absent requested field is known
  * absent, an unrequested field untouched.
  */
+export async function getBusinessProjectionState(db: D1Database, workspaceId: string, entityIds: string[], includeFields: boolean): Promise<{ state: LedgerProjectionState; coverage: ProjectionCoverage }> {
+  const state: LedgerProjectionState = { entities: new Map(), aliases: new Map(), fields: new Map(), interactions: new Map(), tasks: new Map(), drafts: new Map(), memoryEntries: new Map(), memorySuppressions: new Map() };
+  const placeholders = entityIds.map(() => '?').join(',');
+  const familySql = `WITH RECURSIVE ancestors(id, depth) AS (SELECT id, 0 FROM entities WHERE workspace_id = ? AND id IN (${placeholders})
+    UNION ALL SELECT r.target_entity_id, a.depth + 1 FROM ancestors a JOIN entity_redirects r ON r.source_entity_id = a.id AND r.workspace_id = ? WHERE a.depth < 32),
+    family(id) AS (SELECT id FROM ancestors UNION SELECT r.source_entity_id FROM family f JOIN entity_redirects r ON r.target_entity_id = f.id AND r.workspace_id = ?) `;
+  const familyArgs = [workspaceId, ...entityIds, workspaceId, workspaceId];
+  const results = await db.batch([
+    db.prepare(`${familySql} SELECT ${ENTITY_COLUMNS} FROM entities WHERE workspace_id = ? AND id IN (SELECT id FROM family)`).bind(...familyArgs, workspaceId),
+    db.prepare(`${familySql} SELECT ${FIELD_COLUMNS} FROM entity_state WHERE workspace_id = ? AND entity_id IN (SELECT id FROM family)${includeFields ? '' : ' AND 0'}`).bind(...familyArgs, workspaceId),
+    db.prepare(`${familySql} SELECT id, workspace_id, entity_id, alias, source_event_id, created_at FROM entity_aliases WHERE workspace_id = ? AND entity_id IN (SELECT id FROM family)`).bind(...familyArgs, workspaceId),
+    db.prepare(`${familySql} SELECT * FROM entity_contacts WHERE workspace_id = ? AND entity_id IN (SELECT id FROM family)`).bind(...familyArgs, workspaceId),
+    db.prepare(`${familySql} SELECT * FROM entity_redirects WHERE workspace_id = ? AND source_entity_id IN (SELECT id FROM family)`).bind(...familyArgs, workspaceId),
+    db.prepare(`${familySql} SELECT ${INTERACTION_COLUMNS} FROM interaction_state WHERE workspace_id = ? AND entity_id IN (SELECT id FROM family) AND kind = 'quote' AND state = 'active'${includeFields ? '' : ' AND 0'}`).bind(...familyArgs, workspaceId),
+    ...(includeFields ? [db.prepare(`${familySql} SELECT ent.id AS entity_id,
+      (SELECT COUNT(*) FROM events r WHERE r.workspace_id = ent.workspace_id AND r.entity_id = ent.id) AS history,
+      (SELECT COUNT(*) FROM interaction_state r WHERE r.workspace_id = ent.workspace_id AND r.entity_id = ent.id AND r.state = 'active') AS interactions,
+      (SELECT COUNT(*) FROM tasks r WHERE r.workspace_id = ent.workspace_id AND r.entity_id = ent.id) AS tasks,
+      (SELECT COUNT(*) FROM draft_projections r WHERE r.workspace_id = ent.workspace_id AND r.entity_id = ent.id) AS drafts,
+      (SELECT COUNT(*) FROM attachment_links r WHERE r.workspace_id = ent.workspace_id AND r.entity_id = ent.id) AS files,
+      (SELECT COUNT(*) FROM memory_entries r WHERE r.workspace_id = ent.workspace_id AND r.subject_id = ent.id AND r.scope = 'entity' AND r.status = 'active') AS context,
+      (SELECT COUNT(*) FROM entity_contacts r WHERE r.workspace_id = ent.workspace_id AND r.entity_id = ent.id AND r.state != 'removed') AS contacts
+      FROM entities ent WHERE ent.workspace_id = ? AND ent.id IN (SELECT id FROM family)`).bind(...familyArgs, workspaceId)] : []),
+  ]);
+  for (const row of (results[0]!.results ?? []) as Record<string, unknown>[]) { const e = mapEntityRow(row); state.entities.set(e.id, e); }
+  for (const row of (results[1]!.results ?? []) as Record<string, unknown>[]) { const f = mapFieldRow(row); state.fields.set(`${f.entity_id}:${f.field_name}`, f); }
+  for (const row of (results[2]!.results ?? []) as Record<string, unknown>[]) { const a = row as unknown as EntityAlias; state.aliases.set(`${workspaceId}:${a.alias.toLowerCase()}`, a); }
+  state.contacts = new Map(((results[3]!.results ?? []) as Record<string, unknown>[]).map(r => [String(r.id), { ...r, is_primary: Boolean(r.is_primary) } as unknown as import('@otis/contracts').EntityContact]));
+  state.redirects = new Map(((results[4]!.results ?? []) as Record<string, unknown>[]).map(r => { const { decisions_json, ...rest } = r; return [String(r.source_entity_id), { ...rest, decisions: JSON.parse(String(decisions_json)) } as unknown as import('@otis/contracts').EntityRedirect]; }));
+  for (const row of (results[5]!.results ?? []) as Record<string, unknown>[]) { const i = mapInteractionRow(row); state.interactions.set(i.root_event_id, i); }
+  state.mergeCounts = new Map();
+  for (const r of (results[6]?.results ?? []) as Record<string, unknown>[]) { const { entity_id, ...counts } = r; state.mergeCounts.set(String(entity_id), Object.fromEntries(Object.entries(counts).map(([key, value]) => [key, Number(value)]))); }
+  const fieldKeys = new Set(state.fields.keys());
+  if (includeFields) for (const id of state.entities.keys()) for (const name of ['status', 'assigned_user_id', ...[...state.fields.values()].map(f => f.field_name)]) fieldKeys.add(`${id}:${name}`);
+  return { state, coverage: { entities: new Set(state.entities.keys()), aliases: new Set(state.aliases.keys()), fields: fieldKeys, interactions: new Set(state.interactions.keys()), tasks: new Set(), drafts: new Set(), memoryEntries: new Set(), memorySuppressions: new Set() } };
+}
+
+export async function expandCanonicalProjectionState(db: D1Database, workspaceId: string, state: LedgerProjectionState, coverage: ProjectionCoverage, entityId: string, fieldNames: string[]): Promise<void> {
+  if (state.redirects?.size === 0) return;
+  try { if (!(fieldNames.includes('phone') && state.contacts)) await hydrateBusinessDetails(db, workspaceId, state, [entityId], ['entity_redirects']); }
+  catch (error) { if (String(error).includes('no such table')) return; throw error; }
+  const parents: string[] = []; let id = entityId;
+  while (state.redirects?.has(id)) {
+    id = state.redirects.get(id)!.target_entity_id;
+    if (parents.includes(id) || parents.length >= 32) throw new Error('Invalid client redirect chain.');
+    parents.push(id);
+  }
+  if (!parents.length && !(fieldNames.includes('quote') && state.redirects?.size)) return;
+  const marks = parents.length ? parents.map(() => '?').join(',') : "'__none__'";
+  const names = fieldNames.length ? fieldNames : ['__no_fields__'];
+  const queries = [
+    db.prepare(`SELECT ${ENTITY_COLUMNS} FROM entities WHERE workspace_id = ? AND id IN (${marks})`).bind(workspaceId, ...parents),
+    db.prepare(`SELECT ${FIELD_COLUMNS} FROM entity_state WHERE workspace_id = ? AND entity_id IN (${marks}) AND field_name IN (${names.map(() => '?').join(',')})`).bind(workspaceId, ...parents, ...names),
+  ];
+  if (names.includes('quote')) {
+    queries.push(db.prepare(`${ENTITY_FAMILY_SQL} SELECT ${INTERACTION_COLUMNS} FROM interaction_state WHERE workspace_id = ? AND entity_id IN (SELECT id FROM family) AND kind = 'quote' AND state = 'active'`).bind(...familyBinds(workspaceId, entityId), workspaceId));
+    queries.push(db.prepare(`${ENTITY_FAMILY_SQL} SELECT * FROM entity_redirects WHERE workspace_id = ? AND source_entity_id IN (SELECT id FROM family)`).bind(...familyBinds(workspaceId, entityId), workspaceId));
+  }
+  const rows = await db.batch(queries);
+  for (const row of (rows[0]!.results ?? []) as Record<string, unknown>[]) { const e = mapEntityRow(row); state.entities.set(e.id, e); }
+  for (const row of (rows[1]!.results ?? []) as Record<string, unknown>[]) { const f = mapFieldRow(row); state.fields.set(`${f.entity_id}:${f.field_name}`, f); }
+  for (const row of (rows[2]?.results ?? []) as Record<string, unknown>[]) { const i = mapInteractionRow(row); state.interactions.set(i.root_event_id, i); }
+  for (const row of (rows[3]?.results ?? []) as Record<string, unknown>[]) { const { decisions_json, ...rest } = row; state.redirects!.set(String(row.source_entity_id), { ...rest, decisions: JSON.parse(String(decisions_json)) } as unknown as import('@otis/contracts').EntityRedirect); }
+  if (coverage.entities !== 'all') for (const parent of parents) coverage.entities.add(parent);
+  if (coverage.fields !== 'all') for (const parent of parents) for (const name of fieldNames) coverage.fields.add(`${parent}:${name}`);
+  if (coverage.interactions !== 'all') for (const key of state.interactions.keys()) coverage.interactions.add(key);
+}
+
 export async function getFieldProjectionState(
   db: D1Database,
   workspaceId: string,
@@ -486,14 +561,22 @@ export async function getFieldProjectionState(
           )
           .bind(workspaceId, entityId, ...distinctFields)
       : db.prepare(`SELECT ${FIELD_COLUMNS} FROM entity_state WHERE 1 = 0`),
+    ...(distinctFields.includes('quote') ? [db.prepare(
+      `SELECT ${INTERACTION_COLUMNS} FROM interaction_state
+       WHERE workspace_id = ? AND entity_id = ? AND kind = 'quote' AND state = 'active'`,
+    ).bind(workspaceId, entityId)] : []),
+    ...(distinctFields.includes('phone') ? [db.prepare(`${ENTITY_FAMILY_SQL} SELECT * FROM entity_contacts WHERE workspace_id = ? AND entity_id IN (SELECT id FROM family)`).bind(...familyBinds(workspaceId, entityId), workspaceId)] : []),
+    distinctFields.includes('phone') ? db.prepare(`${ENTITY_FAMILY_SQL} SELECT * FROM entity_redirects WHERE workspace_id = ? AND source_entity_id IN (SELECT id FROM family)`).bind(...familyBinds(workspaceId, entityId), workspaceId) : db.prepare('SELECT * FROM entity_redirects WHERE workspace_id = ? AND (source_entity_id = ? OR target_entity_id = ?)').bind(workspaceId, entityId, entityId),
   ]);
   const rowsAt = (index: number): Record<string, unknown>[] =>
     ((loaded[index] as unknown as { results?: Record<string, unknown>[] }).results ?? []);
 
+  state.redirects = new Map(rowsAt(loaded.length - 1).map(r => { const { decisions_json, ...rest } = r; return [String(r.source_entity_id), { ...rest, decisions: JSON.parse(String(decisions_json)) } as unknown as import('@otis/contracts').EntityRedirect]; }));
   for (const r of rowsAt(0)) {
     const e = mapEntityRow(r);
     state.entities.set(e.id, e);
   }
+  if (distinctFields.includes('phone')) state.contacts = new Map(rowsAt(loaded.length - 2).map(r => [String(r.id), { ...r, is_primary: Boolean(r.is_primary) } as unknown as import('@otis/contracts').EntityContact]));
   const fieldKeys = new Set<string>();
   for (const r of rowsAt(1)) {
     const f = mapFieldRow(r);
@@ -504,6 +587,12 @@ export async function getFieldProjectionState(
   // a requested field is inside the footprint, touching any other field is
   // not.
   for (const name of distinctFields) fieldKeys.add(`${entityId}:${name}`);
+  if (distinctFields.includes('quote')) {
+    for (const r of rowsAt(2)) {
+      const row = mapInteractionRow(r);
+      state.interactions.set(row.root_event_id, row);
+    }
+  }
 
   return {
     state,
@@ -511,7 +600,7 @@ export async function getFieldProjectionState(
       entities: new Set([entityId]),
       aliases: new Set(),
       fields: fieldKeys,
-      interactions: new Set(),
+      interactions: new Set(state.interactions.keys()),
       tasks: new Set(),
       drafts: new Set(),
       memoryEntries: new Set(),
@@ -520,42 +609,19 @@ export async function getFieldProjectionState(
   };
 }
 
-/**
- * Entity-scoped interaction rows for the delete_entity commit path: only
- * the doomed entity's lifecycle is loaded, never the workspace history.
- * Tolerant of pre-C1 databases, where there is simply nothing to drop.
- */
+/** Entity deletion needs only its own lifecycle rows to persist removals. */
 export async function getEntityInteractions(
-  db: D1Database,
-  workspaceId: string,
-  entityId: string,
+  db: D1Database, workspaceId: string, entityId: string,
 ): Promise<Map<string, InteractionState>> {
-  const rows = new Map<string, InteractionState>();
-  try {
-    const found = (
-      await db
-        .prepare(`SELECT ${INTERACTION_COLUMNS} FROM interaction_state WHERE workspace_id = ? AND entity_id = ?`)
-        .bind(workspaceId, entityId)
-        .all<Record<string, unknown>>()
-    ).results || [];
-    for (const r of found) {
-      const row = mapInteractionRow(r);
-      rows.set(row.root_event_id, row);
-    }
-  } catch (err) {
-    if (!String(err).includes('no such table')) throw err;
-  }
-  return rows;
+  const result = await db.prepare(`SELECT ${INTERACTION_COLUMNS} FROM interaction_state
+    WHERE workspace_id = ? AND entity_id = ?`).bind(workspaceId, entityId).all<Record<string, unknown>>();
+  return new Map((result.results ?? []).map(value => {
+    const row = mapInteractionRow(value);
+    return [row.root_event_id, row];
+  }));
 }
 
-/**
- * Targeted hydration for the C1 revise/remove interaction handlers: the
- * single interaction row, its scoped entity, and — for quote kinds — the
- * shared quote field row the revision reduces into. One D1 batch; the
- * caller never scans workspace history to resolve a root. A requested
- * quote field is covered whether present or known absent. Databases
- * predating the C1 migration resolve unknown roots, never fake rows.
- */
+/** Target plus content, scoped entity, and active quote dependencies only. */
 export async function getInteractionProjectionState(
   db: D1Database,
   workspaceId: string,
@@ -584,10 +650,14 @@ export async function getInteractionProjectionState(
   let row: InteractionState | null = null;
   try {
     const found = await db
-      .prepare(`SELECT ${INTERACTION_COLUMNS} FROM interaction_state WHERE workspace_id = ? AND root_event_id = ?`)
+      .prepare(`SELECT ${CURRENT_INTERACTION_COLUMNS}, i.workspace_id, i.state, i.updated_at, i.head_value_json
+        ${CURRENT_INTERACTION_JOINS} WHERE i.workspace_id = ? AND i.root_event_id = ?`)
       .bind(workspaceId, rootEventId)
       .first<Record<string, unknown>>();
-    if (found) row = mapInteractionRow(found);
+    if (found) {
+      row = mapInteractionRow(found);
+      state.interactionHeads = new Map([[row.root_event_id, mapCurrentInteraction(found)]]);
+    }
   } catch (err) {
     if (!String(err).includes('no such table')) throw err;
     return { state, coverage };
@@ -597,11 +667,11 @@ export async function getInteractionProjectionState(
   (coverage.interactions as Set<string>).add(row.root_event_id);
   if (!row.entity_id) return { state, coverage };
 
-  // Sibling roots of the same entity and kind feed head-aware field
-  // recompute: revising one disputant must see the others to preserve the
-  // dispute instead of overwriting it. Entity histories stay small; the
-  // read is indexed and never workspace-wide.
-  const loaded = await db.batch([
+  // Sibling roots feed head-aware quote recompute only: revising one
+  // disputant must see the other active heads to preserve the dispute
+  // instead of overwriting it. Non-quote edits need just their target, and
+  // removed roots contribute nothing, so both stay unloaded.
+  const statements: D1PreparedStatement[] = [
     db
       .prepare(`SELECT ${ENTITY_COLUMNS} FROM entities WHERE workspace_id = ? AND id = ?`)
       .bind(workspaceId, row.entity_id),
@@ -613,15 +683,23 @@ export async function getInteractionProjectionState(
           )
           .bind(workspaceId, row.entity_id)
       : db.prepare(`SELECT ${FIELD_COLUMNS} FROM entity_state WHERE 1 = 0`),
-    db
-      .prepare(
-        `SELECT ${INTERACTION_COLUMNS} FROM interaction_state
-         WHERE workspace_id = ? AND entity_id = ? AND kind = ? AND root_event_id != ?`,
-      )
-      .bind(workspaceId, row.entity_id, row.kind, row.root_event_id),
-  ]);
+  ];
+  if (row.kind === 'quote') {
+    statements.push(
+      db
+        .prepare(
+          `SELECT ${INTERACTION_COLUMNS} FROM interaction_state
+           WHERE workspace_id = ? AND entity_id = ? AND kind = ?
+             AND state = 'active' AND root_event_id != ?`,
+        )
+        .bind(workspaceId, row.entity_id, row.kind, row.root_event_id),
+    );
+  }
+  statements.push(db.prepare('SELECT * FROM entity_redirects WHERE workspace_id = ? AND (source_entity_id = ? OR target_entity_id = ?)').bind(workspaceId, row.entity_id, row.entity_id));
+    const loaded = await db.batch(statements);
   const rowsAt = (index: number): Record<string, unknown>[] =>
     ((loaded[index] as unknown as { results?: Record<string, unknown>[] }).results ?? []);
+  state.redirects = new Map(rowsAt(loaded.length - 1).map(r => { const { decisions_json, ...rest } = r; return [String(r.source_entity_id), { ...rest, decisions: JSON.parse(String(decisions_json)) } as unknown as import('@otis/contracts').EntityRedirect]; }));
   for (const r of rowsAt(0)) {
     const e = mapEntityRow(r);
     state.entities.set(e.id, e);
@@ -635,10 +713,101 @@ export async function getInteractionProjectionState(
   if (row.kind === 'quote') {
     (coverage.fields as Set<string>).add(`${row.entity_id}:quote`);
   }
-  for (const r of rowsAt(2)) {
-    const sibling = mapInteractionRow(r);
-    state.interactions.set(sibling.root_event_id, sibling);
-    (coverage.interactions as Set<string>).add(sibling.root_event_id);
+  if (row.kind === 'quote' && loaded.length > 2) {
+    for (const r of rowsAt(2)) {
+      const sibling = mapInteractionRow(r);
+      state.interactions.set(sibling.root_event_id, sibling);
+      (coverage.interactions as Set<string>).add(sibling.root_event_id);
+    }
+  }
+  return { state, coverage };
+}
+
+/**
+ * Targeted hydration for new log_event writes: the scoped entity row for
+ * the existence check, plus active quote siblings when the new entry is a
+ * quote (head-aware recompute must see competing heads). Nothing else is
+ * loaded: a new log creates at most one root and never reads aliases,
+ * tasks, drafts or memory. Coverage carries the entity plus an explicit
+ * create-allowance: the bounds check permits created interaction rows only
+ * for the loaded entity (or entity-less roots when the log has no entity).
+ */
+export async function getLogEventProjectionState(
+  db: D1Database,
+  workspaceId: string,
+  entityId: string | null,
+  kind: string,
+): Promise<{ state: LedgerProjectionState; coverage: ProjectionCoverage }> {
+  const state: LedgerProjectionState = {
+    entities: new Map(),
+    aliases: new Map(),
+    fields: new Map(),
+    interactions: new Map(),
+    tasks: new Map(),
+    drafts: new Map(),
+    memoryEntries: new Map(),
+    memorySuppressions: new Map(),
+  };
+  const coverage: ProjectionCoverage = {
+    entities: new Set(),
+    aliases: new Set(),
+    fields: new Set(),
+    interactions: new Set(),
+    tasks: new Set(),
+    drafts: new Set(),
+    memoryEntries: new Set(),
+    memorySuppressions: new Set(),
+  };
+  coverage.interactionCreate = { entity_id: entityId, kind };
+  if (!entityId) return { state, coverage };
+  try {
+    const statements: D1PreparedStatement[] = [
+      db
+        .prepare(`SELECT ${ENTITY_COLUMNS} FROM entities WHERE workspace_id = ? AND id = ?`)
+        .bind(workspaceId, entityId),
+    ];
+    if (kind === 'quote') {
+      statements.push(
+        db
+          .prepare(
+            `SELECT ${FIELD_COLUMNS} FROM entity_state
+             WHERE workspace_id = ? AND entity_id = ? AND field_name = 'quote'`,
+          )
+          .bind(workspaceId, entityId),
+        db
+          .prepare(
+            `SELECT ${INTERACTION_COLUMNS} FROM interaction_state
+             WHERE workspace_id = ? AND entity_id = ? AND kind = 'quote' AND state = 'active'`,
+          )
+          .bind(workspaceId, entityId),
+      );
+    } else {
+      statements.push(db.prepare(`SELECT ${FIELD_COLUMNS} FROM entity_state WHERE 1 = 0`));
+    }
+    statements.push(db.prepare('SELECT * FROM entity_redirects WHERE workspace_id = ? AND (source_entity_id = ? OR target_entity_id = ?)').bind(workspaceId, entityId, entityId));
+    const loaded = await db.batch(statements);
+    const rowsAt = (index: number): Record<string, unknown>[] =>
+      ((loaded[index] as unknown as { results?: Record<string, unknown>[] }).results ?? []);
+    state.redirects = new Map(rowsAt(loaded.length - 1).map(r => { const { decisions_json, ...rest } = r; return [String(r.source_entity_id), { ...rest, decisions: JSON.parse(String(decisions_json)) } as unknown as import('@otis/contracts').EntityRedirect]; }));
+  for (const r of rowsAt(0)) {
+      const e = mapEntityRow(r);
+      state.entities.set(e.id, e);
+      (coverage.entities as Set<string>).add(e.id);
+    }
+    for (const r of rowsAt(1)) {
+      const f = mapFieldRow(r);
+      state.fields.set(`${f.entity_id}:${f.field_name}`, f);
+    }
+    if (kind === 'quote') {
+      (coverage.fields as Set<string>).add(`${entityId}:quote`);
+      for (const r of rowsAt(2)) {
+        const sibling = mapInteractionRow(r);
+        state.interactions.set(sibling.root_event_id, sibling);
+        (coverage.interactions as Set<string>).add(sibling.root_event_id);
+      }
+    }
+  } catch (err) {
+    if (!String(err).includes('no such table')) throw err;
   }
   return { state, coverage };
 }

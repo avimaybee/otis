@@ -31,6 +31,7 @@
   "images": {
     "binding": "IMAGES"
   },
+  "ai": { "binding": "AI" },
   "durable_objects": {
     "bindings": [
       {
@@ -44,7 +45,7 @@
     "consumers": [{ "queue": "otis-dispatch", "max_batch_size": 10, "max_retries": 5 }]
   },
   "triggers": {
-    "crons": ["*/5 * * * *"]
+    "crons": ["* * * * *", "*/5 * * * *"]
   },
   "migrations": [
     {

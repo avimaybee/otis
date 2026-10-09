@@ -16,6 +16,7 @@ import { reduceFields } from '../reducers/fields.js';
 import { reduceInteractions } from '../reducers/interactions.js';
 import { reduceMemory } from '../reducers/memory.js';
 import { reduceTasks } from '../reducers/tasks.js';
+import { canonicalId } from '../reducers/business.js';
 
 const CONFIRM_VALUES = new Set(['yes', 'confirm', 'confirmed', 'delete', 'da', 'igen']);
 
@@ -66,15 +67,9 @@ export function handleDeleteEntity(
     };
   }
 
-  const event = createLedgerEvent(context, nextSequence, {
-    entity_id: entity.id,
-    kind: 'entity_deleted',
-    payload: {
-      name: entity.name,
-      reason: args.reason ?? null,
-    },
-    provenance: 'stated',
-  });
+  const canonical = canonicalId(state, entity.id);
+  const family = [...state.entities.values()].filter(e => canonicalId(state, e.id) === canonical);
+  const events = family.map((e, n) => createLedgerEvent(context, nextSequence + n, { entity_id: e.id, kind: 'entity_deleted', payload: { name: e.name, reason: args.reason ?? null, combined_client_id: family.length > 1 ? canonical : null }, provenance: 'stated' }));
 
   const nextEntities = new Map(state.entities);
   const nextAliases = new Map(state.aliases);
@@ -84,23 +79,25 @@ export function handleDeleteEntity(
   const nextDrafts = new Map(state.drafts);
   const nextMemoryEntries = new Map(state.memoryEntries);
   const nextSuppressions = new Map(state.memorySuppressions);
-  reduceEntity(nextEntities, nextAliases, event);
-  reduceInteractions(nextInteractions, event);
-  reduceFields(nextFields, nextInteractions, event);
-  reduceTasks(nextTasks, event);
-  reduceDrafts(nextDrafts, event);
-  reduceMemory(nextMemoryEntries, nextSuppressions, event);
+  for (const event of events) {
+    reduceEntity(nextEntities, nextAliases, event);
+    reduceInteractions(nextInteractions, event);
+    reduceFields(nextFields, nextInteractions, event);
+    reduceTasks(nextTasks, event);
+    reduceDrafts(nextDrafts, event);
+    reduceMemory(nextMemoryEntries, nextSuppressions, event);
+  }
 
   return {
     result: {
       status: 'applied',
       action_id: context.action_id,
-      affected_resource_ids: [entity.id],
-      event_ids: [event.id],
-      summary: `Deleted entity '${entity.name}' and all of its details.`,
+      affected_resource_ids: family.map(e => e.id),
+      event_ids: events.map(e => e.id),
+      summary: `Deleted '${entity.name}' and its ${family.length > 1 ? 'combined files and ' : ''}current details. History remains available for Undo.`,
       data: { entity_id: entity.id, name: entity.name },
     },
-    events: [event],
+    events,
     nextState: {
       ...state,
       entities: nextEntities,
