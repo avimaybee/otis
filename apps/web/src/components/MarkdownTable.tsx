@@ -1,6 +1,8 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import type { Components } from 'react-markdown';
 import { CheckIcon, CopyIcon } from './icons.js';
+
+const useIsomorphicLayoutEffect = typeof window !== 'undefined' ? useLayoutEffect : useEffect;
 
 /**
  * Tab-separated export for pasting into Sheets. Cells holding tabs,
@@ -20,13 +22,114 @@ export function tableToTsv(table: HTMLTableElement): string {
 /**
  * Production Markdown table shell for saved and streaming replies: one
  * semantic table in a locally scrolling, keyboard-accessible region plus a
- * functional Copy-table action. No sorting, filtering or download controls.
+ * functional Copy-table action. Dynamically breaks out symmetrically beyond
+ * narrow text margins when wide content needs room.
  */
 export function MarkdownTable({ children }: { children?: ReactNode }) {
+  const containerRef = useRef<HTMLDivElement>(null);
   const scroller = useRef<HTMLDivElement>(null);
   const [copied, setCopied] = useState(false);
   const timer = useRef(0);
+  const [breakoutStyle, setBreakoutStyle] = useState<React.CSSProperties>({});
+  const isBreakout = Boolean(breakoutStyle.width);
+
   useEffect(() => () => window.clearTimeout(timer.current), []);
+
+  useIsomorphicLayoutEffect(() => {
+    const container = containerRef.current;
+    const scrollerEl = scroller.current;
+    if (!container || !scrollerEl) return;
+
+    let rafId = 0;
+
+    const measureAndApply = () => {
+      const transcript = container.closest('.otis-transcript') as HTMLElement | null;
+      if (!transcript) {
+        setBreakoutStyle({});
+        return;
+      }
+
+      const table = scrollerEl.querySelector('table');
+      if (!table) {
+        setBreakoutStyle({});
+        return;
+      }
+
+      // 1. Measure intrinsic table width by temporarily letting it take max-content
+      const prevTableWidth = table.style.width;
+      table.style.width = 'max-content';
+      const intrinsicWidth = Math.ceil(table.getBoundingClientRect().width);
+      table.style.width = prevTableWidth;
+
+      // 2. Measure transcript bounds and container bounds
+      const transcriptRect = transcript.getBoundingClientRect();
+      const parentCol = container.parentElement;
+      const normalWidth = parentCol ? parentCol.clientWidth : container.clientWidth;
+
+      if (!normalWidth || intrinsicWidth <= normalWidth) {
+        setBreakoutStyle({});
+        return;
+      }
+
+      // 3. Compute available headroom on left and right within transcript
+      const safetyGutter = 16;
+      const containerRect = container.getBoundingClientRect();
+      const textColRect = parentCol ? parentCol.getBoundingClientRect() : containerRect;
+      const leftAvailable = Math.max(0, textColRect.left - transcriptRect.left - safetyGutter);
+      const rightAvailable = Math.max(0, transcriptRect.right - textColRect.right - safetyGutter);
+
+      // Max symmetric expansion without overflowing either side
+      const maxSymmetricExtra = Math.min(leftAvailable, rightAvailable) * 2;
+      const maxAllowedWidth = Math.min(1200, normalWidth + maxSymmetricExtra);
+
+      if (maxAllowedWidth <= normalWidth) {
+        setBreakoutStyle({});
+        return;
+      }
+
+      const targetWidth = Math.min(intrinsicWidth, maxAllowedWidth);
+      const extraWidth = Math.max(0, targetWidth - normalWidth);
+      const pullEachSide = Math.round(extraWidth / 2);
+
+      if (pullEachSide <= 4) {
+        setBreakoutStyle({});
+        return;
+      }
+
+      setBreakoutStyle({
+        width: `${normalWidth + extraWidth}px`,
+        marginLeft: `-${pullEachSide}px`,
+        marginRight: `-${pullEachSide}px`,
+      });
+    };
+
+    const scheduleUpdate = () => {
+      cancelAnimationFrame(rafId);
+      rafId = requestAnimationFrame(measureAndApply);
+    };
+
+    scheduleUpdate();
+
+    const transcript = container.closest('.otis-transcript') as HTMLElement | null;
+    let observer: ResizeObserver | null = null;
+    if (typeof ResizeObserver !== 'undefined') {
+      observer = new ResizeObserver(() => {
+        scheduleUpdate();
+      });
+      if (transcript) observer.observe(transcript);
+      if (container.parentElement) observer.observe(container.parentElement);
+      const table = scrollerEl.querySelector('table');
+      if (table) observer.observe(table);
+    }
+
+    window.addEventListener('resize', scheduleUpdate);
+
+    return () => {
+      cancelAnimationFrame(rafId);
+      window.removeEventListener('resize', scheduleUpdate);
+      observer?.disconnect();
+    };
+  }, [children]);
 
   const copy = async (): Promise<void> => {
     const table = scroller.current?.querySelector('table');
@@ -42,7 +145,11 @@ export function MarkdownTable({ children }: { children?: ReactNode }) {
   };
 
   return (
-    <div className="otis-mdtable">
+    <div
+      ref={containerRef}
+      className={`otis-mdtable ${isBreakout ? 'otis-mdtable--breakout' : ''}`}
+      style={breakoutStyle}
+    >
       <div className="otis-mdtable__toolbar">
         <button type="button" className="otis-mdtable__copy gap-1 text-xs" onClick={() => void copy()}>
           {copied ? <CheckIcon /> : <CopyIcon />}

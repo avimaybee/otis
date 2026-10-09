@@ -251,7 +251,7 @@ describe('Frontend Experience Audit & Confidence Verification (FE-01 - FE-16)', 
       expect(view.host.textContent).toContain('Account');
       expect(view.host.textContent).toContain('Time standard');
       expect(view.host.textContent).toContain('UTC (Auto-converted)');
-      expect(view.host.textContent).toContain('Reply language');
+      expect(view.host.textContent).not.toContain('Reply language');
       expect(view.host.textContent).not.toContain('Brief schedule timezone');
       expect(view.host.textContent).not.toContain('Morning brief schedule');
 

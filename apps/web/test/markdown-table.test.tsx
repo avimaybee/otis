@@ -62,6 +62,7 @@ describe('MarkdownTable', () => {
     expect(css).toContain('.otis-mdtable__scroller');
     expect(css).toMatch(/\.otis-mdtable__scroller\s*\{[^}]*overflow-x:\s*auto/);
     expect(css).toContain('.otis-mdtable__nowrap');
+    expect(css).toContain('.otis-mdtable--breakout');
   });
 
   it('renders reply tables through the production transcript shell', async () => {

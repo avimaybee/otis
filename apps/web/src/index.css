@@ -72,7 +72,7 @@
    same visual line); member bubbles already preserve them the same way.
    Flex column layout absorbs whitespace text nodes between block elements so
    inter-block spacing is owned strictly by CSS gap/margins without double gaps. */
-.otis-turn__body { display: flex; flex-direction: column; gap: 8px; max-width: 100%; overflow-wrap: anywhere; white-space: pre-line; }
+.otis-turn__body { display: flex; flex-direction: column; gap: 8px; width: 100%; max-width: 100%; overflow-wrap: anywhere; white-space: pre-line; }
 .otis-turn__body > :first-child { margin-top: 0; }
 .otis-turn__body > :last-child { margin-bottom: 0; }
 .otis-turn__body p { margin: 0; }
@@ -92,9 +92,12 @@
 
 /* Markdown data tables: one semantic table per scroll region. Long cells
    wrap at normal text size; wide tables scroll inside their region without
-   giving the page horizontal overflow. Outer cell borders are omitted so
+   giving the page horizontal overflow. When content requires extra breadth,
+   wide tables dynamically expand symmetrically into the generous margin
+   space up to available transcript width. Outer cell borders are omitted so
    tables read as rows, not grids. */
-.otis-mdtable { margin: 12px 0; min-width: 0; }
+.otis-mdtable { margin: 12px 0; min-width: 0; box-sizing: border-box; }
+.otis-mdtable--breakout { max-width: none; }
 .otis-mdtable__toolbar { display: flex; justify-content: flex-end; }
 .otis-mdtable__copy { display: inline-flex; align-items: center; min-height: 32px; padding: 4px 8px; border: 0; border-radius: 8px; background: transparent; color: var(--muted-foreground); cursor: pointer; transition: background-color 150ms ease-out, color 150ms ease-out; }
 .otis-mdtable__copy:hover { background: var(--accent); color: var(--foreground); }
@@ -102,6 +105,7 @@
 .otis-mdtable__scroller > table { border-collapse: collapse; width: 100%; margin: 0; }
 .otis-mdtable thead { background: var(--muted); }
 .otis-mdtable th, .otis-mdtable td { padding: 8px 12px; border: 0; border-bottom: 1px solid var(--border); text-align: left; vertical-align: top; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
+.otis-mdtable td { max-width: 420px; }
 .otis-mdtable tbody tr:hover { background-color: var(--accent); }
 .otis-mdtable tbody tr:last-child th, .otis-mdtable tbody tr:last-child td { border-bottom: 0; }
 .otis-mdtable th { color: var(--muted-foreground); font-weight: 500; white-space: nowrap; }
@@ -225,8 +229,7 @@
 .otis-nav__author { max-width: 76px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--subtle); }
 .otis-nav__empty { margin: 8px 16px; color: var(--subtle); }
 .otis-nav__search { padding: 8px 16px; }
-.otis-nav__search input { width: 100%; }
-.otis-nav__footer { flex: none; padding: 12px 0 0; border-top: 1px solid var(--sidebar-border); margin-top: 8px; }
+.otis-nav__footer { flex: none; padding: 0; border-top: 1px solid var(--sidebar-border); margin-top: 4px; }
 
 /* Native dialogs own focus and background inertness. */
 .otis-overlay { position: fixed; inset: 0; z-index: 10; width: 100%; max-width: none; height: 100%; max-height: none; margin: 0; padding: 0; border: 0; color: var(--foreground); background: transparent; }

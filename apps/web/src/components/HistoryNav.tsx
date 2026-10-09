@@ -184,9 +184,9 @@ export function HistoryNav(props: HistoryNavProps) {
       </div>
 
       <div className="otis-nav__footer">
-        <div className="flex items-center justify-between px-4 pb-3">
-          <div className="flex items-center gap-3 min-w-0">
-            <span className="size-8 rounded-full bg-accent text-foreground flex items-center justify-center font-medium text-xs shrink-0" aria-hidden="true">
+        <div className="flex items-center justify-between px-4 py-2">
+          <div className="flex items-center gap-2 min-w-0">
+            <span className="size-7 rounded-full bg-accent text-foreground flex items-center justify-center font-medium text-xs shrink-0" aria-hidden="true">
               {avatarInitial}
             </span>
             <div className="flex flex-col min-w-0 leading-tight">
@@ -198,13 +198,13 @@ export function HistoryNav(props: HistoryNavProps) {
             variant="ghost"
             size="sm"
             type="button"
-            className="text-xs text-muted-foreground hover:text-foreground h-8 px-2 shrink-0 flex items-center gap-1"
+            className="text-xs text-muted-foreground hover:text-foreground h-7 px-2 shrink-0 flex items-center gap-1 rounded-md"
             onClick={() => {
               if (isDrawer) props.onClose?.();
               props.onOpenSettings();
             }}
           >
-            <SettingsIcon />
+            <SettingsIcon size={14} />
             <span>Settings</span>
           </Button>
         </div>

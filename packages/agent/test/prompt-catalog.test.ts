@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { renderSystemPrompt } from '../src/prompt.js';
+import { PROMPT_VERSION, STABLE_SYSTEM_INSTRUCTIONS, renderSystemPrompt } from '../src/prompt.js';
 
 describe('model catalog prompt section', () => {
   it('names available models with per-model efforts and marks the current selection', () => {
@@ -106,4 +106,15 @@ describe('model catalog prompt section', () => {
     expect(prompt).not.toContain('Current Member:');
     expect(prompt).not.toContain('Workspace members:');
   });
+
+  it('instructs model never to reveal literal tool names and bumps prompt version', () => {
+    expect(PROMPT_VERSION).toBe('2026-10-09-v7');
+    const prompt = renderSystemPrompt({ workspaceName: 'Kerning' });
+    expect(prompt).toContain('Never reveal literal tool names');
+    expect(prompt).toContain('Never mention, cite, quote, or reveal literal internal tool names');
+    expect(prompt).toContain('Never quote internal tool names, parameters, or raw payloads in conversational replies');
+    expect(prompt).toContain('without citing literal internal tool names or schemas');
+    expect(STABLE_SYSTEM_INSTRUCTIONS).toContain('Never reveal literal tool names');
+  });
 });
+

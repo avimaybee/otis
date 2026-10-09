@@ -1,5 +1,5 @@
 import { useEffect, useId, useRef, useState } from 'react';
-import type { MemberSettings, ModelOption, UpdateMemberSettingsRequest } from '@otis/contracts';
+import type { ModelOption } from '@otis/contracts';
 import { api, ApiError } from '../api/client.js';
 import { CloseIcon, UserIcon, BriefcaseIcon, PanelLeftIcon, ArrowLeftIcon, LogOutIcon } from './icons.js';
 import { Overlay } from './Overlay.js';
@@ -45,7 +45,6 @@ export function SettingsPane({
   const [tab, setTab] = useState<'personal' | 'workspace'>('personal');
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [searchFilter, setSearchFilter] = useState('');
-  const [personal, setPersonal] = useState<MemberSettings | null>(null);
   const [models, setModels] = useState<ModelOption[]>(providedModels ?? []);
   const [defaultModel, setDefaultModel] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
@@ -95,9 +94,8 @@ export function SettingsPane({
     const live = () => liveScope.current === scope;
     setPersonalError('');
     try {
-      const own = await api.memberSettings(workspaceId);
+      await api.memberSettings(workspaceId);
       if (!live()) return;
-      setPersonal(own.settings);
       setLoadedPersonal(true);
     } catch (err) {
       if (!live()) return;
@@ -160,13 +158,6 @@ export function SettingsPane({
   useEffect(() => {
     try { document.documentElement.lang = 'en'; } catch { /* App remains usable without DOM language metadata. */ }
   }, []);
-  const savePersonal = async (field: string, body: UpdateMemberSettingsRequest) => {
-    if (busy) return;
-    setBusy(field); setMessage(''); setSaved('');
-    try { const result = await api.updateMemberSettings(workspaceId, body); setPersonal(result.settings); setSaved('Saved'); }
-    catch (err) { handleError(err); }
-    finally { setBusy(null); }
-  };
   const saveDefault = async (key: string) => {
     if (busy) return;
     setBusy('model'); setMessage(''); setSaved('');
@@ -277,12 +268,12 @@ export function SettingsPane({
     <Overlay label="Settings" className="otis-overlay--settings" onClose={onClose}>
       <section className="otis-settings">
         <aside className={`otis-settings__sidebar ${mobileNavOpen ? 'otis-settings__sidebar--open' : ''}`}>
-          <div className="flex items-center justify-between gap-2 pb-1">
+          <div className="flex items-center justify-between gap-2">
             <Button
               variant="ghost"
               size="sm"
               type="button"
-              className="text-xs text-muted-foreground hover:text-foreground h-8 px-2 flex items-center gap-2"
+              className="text-xs text-muted-foreground hover:text-foreground h-7 px-2 flex items-center gap-1"
               onClick={onClose}
             >
               <ArrowLeftIcon size={14} />
@@ -292,27 +283,27 @@ export function SettingsPane({
               variant="ghost"
               size="icon"
               type="button"
-              className="otis-iconbutton size-8 sm:hidden text-muted-foreground hover:text-foreground"
+              className="otis-iconbutton size-7 sm:hidden text-muted-foreground hover:text-foreground"
               aria-label="Close settings menu"
               onClick={() => setMobileNavOpen(false)}
             >
-              <PanelLeftIcon size={18} />
+              <PanelLeftIcon size={16} />
             </Button>
           </div>
 
-          <div className="pt-1">
+          <div>
             <Input
               placeholder="Search settings…"
               value={searchFilter}
               onChange={e => setSearchFilter(e.target.value)}
-              className="h-8 text-xs bg-card/60"
+              className="h-7 text-xs bg-card/60"
             />
           </div>
 
           <div className="otis-settings__tabs flex flex-col gap-1 flex-1 overflow-y-auto" role="tablist" aria-label="Settings sections">
             {(!searchFilter || 'account personal you'.includes(searchFilter.toLowerCase())) && (
               <>
-                <div className="text-xs font-medium text-muted-foreground px-2 pt-2">Personal</div>
+                <div className="text-xs font-medium text-muted-foreground px-2 pt-1 pb-1">Personal</div>
                 <button
                   id={`${id}-personal-tab`}
                   key="personal"
@@ -342,7 +333,7 @@ export function SettingsPane({
 
             {(!searchFilter || workspaceName.toLowerCase().includes(searchFilter.toLowerCase()) || 'workspace general'.includes(searchFilter.toLowerCase())) && (
               <>
-                <div className="text-xs font-medium text-muted-foreground px-2 pt-3">Workspace</div>
+                <div className="text-xs font-medium text-muted-foreground px-2 pt-2 pb-1">Workspace</div>
                 <button
                   id={`${id}-workspace-tab`}
                   key="workspace"
@@ -371,12 +362,12 @@ export function SettingsPane({
             )}
           </div>
 
-          <div className="mt-auto pt-2 border-t border-border flex flex-col gap-2">
+          <div className="mt-auto pt-2 border-t border-border flex flex-col gap-1">
             {saved && <span role="status" className="text-xs text-muted-foreground truncate">{saved}</span>}
             <Button
               variant="ghost"
               size="sm"
-              className="justify-start text-muted-foreground hover:text-foreground text-xs h-8 px-2 w-full flex items-center gap-2"
+              className="justify-start text-muted-foreground hover:text-foreground text-xs h-7 px-2 w-full flex items-center gap-1"
               onClick={onSignOut}
             >
               <LogOutIcon size={14} />
@@ -485,32 +476,10 @@ export function SettingsPane({
                       <span className="text-sm text-muted-foreground">UTC (Auto-converted)</span>
                     </div>
 
-                    <hr className="otis-settings__card-divider" />
-
-                    <div className="otis-settings__card-row">
-                      <div className="flex flex-col">
-                        <span className="text-sm font-medium text-foreground">Reply language</span>
-                        <span className="otis-detail__label text-xs">Otis answers you in this language.</span>
-                      </div>
-                      <ChoiceSelect
-                        id={`${id}-lang`}
-                        label="Reply language"
-                        value={personal?.preferred_language ?? 'en'}
-                        options={[
-                          { value: 'en', label: 'English' },
-                          { value: 'ro', label: 'Română' },
-                          { value: 'es', label: 'Español' },
-                          { value: 'de', label: 'Deutsch' },
-                          { value: 'fr', label: 'Français' },
-                        ]}
-                        onChange={(lang: string) => void savePersonal('preferred_language', { preferred_language: lang })}
-                        disabled={Boolean(busy)}
-                      />
-                    </div>
                   </div>
 
                   {/* Card 2: Telegram connection */}
-                  <div className="flex flex-col gap-1 pt-2">
+                  <div className="flex flex-col gap-1 pt-1">
                     <h4 className="text-sm font-medium text-foreground">Integrations</h4>
                   </div>
                   <div className="otis-settings__card otis-settings__section">
@@ -528,7 +497,7 @@ export function SettingsPane({
                         variant="outline"
                         size="sm"
                         type="button"
-                        className="text-destructive hover:text-destructive border-border shrink-0"
+                        className="text-destructive hover:text-destructive border-border shrink-0 h-7 px-3 text-xs"
                         onClick={onSignOut}
                       >
                         Sign out
