@@ -26,6 +26,8 @@ import { handleEntityFileAction, handleGetEntityFile } from './routes/entities.j
 import { handleFollowUps } from './routes/followups.js';
 import { handleGetActivity } from './routes/activity.js';
 import { handleGetMemorySource, handleGetWorkspaceSource, handleSearchWorkspaceHistory } from './routes/sources.js';
+import { handleUnifiedSearch } from './routes/search.js';
+import { handleGetDuplicates } from './routes/duplicates.js';
 import { backfillConversationSearch } from './conversationSearch.js';
 import {
   handleGetAction,
@@ -544,6 +546,10 @@ export default {
 
       // 4b. Workspace records route: /api/workspaces/:workspaceId/records
       const historySearchMatch = url.pathname.match(/^\/api\/workspaces\/([^/]+)\/history\/search$/);
+      const unifiedSearchMatch = url.pathname.match(/^\/api\/workspaces\/([^/]+)\/search$/);
+      if (unifiedSearchMatch && request.method === 'GET') return await handleUnifiedSearch(request, env, decodeURIComponent(unifiedSearchMatch[1]!), requestId);
+      const duplicatesMatch = url.pathname.match(/^\/api\/workspaces\/([^/]+)\/duplicates$/);
+      if (duplicatesMatch && request.method === 'GET') return await handleGetDuplicates(request, env, decodeURIComponent(duplicatesMatch[1]!), requestId);
       const followUpsMatch = url.pathname.match(/^\/api\/workspaces\/([^/]+)\/followups$/);
       if (followUpsMatch && ['GET', 'POST'].includes(request.method)) return await handleFollowUps(request, env, decodeURIComponent(followUpsMatch[1]!), requestId);
       if (historySearchMatch && request.method === 'GET') return await handleSearchWorkspaceHistory(request, env, decodeURIComponent(historySearchMatch[1]!), requestId);

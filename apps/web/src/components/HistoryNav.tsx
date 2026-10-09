@@ -1,14 +1,11 @@
-import { lazy, Suspense, useEffect, useId, useRef, useState, type ReactNode, type RefObject } from 'react';
+import { useEffect, useId, useMemo, useRef, type ReactNode, type RefObject } from 'react';
 import { Drawer } from 'vaul';
 import type { Chat } from '@otis/contracts';
-import { CloseIcon, ComposeIcon, MoreVerticalIcon, SearchIcon, SettingsIcon, TableIcon } from './icons.js';
+import { ComposeIcon, MoreVerticalIcon, SettingsIcon, TableIcon, SearchIcon, PanelLeftIcon } from './icons.js';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from './ui/dropdown-menu.js';
 import { ChoiceSelect } from './ui/select.js';
-import { Input } from './ui/input.js';
 import { Button } from './ui/button.js';
 import { useOverlayHistory } from './overlay-history.js';
-const WorkspaceHistorySearch = lazy(() => import('./WorkspaceHistorySearch.js').then(m => ({ default: m.WorkspaceHistorySearch })));
-const FollowUps = lazy(() => import('./FollowUps.js').then(m => ({ default: m.FollowUps })));
 
 export interface HistoryNavProps {
   userId?: string;
@@ -26,43 +23,38 @@ export interface HistoryNavProps {
   onDeleteChat?: (chatId: string, currentTitle: string) => void;
   onCreateWorkspace?: () => void;
 }
+
 export function HistoryNav(props: HistoryNavProps) {
-  const [workspaceSearchOpen, setWorkspaceSearchOpen] = useState(false);
-  const [followUpsOpen, setFollowUpsOpen] = useState(false);
-  const [searching, setSearching] = useState(false); const [query, setQuery] = useState('');
-  const input = useRef<HTMLInputElement>(null); const id = useId();
+  const id = useId();
   const closeButton = useRef<HTMLButtonElement>(null);
-  const searchButton = useRef<HTMLButtonElement>(null);
-  const closeSearch = () => {
-    setSearching(false);
-    setQuery('');
-    requestAnimationFrame(() => searchButton.current?.focus());
-  };
+  const isDrawer = props.variant === 'drawer';
 
-  useEffect(() => {
-    const handleKeyDown = (e: globalThis.KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
-        const target = e.target as HTMLElement | null;
-        const isEditing = target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable);
-        if (!isEditing) {
-          e.preventDefault();
-          setSearching(true);
-          requestAnimationFrame(() => input.current?.focus());
-        }
-      }
-    };
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, []);
+  // Defensively filter team chats so the acting user's own chats never leak into the team list
+  const filteredTeamChats = useMemo(() => {
+    return props.teamChats.filter(chat => !props.userId || chat.author_user_id !== props.userId);
+  }, [props.teamChats, props.userId]);
 
-  const rows = (chats: Chat[], team: boolean) => chats.filter(chat => chat.title.toLocaleLowerCase().includes(query.toLocaleLowerCase())).map(chat => (
+  const primaryName = (props.userId && props.members?.[props.userId]) ? props.members[props.userId] : undefined;
+  const displayName = primaryName || 'Account';
+  const avatarInitial = (primaryName || 'O').charAt(0).toUpperCase();
+
+  const rows = (chats: Chat[], team: boolean) => chats.map(chat => (
     <div key={chat.id} className="relative flex items-center group w-full">
-      <button type="button" className="otis-nav__row pr-8" aria-current={chat.id === props.activeChatId ? 'page' : undefined} title={chat.title} onClick={() => props.onSelectChat(chat.id)}>
-        <span className="otis-nav__label text-base">{chat.title || 'Untitled conversation'}</span>
-        {team && <span className="otis-nav__author text-xs">{chat.author_display_name ?? props.members?.[chat.author_user_id] ?? 'Teammate'}</span>}
+      <button
+        type="button"
+        className={`otis-nav__row pr-8 w-full text-left rounded-lg transition-colors ${chat.id === props.activeChatId ? 'bg-accent text-accent-foreground font-medium' : 'hover:bg-sidebar-hover text-muted-foreground hover:text-foreground'}`}
+        aria-current={chat.id === props.activeChatId ? 'page' : undefined}
+        title={chat.title}
+        onClick={() => {
+          if (isDrawer) props.onClose?.();
+          props.onSelectChat(chat.id);
+        }}
+      >
+        <span className="otis-nav__label text-sm truncate">{chat.title || 'Untitled conversation'}</span>
+        {team && <span className="otis-nav__author text-xs shrink-0">{chat.author_display_name ?? props.members?.[chat.author_user_id] ?? 'Teammate'}</span>}
       </button>
       {!team && (props.onRenameChat || props.onDeleteChat) && (
-        <div className={`absolute right-2 ${props.variant === 'drawer' ? 'opacity-100' : 'opacity-0 group-hover:opacity-100 group-focus-within:opacity-100'} transition-opacity`}>
+        <div className={`absolute right-2 ${isDrawer ? 'opacity-100' : 'opacity-0 group-hover:opacity-100 group-focus-within:opacity-100'} transition-opacity`}>
           <DropdownMenu modal={false}>
             <DropdownMenuTrigger asChild>
               <Button variant="ghost" size="icon-xs" type="button" className="otis-nav__options-btn size-8 p-0 text-muted-foreground hover:text-foreground" aria-label={`Options for ${chat.title || 'conversation'}`}>
@@ -78,39 +70,174 @@ export function HistoryNav(props: HistoryNavProps) {
       )}
     </div>
   ));
-  const content = <nav className={props.variant === 'drawer' ? 'otis-drawer__nav' : 'otis-sidebar'} aria-label="History">
-    <div className="otis-nav__brand"><span className="text-base">Otis</span>{props.variant === 'drawer' && <Button ref={closeButton} variant="ghost" size="icon" className="otis-iconbutton" type="button" aria-label="Close history" onClick={props.onClose}><CloseIcon /></Button>}</div>
-    <label className="otis-visually-hidden" htmlFor={`${id}-workspace`}>Workspace</label>
-    <div className="flex items-center justify-between px-4 pb-2">
-      {props.workspaces.length > 1 ? <ChoiceSelect id={`${id}-workspace`} label="Workspace" className="otis-nav__workspace flex-1 mr-2" value={props.workspaceId} options={props.workspaces.map(workspace => ({ value: workspace.id, label: workspace.name }))} onChange={props.onSwitchWorkspace}/> : <p className="otis-nav__workspace-label text-base flex-1 m-0 p-0">{props.workspaceName}</p>}
-      {props.onCreateWorkspace && <Button variant="ghost" size="sm" type="button" className="text-xs text-muted-foreground hover:text-foreground h-6 px-2 shrink-0" title="Create workspace" aria-label="Create workspace" onClick={props.onCreateWorkspace}>+ New</Button>}
-    </div>
-    <Button variant="ghost" className="otis-nav__action justify-start text-sm" type="button" onClick={props.onNewChat}><ComposeIcon /><span>New chat</span></Button>
-    <Button variant="ghost" className="otis-nav__action justify-start text-sm" type="button" onClick={() => setWorkspaceSearchOpen(true)}><SearchIcon /><span>Search conversations</span></Button>
-    {props.userId && <Button variant="ghost" className="otis-nav__action justify-start text-sm" type="button" onClick={() => setFollowUpsOpen(true)}><span>Your follow-ups</span></Button>}
-    {followUpsOpen && props.userId && <Suspense fallback={<p role="status" className="px-4 text-sm">Opening follow-ups…</p>}><FollowUps key={`${props.userId}:${props.workspaceId}`} workspaceId={props.workspaceId} userId={props.userId} open onClose={() => setFollowUpsOpen(false)}/></Suspense>}
-    {workspaceSearchOpen && <Suspense fallback={<p role="status" className="px-4 text-sm">Opening search…</p>}><WorkspaceHistorySearch key={props.workspaceId} workspaceId={props.workspaceId} members={props.members} open={workspaceSearchOpen} onClose={() => setWorkspaceSearchOpen(false)} onOpenChat={props.onSelectChat}/></Suspense>}
-    {props.onOpenRecords && (
-      <Button variant="ghost" className="otis-nav__action justify-start text-sm" type="button" aria-current={props.isRecordsActive ? 'page' : undefined} onClick={props.onOpenRecords}><TableIcon /><span>Your information</span></Button>
-    )}
-    {!searching ? (
-      <Button ref={searchButton} variant="ghost" className="otis-nav__action justify-start text-sm" type="button" aria-expanded={false} onClick={() => { setSearching(true); requestAnimationFrame(() => input.current?.focus()); }}><SearchIcon /><span className="flex-1">Filter loaded chats</span><kbd className="hidden nav:inline text-xs text-subtle border border-border px-1 rounded font-mono">⌘K</kbd></Button>
-    ) : (
-      <div className="otis-nav__search flex items-center gap-2"><label className="otis-visually-hidden" htmlFor={`${id}-search`}>Filter loaded chats</label><Input ref={input} id={`${id}-search`} type="search" placeholder="Filter loaded chats" value={query} onChange={event => setQuery(event.target.value)} onKeyDown={event => { if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); closeSearch(); } }} className="flex-1" /><Button variant="ghost" size="icon-xs" type="button" aria-label="Close search" onClick={closeSearch}><CloseIcon /></Button></div>
-    )}
-    <div className="otis-nav__history" aria-busy={props.loading}>
-      <p className="otis-nav__heading text-xs">Your chats</p>{props.ownChats.length ? rows(props.ownChats, false) : <p className="otis-nav__empty text-sm">{props.loading ? 'Loading conversations…' : 'No conversations yet'}</p>}
-      {props.teamChats.length > 0 && <><p className="otis-nav__heading text-xs">Team chats</p>{rows(props.teamChats, true)}</>}
-      {query && ![...props.ownChats, ...props.teamChats].some(chat => chat.title.toLocaleLowerCase().includes(query.toLocaleLowerCase())) && (
-        <p className="otis-nav__empty text-sm">
-          {props.hasMore ? 'No matches in loaded conversations. Try loading older history below.' : 'No matching chat titles.'}
-        </p>
+
+  const content = (
+    <nav className={isDrawer ? 'otis-drawer__nav' : 'otis-sidebar'} aria-label="History">
+      {/* Header with wordmark, search, and drawer toggle */}
+      <div className="otis-nav__brand flex items-center justify-between px-3 py-2">
+        <span className="text-base font-medium text-foreground tracking-tight">Otis</span>
+        <div className="flex items-center gap-1">
+          {props.onOpenSearch && (
+            <Button
+              variant="ghost"
+              size="icon"
+              className="otis-iconbutton size-8 text-muted-foreground hover:text-foreground"
+              type="button"
+              aria-label="Search"
+              onClick={() => {
+                if (isDrawer) props.onClose?.();
+                props.onOpenSearch?.();
+              }}
+            >
+              <SearchIcon size={18} />
+            </Button>
+          )}
+          {isDrawer && (
+            <Button
+              ref={closeButton}
+              variant="ghost"
+              size="icon"
+              className="otis-iconbutton size-8 text-muted-foreground hover:text-foreground"
+              type="button"
+              aria-label="Close history"
+              onClick={props.onClose}
+            >
+              <PanelLeftIcon size={18} />
+            </Button>
+          )}
+        </div>
+      </div>
+
+      {/* Prominent New conversation / New chat button */}
+      <div className="px-3 pt-1 pb-2">
+        <Button
+          variant="secondary"
+          className="otis-nav__action w-full justify-start gap-2 h-10 px-3 bg-card hover:bg-accent border border-border/60 text-sm font-medium rounded-xl text-foreground"
+          type="button"
+          onClick={() => {
+            if (isDrawer) props.onClose?.();
+            props.onNewChat();
+          }}
+        >
+          <ComposeIcon />
+          <span>New chat</span>
+        </Button>
+      </div>
+
+      {/* Shortcuts (Records / Information) */}
+      {props.onOpenRecords && (
+        <div className="px-3 pb-2">
+          <Button
+            variant="ghost"
+            className={`otis-nav__action w-full justify-start gap-2 h-9 px-3 text-sm rounded-lg ${props.isRecordsActive ? 'bg-accent text-accent-foreground font-medium' : 'text-muted-foreground hover:text-foreground'}`}
+            type="button"
+            aria-current={props.isRecordsActive ? 'page' : undefined}
+            onClick={() => {
+              if (isDrawer) props.onClose?.();
+              props.onOpenRecords?.();
+            }}
+          >
+            <TableIcon />
+            <span>Your information</span>
+          </Button>
+        </div>
       )}
-      {props.hasMore && <Button variant="ghost" className="otis-nav__row w-full justify-start text-sm" type="button" onClick={props.onLoadMore}>Load more conversations</Button>}
-    </div>
-    <div className="otis-nav__footer"><Button variant="ghost" className="otis-nav__action justify-start text-sm" type="button" onClick={props.onOpenSettings}><SettingsIcon /><span>Settings</span></Button></div>
-  </nav>;
-  return props.variant === 'drawer'
+
+      {/* Workspace switcher if multiple exist */}
+      <label className="otis-visually-hidden" htmlFor={`${id}-workspace`}>Workspace</label>
+      <div className="flex items-center justify-between px-3 pb-2">
+        {props.workspaces.length > 1 ? (
+          <ChoiceSelect
+            id={`${id}-workspace`}
+            label="Workspace"
+            className="otis-nav__workspace flex-1 mr-2"
+            value={props.workspaceId}
+            options={props.workspaces.map(workspace => ({ value: workspace.id, label: workspace.name }))}
+            onChange={props.onSwitchWorkspace}
+          />
+        ) : (
+          <p className="otis-nav__workspace-label text-xs text-muted-foreground flex-1 m-0 px-1 truncate">
+            {props.workspaceName}
+          </p>
+        )}
+        {props.onCreateWorkspace && (
+          <Button
+            variant="ghost"
+            size="sm"
+            type="button"
+            className="text-xs text-muted-foreground hover:text-foreground h-6 px-2 shrink-0"
+            title="Create workspace"
+            aria-label="Create workspace"
+            onClick={props.onCreateWorkspace}
+          >
+            + New
+          </Button>
+        )}
+      </div>
+
+      {/* History list */}
+      <div className="otis-nav__history flex-1 min-h-0 overflow-y-auto px-2 space-y-1" aria-busy={props.loading}>
+        <p className="otis-nav__heading text-xs font-medium text-muted-foreground px-3 pt-2 pb-1">Your chats</p>
+        {props.ownChats.length ? rows(props.ownChats, false) : (
+          <p className="otis-nav__empty text-sm px-3">{props.loading ? 'Loading conversations…' : 'No conversations yet'}</p>
+        )}
+        {filteredTeamChats.length > 0 && (
+          <>
+            <p className="otis-nav__heading text-xs font-medium text-muted-foreground px-3 pt-3 pb-1">Team chats</p>
+            {rows(filteredTeamChats, true)}
+          </>
+        )}
+        {props.hasMore && (
+          <Button
+            variant="ghost"
+            className="otis-nav__row w-full justify-start text-sm text-muted-foreground hover:text-foreground px-3 h-8"
+            type="button"
+            onClick={props.onLoadMore}
+          >
+            Load more conversations
+          </Button>
+        )}
+      </div>
+
+      {/* User profile footer pill pinned at bottom */}
+      <div className="otis-nav__footer mt-auto border-t border-sidebar-border p-2">
+        <div className="flex items-center justify-between gap-2 p-1 rounded-xl hover:bg-sidebar-hover transition-colors">
+          <button
+            type="button"
+            className="flex items-center gap-3 flex-1 min-w-0 text-left cursor-pointer bg-transparent border-0 p-1 text-foreground"
+            onClick={() => {
+              if (isDrawer) props.onClose?.();
+              props.onOpenSettings();
+            }}
+            aria-label="Account settings"
+          >
+            <span className="size-8 rounded-full bg-primary/20 text-primary border border-primary/30 flex items-center justify-center font-medium text-xs shrink-0" aria-hidden="true">
+              {avatarInitial}
+            </span>
+            <div className="flex flex-col min-w-0">
+              <span className="text-sm font-medium text-foreground truncate">{displayName}</span>
+              <span className="text-xs text-muted-foreground truncate">{props.workspaceName}</span>
+            </div>
+          </button>
+          <Button
+            variant="ghost"
+            size="sm"
+            type="button"
+            className="text-xs text-muted-foreground hover:text-foreground h-8 px-2 shrink-0 flex items-center gap-1"
+            onClick={() => {
+              if (isDrawer) props.onClose?.();
+              props.onOpenSettings();
+            }}
+          >
+            <SettingsIcon size={14} />
+            <span>Settings</span>
+          </Button>
+        </div>
+      </div>
+    </nav>
+  );
+
+  return isDrawer
     ? <HistoryDrawer open={props.open ?? false} onClose={() => props.onClose?.()} initialFocus={closeButton}>{content}</HistoryDrawer>
     : content;
 }

@@ -2,7 +2,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import * as React from 'react';
 import { createRoot } from 'react-dom/client';
-import { MarkdownTable, tableToTsv } from '../src/components/MarkdownTable.js';
+import { MarkdownTable, tableToTsv, isShortNoWrapText } from '../src/components/MarkdownTable.js';
 import { Transcript } from '../src/components/Transcript.js';
 import type { ChatMessage } from '@otis/contracts';
 import { readFileSync } from 'fs';
@@ -61,6 +61,7 @@ describe('MarkdownTable', () => {
     const css = readFileSync(resolve(__dirname, '../src/index.css'), 'utf-8');
     expect(css).toContain('.otis-mdtable__scroller');
     expect(css).toMatch(/\.otis-mdtable__scroller\s*\{[^}]*overflow-x:\s*auto/);
+    expect(css).toContain('.otis-mdtable__nowrap');
   });
 
   it('renders reply tables through the production transcript shell', async () => {
@@ -78,6 +79,82 @@ describe('MarkdownTable', () => {
     // Prose accompanies the table instead of being swallowed by it.
     expect(view.host.textContent).toContain('Pick one.');
     expect(view.host.textContent).toContain('Two options:');
+    await view.unmount();
+  });
+
+  it('correctly classifies short dates, statuses, numbers, and currencies for nowrap', () => {
+    // Dates & times
+    expect(isShortNoWrapText('2026-10-09')).toBe(true);
+    expect(isShortNoWrapText('10/09/2026')).toBe(true);
+    expect(isShortNoWrapText('Oct 9, 2026')).toBe(true);
+    expect(isShortNoWrapText('yesterday')).toBe(true);
+    expect(isShortNoWrapText('3 days ago')).toBe(true);
+    expect(isShortNoWrapText('10:30 AM')).toBe(true);
+
+    // Statuses & short states
+    expect(isShortNoWrapText('Won')).toBe(true);
+    expect(isShortNoWrapText('In progress')).toBe(true);
+    expect(isShortNoWrapText('Pending approval')).toBe(true);
+    expect(isShortNoWrapText('Overdue')).toBe(true);
+    expect(isShortNoWrapText('Warm')).toBe(true);
+    expect(isShortNoWrapText('Needs reply')).toBe(true);
+    expect(isShortNoWrapText('Yes')).toBe(true);
+    expect(isShortNoWrapText('No')).toBe(true);
+
+    // Numbers & currencies & phones
+    expect(isShortNoWrapText('#1')).toBe(true);
+    expect(isShortNoWrapText('42')).toBe(true);
+    expect(isShortNoWrapText('100%')).toBe(true);
+    expect(isShortNoWrapText('€500')).toBe(true);
+    expect(isShortNoWrapText('$1,200')).toBe(true);
+    expect(isShortNoWrapText('+40 721 000 000')).toBe(true);
+
+    // Long freeform text should NOT be nowrap
+    expect(
+      isShortNoWrapText(
+        'Pull everything on X — facts, contacts, work, quotes offered vs expected, notes, files.',
+      ),
+    ).toBe(false);
+    expect(
+      isShortNoWrapText(
+        'Correct one logged note without touching the whole client file.',
+      ),
+    ).toBe(false);
+  });
+
+  it('applies otis-mdtable__nowrap to short status and date cells in the transcript', async () => {
+    const tableMarkdown = `
+| Client | Status | Due Date | Quote | Notes |
+|---|---|---|---|---|
+| Alpha | In progress | 2026-10-09 | €500 | Detailed consultation regarding custom carpentry specifications and timber selection |
+`;
+    const view = await mount(
+      <Transcript
+        messages={[message({ id: 'm1', content_text: tableMarkdown })]}
+        members={{}}
+        currentUserId="usr_1"
+        steps={[]}
+        onInspectAction={vi.fn()}
+      />,
+    );
+
+    const cells = Array.from(view.host.querySelectorAll('.otis-mdtable td'));
+    expect(cells).toHaveLength(5);
+
+    // Short status, date, currency cells receive nowrap
+    const [, statusCell, dateCell, quoteCell, notesCell] = cells;
+    expect(statusCell?.classList.contains('otis-mdtable__nowrap')).toBe(true);
+    expect(dateCell?.classList.contains('otis-mdtable__nowrap')).toBe(true);
+    expect(quoteCell?.classList.contains('otis-mdtable__nowrap')).toBe(true);
+
+    // Long freeform cell does NOT receive nowrap so it can wrap naturally
+    expect(notesCell?.classList.contains('otis-mdtable__nowrap')).toBe(false);
+
+    // Headers have otis-mdtable__th
+    const headers = Array.from(view.host.querySelectorAll('.otis-mdtable th'));
+    expect(headers).toHaveLength(5);
+    expect(headers.every((h) => h.classList.contains('otis-mdtable__th'))).toBe(true);
+
     await view.unmount();
   });
 });

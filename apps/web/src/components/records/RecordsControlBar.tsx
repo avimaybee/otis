@@ -39,6 +39,8 @@ export interface RecordsControlBarProps {
   isAskOtisOpen: boolean;
   onRefresh?: () => void;
   isRefreshing?: boolean;
+  onOpenDuplicates?: () => void;
+  onOpenUnifiedSearch?: () => void;
 }
 
 export function RecordsControlBar({
@@ -67,6 +69,8 @@ export function RecordsControlBar({
   isAskOtisOpen,
   onRefresh,
   isRefreshing,
+  onOpenDuplicates,
+  onOpenUnifiedSearch,
 }: RecordsControlBarProps) {
   const [filterMenuOpen, setFilterMenuOpen] = useState(false);
 
@@ -167,6 +171,18 @@ export function RecordsControlBar({
           <PlusIcon />
           <span>Add column</span>
         </Button>
+        {onOpenDuplicates && (
+          <Button variant="ghost" size="sm" onClick={onOpenDuplicates} className="h-8 gap-1 text-xs" title="Review similar records to merge">
+            <SparklesIcon />
+            <span>Find duplicates</span>
+          </Button>
+        )}
+        {onOpenUnifiedSearch && (
+          <Button variant="outline" size="sm" onClick={onOpenUnifiedSearch} className="h-8 gap-1 text-xs" title="Global search (Ctrl+K)">
+            <SearchIcon />
+            <span>Search all</span>
+          </Button>
+        )}
       </div>
 
       {/* Right section: Draft controls, view switch, history & Ask Otis */}

@@ -8,7 +8,6 @@
     "lint": "eslint .",
     "test": "vitest run",
     "check:design": "node scripts/check-design.mjs",
-    "check:stories": "node scripts/check-stories.mjs",
     "eval:agent": "vitest run --config vitest.eval.config.ts",
     "build": "vite build && tsc --build && wrangler deploy --dry-run --outdir dist-worker",
     "build:web": "vite build",

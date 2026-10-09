@@ -4,7 +4,7 @@ import {
   SlidersHorizontal, Mic, Play, Pause, MoreVertical, Trash2, Plus,
   Table, Filter, Sparkles, History, Save, Redo2, LayoutList,
   Calculator, Calendar, DollarSign, Phone, Hash, Type, Download,
-  User, Users, Briefcase, RefreshCw
+  User, Users, Briefcase, RefreshCw, PanelLeft, ArrowLeft, LogOut
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 function icon(Component: LucideIcon, defaultSize = 18) {
@@ -53,5 +53,8 @@ export const UserIcon = icon(User, 16);
 export const UsersIcon = icon(Users, 16);
 export const BriefcaseIcon = icon(Briefcase, 16);
 export const RefreshIcon = icon(RefreshCw, 14);
+export const PanelLeftIcon = icon(PanelLeft, 18);
+export const ArrowLeftIcon = icon(ArrowLeft, 16);
+export const LogOutIcon = icon(LogOut, 16);
 
 

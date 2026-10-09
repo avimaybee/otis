@@ -150,6 +150,21 @@ export const api = {
     const query = new URLSearchParams(); for (const [k, v] of Object.entries(options)) if (v !== undefined) query.set(k === 'query' ? 'q' : k, String(v));
     return request<import('@otis/contracts').HistorySearchResponse>(`/api/workspaces/${encodeURIComponent(workspace)}/history/search?${query}`, { signal });
   },
+  unifiedSearch: (workspaceId: string, query: string, limit = 5, signal?: AbortSignal) =>
+    request<import('@otis/contracts').UnifiedSearchResponse>(
+      `/api/workspaces/${encodeURIComponent(workspaceId)}/search?q=${encodeURIComponent(query)}&limit=${limit}`,
+      { signal },
+    ),
+  duplicates: (workspaceId: string, signal?: AbortSignal) =>
+    request<{
+      candidates: Array<{
+        entity_a: { id: string; name: string; kind?: string | null; status?: string | null; company?: string | null };
+        entity_b: { id: string; name: string; kind?: string | null; status?: string | null; company?: string | null };
+        similarity: number;
+        reason: string;
+      }>;
+      total_candidates: number;
+    }>(`/api/workspaces/${encodeURIComponent(workspaceId)}/duplicates`, { signal }),
   uploadDocument: (workspace: string, file: File, uploadId: string, userId: string) => request<{ media_id: string; filename: string; extraction_state: string }>(`/api/workspaces/${encodeURIComponent(workspace)}/documents/uploads`, { method: 'POST', headers: { 'Content-Type': 'application/pdf', 'x-filename': encodeURIComponent(file.name), 'x-upload-id': uploadId, 'x-expected-user-id': userId }, body: file }),
   retryDocument: (workspace: string, mediaId: string, userId: string) => request<{ media_id: string; state: string }>(`/api/workspaces/${encodeURIComponent(workspace)}/documents/${encodeURIComponent(mediaId)}/retry`, { method: 'POST', headers: { 'x-expected-user-id': userId } }),
   me: () => request<{ user: { id: string; display_name: string | null }; workspaces: { id: string; name: string; role: string }[] }>('/api/me'),

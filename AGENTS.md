@@ -49,15 +49,15 @@ Use shadcn primitives customized to approved tokens; keep state local, scoped, o
 
 ## UI execution
 
-Use one production message/composer implementation in stories and app. Every design.md fixture has a story; future capability fixtures are labeled unimplemented. Give local feedback within 100 ms and keep pending beyond 300 ms in its affected control. Echo a sent message immediately with one stable UUID reused for retry; accepted input is not completed agent work.
+Use one production message/composer implementation in the app. Give local feedback within 100 ms and keep pending beyond 300 ms in its affected control. Echo a sent message immediately with one stable UUID reused for retry; accepted input is not completed agent work.
 
 Commands apply actual scoped operations without config bubbles. Model/effort values reflect server confirmation. Follow-ups remain sendable during work: empty composer shows Stop; a valid draft shows Send, with Stop reachable in overflow. Question answers preserve their explicit target and immutable retry payload.
 
-Run the implemented design/story checkers. Compare token section 12 at 360, 390, 900, 1280 and 1440 px before claiming UI completion. Use native Codex/Antigravity browser controls, no Playwright. DOM geometry and synthetic screenshots are not physical device/provider proof.
+Run the implemented design checkers. Compare token section 12 at 360, 390, 900, 1280 and 1440 px before claiming UI completion. Use native Codex/Antigravity browser controls, no Playwright. DOM geometry and synthetic screenshots are not physical device/provider proof.
 
 ## Verification and documentation
 
-Implementation changes run `pnpm typecheck`, `pnpm lint`, `pnpm test`, `pnpm build` and meaningful targeted behavior checks. Transactions/bindings use actual local Workers/D1. UI changes also run design/story checks, Storybook build, scoped behavior/a11y tests and a native-browser comparison. Fake providers prove orchestration, not live capability or answer quality.
+Implementation changes run `pnpm typecheck`, `pnpm lint`, `pnpm test`, `pnpm build` and meaningful targeted behavior checks. Transactions/bindings use actual local Workers/D1. UI changes also run design checks, scoped behavior/a11y tests and a native-browser comparison. Fake providers prove orchestration, not live capability or answer quality.
 
 Documentation-only changes require link, consistency and diff checks; report application commands only if actually run. Record implemented behavior, affected files/contracts/migrations, exact checks/evidence and remaining limitations in the task handoff. Update existing status/backlog; do not create a new audit/handoff/status document for every round. Archive a finished task's detailed record only when it adds evidence unavailable elsewhere.
 

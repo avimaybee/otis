@@ -1,7 +1,7 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import type { MemberSettings, ModelOption, UpdateMemberSettingsRequest } from '@otis/contracts';
 import { api, ApiError } from '../api/client.js';
-import { CloseIcon, UserIcon, BriefcaseIcon } from './icons.js';
+import { CloseIcon, UserIcon, BriefcaseIcon, PanelLeftIcon, ArrowLeftIcon, LogOutIcon } from './icons.js';
 import { Overlay } from './Overlay.js';
 import { ChoiceSelect } from './ui/select.js';
 import { TelegramConnection } from './TelegramConnection.js';
@@ -9,20 +9,6 @@ import { Button } from './ui/button.js';
 import { Input } from './ui/input.js';
 import { Alert, AlertDescription } from './ui/alert.js';
 import { Badge } from './ui/badge.js';
-
-const supportedTimezones = (() => {
-  try {
-    return Intl.supportedValuesOf ? Intl.supportedValuesOf('timeZone') : [];
-  } catch {
-    return [];
-  }
-})();
-
-function formatWeekdays(weekdays: number[] | null | undefined): string {
-  if (!weekdays || weekdays.length === 0) return 'Not set';
-  const dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-  return weekdays.map(d => dayNames[d] ?? String(d)).join(', ');
-}
 
 export function SettingsPane({
   workspaceId,
@@ -57,9 +43,10 @@ export function SettingsPane({
   const id = useId();
   const isOwner = currentUserRole === 'owner';
   const [tab, setTab] = useState<'personal' | 'workspace'>('personal');
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const [searchFilter, setSearchFilter] = useState('');
   const [personal, setPersonal] = useState<MemberSettings | null>(null);
   const [models, setModels] = useState<ModelOption[]>(providedModels ?? []);
-  const [timezone, setTimezone] = useState('');
   const [defaultModel, setDefaultModel] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [message, setMessage] = useState('');
@@ -111,7 +98,6 @@ export function SettingsPane({
       const own = await api.memberSettings(workspaceId);
       if (!live()) return;
       setPersonal(own.settings);
-      setTimezone(own.settings.brief_timezone ?? '');
       setLoadedPersonal(true);
     } catch (err) {
       if (!live()) return;
@@ -177,13 +163,9 @@ export function SettingsPane({
   const savePersonal = async (field: string, body: UpdateMemberSettingsRequest) => {
     if (busy) return;
     setBusy(field); setMessage(''); setSaved('');
-    try { const result = await api.updateMemberSettings(workspaceId, body); setPersonal(result.settings); if (field === 'timezone') setTimezone(result.settings.brief_timezone ?? ''); setSaved('Saved'); }
+    try { const result = await api.updateMemberSettings(workspaceId, body); setPersonal(result.settings); setSaved('Saved'); }
     catch (err) { handleError(err); }
     finally { setBusy(null); }
-  };
-  const saveTimezone = async () => {
-    if (timezone.trim()) { try { new Intl.DateTimeFormat('en', { timeZone: timezone.trim() }); } catch { setMessage('Choose a valid timezone, such as Asia/Kolkata or Europe/Bucharest.'); return; } }
-    await savePersonal('timezone', { brief_timezone: timezone.trim() || null });
   };
   const saveDefault = async (key: string) => {
     if (busy) return;
@@ -294,72 +276,130 @@ export function SettingsPane({
   return (
     <Overlay label="Settings" className="otis-overlay--settings" onClose={onClose}>
       <section className="otis-settings">
-        <aside className="otis-settings__sidebar">
-          <div className="flex items-center justify-between pb-1">
-            <h2 className="text-base font-medium text-foreground">Settings</h2>
-          </div>
-          <div className="otis-settings__tabs flex flex-col gap-1 flex-1" role="tablist" aria-label="Settings sections">
-            <div className="text-xs font-medium text-muted-foreground px-2 pt-2">Personal</div>
-            <button
-              id={`${id}-personal-tab`}
-              key="personal"
+        <aside className={`otis-settings__sidebar ${mobileNavOpen ? 'otis-settings__sidebar--open' : ''}`}>
+          <div className="flex items-center justify-between gap-2 pb-1">
+            <Button
+              variant="ghost"
+              size="sm"
               type="button"
-              role="tab"
-              aria-selected={tab === 'personal'}
-              aria-controls={`${id}-personal`}
-              tabIndex={tab === 'personal' ? 0 : -1}
-              onClick={() => setTab('personal')}
-              onKeyDown={event => {
-                if (event.key === 'ArrowLeft' || event.key === 'ArrowRight' || event.key === 'ArrowUp' || event.key === 'ArrowDown') {
-                  event.preventDefault();
-                  setTab('workspace');
-                  document.getElementById(`${id}-workspace-tab`)?.focus();
-                }
-              }}
-              className="otis-settings__nav-item text-sm"
+              className="text-xs text-muted-foreground hover:text-foreground h-8 px-2 flex items-center gap-2"
+              onClick={onClose}
             >
-              <UserIcon className="w-4 h-4 shrink-0" aria-hidden="true" />
-              <span>You</span>
-            </button>
-            <div className="text-xs font-medium text-muted-foreground px-2 pt-3">Workspace</div>
-            <button
-              id={`${id}-workspace-tab`}
-              key="workspace"
+              <ArrowLeftIcon size={14} />
+              <span>Back to app</span>
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
               type="button"
-              role="tab"
-              aria-selected={tab === 'workspace'}
-              aria-controls={`${id}-workspace`}
-              tabIndex={tab === 'workspace' ? 0 : -1}
-              onClick={() => setTab('workspace')}
-              onKeyDown={event => {
-                if (event.key === 'ArrowLeft' || event.key === 'ArrowRight' || event.key === 'ArrowUp' || event.key === 'ArrowDown') {
-                  event.preventDefault();
-                  setTab('personal');
-                  document.getElementById(`${id}-personal-tab`)?.focus();
-                }
-              }}
-              className="otis-settings__nav-item text-sm"
+              className="otis-iconbutton size-8 sm:hidden text-muted-foreground hover:text-foreground"
+              aria-label="Close settings menu"
+              onClick={() => setMobileNavOpen(false)}
             >
-              <BriefcaseIcon className="w-4 h-4 shrink-0" aria-hidden="true" />
-              <span className="truncate">{workspaceName}</span>
-            </button>
+              <PanelLeftIcon size={18} />
+            </Button>
           </div>
+
+          <div className="pt-1">
+            <Input
+              placeholder="Search settings…"
+              value={searchFilter}
+              onChange={e => setSearchFilter(e.target.value)}
+              className="h-8 text-xs bg-card/60"
+            />
+          </div>
+
+          <div className="otis-settings__tabs flex flex-col gap-1 flex-1 overflow-y-auto" role="tablist" aria-label="Settings sections">
+            {(!searchFilter || 'account personal you'.includes(searchFilter.toLowerCase())) && (
+              <>
+                <div className="text-xs font-medium text-muted-foreground px-2 pt-2">Personal</div>
+                <button
+                  id={`${id}-personal-tab`}
+                  key="personal"
+                  type="button"
+                  role="tab"
+                  aria-selected={tab === 'personal'}
+                  aria-controls={`${id}-personal`}
+                  tabIndex={tab === 'personal' ? 0 : -1}
+                  onClick={() => {
+                    setTab('personal');
+                    setMobileNavOpen(false);
+                  }}
+                  onKeyDown={event => {
+                    if (event.key === 'ArrowLeft' || event.key === 'ArrowRight' || event.key === 'ArrowUp' || event.key === 'ArrowDown') {
+                      event.preventDefault();
+                      setTab('workspace');
+                      document.getElementById(`${id}-workspace-tab`)?.focus();
+                    }
+                  }}
+                  className="otis-settings__nav-item text-sm"
+                >
+                  <UserIcon className="w-4 h-4 shrink-0" aria-hidden="true" />
+                  <span>Account</span>
+                </button>
+              </>
+            )}
+
+            {(!searchFilter || workspaceName.toLowerCase().includes(searchFilter.toLowerCase()) || 'workspace general'.includes(searchFilter.toLowerCase())) && (
+              <>
+                <div className="text-xs font-medium text-muted-foreground px-2 pt-3">Workspace</div>
+                <button
+                  id={`${id}-workspace-tab`}
+                  key="workspace"
+                  type="button"
+                  role="tab"
+                  aria-selected={tab === 'workspace'}
+                  aria-controls={`${id}-workspace`}
+                  tabIndex={tab === 'workspace' ? 0 : -1}
+                  onClick={() => {
+                    setTab('workspace');
+                    setMobileNavOpen(false);
+                  }}
+                  onKeyDown={event => {
+                    if (event.key === 'ArrowLeft' || event.key === 'ArrowRight' || event.key === 'ArrowUp' || event.key === 'ArrowDown') {
+                      event.preventDefault();
+                      setTab('personal');
+                      document.getElementById(`${id}-personal-tab`)?.focus();
+                    }
+                  }}
+                  className="otis-settings__nav-item text-sm"
+                >
+                  <BriefcaseIcon className="w-4 h-4 shrink-0" aria-hidden="true" />
+                  <span className="truncate">{workspaceName}</span>
+                </button>
+              </>
+            )}
+          </div>
+
           <div className="mt-auto pt-2 border-t border-border flex flex-col gap-2">
             {saved && <span role="status" className="text-xs text-muted-foreground truncate">{saved}</span>}
             <Button
               variant="ghost"
               size="sm"
-              className="justify-start text-muted-foreground hover:text-foreground text-xs h-8 px-2 w-full"
+              className="justify-start text-muted-foreground hover:text-foreground text-xs h-8 px-2 w-full flex items-center gap-2"
               onClick={onSignOut}
             >
-              Sign out
+              <LogOutIcon size={14} />
+              <span>Sign out</span>
             </Button>
           </div>
         </aside>
 
         <div className="otis-settings__main">
           <header className="otis-settings__header">
-            <h3 className="text-base font-medium text-foreground">{tab === 'personal' ? 'You' : workspaceName}</h3>
+            <div className="flex items-center gap-2">
+              <Button
+                variant="ghost"
+                size="icon"
+                type="button"
+                className="otis-iconbutton size-8 sm:hidden text-muted-foreground hover:text-foreground"
+                aria-label="Open settings menu"
+                onClick={() => setMobileNavOpen(true)}
+              >
+                <PanelLeftIcon size={18} />
+              </Button>
+              <h3 className="text-base font-medium text-foreground">{tab === 'personal' ? 'Account' : workspaceName}</h3>
+            </div>
             <Button
               variant="ghost"
               size="icon"
@@ -399,90 +439,101 @@ export function SettingsPane({
                       <AlertDescription>{personalError}</AlertDescription>
                     </Alert>
                   )}
+
+                  <div className="flex flex-col gap-1">
+                    <h4 className="text-sm font-medium text-foreground">Account</h4>
+                  </div>
+
+                  {/* Card 1: Account profile card matching Screenshot 1 */}
                   <div className="otis-settings__card otis-settings__section">
                     <div className="otis-settings__card-row">
-                      <div className="flex flex-col gap-1">
-                        <h4 className="text-sm font-medium">Morning brief schedule</h4>
-                        <p className="otis-detail__label text-xs">
-                          {personal?.brief_enabled
-                            ? 'Delivered according to your active schedule below.'
-                            : 'Morning briefs start disabled until you configure a schedule. When active, Otis prepares a morning summary of upcoming promises, visits, and follow-ups. No forms needed: just tell Otis in chat, e.g. “Weekday brief at 08:30”.'}
-                        </p>
-                      </div>
-                      <Badge variant={personal?.brief_enabled ? 'outline' : 'secondary'} className="text-xs">
-                        {personal?.brief_enabled ? 'Enabled' : 'Disabled'}
-                      </Badge>
+                      <span className="text-sm font-medium text-foreground">Status</span>
+                      <span className="text-sm text-muted-foreground">{isOwner ? 'Owner' : 'Member'}</span>
                     </div>
-
-                    {personal?.brief_enabled && (
-                      <div className="rounded-lg border border-border bg-card/60 p-2 space-y-1 text-xs">
-                        <div className="flex justify-between">
-                          <span className="text-muted-foreground">Delivery time</span>
-                          <span className="font-medium text-foreground">{personal.brief_local_time ?? 'Not set'}</span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span className="text-muted-foreground">Active days</span>
-                          <span className="font-medium text-foreground">{formatWeekdays(personal.brief_weekdays)}</span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span className="text-muted-foreground">Channel</span>
-                          <span className="font-medium text-foreground capitalize">{personal.brief_channel ?? 'web'}</span>
-                        </div>
-                      </div>
-                    )}
 
                     <hr className="otis-settings__card-divider" />
 
-                    <form onSubmit={event => { event.preventDefault(); void saveTimezone(); }}>
-                      <label htmlFor={`${id}-timezone`} className="text-sm font-medium">Brief schedule timezone</label>
-                      <p className="otis-detail__label text-xs">
-                        Controls the timezone for your scheduled morning briefs. Changing this adjusts when your brief delivers.
-                      </p>
-                      <Input
-                        id={`${id}-timezone`}
-                        value={timezone}
-                        placeholder="Not set"
-                        onChange={event => setTimezone(event.target.value)}
-                        autoComplete="off"
-                        spellCheck={false}
-                        list={`${id}-timezones`}
-                        className="mt-2"
-                      />
-                      <datalist id={`${id}-timezones`}>
-                        {supportedTimezones.map(tz => (
-                          <option key={tz} value={tz} />
-                        ))}
-                      </datalist>
-                      <div className="flex items-center gap-2 mt-2">
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          type="button"
-                          disabled={Boolean(busy)}
-                          onClick={() => setTimezone(Intl.DateTimeFormat().resolvedOptions().timeZone)}
-                        >
-                          Use this device’s timezone
-                        </Button>
-                        <Button
-                          size="sm"
-                          type="submit"
-                          disabled={Boolean(busy) || timezone === (personal!.brief_timezone ?? '')}
-                        >
-                          {busy === 'timezone' ? (
-                            <>
-                              <span className="otis-spinner" aria-hidden="true" />
-                              <span>Saving…</span>
-                            </>
-                          ) : (
-                            'Save timezone'
-                          )}
-                        </Button>
+                    <div className="otis-settings__card-row">
+                      <span className="text-sm font-medium text-foreground">User ID</span>
+                      <span className="text-sm font-mono text-muted-foreground truncate max-w-48" title={currentUserId ?? ''}>
+                        {currentUserId ?? '—'}
+                      </span>
+                    </div>
+
+                    <hr className="otis-settings__card-divider" />
+
+                    <div className="otis-settings__card-row">
+                      <span className="text-sm font-medium text-foreground">Name</span>
+                      <span className="text-sm text-foreground">
+                        {memberList.find(m => m.user_id === currentUserId)?.display_name || (currentUserId && members[currentUserId]) || 'You'}
+                      </span>
+                    </div>
+
+                    <hr className="otis-settings__card-divider" />
+
+                    <div className="otis-settings__card-row">
+                      <span className="text-sm font-medium text-foreground">Email</span>
+                      <span className="text-sm text-muted-foreground truncate max-w-48">
+                        {memberList.find(m => m.user_id === currentUserId)?.email || (currentUserId?.includes('@') ? currentUserId : 'Not set')}
+                      </span>
+                    </div>
+
+                    <hr className="otis-settings__card-divider" />
+
+                    <div className="otis-settings__card-row">
+                      <span className="text-sm font-medium text-foreground">Time standard</span>
+                      <span className="text-sm text-muted-foreground">UTC (Auto-converted)</span>
+                    </div>
+
+                    <hr className="otis-settings__card-divider" />
+
+                    <div className="otis-settings__card-row">
+                      <div className="flex flex-col">
+                        <span className="text-sm font-medium text-foreground">Reply language</span>
+                        <span className="otis-detail__label text-xs">Otis answers you in this language.</span>
                       </div>
-                    </form>
+                      <ChoiceSelect
+                        id={`${id}-lang`}
+                        label="Reply language"
+                        value={personal?.preferred_language ?? 'en'}
+                        options={[
+                          { value: 'en', label: 'English' },
+                          { value: 'ro', label: 'Română' },
+                          { value: 'es', label: 'Español' },
+                          { value: 'de', label: 'Deutsch' },
+                          { value: 'fr', label: 'Français' },
+                        ]}
+                        onChange={(lang: string) => void savePersonal('preferred_language', { preferred_language: lang })}
+                        disabled={Boolean(busy)}
+                      />
+                    </div>
                   </div>
 
+                  {/* Card 2: Telegram connection */}
+                  <div className="flex flex-col gap-1 pt-2">
+                    <h4 className="text-sm font-medium text-foreground">Integrations</h4>
+                  </div>
                   <div className="otis-settings__card otis-settings__section">
                     <TelegramConnection workspaceId={workspaceId} workspaceName={workspaceName} />
+                  </div>
+
+                  {/* Card 3: Session & Sign out matching Screenshot 1 */}
+                  <div className="otis-settings__card otis-settings__section">
+                    <div className="otis-settings__card-row">
+                      <div className="flex flex-col gap-1">
+                        <h4 className="text-sm font-medium text-foreground">Active session</h4>
+                        <p className="otis-detail__label text-xs">Sign out of your active session on this device.</p>
+                      </div>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        type="button"
+                        className="text-destructive hover:text-destructive border-border shrink-0"
+                        onClick={onSignOut}
+                      >
+                        Sign out
+                      </Button>
+                    </div>
                   </div>
                 </>
               )

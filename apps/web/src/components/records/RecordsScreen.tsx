@@ -1,11 +1,15 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Toaster, toast } from 'sonner';
 import { Button } from '../ui/button.js';
+import { Input } from '../ui/input.js';
 import { HistoryNav } from '../HistoryNav.js';
 import { SettingsPane } from '../SettingsPane.js';
-import { SparklesIcon, MenuIcon } from '../icons.js';
+import { Overlay } from '../Overlay.js';
+import { SparklesIcon, MenuIcon, CloseIcon } from '../icons.js';
 import { EMPTY_RECORD_LISTS } from './seedData.js';
-import { api } from '../../api/client.js';
-import { useNavChats } from '../../api/queries.js';
+import { useQueryClient } from '@tanstack/react-query';
+import { api, ApiError } from '../../api/client.js';
+import { useNavChats, fetchMoreChats, qk } from '../../api/queries.js';
 import type {
   DirtyCellState,
   DraftOperation,
@@ -23,6 +27,8 @@ import { AddColumnDialog } from './AddColumnDialog.js';
 import { AddListDialog } from './AddListDialog.js';
 import { RecordsHistorySheet } from './RecordsHistorySheet.js';
 import { AskOtisPane, type AskOtisMessage } from './AskOtisPane.js';
+import { UnifiedSearchDialog } from '../UnifiedSearchDialog.js';
+import { DuplicateMergeDialog } from '../DuplicateMergeDialog.js';
 
 export interface RecordsScreenProps {
   workspaceId: string;
@@ -70,11 +76,24 @@ export function RecordsScreen(props: RecordsScreenProps) {
   // History entries per list
   const [historyItems, setHistoryItems] = useState<Record<string, RecordHistoryItem[]>>({});
 
+  const queryClient = useQueryClient();
   // Query real chats for the left navigation sidebar
   const mineQuery = useNavChats(props.userId, props.workspaceId, 'mine', false);
   const teamQuery = useNavChats(props.userId, props.workspaceId, 'team', false);
-  const ownChats = mineQuery.data?.chats ?? [];
-  const teamChats = teamQuery.data?.chats ?? [];
+  const ownChats = useMemo(() => mineQuery.data?.chats ?? [], [mineQuery.data]);
+  const teamChats = useMemo(
+    () => (teamQuery.data?.chats ?? []).filter(chat => chat.author_user_id !== props.userId),
+    [teamQuery.data, props.userId]
+  );
+  const hasMore = Boolean(mineQuery.data?.nextCursor || teamQuery.data?.nextCursor);
+  const handleLoadMore = useCallback(async () => {
+    if (mineQuery.data?.nextCursor) {
+      await fetchMoreChats(queryClient, props.userId, props.workspaceId, 'mine');
+    }
+    if (teamQuery.data?.nextCursor) {
+      await fetchMoreChats(queryClient, props.userId, props.workspaceId, 'team');
+    }
+  }, [queryClient, props.userId, props.workspaceId, mineQuery.data?.nextCursor, teamQuery.data?.nextCursor]);
 
   const [isFetching, setIsFetching] = useState(false);
 
@@ -118,6 +137,19 @@ export function RecordsScreen(props: RecordsScreenProps) {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [saveBanner, setSaveBanner] = useState<string | null>(null);
+  const [isUnifiedSearchOpen, setIsUnifiedSearchOpen] = useState(false);
+  const [isDuplicatesOpen, setIsDuplicatesOpen] = useState(false);
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
+        e.preventDefault();
+        setIsUnifiedSearchOpen(true);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
 
   const handleSidebarNavigate = useCallback(
     (ws: string, nextChat: string | null) => {
@@ -594,74 +626,151 @@ export function RecordsScreen(props: RecordsScreenProps) {
     return props.workspaces.find(w => w.id === props.workspaceId)?.name ?? 'Workspace';
   }, [props.workspaces, props.workspaceId]);
 
+  // Chat management state & handlers for parity with ConversationScreen
+  const [renameTarget, setRenameTarget] = useState<{ id: string; title: string } | null>(null);
+  const [renameTitle, setRenameTitle] = useState('');
+  const [renamingChat, setRenamingChat] = useState(false);
+
+  const handleOpenRename = useCallback((chatId: string, currentTitle: string) => {
+    setRenameTarget({ id: chatId, title: currentTitle });
+    setRenameTitle(currentTitle);
+  }, []);
+
+  const handleConfirmRename = useCallback(async () => {
+    if (!renameTarget || renamingChat) return;
+    const trimmed = renameTitle.trim();
+    if (!trimmed) return;
+    setRenamingChat(true);
+    try {
+      await api.renameChat(props.workspaceId, renameTarget.id, trimmed);
+      void queryClient.invalidateQueries({ queryKey: qk.chats(props.userId, props.workspaceId, 'mine') });
+      void queryClient.invalidateQueries({ queryKey: qk.chat(props.userId, props.workspaceId, renameTarget.id) });
+      toast.success('Conversation renamed');
+      setRenameTarget(null);
+    } catch {
+      toast.error('Could not rename conversation');
+    } finally {
+      setRenamingChat(false);
+    }
+  }, [renameTarget, renamingChat, renameTitle, props.workspaceId, props.userId, queryClient]);
+
+  const [deleteTarget, setDeleteTarget] = useState<{ id: string; title: string } | null>(null);
+  const [deletingChat, setDeletingChat] = useState(false);
+
+  const handleOpenDelete = useCallback((chatId: string, currentTitle: string) => {
+    setDeleteTarget({ id: chatId, title: currentTitle });
+  }, []);
+
+  const handleConfirmDelete = useCallback(async () => {
+    if (!deleteTarget || deletingChat) return;
+    setDeletingChat(true);
+    try {
+      await api.deleteChat(props.workspaceId, deleteTarget.id);
+      void queryClient.invalidateQueries({ queryKey: qk.chats(props.userId, props.workspaceId, 'mine') });
+      void queryClient.invalidateQueries({ queryKey: qk.chats(props.userId, props.workspaceId, 'team') });
+      toast.success('Conversation deleted');
+      setDeleteTarget(null);
+    } catch (err) {
+      if (err instanceof ApiError && (err.status === 404 || deleteTarget.id.startsWith('new-'))) {
+        void queryClient.invalidateQueries({ queryKey: qk.chats(props.userId, props.workspaceId, 'mine') });
+        void queryClient.invalidateQueries({ queryKey: qk.chats(props.userId, props.workspaceId, 'team') });
+        toast.success('Conversation deleted');
+        setDeleteTarget(null);
+      } else {
+        toast.error('Could not delete conversation');
+      }
+    } finally {
+      setDeletingChat(false);
+    }
+  }, [deleteTarget, deletingChat, props.workspaceId, props.userId, queryClient]);
+
+  const [createWorkspaceOpen, setCreateWorkspaceOpen] = useState(false);
+  const [newWorkspaceName, setNewWorkspaceName] = useState('');
+  const [creatingWs, setCreatingWs] = useState(false);
+
+  const handleConfirmCreateWorkspace = useCallback(async () => {
+    const trimmed = newWorkspaceName.trim();
+    if (!trimmed || creatingWs) return;
+    setCreatingWs(true);
+    try {
+      const result = await api.createWorkspace(trimmed);
+      await props.onRefreshSession?.();
+      props.onNavigate(result.workspace.id, null);
+      toast.success('Workspace created');
+      setCreateWorkspaceOpen(false);
+    } catch {
+      toast.error('Could not create workspace');
+    } finally {
+      setCreatingWs(false);
+    }
+  }, [newWorkspaceName, creatingWs, props]);
+
+  const navProps = {
+    userId: props.userId,
+    workspaceName: currentWorkspaceName,
+    workspaces: props.workspaces,
+    workspaceId: props.workspaceId,
+    ownChats,
+    teamChats,
+    activeChatId: null,
+    members: props.members,
+    isRecordsActive: true,
+    loading: mineQuery.isPending || teamQuery.isPending,
+    hasMore,
+    onLoadMore: handleLoadMore,
+    onSelectChat: (chatId: string) => {
+      setIsNavDrawerOpen(false);
+      props.onNavigate(props.workspaceId, chatId);
+    },
+    onNewChat: () => {
+      setIsNavDrawerOpen(false);
+      props.onNavigate(props.workspaceId, null);
+    },
+    onOpenRecords: () => {
+      setIsNavDrawerOpen(false);
+    },
+    onSwitchWorkspace: (id: string) => {
+      setIsNavDrawerOpen(false);
+      props.onNavigate(id, null);
+    },
+    onOpenSettings: () => {
+      setIsNavDrawerOpen(false);
+      setSettingsOpen(true);
+    },
+    onOpenSearch: () => {
+      setIsNavDrawerOpen(false);
+      setIsUnifiedSearchOpen(true);
+    },
+    onRenameChat: handleOpenRename,
+    onDeleteChat: handleOpenDelete,
+    onCreateWorkspace: () => {
+      setNewWorkspaceName('');
+      setCreateWorkspaceOpen(true);
+    },
+  };
+
   return (
-    <div className="flex h-dvh w-full overflow-hidden bg-background text-foreground">
+    <div className="otis-shell h-dvh bg-background text-foreground flex">
+      <Toaster theme="dark" position="top-center" visibleToasts={2} closeButton toastOptions={{ className: 'otis-toast', duration: 3000 }} offset={64} />
       {/* Desktop Navigation Sidebar */}
-      <div className="hidden md:flex md:w-64 md:flex-col md:border-r md:border-sidebar-border bg-sidebar shrink-0">
-        <HistoryNav
-          userId={props.userId}
-          workspaceName={currentWorkspaceName}
-          workspaces={props.workspaces}
-          workspaceId={props.workspaceId}
-          ownChats={ownChats}
-          teamChats={teamChats}
-          activeChatId={null}
-          variant="sidebar"
-          members={props.members}
-          isRecordsActive={true}
-          onSelectChat={chatId => props.onNavigate(props.workspaceId, chatId)}
-          onNewChat={() => props.onNavigate(props.workspaceId, null)}
-          onOpenRecords={() => {}}
-          onSwitchWorkspace={id => props.onNavigate(id, null)}
-          onOpenSettings={() => setSettingsOpen(true)}
-        />
-      </div>
+      <HistoryNav variant="sidebar" {...navProps} />
 
       {/* Mobile Navigation Drawer */}
-      <HistoryNav
-        userId={props.userId}
-        workspaceName={currentWorkspaceName}
-        workspaces={props.workspaces}
-        workspaceId={props.workspaceId}
-        ownChats={ownChats}
-        teamChats={teamChats}
-        activeChatId={null}
-        variant="drawer"
-        open={isNavDrawerOpen}
-        members={props.members}
-        isRecordsActive={true}
-        onSelectChat={chatId => {
-          setIsNavDrawerOpen(false);
-          props.onNavigate(props.workspaceId, chatId);
-        }}
-        onNewChat={() => {
-          setIsNavDrawerOpen(false);
-          props.onNavigate(props.workspaceId, null);
-        }}
-        onOpenRecords={() => setIsNavDrawerOpen(false)}
-        onSwitchWorkspace={id => {
-          setIsNavDrawerOpen(false);
-          props.onNavigate(id, null);
-        }}
-        onOpenSettings={() => {
-          setIsNavDrawerOpen(false);
-          setSettingsOpen(true);
-        }}
-        onClose={() => setIsNavDrawerOpen(false)}
-      />
+      <HistoryNav variant="drawer" open={isNavDrawerOpen} {...navProps} onClose={() => setIsNavDrawerOpen(false)} />
 
       {/* Main Records Area */}
-      <div className="flex flex-1 flex-col min-w-0 h-full overflow-hidden">
+      <main id="main-content" className="otis-main flex flex-1 flex-col min-w-0 h-full overflow-hidden">
         {/* Top Header */}
-        <header className="flex h-12 items-center justify-between border-b border-border px-4 bg-background shrink-0">
-          <div className="flex items-center gap-3 min-w-0">
+        <header className="otis-topbar flex h-12 items-center justify-between border-b border-border px-4 bg-background shrink-0">
+          <div className="otis-topbar__identity flex items-center gap-2 min-w-0">
             {/* Mobile menu hamburger button */}
             <Button
               variant="ghost"
-              size="icon-xs"
+              size="icon"
               type="button"
-              className="md:hidden text-muted-foreground hover:text-foreground"
+              className="otis-iconbutton otis-topbar__menu md:hidden"
               aria-label="Open navigation menu"
+              aria-expanded={isNavDrawerOpen}
               onClick={() => setIsNavDrawerOpen(true)}
             >
               <MenuIcon />
@@ -671,15 +780,15 @@ export function RecordsScreen(props: RecordsScreenProps) {
               Otis
             </span>
             <span className="text-border">/</span>
-            <span className="text-sm font-medium text-foreground truncate">
+            <h1 className="otis-topbar__title truncate text-sm font-medium">
               {activeList.name}
-            </span>
-            <span className="text-xs text-muted-foreground hidden sm:inline">
+            </h1>
+            <span className="otis-topbar__subtitle text-xs text-subtle hidden sm:inline">
               ({effectiveRows.length} rows)
             </span>
           </div>
 
-          <div className="flex items-center gap-2 md:hidden">
+          <div className="otis-topbar__actions flex items-center gap-2">
             <Button
               variant={isAskOtisOpen ? 'secondary' : 'ghost'}
               size="sm"
@@ -743,11 +852,13 @@ export function RecordsScreen(props: RecordsScreenProps) {
           onSave={handleSave}
           onOpenHistory={() => setIsHistoryOpen(true)}
           onToggleAskOtis={() => setIsAskOtisOpen(prev => !prev)}
+          onOpenDuplicates={() => setIsDuplicatesOpen(true)}
+          onOpenUnifiedSearch={() => setIsUnifiedSearchOpen(true)}
         />
 
         {/* Content body: Table or Card List + Ask Otis panel */}
         <div className="flex flex-1 min-h-0 overflow-hidden relative">
-          <main className="flex-1 min-w-0 h-full overflow-hidden flex flex-col">
+          <div className="flex-1 min-w-0 h-full overflow-hidden flex flex-col">
             {viewMode === 'grid' ? (
               <RecordsTable
                 columns={effectiveColumns}
@@ -773,7 +884,7 @@ export function RecordsScreen(props: RecordsScreenProps) {
                 onAddRow={handleAddRow}
               />
             )}
-          </main>
+          </div>
 
           {/* Ask Otis Side Pane on desktop */}
           {isAskOtisOpen && (
@@ -798,7 +909,7 @@ export function RecordsScreen(props: RecordsScreenProps) {
             </div>
           )}
         </div>
-      </div>
+      </main>
 
       {/* Row Editor Sheet */}
       <RecordRowEditor
@@ -875,6 +986,122 @@ export function RecordsScreen(props: RecordsScreenProps) {
           onWorkspaceCreated={id => props.onNavigate(id, null)}
         />
       )}
+
+      {renameTarget && (
+        <Overlay label="Rename conversation" className="otis-overlay--dialog" onClose={() => setRenameTarget(null)}>
+          <div className="otis-dialog-card">
+            <header className="otis-dialog-card__header">
+              <h2 className="text-base font-medium">Rename conversation</h2>
+              <Button variant="ghost" size="icon" type="button" className="otis-iconbutton" aria-label="Close" onClick={() => setRenameTarget(null)}>
+                <CloseIcon />
+              </Button>
+            </header>
+            <form className="otis-dialog-card__body" onSubmit={e => { e.preventDefault(); void handleConfirmRename(); }}>
+              <div>
+                <label htmlFor="rename-chat-input" className="text-sm font-medium">Conversation title</label>
+                <Input
+                  id="rename-chat-input"
+                  value={renameTitle}
+                  onChange={e => setRenameTitle(e.target.value)}
+                  className="mt-1"
+                />
+              </div>
+              <footer className="otis-dialog-card__footer">
+                <Button variant="ghost" size="sm" type="button" onClick={() => setRenameTarget(null)}>Cancel</Button>
+                <Button size="sm" type="submit" disabled={renamingChat || !renameTitle.trim()}>{renamingChat ? 'Saving…' : 'Save'}</Button>
+              </footer>
+            </form>
+          </div>
+        </Overlay>
+      )}
+
+      {deleteTarget && (
+        <Overlay label="Delete conversation" className="otis-overlay--dialog" onClose={() => setDeleteTarget(null)}>
+          <div className="otis-dialog-card">
+            <header className="otis-dialog-card__header">
+              <h2 className="text-base font-medium">Delete conversation</h2>
+              <Button variant="ghost" size="icon" type="button" className="otis-iconbutton" aria-label="Close" onClick={() => setDeleteTarget(null)}>
+                <CloseIcon />
+              </Button>
+            </header>
+            <div className="otis-dialog-card__body">
+              <p className="text-sm text-muted-foreground">Are you sure you want to delete &ldquo;{deleteTarget.title || 'Untitled conversation'}&rdquo;? This conversation cannot be restored.</p>
+              <footer className="otis-dialog-card__footer">
+                <Button variant="ghost" size="sm" type="button" onClick={() => setDeleteTarget(null)}>Cancel</Button>
+                <Button variant="destructive" size="sm" type="button" disabled={deletingChat} onClick={() => void handleConfirmDelete()}>{deletingChat ? 'Deleting…' : 'Delete'}</Button>
+              </footer>
+            </div>
+          </div>
+        </Overlay>
+      )}
+
+      {createWorkspaceOpen && (
+        <Overlay label="Create workspace" className="otis-overlay--dialog" onClose={() => setCreateWorkspaceOpen(false)}>
+          <div className="otis-dialog-card">
+            <header className="otis-dialog-card__header">
+              <h2 className="text-base font-medium">Create workspace</h2>
+              <Button variant="ghost" size="icon" type="button" className="otis-iconbutton" aria-label="Close" onClick={() => setCreateWorkspaceOpen(false)}>
+                <CloseIcon />
+              </Button>
+            </header>
+            <form className="otis-dialog-card__body" onSubmit={e => { e.preventDefault(); void handleConfirmCreateWorkspace(); }}>
+              <div>
+                <label htmlFor="new-ws-input" className="text-sm font-medium">Workspace name</label>
+                <Input
+                  id="new-ws-input"
+                  value={newWorkspaceName}
+                  onChange={e => setNewWorkspaceName(e.target.value)}
+                  placeholder="e.g. Acme Studio"
+                  className="mt-1"
+                />
+              </div>
+              <footer className="otis-dialog-card__footer">
+                <Button variant="ghost" size="sm" type="button" onClick={() => setCreateWorkspaceOpen(false)}>Cancel</Button>
+                <Button size="sm" type="submit" disabled={creatingWs || !newWorkspaceName.trim()}>{creatingWs ? 'Creating…' : 'Create'}</Button>
+              </footer>
+            </form>
+          </div>
+        </Overlay>
+      )}
+
+      {/* Unified Search Modal */}
+      <UnifiedSearchDialog
+        open={isUnifiedSearchOpen}
+        onClose={() => setIsUnifiedSearchOpen(false)}
+        workspaceId={props.workspaceId}
+        onSelectResult={(item) => {
+          setIsUnifiedSearchOpen(false);
+          if (item.category === 'chat') {
+            props.onNavigate(props.workspaceId, item.chatId || item.id);
+          } else if (item.category === 'entity') {
+            const existingRow = effectiveRows.find(r => r.id === item.id);
+            if (existingRow) {
+              setSelectedRowForEditor(existingRow);
+            } else {
+              setSelectedRowForEditor({
+                id: item.id,
+                source: 'entity',
+                cells: { name: item.title },
+              });
+            }
+          } else if (item.category === 'task') {
+            const existingRow = effectiveRows.find(r => r.id === item.id);
+            if (existingRow) {
+              setSelectedRowForEditor(existingRow);
+            }
+          }
+        }}
+      />
+
+      {/* Duplicate Detection & Merge Dialog */}
+      <DuplicateMergeDialog
+        open={isDuplicatesOpen}
+        onClose={() => setIsDuplicatesOpen(false)}
+        workspaceId={props.workspaceId}
+        onMergeComplete={() => {
+          void fetchRecords();
+        }}
+      />
     </div>
   );
 }

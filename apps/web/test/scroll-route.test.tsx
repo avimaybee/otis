@@ -21,8 +21,8 @@ import {
   parseAppLanguage,
 } from '../src/i18n/format.js';
 import { parseConversationSearch } from '../src/router.js';
-import { storyMembers, storyMessage } from '../src/stories/fixtures.js';
-import { storyRun } from '../src/stories/fixtures.js';
+import { storyMembers, storyMessage } from './fixtures/fixtures.js';
+import { storyRun } from './fixtures/fixtures.js';
 import { resetOutboxForTests } from '../src/api/outbox.js';
 import { mountRoute } from './route.js';
 import type { Chat, ChatMessage, PublicActivity } from '@otis/contracts';

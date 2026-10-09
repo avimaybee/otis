@@ -117,6 +117,8 @@ describe('operator model registry', () => {
       const minimal = (muse.capabilities.thinking?.choices ?? []).find((choice) => choice.id === 'minimal');
       expect(minimal?.verifiedAt).toBe('2026-10-06');
     }
+    const muse13 = byKey.get('muse-13')!;
+    expect(muse13.capabilities.thinking?.defaultChoiceId).toBe('xhigh');
     // MiMo gateway validates the enum without proven budget effect: hidden until resolved.
     // Only observed-accepted values are listed, and 2.6 has none at all.
     const mimo25 = byKey.get('mimo-25')!;

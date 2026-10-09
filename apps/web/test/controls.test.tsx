@@ -98,25 +98,19 @@ describe('Authoritative conversation controls', () => {
 });
 
 describe('Independent personal settings', () => {
-  it('saves brief timezone without requiring or inventing settings', async () => {
+  it('renders account profile and handles sign out independently', async () => {
     vi.spyOn(api, 'settings').mockResolvedValue({ settings: { workspace_id: 'ws', default_model: null, created_at: '', updated_at: '' } });
     vi.spyOn(api, 'memberSettings').mockResolvedValue({ settings: own });
     vi.spyOn(api, 'models').mockResolvedValue({ models: [], current_command_key: null, default_command_key: null });
-    const update = vi.spyOn(api, 'updateMemberSettings').mockResolvedValue({ settings: { ...own, brief_timezone: 'Europe/Bucharest' } });
-    const view = await mount(<SettingsPane workspaceId="ws" workspaceName="Kerning" onClose={vi.fn()} onSignOut={vi.fn()}/>);
-    const input = view.host.querySelector('input') as HTMLInputElement;
-    expect(input).toBeTruthy();
-    await React.act(async () => {
-      const nativeSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')?.set;
-      nativeSetter?.call(input, 'Europe/Bucharest');
-      input.dispatchEvent(new Event('input', { bubbles: true }));
-      input.dispatchEvent(new Event('change', { bubbles: true }));
-    });
-    const form = view.host.querySelector('form');
-    await React.act(async () => {
-      form?.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
-    });
-    expect(update).toHaveBeenCalledWith('ws', { brief_timezone: 'Europe/Bucharest' });
+    vi.spyOn(api, 'listMembers').mockResolvedValue({ members: [] });
+    const onSignOut = vi.fn();
+    const view = await mount(<SettingsPane workspaceId="ws" workspaceName="Kerning" currentUserId="avi" onClose={vi.fn()} onSignOut={onSignOut}/>);
+    expect(view.host.textContent).toContain('Account');
+    expect(view.host.textContent).toContain('avi');
+    const signOutBtn = Array.from(view.host.querySelectorAll('button')).find(b => b.textContent === 'Sign out');
+    expect(signOutBtn).toBeTruthy();
+    await React.act(async () => signOutBtn?.click());
+    expect(onSignOut).toHaveBeenCalled();
     await view.unmount();
   });
 });

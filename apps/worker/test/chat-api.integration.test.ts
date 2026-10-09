@@ -1575,6 +1575,39 @@ describe('007 deterministic command behavior', () => {
     const mimoBody = await mimoRes.json() as { reply: string };
     expect(mimoBody.reply).toContain('not been verified');
   });
+
+  it('defaults to Muse Spark 1.3 with xhigh reasoning effort when unconfigured', async () => {
+    const chatId = (await createChat(env.DB, { workspaceId: WS, authorUserId: AVI })).id;
+    // No model_override, no thinking_override_json.
+    // 1. Acceptance pins muse-13 and xhigh into immutable thinking snapshot
+    const accepted = await acceptWebMessage(env.DB, {
+      workspaceId: WS,
+      chatId,
+      userId: AVI,
+      clientMessageId: 'think-muse-default-test',
+      text: 'Default model test',
+    });
+    const runRow = await env.DB
+      .prepare(`SELECT model_key, thinking_snapshot_json FROM agent_runs WHERE id = ?`)
+      .bind(accepted.run_id)
+      .first<{ model_key: string; thinking_snapshot_json: string }>();
+    expect(runRow!.model_key).toBe('muse-13');
+    expect(JSON.parse(runRow!.thinking_snapshot_json)).toMatchObject({
+      choice_id: 'xhigh',
+      choice_label: 'Extra high',
+      request: { kind: 'go_responses_effort', effort: 'xhigh' },
+    });
+
+    // 2. Models endpoint reports muse-13 with effective_choice_id: 'xhigh', is_default: true
+    const modelsRes = await call(`/api/workspaces/${WS}/models?chat_id=${chatId}`, { method: 'GET', cookie: aviCookie });
+    expect(modelsRes.status).toBe(200);
+    const modelsBody = (await modelsRes.json()) as ModelListResponse;
+    const museOption = modelsBody.models.find((m) => m.command_key === 'muse-13');
+    expect(museOption?.thinking).toBeDefined();
+    expect(museOption?.thinking?.effective_choice_id).toBe('xhigh');
+    expect(museOption?.thinking?.is_default).toBe(true);
+    expect(museOption?.thinking?.current_choice_id).toBeNull();
+  });
 });
 
 describe('007 round 2 owning-suite pins: shortcut reply and command endpoint', () => {

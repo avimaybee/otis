@@ -93,10 +93,24 @@ export function RecordRowList({
                 {secondaryCols.map(col => {
                   const val = getEffectiveValue(row, col.id);
                   if (!val) return null;
+                  const isOverdue = Boolean(
+                    (col.id === 'due_date' || col.type === 'date') &&
+                    (() => {
+                      const today = new Date().toISOString().slice(0, 10);
+                      const rowStatus = String(row.cells['status'] || '').toLowerCase();
+                      return val < today && rowStatus !== 'done' && rowStatus !== 'completed' && rowStatus !== 'won';
+                    })()
+                  );
                   return (
                     <div key={col.id} className="truncate">
                       <span className="text-subtle mr-1">{col.name}:</span>
-                      <span className="text-foreground font-medium">{val}</span>
+                      {isOverdue ? (
+                        <span className="text-destructive font-medium">{val} (Overdue)</span>
+                      ) : (
+                        <span className="text-foreground font-medium">
+                          {col.type === 'currency' && !isNaN(Number(val)) ? `€${Number(val).toLocaleString()}` : val}
+                        </span>
+                      )}
                     </div>
                   );
                 })}

@@ -79,7 +79,7 @@ export async function handleListModels(
     .prepare(`SELECT default_model FROM workspace_settings WHERE workspace_id = ?`)
     .bind(workspaceId)
     .first<{ default_model: string | null }>();
-  const defaultKey = settings?.default_model ?? null;
+  const defaultKey = settings?.default_model ?? 'muse-13';
 
   let currentKey: string | null = null;
   let chatThinkingOverride: { model_key: string; choice_id: string } | null = null;
@@ -139,10 +139,12 @@ export async function handleListModels(
         unavailabilityReason = 'This model has no adjustable thinking control.';
       }
 
+      const defaultChoiceId = entry.thinking.defaultChoiceId ?? 'default';
+      const effectiveChoiceId = currentChoiceId ?? defaultChoiceId;
       thinking = {
         current_choice_id: currentChoiceId,
-        effective_choice_id: currentChoiceId ?? 'default',
-        is_default: currentChoiceId === null || currentChoiceId === 'default',
+        effective_choice_id: effectiveChoiceId,
+        is_default: currentChoiceId === null || currentChoiceId === defaultChoiceId || currentChoiceId === 'default',
         state: entry.thinking.state,
         choices,
         ...(unavailabilityReason ? { unavailability_reason: unavailabilityReason } : {}),
@@ -276,7 +278,7 @@ export async function executeCommand(
         .prepare(`SELECT default_model FROM workspace_settings WHERE workspace_id = ?`)
         .bind(context.workspaceId)
         .first<{ default_model: string | null }>();
-      const defaultKey = settings?.default_model ?? null;
+      const defaultKey = settings?.default_model ?? 'muse-13';
       const priorEffectiveModel = chat.model_override ?? defaultKey;
       const newEffectiveModel = key === 'default' ? defaultKey : key;
       const modelChanged = priorEffectiveModel !== newEffectiveModel;
@@ -329,7 +331,7 @@ export async function executeCommand(
         .prepare(`SELECT default_model FROM workspace_settings WHERE workspace_id = ?`)
         .bind(context.workspaceId)
         .first<{ default_model: string | null }>();
-      const defaultKey = settings?.default_model ?? null;
+      const defaultKey = settings?.default_model ?? 'muse-13';
       const effectiveKey = chat.model_override ?? defaultKey;
       const entry = PRODUCTION_REGISTRY.entries.find((e) => e.commandKey === effectiveKey);
       if (!entry) {
@@ -342,9 +344,14 @@ export async function executeCommand(
 
       const thinkingControl = entry.thinking;
       const supportState = thinkingControl?.state ?? 'unverified';
+      const defaultChoice = thinkingControl?.defaultChoiceId
+        ? thinkingControl.choices.find((c) => c.id === thinkingControl.defaultChoiceId) ?? null
+        : null;
       let activeChoice: ThinkingChoice | null = null;
       if (chat.thinking_override && chat.thinking_override.model_key === entry.commandKey) {
         activeChoice = thinkingControl?.choices.find((c) => c.id === chat.thinking_override!.choice_id) ?? null;
+      } else {
+        activeChoice = defaultChoice;
       }
 
       if (parsed.args.length === 0) {
@@ -390,9 +397,10 @@ export async function executeCommand(
             effects: [],
           };
         }
+        const defaultLabel = defaultChoice ? defaultChoice.label : 'Provider default';
         return {
           kind: 'reply',
-          text: `Thinking level reset to Provider default for ${entry.displayName} in this chat.`,
+          text: `Thinking level reset to ${defaultLabel} for ${entry.displayName} in this chat.`,
           effects: [{ type: 'set_chat_thinking', chatId: chat.id, thinkingOverride: null }],
         };
       }

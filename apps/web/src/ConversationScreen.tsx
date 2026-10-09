@@ -22,7 +22,9 @@ import { QuestionPanel } from './components/QuestionPanel.js';
 import { SourcePane } from './components/SourcePane.js';
 import { SettingsPane } from './components/SettingsPane.js';
 import { Transcript } from './components/Transcript.js';
-import { CloseIcon, ComposeIcon, MenuIcon } from './components/icons.js';
+import { CloseIcon, ComposeIcon, MenuIcon, SearchIcon } from './components/icons.js';
+import { UnifiedSearchDialog } from './components/UnifiedSearchDialog.js';
+import { EntityFilePane } from './components/EntityFile.js';
 import { Overlay } from './components/Overlay.js';
 import { Button } from './components/ui/button.js';
 import { Input } from './components/ui/input.js';
@@ -160,6 +162,19 @@ export function ConversationScreen({ workspaceId, chat: routeChat, chatParamPres
   const activeChatId = routeChat;
   const [drawerOpen, setDrawerOpen] = useState(false); const [settingsOpen, setSettingsOpen] = useState(false); const [detailActionId, setDetailActionId] = useState<string | null>(null);
   const [streamStatus, setStreamStatus] = useState<StreamStatus>('idle'); const [error, setError] = useState<string | null>(null); const [accessLost, setAccessLost] = useState(false);
+  const [isUnifiedSearchOpen, setIsUnifiedSearchOpen] = useState(false);
+  const [clientDossierEntityId, setClientDossierEntityId] = useState<string | null>(null);
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
+        e.preventDefault();
+        setIsUnifiedSearchOpen(true);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
   // Live transient preview text by run/round. Memory-only: never persisted,
   // never in the snapshot; durable chunks and answers replace it on arrival.
   const [transients, setTransients] = useState<TransientPreview>({});
@@ -219,7 +234,7 @@ export function ConversationScreen({ workspaceId, chat: routeChat, chatParamPres
 
   const navigate = useCallback((workspace: string, chat: string | null, replace = false) => {
     if (chat === null) clearPendingNewChat(userId, workspace);
-    controlOperation.current = null; setControlResult(null); epoch.current++; selected.current = { workspace, chat }; setDrawerOpen(false); setSettingsOpen(false); setDetailActionId(null); setSourceId(null); setReplyId(null); setDismissedClarificationIds(readQuestionState('dismissed', userId, workspace, chat)); setDraftValue(null); setError(null); setOlderError(null); setAccessLost(false);
+    controlOperation.current = null; setControlResult(null); epoch.current++; selected.current = { workspace, chat }; setDrawerOpen(false); setSettingsOpen(false); setDetailActionId(null); setSourceId(null); setReplyId(null); setDismissedClarificationIds(readQuestionState('dismissed', userId, workspace, chat)); setDraftValue(null); setError(null); setOlderError(null); setAccessLost(false); setIsUnifiedSearchOpen(false); setClientDossierEntityId(null);
     clearRefreshTimers();
     onNavigate(workspace, chat, replace);
     try { sessionStorage.setItem(`otis:view:${userId}:${workspace}`, chat ?? 'new'); } catch { /* URL remains authoritative */ }
@@ -1220,6 +1235,7 @@ export function ConversationScreen({ workspaceId, chat: routeChat, chatParamPres
     onOpenRecords: onNavigateToRecords ? () => onNavigateToRecords(workspaceId) : undefined,
     onSwitchWorkspace: switchWorkspace,
     onOpenSettings: () => { setDrawerOpen(false); setSettingsOpen(true); },
+    onOpenSearch: () => { setDrawerOpen(false); setIsUnifiedSearchOpen(true); },
     hasMore: Boolean(mineQuery.data?.nextCursor || teamQuery.data?.nextCursor),
     onLoadMore: () => void loadMoreChats(),
     onRenameChat: handleOpenRename,
@@ -1262,7 +1278,7 @@ export function ConversationScreen({ workspaceId, chat: routeChat, chatParamPres
           </>
         ) : (
           <>
-            <Button variant="ghost" size="icon" type="button" className="otis-iconbutton otis-topbar__menu" aria-label="Open history" aria-expanded={drawerOpen} onClick={() => setDrawerOpen(true)} disabled={accessLost}><MenuIcon/></Button><div className="otis-topbar__identity"><h1 className="otis-topbar__title truncate text-sm font-medium" title={currentDetail?.chat.title ?? workspaceName}>{currentDetail?.chat.title ?? workspaceName}</h1><span className="otis-topbar__subtitle text-xs text-subtle">{readOnly ? `${currentDetail!.chat.author_display_name ?? members[currentDetail!.chat.author_user_id] ?? 'Teammate'} · read only` : activeChatId ? workspaceName : 'New conversation'}</span></div><div className="otis-topbar__actions"><ChatOverflow models={models} followsDefault={followsDefault} disabled={accessLost || readOnly} pending={controlPending} running={Boolean(running)} onCommand={applyCommand} onStop={running ? async () => { await api.stopRun(workspaceId, running.run.id); if (activeChatId) refreshRun(workspaceId, activeChatId, running.run.id); } : undefined} onRename={activeChatId && !readOnly ? () => handleOpenRename(activeChatId, currentDetail?.chat.title ?? '') : undefined} onDelete={activeChatId && !readOnly ? () => handleOpenDelete(activeChatId, currentDetail?.chat.title ?? '') : undefined}/><Button variant="ghost" size="icon" type="button" className="otis-iconbutton" aria-label="New chat" onClick={() => navigate(workspaceId, null)} disabled={accessLost}><ComposeIcon/></Button></div>
+            <Button variant="ghost" size="icon" type="button" className="otis-iconbutton otis-topbar__menu" aria-label="Open history" aria-expanded={drawerOpen} onClick={() => setDrawerOpen(true)} disabled={accessLost}><MenuIcon/></Button><div className="otis-topbar__identity"><h1 className="otis-topbar__title truncate text-sm font-medium" title={currentDetail?.chat.title ?? workspaceName}>{currentDetail?.chat.title ?? workspaceName}</h1><span className="otis-topbar__subtitle text-xs text-subtle">{readOnly ? `${currentDetail!.chat.author_display_name ?? members[currentDetail!.chat.author_user_id] ?? 'Teammate'} · read only` : activeChatId ? workspaceName : 'New conversation'}</span></div><div className="otis-topbar__actions"><Button variant="ghost" size="icon" type="button" className="otis-iconbutton" aria-label="Search all (Ctrl+K)" title="Search all (Ctrl+K)" onClick={() => setIsUnifiedSearchOpen(true)} disabled={accessLost}><SearchIcon/></Button><ChatOverflow models={models} followsDefault={followsDefault} disabled={accessLost || readOnly} pending={controlPending} running={Boolean(running)} onCommand={applyCommand} onStop={running ? async () => { await api.stopRun(workspaceId, running.run.id); if (activeChatId) refreshRun(workspaceId, activeChatId, running.run.id); } : undefined} onRename={activeChatId && !readOnly ? () => handleOpenRename(activeChatId, currentDetail?.chat.title ?? '') : undefined} onDelete={activeChatId && !readOnly ? () => handleOpenDelete(activeChatId, currentDetail?.chat.title ?? '') : undefined}/><Button variant="ghost" size="icon" type="button" className="otis-iconbutton" aria-label="New chat" onClick={() => navigate(workspaceId, null)} disabled={accessLost}><ComposeIcon/></Button></div>
           </>
         )}
       </header>
@@ -1372,6 +1388,54 @@ export function ConversationScreen({ workspaceId, chat: routeChat, chatParamPres
               <Button size="sm" type="submit" disabled={creatingWs || !newWorkspaceName.trim()}>{creatingWs ? 'Creating…' : 'Create'}</Button>
             </footer>
           </form>
+        </div>
+      </Overlay>
+    )}
+    <UnifiedSearchDialog
+      open={isUnifiedSearchOpen}
+      onClose={() => setIsUnifiedSearchOpen(false)}
+      workspaceId={workspaceId}
+      onSelectResult={(item) => {
+        setIsUnifiedSearchOpen(false);
+        if (item.category === 'chat') {
+          navigate(workspaceId, item.chatId || item.id);
+        } else if (item.category === 'entity') {
+          setClientDossierEntityId(item.id);
+        } else if (item.category === 'task' || item.category === 'note' || item.category === 'file' || item.category === 'quote') {
+          if (item.chatId) {
+            navigate(workspaceId, item.chatId);
+          } else if (item.entityId) {
+            setClientDossierEntityId(item.entityId);
+          } else if (onNavigateToRecords) {
+            onNavigateToRecords(workspaceId);
+          }
+        }
+      }}
+    />
+    {clientDossierEntityId && (
+      <Overlay label="Client dossier" className="otis-overlay--dialog otis-overlay--wide" onClose={() => setClientDossierEntityId(null)}>
+        <div className="otis-dialog-card otis-dialog-card--wide flex flex-col">
+          <header className="otis-dialog-card__header">
+            <h2 className="text-base font-medium">Client Dossier</h2>
+            <Button variant="ghost" size="icon" type="button" className="otis-iconbutton" aria-label="Close" onClick={() => setClientDossierEntityId(null)}>
+              <CloseIcon />
+            </Button>
+          </header>
+          <div className="otis-dialog-card__body overflow-y-auto flex-1">
+            <EntityFilePane
+              workspaceId={workspaceId}
+              userId={userId}
+              entityId={clientDossierEntityId}
+              onAsk={question => {
+                setClientDossierEntityId(null);
+                setDraftValue(question);
+              }}
+              onOpenChat={id => {
+                setClientDossierEntityId(null);
+                navigate(workspaceId, id);
+              }}
+            />
+          </div>
         </div>
       </Overlay>
     )}

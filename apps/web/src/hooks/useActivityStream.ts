@@ -170,11 +170,14 @@ export function clearTransientPreview(current: TransientPreview, runId: string):
 export function transientTextForRun(current: TransientPreview, runId: string): string {
   const rounds = current[runId];
   if (!rounds) return '';
-  return Object.keys(rounds)
+  const roundTexts = Object.keys(rounds)
     .map(Number)
     .sort((left, right) => left - right)
-    .map((round) => rounds[round]!.text)
-    .join('');
+    .map((round) => rounds[round]!.text);
+  if (roundTexts.length <= 1) {
+    return roundTexts[0] ?? '';
+  }
+  return roundTexts.map((text) => text.trim()).filter(Boolean).join('\n\n');
 }
 
 export function isAuthoritativeGap(page: ActivityPageResponse, appliedCursor: number): boolean {

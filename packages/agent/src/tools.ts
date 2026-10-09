@@ -257,9 +257,14 @@ export interface QueryToolArgs {
     | 'lead_overview'
     | 'entity_file'
     | 'merge_preview'
-    | 'followups';
+    | 'followups'
+    | 'members'
+    | 'duplicates'
+    | 'search';
   section?: EntityFileSection;
   order?: 'occurred' | 'recorded' | 'overdue_first';
+  entity_id?: string;
+  target_entity_id?: string;
   filters?: {
     interaction_id?: string;
     entity_id?: string;
@@ -1282,10 +1287,35 @@ export function validateQueryArgs(raw: unknown): ValidationResult<QueryToolArgs>
   if (sec) return sec;
   const unk = checkNoUnknownKeys(
     obj,
-    new Set(['resource', 'filters', 'limit', 'cursor', 'section', 'order']),
+    new Set([
+      'resource',
+      'filters',
+      'limit',
+      'cursor',
+      'section',
+      'order',
+      'entity_id',
+      'target_entity_id',
+    ]),
     'query',
   );
   if (unk) return unk;
+
+  let topEntityId: string | undefined;
+  if (obj['entity_id'] !== undefined) {
+    if (typeof obj['entity_id'] !== 'string' || !obj['entity_id'].trim()) {
+      return fail('invalid_argument', "Field 'entity_id' must be a non-empty string.");
+    }
+    topEntityId = obj['entity_id'].trim();
+  }
+
+  let topTargetEntityId: string | undefined;
+  if (obj['target_entity_id'] !== undefined) {
+    if (typeof obj['target_entity_id'] !== 'string' || !obj['target_entity_id'].trim()) {
+      return fail('invalid_argument', "Field 'target_entity_id' must be a non-empty string.");
+    }
+    topTargetEntityId = obj['target_entity_id'].trim();
+  }
 
   const validResources = new Set([
     'entities',
@@ -1298,11 +1328,14 @@ export function validateQueryArgs(raw: unknown): ValidationResult<QueryToolArgs>
     'entity_file',
     'merge_preview',
     'followups',
+    'members',
+    'duplicates',
+    'search',
   ]);
   if (typeof obj['resource'] !== 'string' || !validResources.has(obj['resource'])) {
     return fail(
       'invalid_argument',
-      'Unknown query resource. Use entities, tasks, events, interactions, drafts, attachments, or lead_overview.',
+      'Unknown query resource. Use entities, tasks, events, interactions, drafts, attachments, lead_overview, entity_file, followups, members, duplicates, or search.',
     );
   }
 
@@ -1408,6 +1441,16 @@ export function validateQueryArgs(raw: unknown): ValidationResult<QueryToolArgs>
     }
   }
 
+  if (topEntityId || topTargetEntityId) {
+    filters = {
+      ...filters,
+      ...(topEntityId && !filters?.entity_id ? { entity_id: topEntityId } : {}),
+      ...(topTargetEntityId && !filters?.target_entity_id
+        ? { target_entity_id: topTargetEntityId }
+        : {}),
+    };
+  }
+
   if (obj['resource'] === 'merge_preview' && (!filters?.entity_id || !filters.target_entity_id))
     return fail('invalid_argument', 'A merge preview needs both client IDs.');
   if (obj['resource'] === 'entity_file') {
@@ -1443,7 +1486,7 @@ export function validateQueryArgs(raw: unknown): ValidationResult<QueryToolArgs>
   if (['tasks', 'attachments', 'followups'].includes(String(obj['resource'])) && (limit ?? 25) > 50)
     return fail('invalid_argument', 'This resource has a 50-row page limit.');
   if (obj['resource'] === 'interactions') {
-    const supplied = (obj['filters'] ?? {}) as Record<string, unknown>;
+    const supplied = (filters ?? {}) as Record<string, unknown>;
     const allowed = new Set([
       'entity_id',
       'interaction_id',
@@ -1454,7 +1497,7 @@ export function validateQueryArgs(raw: unknown): ValidationResult<QueryToolArgs>
       'to',
     ]);
     for (const [key, value] of Object.entries(supplied)) {
-      if (!allowed.has(key) || typeof value !== 'string' || !value.trim()) {
+      if (value !== undefined && (!allowed.has(key) || typeof value !== 'string' || !value.trim())) {
         return fail('invalid_argument', `Invalid current-interaction filter '${key}'.`);
       }
     }
@@ -1493,6 +1536,10 @@ export function validateQueryArgs(raw: unknown): ValidationResult<QueryToolArgs>
       filters,
       limit,
       cursor: typeof obj['cursor'] === 'string' ? obj['cursor'].trim() : undefined,
+      ...(topEntityId || filters?.entity_id ? { entity_id: topEntityId ?? filters?.entity_id } : {}),
+      ...(topTargetEntityId || filters?.target_entity_id
+        ? { target_entity_id: topTargetEntityId ?? filters?.target_entity_id }
+        : {}),
     },
   };
 }
@@ -2854,7 +2901,7 @@ export const ALL_AGENT_TOOLS: ProviderToolDeclaration[] = [
   {
     name: 'query',
     description:
-      'Query scoped business records. entity_file returns the complete client-file overview with facts, contacts, work, quotes, notes, files, attribution and honest section coverage. Every section already supplies total, has_more and next_cursor; coverage.partial_sections lists incomplete sections. Supply entity_id; section/cursor reads just another page. merge_preview compares entity_id and target_entity_id before an explicitly requested combination. interactions is current editable entries with root/head IDs; events is immutable history. lead_overview gives full filtered counts and paged next steps.',
+      'Query scoped business records. entity_file returns the complete client-file overview with facts, contacts, work, quotes, notes, files, attribution and honest section coverage. members returns the workspace team roster, their names, emails, roles, and user IDs. duplicates scans for similar entity pairs to compare or merge. search performs a unified search across clients, notes, quotes, tasks, files, and conversation history. merge_preview compares entity_id and target_entity_id before an explicitly requested combination. interactions is current editable entries with root/head IDs; events is immutable history. lead_overview gives full filtered counts and paged next steps.',
     parameters: {
       type: 'object',
       properties: {
@@ -2871,6 +2918,9 @@ export const ALL_AGENT_TOOLS: ProviderToolDeclaration[] = [
             'entity_file',
             'merge_preview',
             'followups',
+            'members',
+            'duplicates',
+            'search',
           ],
         },
         section: {
@@ -2916,6 +2966,16 @@ export const ALL_AGENT_TOOLS: ProviderToolDeclaration[] = [
             },
           },
           additionalProperties: false,
+        },
+        entity_id: {
+          type: 'string',
+          description:
+            'Entity ID (for entity_file, merge_preview, or interactions). Can also be supplied inside filters.',
+        },
+        target_entity_id: {
+          type: 'string',
+          description:
+            'Target entity ID for merge_preview. Can also be supplied inside filters.',
         },
         limit: { type: 'integer' },
         cursor: { type: 'string' },

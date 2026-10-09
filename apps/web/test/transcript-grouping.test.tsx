@@ -75,6 +75,25 @@ describe('F12 transcript grouping', () => {
     expect(text).toBe('Hello there');
   });
 
+  it('formats multi-round text chunks into paragraphs separated by newlines', () => {
+    const text = joinRunTextChunks([
+      activity('a1', 'run_1', 'text_chunk', { text: 'Proving it end-to-end on fakes — starting with the test clients.', round_index: 0 }),
+      activity('a2', 'run_1', 'text_chunk', { text: 'Proving it out — I will spin up a couple fakes.', round_index: 1 }),
+    ]);
+    expect(text).toBe(
+      'Proving it end-to-end on fakes — starting with the test clients.\n\nProving it out — I will spin up a couple fakes.',
+    );
+  });
+
+  it('concatenates chunks within the same round and separates distinct rounds', () => {
+    const text = joinRunTextChunks([
+      activity('a1', 'run_1', 'text_chunk', { text: 'Round zero part A. ', round_index: 0 }),
+      activity('a2', 'run_1', 'text_chunk', { text: 'Round zero part B.', round_index: 0 }),
+      activity('a3', 'run_1', 'text_chunk', { text: 'Round one only.', round_index: 1 }),
+    ]);
+    expect(text).toBe('Round zero part A. Round zero part B.\n\nRound one only.');
+  });
+
   it('describes member-only runs as unanswered with the latest member message', () => {
     const state = describeRunAnswers([
       message('m1', 'run_1', 'member'),

@@ -15,7 +15,7 @@ import {
   fileEntry,
   followUpPage,
   historyMatches,
-} from '../src/stories/businessFixtures.js';
+} from './fixtures/businessFixtures.js';
 import { TestQueryProvider } from './query.js';
 
 expect.extend(matchers);

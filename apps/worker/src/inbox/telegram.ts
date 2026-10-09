@@ -466,7 +466,7 @@ async function acceptTelegramTextMessage(
     db
       .prepare(
         `INSERT INTO agent_runs (id, workspace_id, chat_id, source_message_id, source_job_id, executor_kind, status, model_key, thinking_snapshot_json, created_at, updated_at)
-         VALUES (?, ?, ?, ?, NULL, 'agent', 'queued', (SELECT COALESCE(c.model_override, s.default_model, '') FROM chats c LEFT JOIN workspace_settings s ON s.workspace_id = c.workspace_id WHERE c.id = ?), ?, ?, ?)`
+         VALUES (?, ?, ?, ?, NULL, 'agent', 'queued', (SELECT COALESCE(c.model_override, s.default_model, 'muse-13') FROM chats c LEFT JOIN workspace_settings s ON s.workspace_id = c.workspace_id WHERE c.id = ?), ?, ?, ?)`
       )
       .bind(runId, input.workspaceId, input.chatId, messageInId, input.chatId, thinkingSnapshotJson, input.now, input.now),
 

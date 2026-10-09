@@ -138,15 +138,17 @@ export function consolidateWorkingSteps(steps: WorkingStep[]): (WorkingStep & { 
   return result;
 }
 
-export function WorkingDisclosure({ steps, finished, expanded, onToggle, onInspectAction, isWaiting }: { steps: WorkingStep[]; finished: boolean; expanded: boolean; onToggle: () => void; onInspectAction?: (actionId: string) => void; isWaiting?: boolean }) {
+export function WorkingDisclosure({ steps, finished, expanded, onToggle, onInspectAction, isWaiting, children }: { steps: WorkingStep[]; finished: boolean; expanded: boolean; onToggle: () => void; onInspectAction?: (actionId: string) => void; isWaiting?: boolean; children?: React.ReactNode }) {
   if (!steps.length) return null;
   const current = steps.find(step => step.state === 'running') ?? steps.at(-1)!;
   const displaySteps = consolidateWorkingSteps(steps);
   const active = !finished && !isWaiting;
+  const hasRunningStep = displaySteps.some(step => step.state === 'running');
+  const showHeaderDot = !finished && (!expanded || !hasRunningStep);
   return (
     <section className="otis-working" aria-label={finished ? 'Worked' : isWaiting ? 'Paused' : 'Working'} aria-live="off">
       <button type="button" className="otis-working__disclosure mb-2 flex items-center gap-2 text-xs text-muted-foreground" aria-expanded={expanded} onClick={onToggle}>
-        {!finished && (
+        {showHeaderDot && (
           <span
             aria-hidden="true"
             className={`size-2 shrink-0 rounded-full ${isWaiting ? 'bg-muted-foreground/60' : 'bg-highlight otis-working__pulse-dot--active'}`}
@@ -162,28 +164,31 @@ export function WorkingDisclosure({ steps, finished, expanded, onToggle, onInspe
         </span>
       </button>
       {expanded && (
-        <ol className="otis-working__steps text-xs">
-          {displaySteps.map(step => (
-            <li key={step.id} className={`otis-working__step otis-working__step--${step.state}`}>
-              <span className="otis-working__step-icon">
-                {step.state === 'running' && !isWaiting ? (
-                  <span className="size-2 shrink-0 rounded-full bg-highlight otis-working__pulse-dot--active" aria-hidden="true" />
-                ) : (
-                  <StepIcon label={step.label} state={step.state} />
+        <>
+          <ol className="otis-working__steps text-xs">
+            {displaySteps.map(step => (
+              <li key={step.id} className={`otis-working__step otis-working__step--${step.state}`}>
+                <span className="otis-working__step-icon">
+                  {step.state === 'running' && !isWaiting ? (
+                    <span className="size-2 shrink-0 rounded-full bg-highlight otis-working__pulse-dot--active" aria-hidden="true" />
+                  ) : (
+                    <StepIcon label={step.label} state={step.state} />
+                  )}
+                </span>
+                <div className="otis-working__description">
+                  <span>{step.count && step.count > 1 ? `${step.label} (${step.count})` : step.label}</span>
+                  {step.summary && !step.label.includes(step.summary) && <span className="text-subtle">{step.summary}</span>}
+                </div>
+                {step.actionId && step.state === 'succeeded' && onInspectAction && (
+                  <Button variant="ghost" size="sm" type="button" className="otis-working__inspect" onClick={() => onInspectAction(step.actionId!)}>
+                    Inspect / Undo
+                  </Button>
                 )}
-              </span>
-              <div className="otis-working__description">
-                <span>{step.count && step.count > 1 ? `${step.label} (${step.count})` : step.label}</span>
-                {step.summary && !step.label.includes(step.summary) && <span className="text-subtle">{step.summary}</span>}
-              </div>
-              {step.actionId && step.state === 'succeeded' && onInspectAction && (
-                <Button variant="ghost" size="sm" type="button" className="otis-working__inspect" onClick={() => onInspectAction(step.actionId!)}>
-                  Inspect / Undo
-                </Button>
-              )}
-            </li>
-          ))}
-        </ol>
+              </li>
+            ))}
+          </ol>
+          {children}
+        </>
       )}
     </section>
   );
@@ -202,22 +207,41 @@ function RunWork({ run, steps, activities, onInspectAction, onReply, onRetryRun,
     return !payload || typeof payload.block_id !== 'string' || !payload.block_id;
   });
   return <div className="otis-run">
-    {(run?.status === 'queued' || (run?.status === 'running' && !steps.length && thinking.blocks.length === 0)) && (
+    {!finished && steps.length === 0 && thinking.blocks.length === 0 && (run?.status === 'queued' || run?.status === 'running' || !run) && (
       <div className="flex items-center gap-2 text-xs text-muted-foreground" role="status">
         <span aria-hidden="true" className="size-2 shrink-0 rounded-full bg-highlight otis-working__pulse-dot--active" />
         <span className="otis-working__label--active">{run?.status === 'queued' ? 'Thinking…' : 'Working…'}</span>
       </div>
     )}
     {steps.length === 0 && thinking.blocks.length > 0 && (
-      <button type="button" className="otis-working__disclosure flex items-center gap-2 text-xs text-muted-foreground" aria-expanded={expanded} onClick={() => setManual(!expanded)}>
-        {!finished && <span aria-hidden="true" className={`size-2 shrink-0 rounded-full ${isWaiting ? 'bg-muted-foreground/60' : 'bg-highlight otis-working__pulse-dot--active'}`} />}
-        <span className="size-4 text-subtle" aria-hidden="true"><ChevronDownIcon /></span>
-        <span className={!finished && !isWaiting ? 'otis-working__label--active' : undefined}>{finished ? 'Worked' : isWaiting ? 'Paused · Needs your answer' : 'Working…'}</span>
-      </button>
+      <ThinkingDisclosure
+        blocks={thinking.blocks}
+        active={!finished && !isWaiting}
+        finished={finished}
+        isWaiting={isWaiting}
+      />
     )}
-    <WorkingDisclosure steps={steps} finished={finished} expanded={expanded} onToggle={() => setManual(!expanded)} onInspectAction={onInspectAction} isWaiting={isWaiting}/>
-    {expanded && <ThinkingDisclosure blocks={thinking.blocks} />}
-    {expanded && summaries.map(summary => { const payload = summary.payload as { text?: string; provider?: string }; return payload.text ? <details key={summary.id} className="otis-provider-summary text-xs"><summary>{payload.provider ?? 'Provider'} public summary</summary><p>{payload.text}</p></details> : null; })}
+    {steps.length > 0 && (
+      <WorkingDisclosure
+        steps={steps}
+        finished={finished}
+        expanded={expanded}
+        onToggle={() => setManual(!expanded)}
+        onInspectAction={onInspectAction}
+        isWaiting={isWaiting}
+      >
+        {thinking.blocks.length > 0 && <ThinkingDisclosure blocks={thinking.blocks} />}
+        {summaries.map(summary => {
+          const payload = summary.payload as { text?: string; provider?: string };
+          return payload.text ? (
+            <details key={summary.id} className="otis-provider-summary text-xs">
+              <summary>{payload.provider ?? 'Provider'} public summary</summary>
+              <p>{payload.text}</p>
+            </details>
+          ) : null;
+        })}
+      </WorkingDisclosure>
+    )}
     {run?.pending_clarification && (
       <div className="otis-question text-base text-foreground" role="region" aria-label="Awaiting input">
         {!hasAgentMessage && <p>{run.pending_clarification.question}</p>}
@@ -298,13 +322,50 @@ export function groupActivitiesByRun(activities: PublicActivity[]): Map<string, 
 
 /** Joins one run's durable text chunks; non-string payloads contribute nothing. */
 export function joinRunTextChunks(runActivities: PublicActivity[]): string {
-  let text = '';
+  const roundChunks = new Map<number, string>();
+  let unrounded = '';
+  let hasRounds = false;
+
   for (const item of runActivities) {
     if (item.type !== 'text_chunk') continue;
-    const chunk = (item.payload as { text?: unknown }).text;
-    text += typeof chunk === 'string' ? chunk : '';
+    const payload = item.payload as { text?: unknown; round_index?: unknown } | null;
+    let chunk = '';
+    let roundIndex: unknown = undefined;
+
+    if (typeof payload?.text === 'string') {
+      chunk = payload.text;
+      roundIndex = payload.round_index;
+    } else if (payload?.text && typeof payload.text === 'object') {
+      const nested = payload.text as { text?: unknown; round_index?: unknown };
+      if (typeof nested.text === 'string') {
+        chunk = nested.text;
+        roundIndex = nested.round_index ?? payload.round_index;
+      }
+    } else if (typeof item.payload === 'string') {
+      chunk = item.payload;
+    }
+
+    if (!chunk) continue;
+
+    if (typeof roundIndex === 'number') {
+      hasRounds = true;
+      const prev = roundChunks.get(roundIndex) ?? '';
+      roundChunks.set(roundIndex, prev + chunk);
+    } else {
+      unrounded += chunk;
+    }
   }
-  return text;
+
+  if (!hasRounds) {
+    return unrounded;
+  }
+
+  const sortedRounds = Array.from(roundChunks.keys()).sort((a, b) => a - b);
+  const sections = sortedRounds.map((r) => roundChunks.get(r)!.trim()).filter(Boolean);
+  if (unrounded.trim()) {
+    sections.unshift(unrounded.trim());
+  }
+  return sections.join('\n\n');
 }
 
 export interface RunAnswerState {
@@ -572,7 +633,10 @@ export function Transcript({ messages, members, currentUserId, steps, run, runs 
               // Durable chunks plus live transient preview for rounds not yet
               // persisted. Transient frames carry each round's full text, so
               // joining is order-safe; durable coverage drops preview rounds.
-              const streamText = chunks + (runId ? transientTextForRun(transients, runId) : '');
+              const transientText = runId ? transientTextForRun(transients, runId) : '';
+              const streamText = chunks && transientText
+                ? (chunks.endsWith('\n') ? `${chunks.trimEnd()}\n\n${transientText.trimStart()}` : `${chunks}\n\n${transientText.trimStart()}`)
+                : (chunks || transientText);
               return streamText && (unfinishedRun ? (
               <div className="otis-turn__body otis-streamed text-base text-foreground [&>p+p]:mt-3" aria-live="off">
                 <p className="otis-run__status text-xs text-subtle">

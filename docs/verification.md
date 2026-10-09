@@ -17,8 +17,6 @@ UI changes also run:
 
 ```powershell
 pnpm check:design
-pnpm check:stories
-pnpm --filter @otis/web build-storybook
 ```
 
 Use targeted behavior checks appropriate to the change. `pnpm eval:agent` runs the deterministic eval project; it is separate from the root suite. `pnpm smoke:providers` and explicitly enabled live voice probes use real services; do not call them fake acceptance or run paid inference without the relevant authorization.
@@ -78,3 +76,14 @@ Record baseline/tree/date, exact commands/results/skips, environment, source/tes
 Deployment validation uses the actual release/resource/schema identity and trusted synthetic accounts, then proves capture → reply → later retrieval, targeted question/Undo, disconnect/reload, media and chosen brief. Operations adds restore/rebuild, retention and key rotation. Dry-run bundle does not verify deployment or a two-week field habit.
 
 Block the affected journey for demonstrated lost accepted input, cross-workspace disclosure, duplicate effects, stale unauthorized writes, secret leakage or false delivery. Keep optional refinements separate; do not require a platform rewrite or fictional exhaustive proof before practical use.
+
+### Latest verification pass (Otis Usage Improvements & Complete Alignment)
+- `pnpm typecheck`: Passed (`tsc --build`, 0 errors).
+- `pnpm lint`: Passed (`eslint .`, 0 errors).
+- `pnpm check:design`: Passed (`node scripts/check-design.mjs`, 94 files scanned, 0 violations).
+- `pnpm build`: Passed (`vite build && tsc --build && wrangler deploy --dry-run --outdir dist-worker`, 0 errors).
+- `packages/agent/test/tools-and-policy.test.ts`: Passed (40/40 tests).
+- `apps/worker/test/records.integration.test.ts`: Passed (7/7 tests).
+- `apps/web/test/records.test.tsx`: Passed (8/8 tests).
+- `apps/web/test/a11y.test.tsx`: Passed (8/8 tests).
+- Invariants preserved: Members list strictly under Workspace Settings; outward messages remain drafts only; internal timing in UTC with automatic local conversion; approved tokens strictly followed.

@@ -14,6 +14,8 @@ import { Command, CommandItem, CommandList } from '../src/components/ui/command.
 import { ErrorBoundary } from '../src/components/ErrorBoundary.js';
 import { TestQueryProvider } from './query.js';
 import { api } from '../src/api/client.js';
+import { ThinkingDisclosure } from '../src/components/Thinking.js';
+import { transientTextForRun } from '../src/hooks/useActivityStream.js';
 import type { ChatMessage, MemberSettings, RunDetailResponse } from '@otis/contracts';
 
 // @ts-expect-error React act flag
@@ -225,8 +227,8 @@ describe('Frontend Experience Audit & Confidence Verification (FE-01 - FE-16)', 
     });
   });
 
-  describe('FE-02: Brief Schedule Timezone Copy', () => {
-    it('displays accurate brief schedule timezone label and explanatory copy', async () => {
+  describe('FE-02: Account Settings and UTC Standard Presentation', () => {
+    it('displays account status, UTC timing standard, and reply language without timezone forms', async () => {
       vi.spyOn(api, 'settings').mockResolvedValue({
         settings: { workspace_id: 'ws_test', default_model: null, created_at: '', updated_at: '' },
       });
@@ -246,8 +248,12 @@ describe('Frontend Experience Audit & Confidence Verification (FE-01 - FE-16)', 
         />,
       );
 
-      expect(view.host.textContent).toContain('Brief schedule timezone');
-      expect(view.host.textContent).toContain('Controls the timezone for your scheduled morning briefs. Changing this adjusts when your brief delivers.');
+      expect(view.host.textContent).toContain('Account');
+      expect(view.host.textContent).toContain('Time standard');
+      expect(view.host.textContent).toContain('UTC (Auto-converted)');
+      expect(view.host.textContent).toContain('Reply language');
+      expect(view.host.textContent).not.toContain('Brief schedule timezone');
+      expect(view.host.textContent).not.toContain('Morning brief schedule');
 
       await view.unmount();
     });
@@ -759,13 +765,14 @@ describe('Frontend Experience Audit & Confidence Verification (FE-01 - FE-16)', 
     });
   });
 
-  describe('FE-14: Search Label', () => {
-    it('HistoryNav uses honest search button and placeholder "Filter loaded chats"', async () => {
+  describe('FE-14: Clean History Navigation', () => {
+    it('HistoryNav renders clean navigation without extraneous search, follow-ups, or filter tabs', async () => {
       const view = await mount(
         <HistoryNav
           workspaces={[{ id: 'ws_test', name: 'Kerning' }]}
           workspaceId="ws_test"
           workspaceName="Kerning"
+          userId="user-1"
           ownChats={[]}
           teamChats={[]}
           onSelectChat={vi.fn()}
@@ -775,19 +782,12 @@ describe('Frontend Experience Audit & Confidence Verification (FE-01 - FE-16)', 
         />,
       );
 
-      expect(view.host.textContent).toContain('Filter loaded chats');
-
-      const searchBtn = Array.from(view.host.querySelectorAll('button')).find((b) =>
-        b.textContent?.includes('Filter loaded chats'),
-      );
-      expect(searchBtn).toBeTruthy();
-
-      await React.act(async () => {
-        searchBtn?.click();
-      });
-
-      const filterInput = view.host.querySelector('input[placeholder="Filter loaded chats"]');
-      expect(filterInput).toBeTruthy();
+      // Clean navigation has New chat and Your chats, but no extraneous tabs
+      expect(view.host.textContent).toContain('New chat');
+      expect(view.host.textContent).toContain('Your chats');
+      expect(view.host.textContent).not.toContain('Filter loaded chats');
+      expect(view.host.textContent).not.toContain('Search conversations');
+      expect(view.host.textContent).not.toContain('Your follow-ups');
 
       await view.unmount();
     });
@@ -846,19 +846,13 @@ describe('Frontend Experience Audit & Confidence Verification (FE-01 - FE-16)', 
     });
   });
 
-  describe('LIVE-02: Brief Schedule Unified Presentation', () => {
-    it('presents morning brief status and timing alongside timezone configuration', async () => {
+  describe('LIVE-02: Account Profile and Session Presentation', () => {
+    it('presents account information, status, and UTC time standard', async () => {
       vi.spyOn(api, 'settings').mockResolvedValue({
         settings: { workspace_id: 'ws_test', default_model: null, created_at: '', updated_at: '' },
       });
       vi.spyOn(api, 'memberSettings').mockResolvedValue({
-        settings: {
-          ...mockMemberSettings,
-          brief_enabled: true,
-          brief_local_time: '08:30',
-          brief_weekdays: [1, 2, 3, 4, 5],
-          brief_channel: 'web',
-        },
+        settings: mockMemberSettings,
       });
       vi.spyOn(api, 'models').mockResolvedValue({ models: [], current_command_key: null, default_command_key: null });
       vi.spyOn(api, 'listMembers').mockResolvedValue({ members: [] });
@@ -868,21 +862,23 @@ describe('Frontend Experience Audit & Confidence Verification (FE-01 - FE-16)', 
           workspaceId="ws_test"
           workspaceName="Kerning Test"
           currentUserRole="owner"
+          currentUserId="user-test"
           onClose={vi.fn()}
           onSignOut={vi.fn()}
         />,
       );
 
-      expect(view.host.textContent).toContain('Morning brief schedule');
-      expect(view.host.textContent).toContain('Enabled');
-      expect(view.host.textContent).toContain('08:30');
-      expect(view.host.textContent).toContain('Mon, Tue, Wed, Thu, Fri');
-      expect(view.host.textContent).toContain('Brief schedule timezone');
+      expect(view.host.textContent).toContain('Account');
+      expect(view.host.textContent).toContain('Owner');
+      expect(view.host.textContent).toContain('User ID');
+      expect(view.host.textContent).toContain('user-test');
+      expect(view.host.textContent).toContain('UTC (Auto-converted)');
+      expect(view.host.textContent).toContain('Sign out');
 
       await view.unmount();
     });
 
-    it('explains disabled state when brief is not yet scheduled', async () => {
+    it('displays member role when not an owner', async () => {
       vi.spyOn(api, 'settings').mockResolvedValue({
         settings: { workspace_id: 'ws_test', default_model: null, created_at: '', updated_at: '' },
       });
@@ -894,16 +890,16 @@ describe('Frontend Experience Audit & Confidence Verification (FE-01 - FE-16)', 
         <SettingsPane
           workspaceId="ws_test"
           workspaceName="Kerning Test"
-          currentUserRole="owner"
+          currentUserRole="member"
+          currentUserId="user-hunor"
           onClose={vi.fn()}
           onSignOut={vi.fn()}
         />,
       );
 
-      expect(view.host.textContent).toContain('Morning brief schedule');
-      expect(view.host.textContent).toContain('Disabled');
-      expect(view.host.textContent).toContain('Morning briefs start disabled until you configure a schedule.');
-      expect(view.host.textContent).toContain('Weekday brief at 08:30');
+      expect(view.host.textContent).toContain('Account');
+      expect(view.host.textContent).toContain('Member');
+      expect(view.host.textContent).toContain('user-hunor');
 
       await view.unmount();
     });
@@ -1226,43 +1222,40 @@ describe('Frontend Experience Audit & Confidence Verification (FE-01 - FE-16)', 
     });
   });
 
-  describe('LIVE-15: HistoryNav Filter Escape Bubbling Prevention', () => {
-    it('stops propagation of Escape event when closing search filter', async () => {
-      const outerKeyDown = vi.fn();
+  describe('LIVE-15: HistoryNav Defensive Team Chat Filtering', () => {
+    it('defensively filters out user’s own chats from teamChats so they never appear twice', async () => {
       const view = await mount(
-        <div onKeyDown={outerKeyDown}>
-          <HistoryNav
-            workspaces={[{ id: 'ws_test', name: 'Kerning' }]}
-            workspaceId="ws_test"
-            workspaceName="Kerning"
-            ownChats={[]}
-            teamChats={[]}
-            activeChatId={null}
-            onSelectChat={vi.fn()}
-            onNewChat={vi.fn()}
-            onSwitchWorkspace={vi.fn()}
-            onOpenSettings={vi.fn()}
-          />
-        </div>,
+        <HistoryNav
+          workspaces={[{ id: 'ws_test', name: 'Kerning' }]}
+          workspaceId="ws_test"
+          workspaceName="Kerning"
+          userId="user-avi"
+          ownChats={[{ id: 'chat-1', title: 'Avi chat 1', author_user_id: 'user-avi' } as never]}
+          teamChats={[
+            { id: 'chat-1', title: 'Avi chat 1', author_user_id: 'user-avi' } as never,
+            { id: 'chat-2', title: 'Hunor chat 2', author_user_id: 'user-hunor' } as never,
+          ]}
+          activeChatId={null}
+          onSelectChat={vi.fn()}
+          onNewChat={vi.fn()}
+          onSwitchWorkspace={vi.fn()}
+          onOpenSettings={vi.fn()}
+        />,
       );
 
-      const filterBtn = Array.from(view.host.querySelectorAll('button')).find((b) =>
-        b.textContent?.includes('Filter loaded chats'),
-      ) as HTMLButtonElement;
-      expect(filterBtn).toBeTruthy();
+      // "Avi chat 1" should appear in "Your chats", but NOT under "Team chats"
+      const allText = view.host.textContent ?? '';
+      expect(allText).toContain('Avi chat 1');
+      expect(allText).toContain('Hunor chat 2');
 
-      await React.act(async () => {
-        filterBtn.click();
-      });
+      // Check the Team chats section specifically
+      const teamSection = Array.from(view.host.querySelectorAll('.otis-nav__row')).map(
+        r => r.textContent,
+      );
+      // "Hunor chat 2" should be present, and "Avi chat 1" should only be present once overall
+      const occurrencesOfAviChat = teamSection.filter(t => t?.includes('Avi chat 1'));
+      expect(occurrencesOfAviChat).toHaveLength(1);
 
-      const searchInput = view.host.querySelector('input[type="search"]') as HTMLInputElement;
-      expect(searchInput).toBeTruthy();
-
-      await React.act(async () => {
-        searchInput.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
-      });
-
-      expect(outerKeyDown).not.toHaveBeenCalled();
       await view.unmount();
     });
   });
@@ -1377,6 +1370,135 @@ describe('Frontend Experience Audit & Confidence Verification (FE-01 - FE-16)', 
       // Focus restored to trigger on unmount
       expect(document.activeElement).toBe(triggerBtn);
       triggerBtn.remove();
+    });
+  });
+
+  describe('LIVE-21: Working and Thinking Polish & Single Indicator Invariant', () => {
+    it('eliminates duplicate pulsing dots during active working steps', async () => {
+      const runDetail: RunDetailResponse = {
+        run: {
+          id: 'run_single_dot',
+          workspace_id: 'ws_test',
+          chat_id: 'chat_1',
+          source_message_id: 'msg_single_dot',
+          source_job_id: null,
+          executor_kind: 'agent',
+          status: 'running',
+          model_key: 'mimo-25',
+          attempt_id: null,
+          lease_fence: 1,
+          error_code: null,
+          error_message: null,
+          created_at: '2026-10-05T10:00:00Z',
+          updated_at: '2026-10-05T10:00:00Z',
+        },
+        status: 'running',
+        steps: [
+          {
+            step_index: 0,
+            tool_name: 'find_entities',
+            status: 'running',
+            action_id: null,
+            created_at: '2026-10-05T10:00:00Z',
+          },
+        ],
+        actions: [],
+        sources: [],
+        activities: [],
+      };
+
+      const messages: ChatMessage[] = [
+        makeMessage({
+          id: 'msg_single_dot',
+          content_text: 'Find records',
+          run_id: 'run_single_dot',
+        }),
+      ];
+
+      const view = await mount(
+        <Transcript
+          messages={messages}
+          members={{}}
+          steps={[
+            { id: 's1', label: 'Finding the business', state: 'running' },
+          ]}
+          run={runDetail}
+          runs={{ run_single_dot: runDetail }}
+          currentUserId="user_1"
+          onInspectAction={vi.fn()}
+        />,
+      );
+
+      // Exactly ONE pulse dot exists across the entire DOM (on the active running step)
+      const pulseDots = view.host.querySelectorAll('.otis-working__pulse-dot--active');
+      expect(pulseDots).toHaveLength(1);
+
+      // Header disclosure button does NOT have a duplicate pulse dot while expanded with running step
+      const headerDot = view.host.querySelector('.otis-working__disclosure .otis-working__pulse-dot--active');
+      expect(headerDot).toBeNull();
+
+      // Step item holds the single pulse dot
+      const stepDot = view.host.querySelector('.otis-working__step--running .otis-working__pulse-dot--active');
+      expect(stepDot).toBeTruthy();
+
+      // When user collapses disclosure, the single pulse dot moves to the disclosure header
+      const toggleBtn = view.host.querySelector('.otis-working__disclosure') as HTMLButtonElement;
+      await React.act(async () => toggleBtn.click());
+
+      const collapsedPulseDots = view.host.querySelectorAll('.otis-working__pulse-dot--active');
+      expect(collapsedPulseDots).toHaveLength(1);
+      const collapsedHeaderDot = view.host.querySelector('.otis-working__disclosure .otis-working__pulse-dot--active');
+      expect(collapsedHeaderDot).toBeTruthy();
+
+      await view.unmount();
+    });
+
+    it('renders a single disclosure without redundant nested triggers when only thinking blocks exist', async () => {
+      const view = await mount(
+        <ThinkingDisclosure
+          blocks={[
+            {
+              key: 'r1:0:s0',
+              runId: 'r1',
+              roundIndex: 0,
+              blockId: 's0',
+              provider: 'gemini',
+              contentKind: 'summary',
+              state: 'complete',
+              text: 'Analyzing the request first.',
+              firstCursor: 1,
+              lastCursor: 2,
+              truncated: false,
+            },
+          ]}
+          active={true}
+        />,
+      );
+
+      // Exactly ONE button trigger exists
+      const buttons = view.host.querySelectorAll('button');
+      expect(buttons).toHaveLength(1);
+      expect(buttons[0]?.textContent).toContain('Thinking…');
+
+      // Exactly ONE pulse dot exists
+      const dots = view.host.querySelectorAll('.otis-working__pulse-dot--active');
+      expect(dots).toHaveLength(1);
+
+      await view.unmount();
+    });
+
+    it('formats multi-round transient preview into separated paragraphs without merging words', () => {
+      const state = {
+        run_1: {
+          0: { seq: 1, text: 'Proving it end-to-end on fakes — starting with the test clients.' },
+          1: { seq: 2, text: 'Proving it out — I will spin up a couple fakes.' },
+        },
+      };
+
+      const formatted = transientTextForRun(state, 'run_1');
+      expect(formatted).toBe(
+        'Proving it end-to-end on fakes — starting with the test clients.\n\nProving it out — I will spin up a couple fakes.',
+      );
     });
   });
 });

@@ -57,8 +57,9 @@ export async function handleGetRecords(
   workspaceId: string,
   requestId: string,
 ): Promise<Response> {
-  const scope = await requireWorkspaceScope(request, env.DB, workspaceId, requestId);
-  if (scope instanceof Response) return scope;
+  try {
+    const scope = await requireWorkspaceScope(request, env.DB, workspaceId, requestId);
+    if (scope instanceof Response) return scope;
 
   // 1. Fetch workspace users to resolve assignee IDs to display names
   const usersResult = await env.DB.prepare(
@@ -81,6 +82,7 @@ export async function handleGetRecords(
     receiptsResult,
     redirectsResult,
     contactsResult,
+    activeInteractionsResult,
   ] = await Promise.all([
     env.DB.prepare(
       `SELECT id, name, kind, status, assigned_user_id, created_at, updated_at
@@ -164,10 +166,19 @@ export async function handleGetRecords(
       .bind(workspaceId)
       .all<{ source_entity_id: string; target_entity_id: string }>(),
     env.DB.prepare(
-      "SELECT entity_id, value, is_primary, state FROM entity_contacts WHERE workspace_id = ? AND method = 'phone' AND state != 'removed'",
+      "SELECT entity_id, method, value, is_primary, state FROM entity_contacts WHERE workspace_id = ? AND state != 'removed' ORDER BY is_primary DESC, updated_at ASC",
     )
       .bind(workspaceId)
-      .all<{ entity_id: string; value: string; is_primary: number; state: string }>(),
+      .all<{ entity_id: string; method: string; value: string; is_primary: number; state: string }>(),
+    env.DB.prepare(
+      `SELECT i.entity_id, i.kind, i.occurred_at, e.payload_json
+         FROM interaction_state i
+         JOIN events e ON e.workspace_id = i.workspace_id AND e.id = i.head_event_id
+        WHERE i.workspace_id = ? AND i.state = 'active' AND i.entity_id IS NOT NULL
+        ORDER BY i.occurred_at DESC`,
+    )
+      .bind(workspaceId)
+      .all<{ entity_id: string; kind: string; occurred_at: string; payload_json: string }>(),
   ]);
 
   const redirects = new Map(
@@ -184,6 +195,7 @@ export async function handleGetRecords(
   const rawDrafts = draftsResult.results || [];
   const rawEvents = eventsResult.results || [];
   const rawReceipts = receiptsResult.results || [];
+  const rawInteractions = activeInteractionsResult.results || [];
 
   // Group entity state fields by entity_id
   const fieldsByEntity = new Map<
@@ -191,10 +203,11 @@ export async function handleGetRecords(
     Array<{ field_name: string; value: string; provenance?: string }>
   >();
   for (const f of rawFields) {
-    let list = fieldsByEntity.get(f.entity_id);
+    const id = canonical(f.entity_id);
+    let list = fieldsByEntity.get(id);
     if (!list) {
       list = [];
-      fieldsByEntity.set(f.entity_id, list);
+      fieldsByEntity.set(id, list);
     }
     let val = f.state === 'disputed' ? 'Disputed' : (f.value_text ?? '');
     if (!val && f.value_json) {
@@ -214,82 +227,161 @@ export async function handleGetRecords(
   for (const e of allEntities) {
     entityNameMap[e.id] = canonicalNames.get(canonical(e.id)) ?? e.name;
   }
-  const phones = new Map<string, typeof contactsResult.results>();
-  for (const contact of contactsResult.results ?? []) {
-    const id = canonical(contact.entity_id),
-      group = phones.get(id) ?? [];
-    group.push(contact);
-    phones.set(id, group);
+
+  // Group contacts by entity
+  const contactsByEntity = new Map<
+    string,
+    Array<{ method: string; value: string; is_primary: number; state: string }>
+  >();
+  for (const c of contactsResult.results ?? []) {
+    const id = canonical(c.entity_id);
+    let list = contactsByEntity.get(id);
+    if (!list) {
+      list = [];
+      contactsByEntity.set(id, list);
+    }
+    list.push(c);
   }
 
-  // 3. Assemble Leads list
-  const recognizedCoreFields = new Set([
-    'phone',
-    'preferred_language',
-    'language',
-    'quote',
-    'deal_value',
-    'value',
-    'access',
-    'access_instructions',
-    'notes',
-  ]);
-  const extraFieldNames = new Set<string>();
-  for (const f of rawFields) {
-    if (!recognizedCoreFields.has(f.field_name)) {
-      extraFieldNames.add(f.field_name);
+  // Extract latest notes and quotes from interaction_state
+  const latestNotesByEntity = new Map<string, { text: string; date: string }>();
+  const latestQuotesByEntity = new Map<string, { quote: string; date: string }>();
+
+  for (const inter of rawInteractions) {
+    const id = canonical(inter.entity_id);
+    if (inter.kind === 'note' && !latestNotesByEntity.has(id)) {
+      try {
+        const p = JSON.parse(inter.payload_json) as Record<string, unknown>;
+        const text = String(p['text'] || p['summary'] || p['notes'] || p['description'] || '');
+        if (text) {
+          latestNotesByEntity.set(id, { text, date: inter.occurred_at });
+        }
+      } catch {
+        // ignore parse error
+      }
+    } else if (inter.kind === 'quote' && !latestQuotesByEntity.has(id)) {
+      try {
+        const p = JSON.parse(inter.payload_json) as Record<string, unknown>;
+        if (typeof p['amount'] === 'number' && typeof p['currency'] === 'string') {
+          const formatted = formatQuoteText(p['amount'], p['currency'], String(p['role'] || 'quoted'));
+          latestQuotesByEntity.set(id, { quote: formatted, date: inter.occurred_at });
+        }
+      } catch {
+        // ignore parse error
+      }
     }
   }
 
+  // Extract earliest open tasks per entity
+  const openTasksByEntity = new Map<string, { title: string; due?: string }>();
+  for (const t of rawTasks) {
+    if (t.entity_id && t.status === 'open') {
+      const id = canonical(t.entity_id);
+      if (!openTasksByEntity.has(id)) {
+        openTasksByEntity.set(id, {
+          title: t.title,
+          due: t.due_local_date || t.due_instant || undefined,
+        });
+      }
+    }
+  }
+
+  // Build rows from entities with real ledger projections
   const buildEntityRows = (entities: typeof rawEntities): RecordRow[] => {
     return entities.map((e) => {
       const cells: Record<string, string> = {
         name: e.name,
-        status: e.status,
-        phone: '',
-        language: '',
-        value: '',
-        assignee: e.assigned_user_id ? (memberMap[e.assigned_user_id] ?? 'Teammate') : '',
-        access: '',
-        notes: '',
+        status: e.status || 'new',
       };
       const prov: Record<string, string> = {};
-      const fieldItems = fieldsByEntity.get(e.id) || [];
-      for (const item of fieldItems) {
-        if (item.field_name === 'phone') cells.phone = item.value;
-        else if (item.field_name === 'assigned_user_id')
-          cells.assignee = item.value === 'Disputed' ? 'Disputed' : (memberMap[item.value] ?? '');
-        else if (item.field_name === 'preferred_language' || item.field_name === 'language')
-          cells.language = item.value;
-        else if (
-          item.field_name === 'quote' ||
-          item.field_name === 'deal_value' ||
-          item.field_name === 'value'
-        ) {
-          cells.value = item.value;
-        } else if (item.field_name === 'access' || item.field_name === 'access_instructions')
-          cells.access = item.value;
-        else if (item.field_name === 'notes') cells.notes = item.value;
-        else cells[item.field_name] = item.value;
 
-        if (item.provenance) {
-          prov[item.field_name] = item.provenance;
+      if (e.assigned_user_id) {
+        cells.assignee = memberMap[e.assigned_user_id] ?? 'Teammate';
+      }
+
+      // 1. Phone and email from entity_contacts
+      const entContacts = contactsByEntity.get(e.id) || [];
+      const phones = entContacts.filter((c) => c.method === 'phone');
+      const emails = entContacts.filter((c) => c.method === 'email');
+
+      if (phones.length > 0) {
+        const primary = phones.find((c) => c.is_primary && c.state === 'active') || phones.find((c) => c.state === 'active');
+        if (primary) {
+          cells.phone = primary.value;
+          prov.phone = 'Contact from business memory';
+        } else if (phones.some((c) => c.state === 'disputed')) {
+          cells.phone = 'Disputed';
         }
       }
-      const contacts = phones.get(e.id);
-      if (contacts?.length) {
-        const primaries = contacts.filter(
-          (contact) => contact.state === 'active' && contact.is_primary,
-        );
-        cells.phone =
-          primaries.length === 1
-            ? primaries[0]!.value
-            : contacts.length === 1 && contacts[0]!.state === 'active'
-              ? contacts[0]!.value
-              : contacts.some((contact) => contact.state === 'disputed')
-                ? 'Disputed'
-                : 'Multiple contacts';
+
+      if (emails.length > 0) {
+        const primary = emails.find((c) => c.is_primary && c.state === 'active') || emails.find((c) => c.state === 'active');
+        if (primary) {
+          cells.email = primary.value;
+          prov.email = 'Contact from business memory';
+        } else if (emails.some((c) => c.state === 'disputed')) {
+          cells.email = 'Disputed';
+        }
       }
+
+      // 2. Entity state fields
+      const fieldItems = fieldsByEntity.get(e.id) || [];
+      for (const item of fieldItems) {
+        const key = item.field_name;
+        if (key === 'phone' && !cells.phone) {
+          cells.phone = item.value;
+        } else if (key === 'email' && !cells.email) {
+          cells.email = item.value;
+        } else if (key === 'assigned_user_id') {
+          if (!cells.assignee) {
+            cells.assignee = item.value === 'Disputed' ? 'Disputed' : (memberMap[item.value] ?? '');
+          }
+        } else if (key === 'preferred_language' || key === 'language') {
+          cells.language = item.value;
+        } else if (key === 'quote' || key === 'deal_value' || key === 'value') {
+          cells.value = item.value;
+        } else if (key === 'access' || key === 'access_instructions') {
+          cells.access = item.value;
+        } else if (key === 'notes' && !cells.notes) {
+          cells.notes = item.value;
+        } else if (key === 'company') {
+          cells.company = item.value;
+        } else if (key === 'address') {
+          cells.address = item.value;
+        } else if (key !== 'name' && key !== 'status' && key !== 'id' && key !== 'workspace_id') {
+          cells[key] = item.value;
+        }
+
+        if (item.provenance) {
+          prov[key] = item.provenance;
+        }
+      }
+
+      // 3. Genuine ledger interactions (notes & quotes)
+      if (!cells.notes && latestNotesByEntity.has(e.id)) {
+        const note = latestNotesByEntity.get(e.id)!;
+        cells.notes = note.text;
+        prov.notes = `Logged on ${note.date.slice(0, 10)}`;
+      }
+
+      if (!cells.value && latestQuotesByEntity.has(e.id)) {
+        const quote = latestQuotesByEntity.get(e.id)!;
+        cells.value = quote.quote;
+        prov.value = `Quote from ${quote.date.slice(0, 10)}`;
+      }
+
+      // 4. Open tasks / Next action
+      if (openTasksByEntity.has(e.id)) {
+        const t = openTasksByEntity.get(e.id)!;
+        cells.next_action = t.due ? `${t.title} (${t.due})` : t.title;
+        prov.next_action = 'Open task';
+      }
+
+      // 5. Kind badge if distinct
+      if (e.kind && e.kind !== 'lead') {
+        cells.kind = e.kind.charAt(0).toUpperCase() + e.kind.slice(1);
+      }
+
       return {
         id: e.id,
         source: 'entity',
@@ -299,34 +391,112 @@ export async function handleGetRecords(
     });
   };
 
-  const leadRows = buildEntityRows(rawEntities.filter((e) => !e.kind || e.kind === 'lead'));
+  // Build clean, deduplicated columns reflecting actual populated data
+  const buildColumnsForRows = (rows: RecordRow[], isLeadsList: boolean): RecordColumn[] => {
+    const hasData = (colId: string) =>
+      rows.some((r) => r.cells[colId] && r.cells[colId].trim().length > 0);
 
-  const leadColumns: RecordColumn[] = [
-    { id: 'name', name: 'Lead name', type: 'text', width: 200, isCore: true },
-    {
-      id: 'status',
-      name: 'Status',
-      type: 'status',
-      width: 120,
-      isCore: true,
-      options: ['new', 'warm', 'hot', 'won', 'cold', 'lost', 'deprioritized'],
-    },
-    { id: 'phone', name: 'Phone', type: 'phone', width: 160, isCore: true },
-    { id: 'language', name: 'Language', type: 'text', width: 120, isCore: true },
-    { id: 'value', name: 'Deal value', type: 'currency', width: 130 },
-    { id: 'assignee', name: 'Assignee', type: 'text', width: 140 },
-    { id: 'access', name: 'Access instructions', type: 'text', width: 240 },
-    { id: 'notes', name: 'Notes', type: 'text', width: 280 },
-  ];
+    const cols: RecordColumn[] = [
+      { id: 'name', name: isLeadsList ? 'Lead name' : 'Name', type: 'text', width: 200, isCore: true },
+      {
+        id: 'status',
+        name: 'Status',
+        type: 'status',
+        width: 120,
+        isCore: true,
+        options: ['new', 'warm', 'hot', 'won', 'cold', 'lost', 'deprioritized'],
+      },
+    ];
 
-  for (const fName of extraFieldNames) {
-    leadColumns.push({
-      id: fName,
-      name: fName.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase()),
-      type: 'text',
-      width: 160,
+    if (isLeadsList) {
+      cols.push({ id: 'phone', name: 'Phone', type: 'phone', width: 160, isCore: true });
+      if (hasData('email')) {
+        cols.push({ id: 'email', name: 'Email', type: 'text', width: 180 });
+      }
+      if (hasData('company')) {
+        cols.push({ id: 'company', name: 'Company', type: 'text', width: 160 });
+      }
+      if (hasData('value') || rows.length === 0) {
+        cols.push({ id: 'value', name: 'Deal value', type: 'currency', width: 130 });
+      }
+      if (hasData('notes') || rows.length === 0) {
+        cols.push({ id: 'notes', name: 'Notes', type: 'text', width: 280 });
+      }
+      if (hasData('next_action')) {
+        cols.push({ id: 'next_action', name: 'Next action', type: 'text', width: 200 });
+      }
+      if (hasData('assignee')) {
+        cols.push({ id: 'assignee', name: 'Assignee', type: 'text', width: 140 });
+      }
+      if (hasData('kind')) {
+        cols.push({ id: 'kind', name: 'Type', type: 'text', width: 110 });
+      }
+      if (hasData('address')) {
+        cols.push({ id: 'address', name: 'Address', type: 'text', width: 200 });
+      }
+      if (hasData('language')) {
+        cols.push({ id: 'language', name: 'Language', type: 'text', width: 120 });
+      }
+      if (hasData('access')) {
+        cols.push({ id: 'access', name: 'Access instructions', type: 'text', width: 240 });
+      }
+    } else {
+      if (hasData('phone')) cols.push({ id: 'phone', name: 'Phone', type: 'phone', width: 160 });
+      if (hasData('email')) cols.push({ id: 'email', name: 'Email', type: 'text', width: 180 });
+      if (hasData('value')) cols.push({ id: 'value', name: 'Value', type: 'currency', width: 130 });
+      if (hasData('notes')) cols.push({ id: 'notes', name: 'Notes', type: 'text', width: 280 });
+      if (hasData('assignee')) cols.push({ id: 'assignee', name: 'Assignee', type: 'text', width: 140 });
+    }
+
+    // Dynamic custom columns from row cells
+    const knownIds = new Set(cols.map((c) => c.id));
+    for (const row of rows) {
+      for (const [cellKey, cellVal] of Object.entries(row.cells)) {
+        if (!knownIds.has(cellKey) && cellVal && cellVal.trim().length > 0) {
+          knownIds.add(cellKey);
+          cols.push({
+            id: cellKey,
+            name: cellKey.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase()),
+            type: /price|cost|amount|val/i.test(cellKey)
+              ? 'currency'
+              : /^\d+$/.test(cellVal.trim())
+                ? 'number'
+                : 'text',
+            width: 160,
+          });
+        }
+      }
+    }
+
+    // STRICT DEDUPLICATION
+    const seen = new Set<string>();
+    return cols.filter((c) => {
+      if (seen.has(c.id)) return false;
+      seen.add(c.id);
+      return true;
     });
-  }
+  };
+
+  // Group entities into core business records (Leads & Contacts) and custom collections
+  const CORE_BUSINESS_KINDS = new Set([
+    'lead',
+    'client',
+    'prospect',
+    'contact',
+    'person',
+    'business',
+    'company',
+    'organization',
+    'partner',
+    'vendor',
+    '',
+  ]);
+  const isCoreBusinessEntity = (kind?: string | null) =>
+    !kind || CORE_BUSINESS_KINDS.has(kind.toLowerCase());
+
+  const coreEntities = rawEntities.filter((e) => isCoreBusinessEntity(e.kind));
+  const leadRows = buildEntityRows(coreEntities);
+  const leadColumns = buildColumnsForRows(leadRows, true);
 
   // 4. Assemble Tasks list
   const taskRows: RecordRow[] = rawTasks.map((t) => ({
@@ -421,18 +591,23 @@ export async function handleGetRecords(
     { id: 'entity', name: 'Related record', type: 'text', width: 180 },
   ];
 
+  // 7. Custom lists (for genuinely non-core entities e.g. properties, products, inventory)
   const customLists: RecordList[] = [];
-  const entityKinds = new Set(rawEntities.map((e) => e.kind).filter(Boolean));
-  for (const kind of entityKinds) {
-    if (kind === 'lead') continue;
+  const customKinds = new Set(
+    rawEntities
+      .map((e) => e.kind)
+      .filter((k): k is string => Boolean(k) && !isCoreBusinessEntity(k)),
+  );
+  for (const kind of customKinds) {
     const kindEntities = rawEntities.filter((e) => e.kind === kind);
+    const kindRows = buildEntityRows(kindEntities);
     const kindName = kind.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
     customLists.push({
       id: kind,
       name: kindName,
       description: `Custom ${kindName.toLowerCase()} tracked in business memory.`,
-      columns: leadColumns,
-      rows: buildEntityRows(kindEntities),
+      columns: buildColumnsForRows(kindRows, false),
+      rows: kindRows,
     });
   }
 
@@ -499,6 +674,11 @@ export async function handleGetRecords(
   return jsonSuccess(responsePayload, 200, {
     'x-request-id': requestId,
   });
+} catch (err: unknown) {
+  const msg = err instanceof Error ? err.stack || err.message : String(err);
+  console.error('[otis:records get error]:', msg);
+  return jsonError(500, 'internal_error', msg, requestId);
+}
 }
 
 export async function handleSaveRecords(

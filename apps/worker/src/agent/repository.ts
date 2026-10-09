@@ -1,5 +1,8 @@
 import { isExplicitMergeIntent } from '@otis/agent';
 import { readFollowUps } from '../entities/followups.js';
+import { listMembers } from '@otis/identity';
+import { normalizeName, levenshteinDistance } from '@otis/ledger';
+import { unifiedWorkspaceSearch } from '../unifiedSearch.js';
 /**
  * @otis/worker/agent/repository
  * Guarded execution bridge mapping agent tools to ledger commands,
@@ -489,6 +492,89 @@ export async function executeAgentTool(params: ExecuteAgentToolParams): Promise<
           to: qArgs.filters?.to,
         });
         return { status: 'applied', action_id: actionId, data };
+      }
+      if (qArgs.resource === 'members') {
+        const members = await listMembers(db, workspaceId);
+        return {
+          status: 'applied',
+          action_id: actionId,
+          data: {
+            members: members.map((m) => ({
+              user_id: m.user_id,
+              display_name: m.display_name,
+              email: m.email,
+              role: m.role,
+              joined_at: m.joined_at,
+            })),
+            total: members.length,
+          },
+        };
+      }
+      if (qArgs.resource === 'search') {
+        const queryText = qArgs.filters?.text || (qArgs as unknown as { text?: string }).text || '';
+        const limitPerCategory = Math.min(Math.max(1, qArgs.limit || 5), 20);
+        const searchResults = await unifiedWorkspaceSearch(
+          db,
+          workspaceId,
+          actorUserId,
+          queryText,
+          limitPerCategory,
+        );
+        return {
+          status: 'applied',
+          action_id: actionId,
+          data: searchResults,
+        };
+      }
+      if (qArgs.resource === 'duplicates') {
+        const { results: allEntities } = await db
+          .prepare(
+            `SELECT id, name, kind, status, company FROM entities WHERE workspace_id = ? AND state != 'deleted' AND NOT EXISTS (SELECT 1 FROM entity_redirects redirect WHERE redirect.workspace_id = entities.workspace_id AND redirect.source_entity_id = entities.id) ORDER BY name ASC LIMIT 100`,
+          )
+          .bind(workspaceId)
+          .all<{ id: string; name: string; kind?: string | null; status?: string | null; company?: string | null }>();
+
+        const candidates: Array<{
+          entity_a: { id: string; name: string; kind?: string | null; status?: string | null };
+          entity_b: { id: string; name: string; kind?: string | null; status?: string | null };
+          similarity: number;
+          reason: string;
+        }> = [];
+
+        const ents = allEntities ?? [];
+        for (let i = 0; i < ents.length; i++) {
+          for (let j = i + 1; j < ents.length; j++) {
+            const ea = ents[i]!;
+            const eb = ents[j]!;
+            const normA = normalizeName(ea.name);
+            const normB = normalizeName(eb.name);
+            if (!normA || !normB) continue;
+
+            const maxLen = Math.max(normA.length, normB.length);
+            const dist = levenshteinDistance(normA, normB);
+            const score = 1 - dist / maxLen;
+
+            const isSubstring = (normA.length >= 3 && normB.includes(normA)) || (normB.length >= 3 && normA.includes(normB));
+
+            if (score >= 0.75 || (isSubstring && Math.abs(normA.length - normB.length) <= 5)) {
+              candidates.push({
+                entity_a: { id: ea.id, name: ea.name, kind: ea.kind, status: ea.status },
+                entity_b: { id: eb.id, name: eb.name, kind: eb.kind, status: eb.status },
+                similarity: Math.round(Math.max(score, isSubstring ? 0.8 : 0) * 100) / 100,
+                reason: score >= 0.9 ? 'Nearly identical names' : isSubstring ? 'Name variation or suffix' : 'Similar spelling',
+              });
+            }
+          }
+        }
+
+        return {
+          status: 'applied',
+          action_id: actionId,
+          data: {
+            candidates: candidates.slice(0, 20),
+            total_candidates: candidates.length,
+          },
+        };
       }
       const limit = qArgs.limit || 25;
 

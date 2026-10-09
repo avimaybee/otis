@@ -350,6 +350,7 @@ export const PRODUCTION_REGISTRY: ModelRegistry = {
           audio: 'unsupported',
           thinking: {
             state: 'supported',
+            defaultChoiceId: 'xhigh',
             documentationUrl: 'https://dev.meta.ai/docs/reasoning',
             notes: 'Minimal/high verified live 2026-10-06 with the selected effort echoed; low/medium/xhigh provider-documented.',
             choices: [

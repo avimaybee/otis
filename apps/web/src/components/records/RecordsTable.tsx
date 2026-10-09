@@ -325,6 +325,15 @@ export function RecordsTable({
                     const isEditing = editingCell?.[0] === rowIdx && editingCell?.[1] === colIdx;
                     const val = getEffectiveValue(row, col.id);
                     const dirty = isCellDirty(row.id, col.id);
+                    const isOverdue = Boolean(
+                      (col.id === 'due_date' || col.type === 'date') &&
+                      val &&
+                      (() => {
+                        const today = new Date().toISOString().slice(0, 10);
+                        const rowStatus = String(row.cells['status'] || '').toLowerCase();
+                        return val < today && rowStatus !== 'done' && rowStatus !== 'completed' && rowStatus !== 'won';
+                      })()
+                    );
 
                     return (
                       <td
@@ -353,8 +362,13 @@ export function RecordsTable({
                           <div className="truncate text-xs">
                             {col.type === 'status' && val ? (
                               <StatusPill status={val} />
+                            ) : isOverdue ? (
+                              <span className="text-destructive font-medium inline-flex items-center gap-1">
+                                <span>{val}</span>
+                                <span className="text-xs bg-destructive/15 text-destructive px-1 rounded font-medium">Overdue</span>
+                              </span>
                             ) : (
-                              <span>{val || <span className="text-subtle">—</span>}</span>
+                              <span>{col.type === 'currency' && val && !isNaN(Number(val)) ? `€${Number(val).toLocaleString()}` : (val || <span className="text-subtle">—</span>)}</span>
                             )}
                           </div>
                         )}

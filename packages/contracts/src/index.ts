@@ -1064,3 +1064,4 @@ export const DOMAIN_BOUNDS = {
 } as const;
 export * from './entityFile.js';
 export * from './money.js';
+export * from './search.js';

@@ -10,7 +10,7 @@ import { WorkingDisclosure } from '../src/components/Transcript.js';
 import { StatusPill } from '../src/components/StatusPill.js';
 import { SignInView } from '../src/components/SignInView.js';
 import { UnavailableScreen } from '../src/components/UnavailableScreen.js';
-import { storyCommands, storyMembers, storyMessage, storyModels, storyRun } from '../src/stories/fixtures.js';
+import { storyCommands, storyMembers, storyMessage, storyModels, storyRun } from './fixtures/fixtures.js';
 
 expect.extend(matchers);
 

@@ -229,9 +229,9 @@ export async function resolveThinkingSnapshot(
       thinking_override_json: string | null;
     }>();
 
-  let effectiveModelKey = chatRow?.model_override ?? chatRow?.default_model ?? '';
+  let effectiveModelKey = chatRow?.model_override ?? chatRow?.default_model ?? 'muse-13';
   if (params.command && 'modelOverride' in params.command) {
-    effectiveModelKey = params.command.modelOverride ?? chatRow?.default_model ?? '';
+    effectiveModelKey = params.command.modelOverride ?? chatRow?.default_model ?? 'muse-13';
   }
 
   let effectiveThinkingOverride: { model_key: string; choice_id: string } | null = null;
@@ -249,7 +249,8 @@ export async function resolveThinkingSnapshot(
   }
 
   const entry = PRODUCTION_REGISTRY.entries.find((e) => e.commandKey === effectiveModelKey);
-  const choice = entry?.thinking?.choices.find((c) => c.id === effectiveThinkingOverride?.choice_id);
+  const targetChoiceId = effectiveThinkingOverride?.choice_id ?? entry?.thinking?.defaultChoiceId;
+  const choice = entry?.thinking?.choices.find((c) => c.id === targetChoiceId);
   const thinkingSnapshot = (entry && choice)
     ? {
         version: 1,
@@ -846,7 +847,7 @@ export async function acceptWebMessage(
         .prepare(
           `INSERT INTO agent_runs (id, workspace_id, chat_id, source_message_id, source_job_id, executor_kind, status, model_key, thinking_snapshot_json, created_at, updated_at)
            VALUES (?, ?, ?, ?, NULL, ?, ?,
-             (SELECT COALESCE(c.model_override, s.default_model, '') FROM chats c
+             (SELECT COALESCE(c.model_override, s.default_model, 'muse-13') FROM chats c
                LEFT JOIN workspace_settings s ON s.workspace_id = c.workspace_id WHERE c.id = ?), ?, ?, ?)`
         )
         .bind(runId, params.workspaceId, params.chatId, messageInId,

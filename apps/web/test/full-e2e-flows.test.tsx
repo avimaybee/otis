@@ -1002,7 +1002,7 @@ describe('End-to-End UI to Backend Flow Verification', () => {
     vi.spyOn(api, 'memberSettings').mockResolvedValue({ settings: ownSettings });
     vi.spyOn(api, 'credentialStatus').mockResolvedValue({ credential: { provider: 'opencode_go', status: 'available', updated_at: TIMESTAMP } });
 
-    const updateMemberSpy = vi.spyOn(api, 'updateMemberSettings').mockResolvedValue({ settings: { ...ownSettings, preferred_language: 'ro', brief_timezone: 'Europe/Bucharest' } });
+    vi.spyOn(api, 'updateMemberSettings').mockResolvedValue({ settings: { ...ownSettings, preferred_language: 'ro' } });
     vi.spyOn(api, 'updateWorkspaceSettings').mockResolvedValue({ settings: { ...wsSettings, default_model: 'gemini-3.1-flash' } });
 
     const view = await mount(
@@ -1017,16 +1017,9 @@ describe('End-to-End UI to Backend Flow Verification', () => {
     // Settings modal is open
     expect(view.host.querySelector('.otis-overlay--settings')).toBeTruthy();
 
-    // Change timezone
-    const tzInput = view.host.querySelector('#\\:r0\\:-timezone') || view.host.querySelector('input[placeholder="Not set"]') as HTMLInputElement;
-    expect(tzInput).toBeTruthy();
-    await fill(tzInput as HTMLInputElement, 'Europe/Bucharest');
-
-    const saveTzBtn = Array.from(view.host.querySelectorAll('button')).find(b => b.textContent === 'Save timezone') as HTMLButtonElement;
-    expect(saveTzBtn).toBeTruthy();
-    await React.act(async () => saveTzBtn.click());
-
-    expect(updateMemberSpy).toHaveBeenCalledWith(WS, { brief_timezone: 'Europe/Bucharest' });
+    // Verify Account profile and UTC time standard presentation
+    expect(view.host.textContent).toContain('Account');
+    expect(view.host.textContent).toContain('UTC (Auto-converted)');
 
     // Switch to Workspace tab ("Kerning")
     const wsTab = Array.from(view.host.querySelectorAll('[role="tab"]')).find(t => t.textContent === 'Kerning') as HTMLElement;

@@ -293,6 +293,53 @@ describe('006A: Tool Schemas and Argument Validation', () => {
     expect(validateToolCall('query', { resource: 'lead_overview', limit: 10 }).ok).toBe(true);
   });
 
+  it('accepts top-level entity_id and target_entity_id for query and normalizes them into filters', () => {
+    // LLMs naturally provide entity_id at the top level
+    const fileRes = validateQueryArgs({
+      resource: 'entity_file',
+      entity_id: 'ent_12345',
+      limit: 20,
+    });
+    expect(fileRes.ok).toBe(true);
+    if (fileRes.ok) {
+      expect(fileRes.data.resource).toBe('entity_file');
+      expect(fileRes.data.entity_id).toBe('ent_12345');
+      expect(fileRes.data.filters?.entity_id).toBe('ent_12345');
+    }
+
+    const previewRes = validateQueryArgs({
+      resource: 'merge_preview',
+      entity_id: 'ent_alpha',
+      target_entity_id: 'ent_beta',
+    });
+    expect(previewRes.ok).toBe(true);
+    if (previewRes.ok) {
+      expect(previewRes.data.filters?.entity_id).toBe('ent_alpha');
+      expect(previewRes.data.filters?.target_entity_id).toBe('ent_beta');
+    }
+
+    const interRes = validateQueryArgs({
+      resource: 'interactions',
+      entity_id: 'ent_alpha',
+    });
+    expect(interRes.ok).toBe(true);
+    if (interRes.ok) {
+      expect(interRes.data.filters?.entity_id).toBe('ent_alpha');
+    }
+
+    // validateToolCall also succeeds
+    expect(
+      validateToolCall('query', {
+        resource: 'entity_file',
+        entity_id: 'ent_12345',
+      }).ok,
+    ).toBe(true);
+
+    // Rejects non-string entity_id
+    expect(validateQueryArgs({ resource: 'entity_file', entity_id: 123 }).ok).toBe(false);
+    expect(validateQueryArgs({ resource: 'entity_file', entity_id: '' }).ok).toBe(false);
+  });
+
   it('validates view_image media identity and detail without accepting extras', () => {
     const good = validateViewImageArgs({ media_id: 'med_abc123' });
     expect(good.ok).toBe(true);

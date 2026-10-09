@@ -31,6 +31,7 @@ const SavedChange = lazy(() =>
 );
 
 const labels: Record<string, string> = {
+  overview: 'Client overview / dossier',
   facts: 'Current information',
   contacts: 'Contact details',
   tasks: 'Next steps',
@@ -43,7 +44,8 @@ const labels: Record<string, string> = {
   memory: 'Saved context',
   history: 'History',
 };
-const sections: EntityFileSection[] = [
+const sections: Array<EntityFileSection | 'overview'> = [
+  'overview',
   'facts',
   'contacts',
   'tasks',
@@ -105,7 +107,7 @@ export function EntityFilePane({
   onAsk,
   onOpenChat,
   initialFile,
-  initialSection = 'facts',
+  initialSection = 'overview',
 }: {
   workspaceId: string;
   userId: string;
@@ -113,7 +115,7 @@ export function EntityFilePane({
   onAsk?: (name: string) => void;
   onOpenChat?: (id: string) => void;
   initialFile?: EntityFile;
-  initialSection?: EntityFileSection;
+  initialSection?: EntityFileSection | 'overview';
 }) {
   const client = useQueryClient(),
     key = ['entity-file', userId, workspaceId, entityId];
@@ -125,7 +127,7 @@ export function EntityFilePane({
     staleTime: initialFile ? Infinity : 30_000,
   });
   const file = query.data;
-  const [section, setSection] = useState<EntityFileSection>(initialSection),
+  const [section, setSection] = useState<EntityFileSection | 'overview'>(initialSection),
     [pages, setPages] = useState<Partial<Record<EntityFileSection, FilePage>>>({}),
     [source, setSource] = useState<string | null>(null),
     [editor, setEditor] = useState<Editor | null>(null),
@@ -387,7 +389,7 @@ export function EntityFilePane({
         </Button>
       </div>
     );
-  const page = pages[section] ?? (file[section as keyof EntityFile] as FilePage | undefined);
+  const page = section === 'overview' ? undefined : (pages[section] ?? (file[section as keyof EntityFile] as FilePage | undefined));
   const rows = page?.items as Record<string, unknown>[] | undefined;
   return (
     <div className="min-w-0 space-y-4 text-base">
@@ -433,7 +435,7 @@ export function EntityFilePane({
         value={section}
         options={sections.map((s) => ({ value: s, label: labels[s]! }))}
         onChange={(value) => {
-          setSection(value as EntityFileSection);
+          setSection(value as EntityFileSection | 'overview');
           // Filters apply to this section only. A different section starts from
           // its current unfiltered page instead of inheriting a hidden filter.
           setFileOptions({});
@@ -441,7 +443,9 @@ export function EntityFilePane({
           setFromFilter('');
           setToFilter('');
           setOrderFilter('occurred');
-          setPages((prior) => ({ ...prior, [value]: undefined }));
+          if (value !== 'overview') {
+            setPages((prior) => ({ ...prior, [value]: undefined }));
+          }
           if (value === 'history') void load('history', false, {});
         }}
       />
@@ -457,7 +461,7 @@ export function EntityFilePane({
               ...(toFilter ? { to: new Date(`${toFilter}T00:00:00`).toISOString() } : {}),
             };
             setFileOptions(options);
-            void load(section, false, options);
+            void load(section as EntityFileSection, false, options);
           }}
         >
           <ChoiceSelect
@@ -578,7 +582,167 @@ export function EntityFilePane({
           )}
         </div>
       )}
-      {!page ? (
+      {section === 'overview' ? (
+        <div className="space-y-4 pt-1">
+          {/* Core Facts */}
+          <div className="p-3 rounded-lg border border-border bg-card space-y-2">
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-medium text-foreground">Core Facts</h3>
+              <Button variant="ghost" size="sm" onClick={() => setSection('facts')}>
+                All facts →
+              </Button>
+            </div>
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-sm">
+              <div>
+                <span className="text-xs text-muted-foreground block">Status</span>
+                <span className="font-medium text-foreground capitalize">{file.entity.status || 'new'}</span>
+              </div>
+              <div>
+                <span className="text-xs text-muted-foreground block">Type</span>
+                <span className="text-foreground capitalize">{file.entity.kind || 'Lead'}</span>
+              </div>
+              <div>
+                <span className="text-xs text-muted-foreground block">Assignee</span>
+                <span className="text-foreground">{file.entity.assigned_name || 'Unassigned'}</span>
+              </div>
+            </div>
+          </div>
+
+          {/* Contact Details */}
+          <div className="p-3 rounded-lg border border-border bg-card space-y-2">
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-medium text-foreground">Contact Details</h3>
+              <Button variant="ghost" size="sm" onClick={() => setSection('contacts')}>
+                All contacts ({file.contacts.items.length}) →
+              </Button>
+            </div>
+            {file.contacts.items.length === 0 ? (
+              <p className="text-sm text-muted-foreground">No contacts recorded.</p>
+            ) : (
+              <div className="space-y-2 text-sm">
+                {(file.contacts.items as Array<Record<string, unknown>>).map((c, idx) => (
+                  <div key={String(c.id ?? idx)} className="flex items-center justify-between">
+                    <span className="text-foreground">
+                      <span className="text-xs text-muted-foreground mr-2">{String(c.method ?? '')}:</span>
+                      {String(c.value ?? '')}
+                    </span>
+                    {Boolean(c.is_primary) && (
+                      <span className="text-xs bg-muted text-muted-foreground px-2 py-1 rounded">
+                        Primary
+                      </span>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Quotes & Deal Value */}
+          <div className="p-3 rounded-lg border border-border bg-card space-y-2">
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-medium text-foreground">Quotes &amp; Deal Value</h3>
+              <Button variant="ghost" size="sm" onClick={() => setSection('quotes')}>
+                All quotes ({file.quotes.items.length}) →
+              </Button>
+            </div>
+            {file.quotes.items.length === 0 ? (
+              <p className="text-sm text-muted-foreground">No quotes logged.</p>
+            ) : (
+              <div className="space-y-2 text-sm">
+                {(file.quotes.items as CurrentInteraction[]).slice(0, 3).map((q) => {
+                  const payload = q.payload as Record<string, unknown>;
+                  const isExpected = payload.role === 'expected';
+                  const amount = Number(payload.amount || 0);
+                  const currency = String(payload.currency || 'EUR');
+                  const desc = payload.description ? String(payload.description) : null;
+                  return (
+                    <div key={q.interaction_id} className="p-2 rounded bg-muted/40 flex items-center justify-between">
+                      <div>
+                        <span className="font-medium text-foreground">
+                          {isExpected ? 'Expected Budget (Client)' : 'Offered Proposal'}:{' '}
+                          {quoteMajorUnits(amount, currency)} {currency}
+                        </span>
+                        {desc ? (
+                          <span className="text-xs text-muted-foreground ml-2">({desc})</span>
+                        ) : null}
+                      </div>
+                      <span className="text-xs text-subtle shrink-0">{q.occurred_at ? q.occurred_at.slice(0, 10) : ''}</span>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+          {/* Next Actions & Tasks */}
+          <div className="p-3 rounded-lg border border-border bg-card space-y-2">
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-medium text-foreground">Next Actions &amp; Tasks</h3>
+              <Button variant="ghost" size="sm" onClick={() => setSection('tasks')}>
+                All tasks ({file.tasks.items.length}) →
+              </Button>
+            </div>
+            {file.tasks.items.length === 0 ? (
+              <p className="text-sm text-muted-foreground">No open tasks or next steps.</p>
+            ) : (
+              <div className="space-y-2 text-sm">
+                {file.tasks.items.slice(0, 4).map((t, idx) => (
+                  <div key={t.id || String(idx)} className="flex items-center justify-between p-2 rounded hover:bg-muted/30">
+                    <span className="text-foreground font-medium">{t.title}</span>
+                    <span className="text-xs text-muted-foreground">
+                      {t.due_local_date || t.due_instant || t.status || ''}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Recent Notes */}
+          <div className="p-3 rounded-lg border border-border bg-card space-y-2">
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-medium text-foreground">Recent Notes</h3>
+              <Button variant="ghost" size="sm" onClick={() => setSection('notes')}>
+                All notes ({file.notes.items.length}) →
+              </Button>
+            </div>
+            {file.notes.items.length === 0 ? (
+              <p className="text-sm text-muted-foreground">No notes recorded.</p>
+            ) : (
+              <div className="space-y-2 text-sm">
+                {(file.notes.items as CurrentInteraction[]).slice(0, 4).map((n) => (
+                  <div key={n.interaction_id} className="p-2 rounded bg-muted/40 space-y-1">
+                    <p className="text-foreground">{entryText(n)}</p>
+                    <p className="text-xs text-muted-foreground">
+                      {n.occurred_at ? n.occurred_at.slice(0, 10) : ''} · Logged by {n.original_actor_name ?? 'Member'}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Attached Files */}
+          {file.attachments.items.length > 0 && (
+            <div className="p-3 rounded-lg border border-border bg-card space-y-2">
+              <div className="flex items-center justify-between">
+                <h3 className="text-sm font-medium text-foreground">Attached Files</h3>
+                <Button variant="ghost" size="sm" onClick={() => setSection('attachments')}>
+                  All files ({file.attachments.items.length}) →
+                </Button>
+              </div>
+              <div className="space-y-1 text-sm">
+                {(file.attachments.items as Array<Record<string, unknown>>).slice(0, 3).map((f, idx) => (
+                  <div key={String(f.id ?? idx)} className="flex items-center justify-between">
+                    <span className="text-foreground truncate">{String(f.filename ?? '')}</span>
+                    <span className="text-xs text-muted-foreground ml-2 shrink-0">{String(f.mime_type ?? '')}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      ) : !page ? (
         <p role="status">Reading {labels[section]?.toLowerCase()}…</p>
       ) : (
         <>
