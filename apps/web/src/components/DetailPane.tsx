@@ -10,7 +10,12 @@ import { Alert, AlertDescription } from './ui/alert.js';
 import { formatDayLabel } from '../i18n/format.js';
 function cleanSummary(summary?: string | null): string | null {
   if (!summary) return null;
-  const cleaned = summary.replace(/\b(mem|act)_[a-zA-Z0-9_-]+/g, '').replace(/\(\s*\)/g, '').replace(/\s{2,}/g, ' ').trim();
+  const cleaned = summary
+    .replace(/\b(mem|act)_[a-zA-Z0-9_-]+/g, '')
+    .replace(/\(?\b(other_context|client_context|workspace_context|entity_context|unassigned_context)\b\)?/gi, '')
+    .replace(/\(\s*\)/g, '')
+    .replace(/\s{2,}/g, ' ')
+    .trim();
   return cleaned || null;
 }
 

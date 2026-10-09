@@ -1074,6 +1074,11 @@ export class AgentHandler implements TurnHandler {
             thinkingRequest = { kind: 'provider_default' };
           }
         }
+        if (modelSnapshot.provider === 'gemini' && thinkingRequest.kind !== 'gemini_level') {
+          thinkingRequest = { kind: 'provider_default' };
+        } else if (modelSnapshot.provider === 'opencode_go' && thinkingRequest.kind !== 'go_responses_effort') {
+          thinkingRequest = { kind: 'provider_default' };
+        }
 
         const turnInput: Omit<TurnInput, 'model'> = {
           workspaceId: ctx.workspaceId,

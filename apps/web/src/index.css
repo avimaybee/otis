@@ -73,10 +73,14 @@
 .otis-turn__body { max-width: 100%; overflow-wrap: anywhere; white-space: pre-line; }
 .otis-turn__body > :first-child { margin-top: 0; }
 .otis-turn__body > :last-child { margin-bottom: 0; }
-.otis-turn__body p, .otis-turn__body ul, .otis-turn__body ol, .otis-turn__body blockquote, .otis-turn__body pre { margin: 0 0 8px; }
-.otis-turn__body ul, .otis-turn__body ol { padding-left: 16px; }
+.otis-turn__body p { margin: 0 0 12px; }
+.otis-turn__body p:last-child { margin-bottom: 0; }
+.otis-turn__body ul { list-style-type: disc; padding-left: 16px; margin: 8px 0; }
+.otis-turn__body ol { list-style-type: decimal; padding-left: 16px; margin: 8px 0; }
 .otis-turn__body li { margin: 4px 0; }
+.otis-turn__body li::marker { color: var(--muted-foreground); }
 .otis-turn__body li > p { margin: 0 0 4px; }
+.otis-turn__body blockquote, .otis-turn__body pre { margin: 0 0 12px; }
 .otis-turn__body h1, .otis-turn__body h2, .otis-turn__body h3, .otis-turn__body h4 { margin: 16px 0 8px; font-weight: 500; font-size: inherit; }
 .otis-turn__body blockquote { padding-left: 12px; border-left: 1px solid var(--border); color: var(--muted-foreground); }
 .otis-turn__body code { padding: 4px; border-radius: 4px; background: var(--muted); font-family: var(--font-mono); }
@@ -200,7 +204,7 @@
 .otis-nav__brand { display: flex; height: 44px; align-items: center; justify-content: space-between; padding: 0 16px; }
 .otis-nav__brand span, .otis-wordmark { font-family: var(--font-wordmark); font-weight: 600; }
 .otis-nav__workspace-label { padding: 8px 16px; margin: 0 0 8px; }
-.otis-nav__action, .otis-nav__row { display: flex; flex: none; width: 100%; align-items: center; gap: 8px; padding: 8px 16px; border: 0; border-left: 2px solid transparent; background: transparent; text-align: left; color: var(--muted-foreground); transition: background-color 150ms ease-out, color 150ms ease-out; }
+.otis-nav__action, .otis-nav__row { display: flex; flex: none; width: 100%; height: 32px; min-height: 32px; align-items: center; gap: 8px; padding: 0 16px; border: 0; border-left: 2px solid transparent; background: transparent; text-align: left; color: var(--muted-foreground); transition: background-color 150ms ease-out, color 150ms ease-out; }
 .otis-nav__action { min-height: 32px; }
 .otis-nav__row { min-height: 32px; }
 .otis-nav__action:hover, .otis-nav__row:hover { background: var(--sidebar-hover); color: var(--foreground); }
@@ -211,9 +215,9 @@
 }
 .otis-nav__row[aria-current='page'] { border-left-color: var(--highlight); background: var(--sidebar-accent); padding-left: 14px; color: var(--sidebar-accent-foreground); }
 .otis-nav__action[aria-current='page'] { background: var(--sidebar-accent); color: var(--sidebar-accent-foreground); }
-.otis-nav__history { flex: 1; min-height: 0; overflow-y: auto; scrollbar-width: thin; margin-top: 8px; border-top: 1px solid var(--sidebar-border); padding-top: 8px; }
-.otis-nav__heading { margin: 16px 0 4px; padding: 8px 16px; color: var(--subtle); }
-.otis-nav__heading:first-child { margin-top: 8px; }
+.otis-nav__history { flex: 1; min-height: 0; overflow-y: auto; scrollbar-width: thin; margin-top: 4px; border-top: 1px solid var(--sidebar-border); padding-top: 4px; }
+.otis-nav__heading { margin: 8px 0 4px; padding: 4px 16px; color: var(--subtle); }
+.otis-nav__heading:first-child { margin-top: 4px; }
 .otis-nav__label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .otis-nav__author { max-width: 76px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--subtle); }
 .otis-nav__empty { margin: 8px 16px; color: var(--subtle); }
@@ -242,8 +246,8 @@
 .otis-detail__label { color: var(--subtle); }
 .otis-detail__value { white-space: pre-wrap; overflow-wrap: anywhere; }
 blockquote.otis-detail__value { margin: 0; padding-left: 12px; border-left: 1px solid var(--border); }
-.otis-sources { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 4px; }
-.otis-source-link { display: inline-flex; align-items: center; gap: 8px; min-height: 44px; padding: 8px 12px; border: 0; border-radius: 8px; background: transparent; color: var(--muted-foreground); cursor: pointer; transition: background-color 150ms ease-out, color 150ms ease-out; }
+.otis-sources { display: flex; flex-wrap: wrap; gap: 4px; }
+.otis-source-link { display: inline-flex; align-items: center; gap: 4px; min-height: 24px; padding: 0 8px; border: 0; border-radius: 4px; background: transparent; color: var(--muted-foreground); cursor: pointer; transition: background-color 150ms ease-out, color 150ms ease-out; }
 .otis-source-link:hover { background: var(--accent); color: var(--foreground); }
 .otis-button { display: inline-flex; min-height: 44px; align-items: center; justify-content: center; gap: 8px; }
 a.otis-button, a.otis-button:hover { text-decoration: none; }

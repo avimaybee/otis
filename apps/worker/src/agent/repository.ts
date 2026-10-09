@@ -421,8 +421,21 @@ export async function executeAgentTool(params: ExecuteAgentToolParams): Promise<
       }
     }
     case 'query': {
-      const qArgs = args as QueryToolArgs;
+      try {
+        const qArgs = args as QueryToolArgs;
       if (qArgs.resource === 'merge_preview') {
+        const sourceEntityId = qArgs.filters?.entity_id ?? qArgs.entity_id;
+        const targetEntityId = qArgs.filters?.target_entity_id ?? qArgs.target_entity_id;
+        if (!sourceEntityId || !targetEntityId) {
+          return {
+            status: 'rejected',
+            action_id: actionId,
+            error: {
+              code: 'missing_argument',
+              message: 'Both entity_id and target_entity_id are required for merge preview.',
+            },
+          };
+        }
         const member = await db
           .prepare('SELECT 1 FROM workspace_users WHERE workspace_id = ? AND user_id = ?')
           .bind(workspaceId, actorUserId)
@@ -432,13 +445,13 @@ export async function executeAgentTool(params: ExecuteAgentToolParams): Promise<
         const { state } = await getBusinessProjectionState(
           db,
           workspaceId,
-          [qArgs.filters!.entity_id!, qArgs.filters!.target_entity_id!],
+          [sourceEntityId, targetEntityId],
           true,
         );
         const preview = previewEntityMerge(
           state,
-          qArgs.filters!.entity_id!,
-          qArgs.filters!.target_entity_id!,
+          sourceEntityId,
+          targetEntityId,
         );
         return preview
           ? {
@@ -448,6 +461,7 @@ export async function executeAgentTool(params: ExecuteAgentToolParams): Promise<
             }
           : {
               status: 'rejected',
+              action_id: actionId,
               error: {
                 code: 'invalid_merge',
                 message: 'Choose two different clients in this workspace.',
@@ -455,11 +469,22 @@ export async function executeAgentTool(params: ExecuteAgentToolParams): Promise<
             };
       }
       if (qArgs.resource === 'entity_file') {
+        const entityId = qArgs.filters?.entity_id ?? qArgs.entity_id;
+        if (!entityId) {
+          return {
+            status: 'rejected',
+            action_id: actionId,
+            error: {
+              code: 'missing_argument',
+              message: 'entity_id is required for entity_file.',
+            },
+          };
+        }
         try {
           return {
             status: 'applied',
             action_id: actionId,
-            data: await readEntityFile(db, workspaceId, actorUserId, qArgs.filters!.entity_id!, {
+            data: await readEntityFile(db, workspaceId, actorUserId, entityId, {
               author_user_id: qArgs.filters?.author_user_id,
               from: qArgs.filters?.from,
               to: qArgs.filters?.to,
@@ -471,11 +496,17 @@ export async function executeAgentTool(params: ExecuteAgentToolParams): Promise<
             }),
           };
         } catch (error) {
-          if (!(error instanceof FileReadError)) throw error;
+          if (error instanceof FileReadError) {
+            return {
+              status: 'rejected',
+              action_id: actionId,
+              error: { code: error.code, message: error.message },
+            };
+          }
           return {
             status: 'rejected',
             action_id: actionId,
-            error: { code: error.code, message: error.message },
+            error: { code: 'query_error', message: error instanceof Error ? error.message : String(error) },
           };
         }
       }
@@ -511,7 +542,7 @@ export async function executeAgentTool(params: ExecuteAgentToolParams): Promise<
         };
       }
       if (qArgs.resource === 'search') {
-        const queryText = qArgs.filters?.text || (qArgs as unknown as { text?: string }).text || '';
+        const queryText = qArgs.filters?.text || (qArgs as unknown as { text?: string; query?: string }).text || (qArgs as unknown as { text?: string; query?: string }).query || '';
         const limitPerCategory = Math.min(Math.max(1, qArgs.limit || 5), 20);
         const searchResults = await unifiedWorkspaceSearch(
           db,
@@ -529,14 +560,23 @@ export async function executeAgentTool(params: ExecuteAgentToolParams): Promise<
       if (qArgs.resource === 'duplicates') {
         const { results: allEntities } = await db
           .prepare(
-            `SELECT id, name, kind, status, company FROM entities WHERE workspace_id = ? AND state != 'deleted' AND NOT EXISTS (SELECT 1 FROM entity_redirects redirect WHERE redirect.workspace_id = entities.workspace_id AND redirect.source_entity_id = entities.id) ORDER BY name ASC LIMIT 100`,
+            `SELECT id, name, kind, status,
+                    (SELECT value_text FROM entity_state s WHERE s.workspace_id = entities.workspace_id AND s.entity_id = entities.id AND s.field_name = 'company' AND s.state = 'clear') AS company
+             FROM entities
+             WHERE workspace_id = ?
+               AND NOT EXISTS (
+                 SELECT 1 FROM entity_redirects redirect
+                 WHERE redirect.workspace_id = entities.workspace_id
+                   AND redirect.source_entity_id = entities.id
+               )
+             ORDER BY name ASC LIMIT 100`,
           )
           .bind(workspaceId)
           .all<{ id: string; name: string; kind?: string | null; status?: string | null; company?: string | null }>();
 
         const candidates: Array<{
-          entity_a: { id: string; name: string; kind?: string | null; status?: string | null };
-          entity_b: { id: string; name: string; kind?: string | null; status?: string | null };
+          entity_a: { id: string; name: string; kind?: string | null; status?: string | null; company?: string | null };
+          entity_b: { id: string; name: string; kind?: string | null; status?: string | null; company?: string | null };
           similarity: number;
           reason: string;
         }> = [];
@@ -558,8 +598,8 @@ export async function executeAgentTool(params: ExecuteAgentToolParams): Promise<
 
             if (score >= 0.75 || (isSubstring && Math.abs(normA.length - normB.length) <= 5)) {
               candidates.push({
-                entity_a: { id: ea.id, name: ea.name, kind: ea.kind, status: ea.status },
-                entity_b: { id: eb.id, name: eb.name, kind: eb.kind, status: eb.status },
+                entity_a: { id: ea.id, name: ea.name, kind: ea.kind, status: ea.status, company: ea.company },
+                entity_b: { id: eb.id, name: eb.name, kind: eb.kind, status: eb.status, company: eb.company },
                 similarity: Math.round(Math.max(score, isSubstring ? 0.8 : 0) * 100) / 100,
                 reason: score >= 0.9 ? 'Nearly identical names' : isSubstring ? 'Name variation or suffix' : 'Similar spelling',
               });
@@ -914,6 +954,16 @@ export async function executeAgentTool(params: ExecuteAgentToolParams): Promise<
         action_id: actionId,
         error: { code: 'invalid_resource', message: `Unknown resource '${qArgs.resource}'.` },
       };
+      } catch (err: unknown) {
+        return {
+          status: 'rejected',
+          action_id: actionId,
+          error: {
+            code: 'query_error',
+            message: err instanceof Error ? err.message : String(err),
+          },
+        };
+      }
     }
 
     case 'view_image': {

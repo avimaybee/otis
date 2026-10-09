@@ -393,7 +393,7 @@ export function Composer({ disabled, disabledReason, running, commands, models =
                   <DropdownMenuTrigger asChild>
                     <button
                       type="button"
-                      className="flex min-w-0 max-w-36 items-center gap-1 truncate rounded-full px-2 py-1 text-nav text-muted-foreground transition-colors hover:bg-accent hover:text-foreground cursor-pointer select-none"
+                      className="inline-flex h-[22px] min-w-0 max-w-36 items-center gap-1 truncate rounded-full border border-border bg-secondary/40 px-2 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground cursor-pointer select-none"
                       disabled={controlPending}
                       aria-label="Select model and thinking effort"
                     >

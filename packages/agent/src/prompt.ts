@@ -112,9 +112,10 @@ export function renderSystemPrompt(context?: DynamicPromptContext): string {
       parts.push(`Preferred Language: ${context.actingMemberLanguage}`);
     }
     if (context.currentDateIso) {
-      parts.push(`Current UTC Date/Time: ${context.currentDateIso}`);
       if (context.currentTimezone) {
-        parts.push(`Member Timezone: ${context.currentTimezone} (convert member local times to UTC when saving deadlines, follow-ups or reminders)`);
+        parts.push(`Current Date/Time: ${context.currentDateIso} (${context.currentTimezone})`);
+      } else {
+        parts.push(`Current Date/Time: ${context.currentDateIso} (Timezone: unknown - ask to confirm timezone when resolving relative or local date/time deadlines)`);
       }
     }
 

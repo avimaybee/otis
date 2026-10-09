@@ -265,6 +265,8 @@ export interface QueryToolArgs {
   order?: 'occurred' | 'recorded' | 'overdue_first';
   entity_id?: string;
   target_entity_id?: string;
+  text?: string;
+  query?: string;
   filters?: {
     interaction_id?: string;
     entity_id?: string;
@@ -1296,6 +1298,8 @@ export function validateQueryArgs(raw: unknown): ValidationResult<QueryToolArgs>
       'order',
       'entity_id',
       'target_entity_id',
+      'text',
+      'query',
     ]),
     'query',
   );
@@ -1315,6 +1319,13 @@ export function validateQueryArgs(raw: unknown): ValidationResult<QueryToolArgs>
       return fail('invalid_argument', "Field 'target_entity_id' must be a non-empty string.");
     }
     topTargetEntityId = obj['target_entity_id'].trim();
+  }
+
+  let topText: string | undefined;
+  if (typeof obj['text'] === 'string' && obj['text'].trim()) {
+    topText = obj['text'].trim();
+  } else if (typeof obj['query'] === 'string' && obj['query'].trim()) {
+    topText = obj['query'].trim();
   }
 
   const validResources = new Set([
@@ -1378,6 +1389,7 @@ export function validateQueryArgs(raw: unknown): ValidationResult<QueryToolArgs>
         'due_after',
         'kind',
         'text',
+        'query',
         'status',
         'overdue_only',
         'without_next_step',
@@ -1441,13 +1453,14 @@ export function validateQueryArgs(raw: unknown): ValidationResult<QueryToolArgs>
     }
   }
 
-  if (topEntityId || topTargetEntityId) {
+  if (topEntityId || topTargetEntityId || topText) {
     filters = {
       ...filters,
       ...(topEntityId && !filters?.entity_id ? { entity_id: topEntityId } : {}),
       ...(topTargetEntityId && !filters?.target_entity_id
         ? { target_entity_id: topTargetEntityId }
         : {}),
+      ...(topText && !filters?.text ? { text: topText } : {}),
     };
   }
 
@@ -2976,6 +2989,10 @@ export const ALL_AGENT_TOOLS: ProviderToolDeclaration[] = [
           type: 'string',
           description:
             'Target entity ID for merge_preview. Can also be supplied inside filters.',
+        },
+        text: {
+          type: 'string',
+          description: 'Search query text (search resource only). Can also be supplied inside filters.',
         },
         limit: { type: 'integer' },
         cursor: { type: 'string' },

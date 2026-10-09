@@ -50,7 +50,7 @@ export function HistoryNav(props: HistoryNavProps) {
           props.onSelectChat(chat.id);
         }}
       >
-        <span className="otis-nav__label text-base">{chat.title || 'Untitled conversation'}</span>
+        <span className="otis-nav__label text-nav">{chat.title || 'Untitled conversation'}</span>
         {team && <span className="otis-nav__author text-xs">{chat.author_display_name ?? props.members?.[chat.author_user_id] ?? 'Teammate'}</span>}
       </button>
       {!team && (props.onRenameChat || props.onDeleteChat) && (
@@ -137,7 +137,7 @@ export function HistoryNav(props: HistoryNavProps) {
       )}
 
       <label className="otis-visually-hidden" htmlFor={`${id}-workspace`}>Workspace</label>
-      <div className="flex items-center justify-between px-4 pb-2">
+      <div className="flex items-center justify-between px-4 pb-1">
         {props.workspaces.length > 1 ? (
           <ChoiceSelect
             id={`${id}-workspace`}
@@ -148,7 +148,7 @@ export function HistoryNav(props: HistoryNavProps) {
             onChange={props.onSwitchWorkspace}
           />
         ) : (
-          <p className="otis-nav__workspace-label text-base flex-1 m-0 p-0 text-muted-foreground">{props.workspaceName}</p>
+          <p className="otis-nav__workspace-label text-sm flex-1 m-0 p-0 text-muted-foreground">{props.workspaceName}</p>
         )}
         {props.onCreateWorkspace && (
           <Button

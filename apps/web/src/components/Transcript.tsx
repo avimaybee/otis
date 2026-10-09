@@ -101,6 +101,7 @@ export function formatOutcomeSummary(summary?: string | null, totalActions = 1):
   // "act_..." or "ent_...". Durable ledger summaries stay intact; only the
   // display drops them, and a dangling "for entity" left behind goes too.
   clean = clean.replace(/\b(mem|act|ent)_[a-zA-Z0-9_-]+/g, '').trim();
+  clean = clean.replace(/\(?\b(other_context|client_context|workspace_context|entity_context|unassigned_context)\b\)?/gi, '').trim();
   clean = clean.replace(/\(\s*\)/g, '').replace(/\s{2,}/g, ' ').trim();
   clean = clean.replace(/\s+for entity\s*['"]?\s*['"]?\s*\.?$/i, '');
   if (!clean || /^[^a-zA-Z0-9]+$/.test(clean)) {
@@ -147,7 +148,7 @@ export function WorkingDisclosure({ steps, finished, expanded, onToggle, onInspe
   const showHeaderDot = !finished && (!expanded || !hasRunningStep);
   return (
     <section className="otis-working" aria-label={finished ? 'Worked' : isWaiting ? 'Paused' : 'Working'} aria-live="off">
-      <button type="button" className="otis-working__disclosure mb-2 flex items-center gap-2 text-xs text-muted-foreground" aria-expanded={expanded} onClick={onToggle}>
+      <button type="button" className="otis-working__disclosure flex items-center gap-2 text-xs text-muted-foreground" aria-expanded={expanded} onClick={onToggle}>
         {showHeaderDot && (
           <span
             aria-hidden="true"
@@ -574,7 +575,6 @@ export function Transcript({ messages, members, currentUserId, steps, run, runs 
             <article className={`otis-turn group otis-turn--${isMember ? 'member' : 'agent'}`} data-author-kind={message.author_kind}>
               {isMember && message.author_user_id !== currentUserId && <div className="otis-turn__meta text-xs text-subtle">{author}</div>}
               <MessageBody message={message} />
-              {!isMember && runData?.sources?.length && onInspectSource ? <div className="otis-sources" aria-label="Sources">{runData.sources.map(source => <Button variant="ghost" size="sm" type="button" key={source.memory_id} className="otis-source-link" onClick={() => onInspectSource(source.memory_id)}>{source.label}{source.provenance === 'inferred' ? ' · inferred' : ''}</Button>)}</div> : null}
               {!isMember && runData?.actions?.length ? (
                 <div className="otis-outcome mt-2 flex items-center gap-2 text-xs text-subtle" role="status">
                   <CheckIcon />
@@ -612,6 +612,23 @@ export function Transcript({ messages, members, currentUserId, steps, run, runs 
               )}
               <div className="otis-turn__actions">
                 <time className="text-xs text-subtle tabular-nums" dateTime={message.created_at}>{formatClockTime(message.created_at)}</time>
+                {!isMember && runData?.sources?.length && onInspectSource ? (
+                  <div className="otis-sources flex items-center gap-1" aria-label="Sources">
+                    {runData.sources.map(source => (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        type="button"
+                        key={source.memory_id}
+                        className="otis-source-link otis-msg-action h-6 px-2 text-xs text-subtle hover:text-foreground"
+                        onClick={() => onInspectSource(source.memory_id)}
+                        title={`View source: ${source.label}`}
+                      >
+                        <span>{source.label}{source.provenance === 'inferred' ? ' · inferred' : ''}</span>
+                      </Button>
+                    ))}
+                  </div>
+                ) : null}
                 {message.content_text && (
                   <Button variant="ghost" size="icon-xs" type="button" className="otis-msg-action text-muted-foreground hover:text-foreground" aria-label={isMember ? 'Copy message' : 'Copy response'} title="Copy" onClick={() => void handleCopy(message.id, message.content_text)}>
                     {copiedId === message.id ? <CheckIcon /> : <CopyIcon />}

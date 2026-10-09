@@ -20,9 +20,10 @@ export async function handleGetDuplicates(
   try {
     const { results: allEntities } = await env.DB
       .prepare(
-        `SELECT id, name, kind, status, company
+        `SELECT id, name, kind, status,
+                (SELECT value_text FROM entity_state s WHERE s.workspace_id = entities.workspace_id AND s.entity_id = entities.id AND s.field_name = 'company' AND s.state = 'clear') AS company
          FROM entities
-         WHERE workspace_id = ? AND state != 'deleted'
+         WHERE workspace_id = ?
            AND NOT EXISTS (
              SELECT 1 FROM entity_redirects redirect
              WHERE redirect.workspace_id = entities.workspace_id
