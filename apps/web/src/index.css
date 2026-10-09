@@ -69,18 +69,21 @@
 
 /* Assistant text sits directly on the canvas. Single newlines from the model
    render as line breaks (Markdown would otherwise collapse them into the
-   same visual line); member bubbles already preserve them the same way. */
-.otis-turn__body { max-width: 100%; overflow-wrap: anywhere; white-space: pre-line; }
+   same visual line); member bubbles already preserve them the same way.
+   Flex column layout absorbs whitespace text nodes between block elements so
+   inter-block spacing is owned strictly by CSS gap/margins without double gaps. */
+.otis-turn__body { display: flex; flex-direction: column; gap: 8px; max-width: 100%; overflow-wrap: anywhere; white-space: pre-line; }
 .otis-turn__body > :first-child { margin-top: 0; }
 .otis-turn__body > :last-child { margin-bottom: 0; }
-.otis-turn__body p { margin: 0 0 12px; }
-.otis-turn__body p:last-child { margin-bottom: 0; }
-.otis-turn__body ul { list-style-type: disc; padding-left: 16px; margin: 8px 0; }
-.otis-turn__body ol { list-style-type: decimal; padding-left: 16px; margin: 8px 0; }
-.otis-turn__body li { margin: 4px 0; }
+.otis-turn__body p { margin: 0; }
+.otis-turn__body p + p { margin-top: 4px; }
+.otis-turn__body ul, .otis-turn__body ol { display: flex; flex-direction: column; gap: 4px; padding-left: 16px; margin: 0; white-space: normal; }
+.otis-turn__body ul { list-style-type: disc; }
+.otis-turn__body ol { list-style-type: decimal; }
+.otis-turn__body li { margin: 0; }
 .otis-turn__body li::marker { color: var(--muted-foreground); }
-.otis-turn__body li > p { margin: 0 0 4px; }
-.otis-turn__body blockquote, .otis-turn__body pre { margin: 0 0 12px; }
+.otis-turn__body li > p { margin: 0; }
+.otis-turn__body blockquote, .otis-turn__body pre { margin: 0; }
 .otis-turn__body h1, .otis-turn__body h2, .otis-turn__body h3, .otis-turn__body h4 { margin: 16px 0 8px; font-weight: 500; font-size: inherit; }
 .otis-turn__body blockquote { padding-left: 12px; border-left: 1px solid var(--border); color: var(--muted-foreground); }
 .otis-turn__body code { padding: 4px; border-radius: 4px; background: var(--muted); font-family: var(--font-mono); }
