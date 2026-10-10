@@ -455,39 +455,47 @@ export async function listChatMessages(
   const ids = rows.map((r) => String(r['id']));
   const attached = new Map<string, string[]>();
   if (ids.length > 0) {
-    const placeholders = ids.map(() => '?').join(',');
-    const linkRows = (
-      await db
-        .prepare(
-          `SELECT chat_message_id, media_id FROM message_image_attachments
-           WHERE workspace_id = ? AND chat_message_id IN (${placeholders}) ORDER BY position ASC`,
-        )
-        .bind(workspaceId, ...ids)
-        .all<{ chat_message_id: string; media_id: string }>()
-    ).results || [];
-    for (const link of linkRows) {
-      const list = attached.get(link.chat_message_id) ?? [];
-      list.push(link.media_id);
-      attached.set(link.chat_message_id, list);
+    try {
+      const placeholders = ids.map(() => '?').join(',');
+      const linkRows = (
+        await db
+          .prepare(
+            `SELECT chat_message_id, media_id FROM message_image_attachments
+             WHERE workspace_id = ? AND chat_message_id IN (${placeholders}) ORDER BY position ASC`,
+          )
+          .bind(workspaceId, ...ids)
+          .all<{ chat_message_id: string; media_id: string }>()
+      ).results || [];
+      for (const link of linkRows) {
+        const list = attached.get(link.chat_message_id) ?? [];
+        list.push(link.media_id);
+        attached.set(link.chat_message_id, list);
+      }
+    } catch {
+      // Degrade gracefully if attachment table is temporarily inaccessible
     }
   }
 
   const docAttached = new Map<string, string[]>();
   if (ids.length > 0) {
-    const placeholders = ids.map(() => '?').join(',');
-    const docLinkRows = (
-      await db
-        .prepare(
-          `SELECT chat_message_id, media_id FROM message_document_attachments
-           WHERE workspace_id = ? AND chat_message_id IN (${placeholders}) ORDER BY position ASC`,
-        )
-        .bind(workspaceId, ...ids)
-        .all<{ chat_message_id: string; media_id: string }>()
-    ).results || [];
-    for (const link of docLinkRows) {
-      const list = docAttached.get(link.chat_message_id) ?? [];
-      list.push(link.media_id);
-      docAttached.set(link.chat_message_id, list);
+    try {
+      const placeholders = ids.map(() => '?').join(',');
+      const docLinkRows = (
+        await db
+          .prepare(
+            `SELECT chat_message_id, media_id FROM message_document_attachments
+             WHERE workspace_id = ? AND chat_message_id IN (${placeholders}) ORDER BY position ASC`,
+          )
+          .bind(workspaceId, ...ids)
+          .all<{ chat_message_id: string; media_id: string }>()
+      ).results || [];
+      for (const link of docLinkRows) {
+        const list = docAttached.get(link.chat_message_id) ?? [];
+        list.push(link.media_id);
+        docAttached.set(link.chat_message_id, list);
+      }
+    } catch {
+      // Degrade gracefully if document attachment table is temporarily inaccessible
     }
   }
 
