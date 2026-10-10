@@ -2,7 +2,7 @@
 
 Otis is a mobile-first conversational business memory: record what happened, retrieve what the team knows, correct it, and act on a useful follow-up. Web and Telegram share workspace records. It is built for Kerning today without hardcoded customer or member identities.
 
-The code contains the ledger, identity, durable chat/agent loop, provider adapters, web UI, Telegram, voice pipeline and chosen-time briefs. Some intended capabilities and acceptance checks remain incomplete. [Implementation status](docs/status.md) is the sole maintained record of what exists, what was tested and what remains open. Package names, old DONE labels and fake-provider replies are not release evidence.
+The app includes a durable workspace ledger, conversational capture and recall, a sourced client file, cross-chat search, retained photos/PDFs, explicit follow-ups, JSON/XLSX export and owner-controlled workspace erasure. Otis can compose general tables; wide tables can use the available transcript width and copy as tab-separated data. Some work remains incomplete: the Records page's manual Save path still needs ledger-backed repair, and live browser/device and production-cost acceptance is separate. [Implementation status](docs/status.md) is the maintained record of what exists, what was tested and what remains open. Package names, old DONE labels and fake-provider replies are not release evidence.
 
 ## Read only what the task needs
 
@@ -13,7 +13,7 @@ Start with [AGENTS.md](AGENTS.md), the assigned task and the relevant document b
 | [product.md](product.md) | Product intent, behavior and boundaries |
 | [architecture.md](architecture.md) | Runtime flow and technical ownership |
 | [docs/contracts.md](docs/contracts.md) | Contract semantics and links to canonical code |
-| [design.md](design.md) | Interaction behavior and required story inventory |
+| [design.md](design.md) | Interaction behavior and current UI acceptance |
 | [design-tokens.md](design-tokens.md) | Approved visual values and recipes |
 | [docs/decisions.md](docs/decisions.md) | Settled choices and unresolved product decisions |
 | [docs/verification.md](docs/verification.md) | Checks and the evidence needed for acceptance |
@@ -39,7 +39,7 @@ pnpm build
 
 Development uses Vite on port 5173 and Wrangler on 8787. Build generates the web/PWA assets, checks TypeScript and bundles the Worker with `wrangler deploy --dry-run`; it does not deploy. Local Workers tests exercise real D1/DO/R2 bindings. See [operations](docs/operations.md) for runtime configuration.
 
-UI tooling is implemented: `pnpm check:design`, `pnpm check:stories`, `pnpm --filter @otis/web build-storybook`. The design checker checks the real source paths and pins the approved token file; the story checker checks the fixture inventory. Neither proves native-browser/device acceptance.
+`pnpm check:design` checks real source paths against the approved token file. Storybook and the `check:stories` script are not present on the current branch. The design check does not prove native-browser/device acceptance.
 
 ## Source ownership
 
@@ -48,6 +48,6 @@ UI tooling is implemented: `pnpm check:design`, `pnpm check:stories`, `pnpm --fi
 - `apps/web/src`: production React conversation, shadcn primitives, scoped query/router state, drafts/outbox, recording and PWA.
 - `packages/contracts`, `identity`, `ledger`, `agent`, `commands`, `channels`, `brief`: shared types and domain owners.
 - `migrations`: one forward SQL sequence; inspect the actual files and remote state before applying changes.
-- `packages/sheet`: export interfaces only at the audited baseline. `/sheet` remains unavailable.
+- `packages/sheet`: zero-dependency XLSX workbook generation used by the authenticated workspace export route.
 
 Use direct functions and prepared SQL, the existing actor/Queue and shadcn components. Keep interaction feedback immediate, provider previews in memory and durable effects replay-safe. The Cloudflare Free budgets and known deviations are recorded in [architecture](architecture.md) and [status](docs/status.md); a statement count or successful build is not proof of CPU compliance.

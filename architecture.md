@@ -1,6 +1,6 @@
 # Otis architecture
 
-Current source ownership, reconciled 2026-10-07 against `2db5344`. [Product](product.md) defines intent; [contracts](docs/contracts.md) defines semantic boundaries; [status](docs/status.md) distinguishes implementation, open defects and unverified acceptance. This document does not claim the Free budget or deployment journey has passed.
+Current source ownership, reconciled 2026-10-10 against `2bcae14`. The working tree also contains uncommitted changes, which are not treated as accepted or deployed behavior. [Product](product.md) defines intent; [contracts](docs/contracts.md) defines semantic boundaries; [status](docs/status.md) distinguishes implementation, open defects and unverified acceptance. This document does not claim the Free budget or latest deployment journey has passed.
 
 ## 1. What the architecture must make true
 
@@ -12,7 +12,7 @@ Accept input durably, execute authorized work once, preserve sources/history, re
 |---|---|
 | Worker HTTP | Session/membership/CSRF, bounded routes, acceptance and private downloads |
 | WorkspaceActor | Immediate dispatch, bounded recovery slices, live SSE execution venue and best-effort Stop |
-| D1 | Identity, conversations/sources, runs/steps/receipts/outbox, events/projections, memory/media/brief metadata |
+| D1 | Identity, conversations/sources and search indexes, runs/steps/receipts/outbox, events/projections, memory/media/brief metadata |
 | R2 | Private audio/images and retained standard image renditions |
 | Queue | Delayed continuation/retry hints and fallback dispatch |
 | Cron | Recover durable due work, selected briefs, transcription/delivery and media cleanup |
@@ -25,7 +25,7 @@ Bindings and actual entry points live in [wrangler.jsonc](wrangler.jsonc) and [W
 
 Shared contracts live in `packages/contracts`; identity/session/credentials in `packages/identity`; event commands/reducers/repository in `packages/ledger`; provider protocol, prompt, tools and policy in `packages/agent`. Commands/channels/brief kernel are shared packages. Worker `inbox`, `actor`, `agent`, `chat`, `media`, `brief` supply bindings and orchestration.
 
-`packages/sheet` currently contains interfaces, not an exporter. Frontend source in `apps/web/src` uses the installed TanStack query/router, shadcn primitives, IndexedDB helpers, stick-to-bottom and Markdown/GFM owners.
+`packages/sheet` generates XLSX snapshots for the workspace export route. Worker routes also provide scoped JSON export, unified workspace search and owner-only workspace erasure. Frontend source in `apps/web/src` uses the installed TanStack query/router, shadcn primitives, IndexedDB helpers, stick-to-bottom and Markdown/GFM owners. Its current interface includes adaptive Markdown tables, workspace search, client files, Records, mobile history navigation and responsive settings.
 
 ## 4. Identity and authorization
 
@@ -115,7 +115,7 @@ Record non-sensitive acceptance/dispatch/context/provider/first-text/completion 
 
 [Operations](docs/operations.md) owns environment/deployment/recovery; [verification](docs/verification.md) owns commands and meaningful acceptance. A build dry run, source test, native-browser fixture, live model/device test and deployed dogfood are separate evidence layers.
 
-Full workbook/export/erasure/restore release acceptance remains open. A legacy workspace-delete route is not complete erasure.
+Workspace JSON/XLSX export and owner-only cross-store D1/R2 erasure are implemented. Independent workbook/restore checks, backup policy, and an end-to-end production erasure/export journey remain release acceptance. The last deployment evidence recorded in [status](docs/status.md) predates the current source snapshot; do not infer deployment from a branch commit.
 
 ## 17. Frontend state and local durability
 

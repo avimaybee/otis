@@ -36,6 +36,8 @@ Sourced durable preferences, shorthand and aliases should improve subsequent con
 
 Retrieve relevant historical facts and conversation when the recent window is insufficient. A model's previous description is not a substitute for retained source evidence. Forgotten/superseded memory must not return as an active instruction or be silently promoted again from old transcripts. Summaries/caches can accelerate retrieval but are never the sole canonical state.
 
+Members can search workspace records and conversations from the app. Conversation search keeps the original message as the source and reports its match/coverage; an index accelerates lookup but does not replace the stored conversation.
+
 Untrusted forwarded or supplied content is context, not permission to perform writes. Do not infer durable personality/style rules from one editing request.
 
 ## 5. Responses and tables
@@ -48,7 +50,7 @@ Retrieve missing saved facts where needed, preserve requested columns, and mark 
 
 Follow-ups such as “add a column,” “compare these two,” “make it more detailed” and “explain the second row” refer to the relevant visible result. Revalidate facts/authority before any subsequent mutation. Prose and several tables can coexist.
 
-The production renderer makes wide/long tables readable with local scrolling, normal typography and working table copy. No dead sorting/export controls, new report language or separate formatter model is required.
+The production renderer makes wide/long tables readable with local scrolling, normal typography and working tab-separated table copy. When a table is wider than the message text column, it can widen symmetrically into available transcript space while retaining local horizontal scrolling. No dead sorting/export controls, new report language or separate formatter model is required.
 
 ## 6. Responsive conversation and questions
 
@@ -72,6 +74,8 @@ The exact selected provider/model/endpoint/format determines native transcriptio
 
 Images retain attachment/source identity. Recent image follow-ups should work without re-uploading; older retained images remain discoverable and viewable by scoped read tools. Preserve selected images on stateless replay/tool rounds and restore selection after restart. Normalized renditions reduce repeated payload cost; unavailable/expired/unsupported visual input gets an honest limitation, not a guessed description.
 
+Client files can keep linked image and PDF originals. PDFs may have a background text extraction with visible availability/coverage; the original remains available when extraction fails. Voice transcript corrections are sourced overlays and do not replace the original audio or transcript. These features still need live Worker/device and broad format acceptance.
+
 ## 9. Briefs and reminders
 
 Briefs start disabled. A member chooses time, weekdays, timezone and delivery channel. At most one scheduled daily brief per member/local date; no default 09:00 or automatic notification on empty work.
@@ -80,15 +84,15 @@ Select a small actionable set with concrete reasons, dates where known and sourc
 
 Done, Draft, Move and Snooze may use existing authorized services; ordinary conversation remains sufficient. Replies to a saved brief item must resolve that item, while “the second one” after a newer table refers to the relevant newer result.
 
-Explicit one-off reminder create/change/cancel and due delivery are implemented through the existing reminder service; actual chosen-channel/device acceptance remains separate evidence. Recurring and after-quote reminders are selected follow-on work in the [capability plan](plans/business-memory-capabilities.md#10-c6--recurring-and-condition-based-follow-ups), extending those owners with chosen/confirmed time, timezone, channel and durable deduplicated delivery. Additional unsolicited proactivity remains unresolved and disabled.
+Explicit one-off reminders and member-requested weekly or after-quote follow-up rules are implemented through the existing reminder service. Rule timing, timezone, channel, quote condition and deduplicated occurrences are stored; actual chosen-channel/device delivery acceptance remains separate. Additional unsolicited proactivity remains unresolved and disabled.
 
 ## 10. Outward drafts and export
 
 Create/revise outward drafts only when requested, in the requested or known recipient language, grounded in confirmed facts. Copy is available; a usable normalized phone permits a prefilled WhatsApp link. Ask for a phone only when handoff needs it. Copy/open never marks sent; sent status requires the member's explicit completed-send confirmation. No agent tool sends to a lead in v1.
 
-A generated XLSX is intended as a private snapshot of Leads/Tasks/Log with stable IDs, usable date/money formatting, dispute/source markers and formula-safe cells. It is not another database or edit-back synchronization. Workbook generation, private download and machine-readable workspace export remain open.
+A member-scoped route generates a JSON workspace export and an XLSX snapshot using the same scoped data collection. The workbook uses formula-safe cell text; it is a snapshot, not another database or edit-back synchronization. Independent reader and restore/rebuild acceptance remain open.
 
-A complete, audited erasure/retention procedure covers the actual D1/R2/memory/credential/job stores and documents backup limitations. A partial workspace-delete route does not establish that procedure.
+An owner-only workspace erasure route removes workspace-scoped D1 data and inventoried R2 media, then records a content-free tombstone with per-store counts. Backup/restore behavior and the complete production retention/erasure journey still need release acceptance.
 
 ## 11. Model setup and practical scope
 
@@ -100,12 +104,12 @@ After reliable dogfood, consider self-serve expansion, read-only MCP, connected 
 
 Success is repeat field use: capture → recall → useful resurfacing → action. The two-week habit/usefulness criterion and real-device/native-latency measurements remain acceptance work, not promises inferred from a demo.
 
-## 12. Editable information — selected, not yet implemented
+## 12. Editable information — selected, partially implemented
 
-Members can view and directly add/update/remove the same information Otis uses through **Your information**: a full desktop spreadsheet and convenient mobile row editor. Use simple named lists and ordinary language, with useful existing records and flexible sparse custom columns. Users should not need database knowledge. Otis should reuse a suitable core/custom field before inventing another; preserve important information that does not fit existing fields.
+**Your information** now presents real workspace records in a desktop grid and a mobile-friendly row view, with list/column and draft-edit controls. The page is useful for viewing and preparing changes, but its manual Save path is not accepted: it currently writes projections outside ledger commands, uses fixed receipt metadata, commits chunks separately, and reports success for Notes/Drafts edits it skips. R16 tracks replacing that path with authoritative ledger-backed Save before the UI is described as safe direct editing.
 
 Manual cell, row and column changes collect in a recoverable draft until explicit **Save**. Local Undo/Redo operates on that draft. Saved edits are sourced ledger commands, with history and saved Undo; ordinary removal preserves recoverable history. Concurrent edits retain the member's draft and resolve only the affected conflicting values, preserving unrelated teammate work.
 
 Otis can create fields, organize information and define calculations conversationally. On clean saved information, authorized cleanup applies immediately with history/Undo. With unsaved manual edits, Otis tidies the draft and the member still clicks Save. Never let another tool silently bypass that draft target. Summaries and consolidation retain original values, source evidence and relationships; uncertain identity/status/value changes still ask narrowly.
 
-The [implementation plan](plans/editable-records.md) defines the proposed data/UI/Save/tool contracts and acceptance slices. It extends the existing ledger and Cloudflare owners; it is neither a second business database nor an export-edit synchronization feature. Its presence does not establish implementation.
+The [implementation plan](plans/editable-records.md) defines the remaining data/UI/Save/tool contracts and acceptance slices. It extends the existing ledger and Cloudflare owners; it is neither a second business database nor an export-edit synchronization feature.

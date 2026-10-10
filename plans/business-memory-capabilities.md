@@ -394,13 +394,11 @@ pnpm lint
 pnpm test
 pnpm build
 pnpm check:design
-pnpm check:stories
-pnpm --filter @otis/web build-storybook
 node plans/qa/docs-audit.mjs links
 git diff --check
 ```
 
-Implementation slices run the first four plus their meaningful behavior cases. UI changes additionally run design/story checkers, Storybook, scoped a11y/keyboard cases and native comparison at 360, 390, 900, 1280 and 1440 px. Use production components/stories and native Codex/Antigravity browser controls; no Playwright. Synthetic DOM geometry is not physical device/provider proof.
+Implementation slices run the first four plus meaningful behavior cases. UI changes additionally run the design checker, scoped a11y/keyboard cases and native comparison at 360, 390, 900, 1280 and 1440 px. Use production components and native Codex/Antigravity browser controls; no Playwright. Synthetic DOM geometry is not physical device/provider proof.
 
 Focused existing command patterns (use only affected suites and add the new selected files):
 

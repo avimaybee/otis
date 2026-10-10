@@ -537,9 +537,7 @@ pnpm typecheck
 pnpm lint
 pnpm test
 pnpm check:design
-pnpm check:stories
 pnpm build
-pnpm --filter @otis/web build-storybook
 git diff --check
 ```
 

@@ -17,7 +17,7 @@ The supplementary [Working/Undo reference](docs/design/working-undo-reference.pn
 | Subject | Authority |
 |---|---|
 | Visual values, recipes, allowed highlight, font and copy constraints | [design-tokens.md](design-tokens.md), then the reference at its documented production scale |
-| Interaction, presentation and fixture inventory | This guide and latest explicit user instructions |
+| Interaction and presentation behavior | This guide and latest explicit user instructions |
 | Business meaning, clarification, membership, memory and undo scope | [product.md](product.md) |
 | Durable acceptance, authorization, retries and run execution | [architecture.md](architecture.md), [contracts](docs/contracts.md) |
 | Delivery and evidence | [implementation status](docs/status.md), [current backlog](plans/README.md), [verification](docs/verification.md) |
@@ -192,43 +192,19 @@ Settings have explicit personal/shared scope, truthful effective values and loca
 
 Briefs contain at most five useful distinct items with reason/source and working optional actions; plain-language replies map to the stored displayed items. A read-only entity timeline may open in the existing detail surface, preserving source attribution and disputed candidates. It is not another management screen. Use existing recipes; ask before introducing an uncovered timeline element. No unsolicited nudge, push or end-of-day-wrap control until its policy/feature is approved and built.
 
-## 13. Required Storybook fixture inventory
+## 13. Current interface and coverage
 
-Each ID is a story using production components, not a separately styled mock. Grouped rows mean **one story for every named ID**. Additional real-behavior fixtures do not authorize new design. Planned-feature stories are labeled contract-only and do not authorize shipped controls.
+The current production UI includes ordinary chat and the separate Codex-style question panel; adaptive Markdown tables with local scroll and tab-separated copy; workspace search across clients, notes, quotes, tasks, files and chats; client-file inspection; the Records page; and mobile history navigation with responsive settings. Search and detail routes preserve workspace scope and source context. The Records page's direct Save path remains unaccepted under [R16](plans/editable-records.md).
 
-| IDs | Coverage |
-|---|---|
-| entry/sign-in, entry/pending, entry/failure, entry/invite, entry/revoked | Entry, join disclosure, private-data removal |
-| chat/empty, chat/short, chat/long-ro, chat/long-hu, chat/long-url | Ordinary conversation, diacritics, long content |
-| message/sending, message/saved, message/failed, message/retry, message/unknown-acceptance, message/local-durable, message/filed, message/partial-filed | Optimistic echo, honest capture/processing milestones, idempotent reconciliation |
-| stream/live, stream/unfinished-markdown, stream/replay, stream/disconnected | Stable streaming and reconnect |
-| work/running, work/finished, work/expanded, work/failed, work/partial, work/stopped | Real activity and terminal states |
-| work/thinking-live, work/thinking-finished, work/thinking-absent, work/thinking-only, work/thinking-with-tools, work/thinking-interrupted, work/thinking-replay, work/thinking-truncated | One nested provider-attributed stream, honest absence, stable replay, bounded display and no fake step counts |
-| question/deadline, question/status, question/entity, question/dispute, question/multiple | Explicit question panel, meaningful wrapped context and exact target selection |
-| question/free-text, question/skipped, question/reopened, question/pending, question/failed, question/stale, question/late-acceptance, question/chat-independent | Explicit question panel, meaningful wrapped context and exact target selection; free-text renders the production panel while Skip/reopen, retry, stale/late recovery and ordinary chat while waiting stay contract-only until implemented |
-| undo/single, undo/from-here, undo/dependency, undo/teammate-preserved | Effects and attribution |
-| undo/mobile-scope-sheet | Screenshot composition, exact preview, primary suffix undo and secondary single-action choice |
-| scroll/follow, scroll/released, scroll/prepend, scroll/prepend-while-streaming | Reading position and Jump to latest |
-| composer/empty, composer/short, composer/multiline, composer/max-lines, composer/ime, composer/follow-up | One composer, including active-run correction |
-| command/root, command/filter, command/model, command/thinking, command/pending, command/failed, command/literal-slash | Functional shortcuts, no chat pollution |
-| nav/drawer, nav/sidebar, nav/long-title, nav/read-only, detail/source, detail/action, detail/entity-timeline | Navigation and sourced inspection |
-| settings/personal, settings/workspace, settings/connection, settings/model-unavailable | Scoped configuration |
-| brief/disabled, brief/configured, brief/empty, brief/delivery-unknown | Chosen schedule and truthful delivery |
-| offline/shell, offline/pending, offline/reconnect, offline/storage-unavailable | Offline recovery |
-| voice/permission, voice/recording, voice/interrupted, voice/review, voice/upload, voice/transcribing, voice/uncertain, voice/expired | Voice lifecycle |
-| voice/recording-during-work, voice/amount-confirmation | Screenshot composition, separate capture/run Stop, server-supplied clarification choices |
-| table/compare, table/timeline, table/action-plan, table/long-cells, table/missing-values, table/multiple, table/streaming | Model-composed tables for any subject, shared shell, scroll confinement, working copy |
-| file/current, file/entries, file/contacts, file/quotes, file/attachments, file/history, file/edit-conflict, file/unavailable | Production client-file sections, bounded coverage, original/correction attribution, explicit editing, conflict recovery and retained originals |
-| history/search, history/no-matches, history/search-failed | Production workspace search, filters, sourced matches and retry (interactive synthetic API fixtures) |
-| followup/active, followup/paused, followup/empty, gallery/unavailable | Production own follow-ups and private-original unavailable state, source, explicit controls and retry |
+The current branch has no Storybook stories, Storybook build command or `check:stories` script. Keep the approved behavior here and the detailed implementation verdicts in [status](docs/status.md); do not describe a planned fixture as an existing story.
 
 ## 14. Acceptance and process
 
 Follow [token section 12](design-tokens.md#12-visual-review-checklist) at **360×800, 390×844, 900, 1280 and 1440 CSS px**. Screenshot the same representative stories at every width; record desktop heights. Interact with the actual app too. Test physical Android/iPhone keyboards separately.
 
-Every UI increment needs production-component stories, token enforcement, targeted behavior/a11y checks, browser comparison to the reference, and evidence with commit, browser/OS, viewport, story IDs, screenshots, defects and disposition. Use native Codex/Antigravity browser controls, no Playwright. Screenshots and happy-dom geometry do not replace interaction/device evidence.
+Every UI increment needs token enforcement, targeted behavior and accessibility checks, browser comparison to the reference, and evidence with commit, browser/OS, viewport, screenshots, defects and disposition. Use native Codex/Antigravity browser controls, no Playwright. Screenshots and happy-dom geometry do not replace interaction/device evidence.
 
-The current repository has `pnpm check:design`, `pnpm check:stories` and Storybook tooling. Passing inventory/checker runs do not establish every revised target's implementation. The free-text question story uses the production panel; seven question recovery/failure stories and other listed future states remain contract-only. Their fixture IDs count toward inventory but not implemented-journey proof. Extend production-component stories rather than loosen checks or count a zero-file scan as evidence. Current verdicts live in [status](docs/status.md); run applicable implementation checks and record identified-build browser comparisons before claiming completion.
+The current repository has `pnpm check:design`; Storybook and `check:stories` were removed from the branch on 2026-10-09. A source test or design-token check does not establish every interaction or responsive layout. Current verdicts live in [status](docs/status.md); run applicable behavior checks and record identified-build browser comparisons before claiming completion.
 
 Reject separate toolbar strips, rounded sidebar cards, bordered ordinary messages, dead controls, duplicate composer/message variants, persistent desktop timestamps, hidden action-row inflation, decorative motion, arbitrary visual values and false success states. The specified question panel is allowed. Passing a build does not excuse mismatches. Apply this explicit revised direction rather than restoring superseded density rules. Unknown recipes ask; known mismatches get fixed.
 
@@ -242,7 +218,7 @@ Ask Otis opens the production conversation in a panel/sheet with the selected in
 
 Approved colors/fonts/control recipes still govern; grid theme values resolve from existing CSS variables. Proposed records sizing composes the existing scale: 32 px desktop data rows/headers, 48 px mobile row/control reach, 14/20 grid UI, 16/24 form text and tabular numbers. Use neutral cell selection/focus and labeled dirty/error feedback. The approved token file is unchanged in this planning pass; document any required new production recipe with implementation rather than altering tokens to excuse drift.
 
-Records Save remains a separate unaccepted writer under [R16](plans/editable-records.md). C2–Q supplies the optional complete client file within the existing row inspector, workspace conversation search and own follow-up controls. Their production fixtures are listed above. Native keyboard/a11y and five-width/device evidence remain required; passing fixture inventory is not acceptance of Records Save.
+Records Save remains a separate unaccepted writer under [R16](plans/editable-records.md). C2–Q supplies the optional complete client file within the existing row inspector, workspace conversation search and own follow-up controls. Native keyboard/a11y and five-width/device evidence remain required; source presence does not accept Records Save.
 
 ## 16. Client files, sources and follow-ups
 

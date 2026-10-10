@@ -34,7 +34,7 @@ Latest explicit user instructions resolve older conflicts. This register records
 | D27 | Active empty input shows Stop; valid follow-up shows Send, Stop remains in overflow |
 | D28 | Feedback within 100 ms, in-control pending after 300 ms, stable retry UUID |
 | D29 | Scoped IndexedDB drafts/outbox and static PWA shell; no private service-worker caches |
-| D30 | Production component per fixture, Storybook coverage and five-width native review |
+| D30 | Cover each UI behavior with the production component and complete five-width native review; Storybook was an implementation tool and is no longer present on the current branch |
 | D31 | Reuse installed frontend owners and shadcn primitives; don't install a proposed library stack |
 | D32 | Detected voice format, ordered chunks, actual meter and explicit interruption |
 | D33 | Capture → memory → useful resurfacing → action is the quality loop |

@@ -266,7 +266,7 @@ Build entry is **1,056.66 kB JS / 313.54 kB gzip**. Rare settings/detail/auth ea
 
 **P1 · Impact: completion evidence · Effort: M · Risk: low/medium · Confidence: high**
 
-[Design checker](../../../scripts/check-design.mjs#L213) bans named toolbar classes, unnamed stack passes. [Story checker](../../../scripts/check-stories.mjs#L56) counts strings. [Invite story](../../../apps/web/src/stories/Entry.stories.tsx#L54) shows no-workspace state, not redemption. Mock/contract stories are not feature proof. full-e2e is mocked happy-dom, not browser/Worker integration. Review HTML failed; wrapper needed. Fresh Storybook itself rendered.
+[Design checker](../../../scripts/check-design.mjs#L213) bans named toolbar classes, unnamed stack passes. The historical story-checker path (`scripts/check-stories.mjs#L56`) counted strings; the checker and the invite-story path (`apps/web/src/stories/Entry.stories.tsx#L54`) were removed from the current branch on 2026-10-09. The story showed no-workspace state, not redemption. Mock/contract stories are not feature proof. full-e2e is mocked happy-dom, not browser/Worker integration. Review HTML failed; wrapper needed. Fresh Storybook itself rendered at the historical audit baseline.
 
 **Proposal:** portable production-style review entry, semantic assertions, actual invite/owner/member/config journeys with local Workers/D1 where needed, native five-width evidence, labeled future stories, accurate README.
 

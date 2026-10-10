@@ -2,7 +2,7 @@
 
 This file owns semantic boundaries. Executable types/validators in [packages/contracts/src](../packages/contracts/src) and tool declarations in [packages/agent/src/tools.ts](../packages/agent/src/tools.ts) own exact wire shapes. Inspect those files before changing a schema; do not copy a historical interface sketch into runtime code.
 
-[Product](../product.md) owns intended behavior. [Status](status.md) marks partial/missing contracts and unverified acceptance. The old specification listed export routes as though they existed; they do not exist at the audited baseline.
+[Product](../product.md) owns intended behavior. [Status](status.md) marks partial/missing contracts and unverified acceptance. This file links to current executable contracts; implementation presence does not by itself establish full product or release acceptance.
 
 ## 1. Canonical owners
 
@@ -83,6 +83,7 @@ All workspace paths are under `/api/workspaces/:workspaceId`; use the source han
 | Media/voice | Private claim/upload/finalize, retained attachment access, transcript/STT configuration and validation |
 | Client files/actions | `GET /entities/:id/file` with section/sort/author/date/bookmark; `POST /entities/:id/actions` for one actor-bound ledger edit |
 | Workspace history | `GET /history/search` with query/chat/author/date/bookmark; authenticated source opening |
+| Unified workspace search | `GET /search?q=...&limit=...` across clients, notes, quotes, tasks, files and chats; workspace scoped |
 | Follow-ups | `GET /followups` lists own rules; `POST /followups` pauses/resumes/cancels one current rule |
 | Documents | `POST /documents/uploads` saves a private PDF; `POST /documents/:id/retry` retries conversion; originals use the existing private media route |
 | Telegram | Webhook/linking/scoped selection and replay-safe channel delivery |
@@ -117,10 +118,10 @@ Tables are ordinary flexible Markdown output from saved, supplied or conversatio
 
 ## 9. Compatibility and change
 
-The selected [editable-information plan](../plans/editable-records.md) proposes records references/typed values, list/page reads, immutable Save chunks, actor-bound receipt groups and persisted draft-aware agent patches. These are **not implemented contracts** at this planning baseline. Add their canonical shared types, routes, forward migration/replay and compatibility tests together; existing core record/source/authority/date/dispute/Undo semantics continue to apply.
+The selected [editable-information plan](../plans/editable-records.md) proposes records references/typed values, list/page reads, immutable Save chunks, actor-bound receipt groups and persisted draft-aware agent patches. The Records UI and ledger reads exist, but manual Save still bypasses the ledger and is not an accepted contract. Add canonical shared types, routes, forward migration/replay and compatibility checks together; existing core record/source/authority/date/dispute/Undo semantics continue to apply.
 
 Append forward migrations; never edit an applied migration. Change types, validators, public serializers, tests and affected clients together. Version changed event meaning/provider checkpoints; a legacy checkpoint resumes faithfully or fails before new effects.
 
 At every mutation/recovery boundary, verify membership, source, revision and current attempt in the same atomic batch. Zero affected rows do not establish rollback. Test actual D1 failures and receipt replay; don't duplicate authority in the browser.
 
-C2–Q adds forward migrations 0026–0029 for contact/redirect/link/rule projections, conversation FTS, document/occurrence receipts and transcript overlays. Production was last observed at 0022: an authorized rollout must apply the complete 0023–0029 sequence first. No remote migration or deployment has been performed. R16's draft-aware spreadsheet writer remains a separate unimplemented contract.
+C1/C2–Q added forward migrations 0023–0029 for interaction state and corrections, contacts/redirects/links/rules, conversation FTS, document/occurrence receipts and transcript overlays. The authorized 2026-10-09 rollout applied 0023–0029 in production before the feature push; consult [status](status.md) for the recorded release identity. Verify live migration state before any future migration. R16's draft-aware spreadsheet writer remains a separate unimplemented contract.

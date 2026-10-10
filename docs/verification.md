@@ -21,14 +21,14 @@ pnpm check:design
 
 Use targeted behavior checks appropriate to the change. `pnpm eval:agent` runs the deterministic eval project; it is separate from the root suite. `pnpm smoke:providers` and explicitly enabled live voice probes use real services; do not call them fake acceptance or run paid inference without the relevant authorization.
 
-Documentation-only work requires local link/consistency/`git diff --check` checks. Record application commands only when actually run. This audit ran the root suite/build and UI tooling despite editing documentation, to reconcile old completion claims.
+Documentation-only work requires local link/consistency/`git diff --check` checks. Record application commands only when actually run. The current source and working-tree status are in [status](status.md); do not copy older check results forward as current evidence.
 
 ## 2. Meaningful local acceptance
 
 | Area | Decisive checks |
 |---|---|
 | Identity/tenant | Two workspaces/members, forged/out-of-scope IDs, current membership loss, expected-member mismatch, author-only append/Stop |
-| Lifecycle/secrets | Owner transfer/removal rules; BYOK replacement/removal/platform fallback; no keys in logs/public views; partial DELETE is not full erasure |
+| Lifecycle/secrets | Owner transfer/removal rules; BYOK replacement/removal/platform fallback; no keys in logs/public views; verify the implemented owner-only erasure route across D1 and R2 |
 | Acceptance | Stable UUID/payload dedupe, changed-payload conflict, acceptance before response, duplicate hints, HTTP/stream inversion, reload/unknown acknowledgment |
 | Atomic ledger | Membership/source/revision/attempt failure and late-batch failure roll back all neighboring writes in real D1 |
 | Replay/rebuild/Undo | Identical action replay, collision rejection, deterministic versioned rebuild, suffix/single Undo and dependent/teammate work |
@@ -40,7 +40,7 @@ Documentation-only work requires local link/consistency/`git diff --check` check
 | Voice/images | Actual container bounds, scoped retained bytes, transcript-before-agent, resumed uploads, stateless image replay/history/view, unsupported/expired input honesty |
 | Briefs | Disabled schedule, selected zone/days/channel, DST, one daily record, due-member discovery, concrete selection reasons, saved-item resolution and deduped delivery |
 | Drafts | Requested-only create/revise, dispute avoidance, language/recipient preservation, actual copy result, normalized phone and explicit completed-send confirmation |
-| Export/privacy | Actual XLSX reader/formula-safe cells/private download, complete machine-readable export and audited D1/R2/job erasure; currently missing |
+| Export/privacy | Independent read of generated XLSX; formula-safe cells; member-scoped JSON/XLSX download; complete D1/R2 inventory, backup/restore and erasure-tombstone behavior |
 | Client recovery | Real local storage result, immutable retry, two tabs/reload/late acceptance, scoped purge, local failure visibility and no automatic reload over unsent work |
 
 Use actual local Workers/D1/DO/R2 for binding/transaction boundaries. Scripted providers make orchestration reproducible but do not establish a model's judgment, voice/vision support or latency. Test the failure scenario and user-visible result; a green reproduction expecting the bug remains defect evidence.
@@ -53,7 +53,7 @@ Compare fixed provider/model/effort on equivalent synthetic data. Include suppli
 
 ## 4. Native browser and device review
 
-Use Codex/Antigravity native controls, no Playwright. Exercise production components/routes or clearly label a synthetic production-component fixture. Happy-dom geometry is not layout proof, Storybook build is not browser interaction, and viewport emulation is not a physical phone.
+Use Codex/Antigravity native controls, no Playwright. Exercise production components/routes or clearly label a synthetic production-component fixture. DOM geometry and viewport emulation are not physical-device proof.
 
 Compare token section 12 at 360, 390, 900, 1280 and 1440 CSS px, enlarged text/200% zoom and reduced motion. Record viewport/browser/build/fixture, observed result and screenshot where useful.
 
@@ -77,13 +77,4 @@ Deployment validation uses the actual release/resource/schema identity and trust
 
 Block the affected journey for demonstrated lost accepted input, cross-workspace disclosure, duplicate effects, stale unauthorized writes, secret leakage or false delivery. Keep optional refinements separate; do not require a platform rewrite or fictional exhaustive proof before practical use.
 
-### Latest verification pass (Otis Usage Improvements & Complete Alignment)
-- `pnpm typecheck`: Passed (`tsc --build`, 0 errors).
-- `pnpm lint`: Passed (`eslint .`, 0 errors).
-- `pnpm check:design`: Passed (`node scripts/check-design.mjs`, 94 files scanned, 0 violations).
-- `pnpm build`: Passed (`vite build && tsc --build && wrangler deploy --dry-run --outdir dist-worker`, 0 errors).
-- `packages/agent/test/tools-and-policy.test.ts`: Passed (40/40 tests).
-- `apps/worker/test/records.integration.test.ts`: Passed (7/7 tests).
-- `apps/web/test/records.test.tsx`: Passed (8/8 tests).
-- `apps/web/test/a11y.test.tsx`: Passed (8/8 tests).
-- Invariants preserved: Members list strictly under Workspace Settings; outward messages remain drafts only; internal timing in UTC with automatic local conversion; approved tokens strictly followed.
+Exact current results, including the source commit they cover, live in [implementation status](status.md). The earlier Storybook/check:stories tooling was removed from the current branch; `pnpm check:design` remains the UI design-token check.
