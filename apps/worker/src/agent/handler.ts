@@ -7,7 +7,7 @@
  */
 
 import type { CommandResult, ProviderName } from '@otis/contracts';
-import { IMAGE_BOUNDS } from '@otis/contracts';
+import { IMAGE_BOUNDS, DOCUMENT_BOUNDS } from '@otis/contracts';
 import type { TurnContext, TurnHandler, TurnOutcome } from '../actor/dispatch.js';
 import { completeStep, hashStepArguments, nextStepIndex, persistStep } from '../actor/steps.js';
 import { resolveModelForChat, resolveProviderRawKey, runProviderTurn, type PlatformKeys } from '../providers/service.js';
@@ -179,6 +179,8 @@ export interface AgentHandlerOptions {
   registry?: ModelRegistry;
   providerAdapter?: ProviderAdapter;
   storage?: R2Bucket;
+  pdfQueue?: Queue;
+  browser?: Fetcher;
   /**
    * Cloudflare Images binding for standard inference renditions. Absent in
    * tests and unconfigured workers: every read preserves original access.
@@ -875,6 +877,43 @@ export class AgentHandler implements TurnHandler {
           if (userMessage && userMessage.role === 'user') {
             userMessage.images = userImages;
           }
+        }
+
+        // Load message document attachments (PDFs, text, markdown, or pasted text files)
+        try {
+          const docAttached = await ctx.db
+            .prepare(
+              `SELECT m.id, m.format, m.state, m.byte_size, m.filename
+               FROM message_document_attachments a
+               JOIN media_objects m ON m.id = a.media_id
+               JOIN chat_messages cm ON cm.id = a.chat_message_id
+               WHERE (cm.run_id = ? OR cm.inbound_message_id = ?) AND cm.workspace_id = ? AND a.workspace_id = ?
+               ORDER BY a.position ASC
+               LIMIT ?`,
+            )
+            .bind(ctx.runId, ctx.sourceMessageId ?? '', ctx.workspaceId, ctx.workspaceId, DOCUMENT_BOUNDS.MAX_PER_MESSAGE + 1)
+            .all<{ id: string; format: string; state: string; byte_size: number; filename: string | null }>();
+          const docRows = docAttached.results ?? [];
+          if (docRows.length > 0) {
+            const userMessage = conversationMessages[conversationMessages.length - 1];
+            if (userMessage && userMessage.role === 'user') {
+              const docLines = docRows.map((d) => {
+                const name = d.filename || 'Document';
+                const isPasted = name === 'Pasted text.txt';
+                return isPasted
+                  ? `[Attached document: Pasted text.txt (media_id: "${d.id}", size: ${d.byte_size} bytes). The user pasted oversized text which was saved as an attached file. Read this document using read_document (media_id: "${d.id}") before replying.]`
+                  : `[Attached document: ${name} (media_id: "${d.id}", format: ${d.format}, size: ${d.byte_size} bytes). Use read_document with media_id: "${d.id}" to inspect its content.]`;
+              });
+              const attachmentNote = '\n\n' + docLines.join('\n');
+              userMessage.text = (userMessage.text || '') + attachmentNote;
+            }
+          }
+        } catch (docErr) {
+          workerFailure('agent', 'failed to query document attachments', {
+            workspaceId: ctx.workspaceId,
+            runId: ctx.runId,
+            error: String(docErr),
+          });
         }
 
         if (attachedMediaId && userAudio) {
@@ -1579,6 +1618,8 @@ export class AgentHandler implements TurnHandler {
             result = await executeAgentTool({
               db: ctx.db,
               storage: this.options?.storage,
+              pdfQueue: this.options?.pdfQueue,
+              browser: this.options?.browser,
               workspaceId: ctx.workspaceId,
               actorUserId,
               runId: ctx.runId,
@@ -1590,6 +1631,7 @@ export class AgentHandler implements TurnHandler {
               chatId: ctx.chatId,
               sourceTrust: ctx.sourceTrust ?? 'member',
               sourceText: ctx.sourceText,
+              recordsContext: ctx.recordsContext,
               toolName: call.name,
               toolArgs: call.args,
               maxDailyActions: this.options?.limits?.maxDailyActions,

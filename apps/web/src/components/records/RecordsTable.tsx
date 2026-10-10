@@ -5,7 +5,7 @@ import { Button } from '../ui/button.js';
 import {
   TypeIcon, PhoneIcon, DollarIcon, HashIcon,
   CalendarIcon, CalculatorIcon,
-  MoreVerticalIcon, PlusIcon
+  MoreVerticalIcon
 } from '../icons.js';
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem,
@@ -17,11 +17,11 @@ export interface RecordsTableProps {
   rows: RecordRow[];
   dirtyCells: Record<string, DirtyCellState>;
   onCellChange: (rowId: string, columnId: string, nextValue: string) => void;
-  onAddRow: () => void;
   onDeleteRow?: (rowId: string) => void;
   onSortColumn?: (columnId: string, direction: 'asc' | 'desc') => void;
   onHideColumn?: (columnId: string) => void;
   onSelectRow?: (rowId: string) => void;
+  onSelectionChange?: (rowIds: string[]) => void;
 }
 
 export function RecordsTable({
@@ -29,17 +29,29 @@ export function RecordsTable({
   rows,
   dirtyCells,
   onCellChange,
-  onAddRow,
   onDeleteRow,
   onSortColumn,
   onHideColumn,
   onSelectRow,
+  onSelectionChange,
 }: RecordsTableProps) {
   // Navigation & selection coordinates: [rowIndex, colIndex]
   const [selectedCell, setSelectedCell] = useState<[number, number] | null>([0, 0]);
   const [editingCell, setEditingCell] = useState<[number, number] | null>(null);
   const [editValue, setEditValue] = useState<string>('');
   const [selectedRowIds, setSelectedRowIds] = useState<Set<string>>(new Set());
+
+  // Refetch, sort, or filter must not retarget the selection: keep only ids
+  // that are still visibly loaded.
+  const visibleIdsKey = rows.map(r => r.id).join('|');
+  useEffect(() => {
+    const visible = new Set(rows.map(r => r.id));
+    const current = [...selectedRowIds];
+    if (current.every(id => visible.has(id))) return;
+    const pruned = current.filter(id => visible.has(id));
+    setSelectedRowIds(new Set(pruned));
+    onSelectionChange?.(pruned);
+  }, [visibleIdsKey, selectedRowIds, onSelectionChange, rows]);
 
   const inputRef = useRef<HTMLInputElement>(null);
   const tableRef = useRef<HTMLTableElement>(null);
@@ -178,11 +190,9 @@ export function RecordsTable({
   };
 
   const toggleSelectAll = () => {
-    if (selectedRowIds.size === rows.length) {
-      setSelectedRowIds(new Set());
-    } else {
-      setSelectedRowIds(new Set(rows.map(r => r.id)));
-    }
+    const next = selectedRowIds.size === rows.length ? new Set<string>() : new Set(rows.map(r => r.id));
+    setSelectedRowIds(next);
+    onSelectionChange?.([...next]);
   };
 
   const toggleSelectRow = (rowId: string) => {
@@ -190,6 +200,7 @@ export function RecordsTable({
     if (next.has(rowId)) next.delete(rowId);
     else next.add(rowId);
     setSelectedRowIds(next);
+    onSelectionChange?.([...next]);
   };
 
   return (
@@ -268,7 +279,7 @@ export function RecordsTable({
                 <td colSpan={columns.length + 2} className="py-12 text-center text-xs text-muted-foreground">
                   <div className="flex flex-col items-center justify-center gap-1">
                     <span className="font-medium text-foreground">No records found</span>
-                    <span className="text-subtle">No records in this collection. Click &quot;+ Add row&quot; or ask Otis in the sidebar.</span>
+                    <span className="text-subtle">No records in this collection. Use Add row above, or ask Otis in the sidebar.</span>
                   </div>
                 </td>
               </tr>
@@ -325,13 +336,15 @@ export function RecordsTable({
                     const isEditing = editingCell?.[0] === rowIdx && editingCell?.[1] === colIdx;
                     const val = getEffectiveValue(row, col.id);
                     const dirty = isCellDirty(row.id, col.id);
+                    // Overdue only for real calendar dates, compared at day
+                    // precision; arbitrary text never counts as overdue.
                     const isOverdue = Boolean(
-                      (col.id === 'due_date' || col.type === 'date') &&
-                      val &&
+                      (col.id === 'due' || col.type === 'date') &&
+                      /^\d{4}-\d{2}-\d{2}/.test(val) &&
                       (() => {
                         const today = new Date().toISOString().slice(0, 10);
                         const rowStatus = String(row.cells['status'] || '').toLowerCase();
-                        return val < today && rowStatus !== 'done' && rowStatus !== 'completed' && rowStatus !== 'won';
+                        return val.slice(0, 10) < today && !['done', 'completed', 'cancelled', 'won'].includes(rowStatus);
                       })()
                     );
 
@@ -368,7 +381,7 @@ export function RecordsTable({
                                 <span className="text-xs bg-destructive/15 text-destructive px-1 rounded font-medium">Overdue</span>
                               </span>
                             ) : (
-                              <span>{col.type === 'currency' && val && !isNaN(Number(val)) ? `€${Number(val).toLocaleString()}` : (val || <span className="text-subtle">—</span>)}</span>
+                              <span>{val || <span className="text-subtle">—</span>}</span>
                             )}
                           </div>
                         )}
@@ -382,12 +395,8 @@ export function RecordsTable({
         </table>
       </div>
 
-      {/* Table bottom controls: Add row + keyboard shortcut hint */}
-      <div className="flex items-center justify-between border-t border-border bg-card px-4 py-2">
-        <Button variant="ghost" size="sm" onClick={onAddRow} className="h-7 gap-1 text-xs">
-          <PlusIcon />
-          <span>Add row</span>
-        </Button>
+      {/* Table bottom hint (Add row lives in the toolbar; the empty state carries its own action) */}
+      <div className="flex items-center justify-end border-t border-border bg-card px-4 py-2">
         <span className="text-xs text-subtle hidden md:inline">
           <kbd className="font-mono">Enter</kbd> edit · <kbd className="font-mono">Tab</kbd> navigate · <kbd className="font-mono">Ctrl+S</kbd> save · <kbd className="font-mono">Ctrl+Z</kbd> undo
         </span>

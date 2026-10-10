@@ -9,8 +9,9 @@ import type {
   ChatMessage,
   ChatListResponse,
   AcceptMessageResponse,
+  RecordsContext,
 } from '@otis/contracts';
-import { DOMAIN_BOUNDS, IMAGE_BOUNDS, STEERING_BOUNDS } from '@otis/contracts';
+import { DOMAIN_BOUNDS, IMAGE_BOUNDS, DOCUMENT_BOUNDS, STEERING_BOUNDS, validateRecordsContext } from '@otis/contracts';
 import { sha256 } from '@otis/identity';
 import { PRODUCTION_REGISTRY } from '@otis/agent';
 import { resolveModelForChat, resolveVoiceRouteForWorkspace, type PlatformKeys } from '../providers/service.js';
@@ -471,6 +472,25 @@ export async function listChatMessages(
     }
   }
 
+  const docAttached = new Map<string, string[]>();
+  if (ids.length > 0) {
+    const placeholders = ids.map(() => '?').join(',');
+    const docLinkRows = (
+      await db
+        .prepare(
+          `SELECT chat_message_id, media_id FROM message_document_attachments
+           WHERE workspace_id = ? AND chat_message_id IN (${placeholders}) ORDER BY position ASC`,
+        )
+        .bind(workspaceId, ...ids)
+        .all<{ chat_message_id: string; media_id: string }>()
+    ).results || [];
+    for (const link of docLinkRows) {
+      const list = docAttached.get(link.chat_message_id) ?? [];
+      list.push(link.media_id);
+      docAttached.set(link.chat_message_id, list);
+    }
+  }
+
   return rows.reverse().map((r) => ({
     id: String(r['id']),
     workspace_id: String(r['workspace_id']),
@@ -484,6 +504,7 @@ export async function listChatMessages(
     content_text: String(r['content_text']),
     media_id: r['media_id'] ? String(r['media_id']) : null,
     image_media_ids: attached.get(String(r['id'])) ?? null,
+    document_media_ids: docAttached.get(String(r['id'])) ?? null,
     run_id: r['run_id'] ? String(r['run_id']) : null,
     sequence: Number(r['sequence']),
     created_at: String(r['created_at']),
@@ -511,6 +532,16 @@ export async function acceptWebMessage(
     mediaId?: string;
     /** Validated still-image uploads attached to this message (fresh messages only). */
     imageMediaIds?: string[];
+    /** Validated document uploads attached to this message. */
+    documentMediaIds?: string[];
+    /** Marker indicating an automatically attached oversized paste. */
+    isPastedText?: boolean;
+    /**
+     * Records-page target for assistant turns composed beside the grid.
+     * Validated at the route; re-validated here so a forged caller cannot
+     * smuggle an oversized or malformed target into the frozen fingerprint.
+     */
+    recordsContext?: RecordsContext;
     /** Command completion is committed with acceptance, using the same dedupe/guard path. */
     command?: {
       reply: string;
@@ -531,13 +562,18 @@ export async function acceptWebMessage(
   const text = (params.text || '').trim();
   const mediaId = params.mediaId || null;
   const imageMediaIds = [...new Set(params.imageMediaIds ?? [])];
+  const documentMediaIds = [...new Set(params.documentMediaIds ?? [])];
 
-  if (!text && !mediaId && imageMediaIds.length === 0) {
+  if (!text && !mediaId && imageMediaIds.length === 0 && documentMediaIds.length === 0) {
     throw new ValidationError('Message must contain text or a media attachment.');
   }
 
   if (imageMediaIds.length > IMAGE_BOUNDS.MAX_PER_MESSAGE) {
     throw new ValidationError(`At most ${IMAGE_BOUNDS.MAX_PER_MESSAGE} images may be attached to a message.`);
+  }
+
+  if (documentMediaIds.length > DOCUMENT_BOUNDS.MAX_PER_MESSAGE) {
+    throw new ValidationError(`At most ${DOCUMENT_BOUNDS.MAX_PER_MESSAGE} documents may be attached to a message.`);
   }
 
   if (text.length > DOMAIN_BOUNDS.MAX_INPUT_CHARS) {
@@ -546,13 +582,27 @@ export async function acceptWebMessage(
     );
   }
 
-  // Calculate canonical payload fingerprint
+  // Calculate canonical payload fingerprint. The records target freezes
+  // with the accepted input: retries, paused questions, and later
+  // navigation cannot retarget the turn, and a changed target is a
+  // different payload (conflict, never silent overwrite).
+  let recordsContextJson: string | undefined;
+  if (params.recordsContext !== undefined) {
+    const contextCheck = validateRecordsContext(params.recordsContext);
+    if (!contextCheck.valid) {
+      throw new ValidationError(`Invalid records_context: ${contextCheck.message}`);
+    }
+    recordsContextJson = JSON.stringify(params.recordsContext);
+  }
   const canonicalPayload = JSON.stringify({
     text,
     media_id: mediaId,
     ...(imageMediaIds.length > 0 ? { image_media_ids: [...imageMediaIds].sort() } : {}),
+    ...(documentMediaIds.length > 0 ? { document_media_ids: [...documentMediaIds].sort() } : {}),
+    ...(params.isPastedText ? { is_pasted_text: true } : {}),
     ...(params.command?.presentation === 'control' ? { presentation: 'control' } : {}),
     ...(params.answerContext ? { answer: params.answerContext } : {}),
+    ...(recordsContextJson !== undefined ? { records_context: recordsContextJson } : {}),
   });
   const fingerprint = await sha256(canonicalPayload);
 
@@ -671,6 +721,32 @@ export async function acceptWebMessage(
       throw new ValidationError(
         `Model '${resolvedChatModel.entry.commandKey}' does not accept image input. Send text only or switch models.`,
       );
+    }
+  }
+
+  let documentContext: Array<{ mediaId: string; contentType: string }> | null = null;
+  if (documentMediaIds.length > 0) {
+    documentContext = [];
+    for (const docId of documentMediaIds) {
+      const media = await db
+        .prepare(
+          `SELECT m.* FROM media_objects m
+           WHERE m.id = ? AND m.workspace_id = ?
+           AND EXISTS (SELECT 1 FROM workspace_users WHERE workspace_id = m.workspace_id AND user_id = ?)`,
+        )
+        .bind(docId, params.workspaceId, params.userId)
+        .first<{ id: string; state: string; content_type: string | null; expires_at: string; retained: number }>();
+
+      if (!media || !['ready', 'validated'].includes(media.state)) {
+        throw new ValidationError('An attached document is not available for this message.');
+      }
+      if (media.retained !== 1 && media.expires_at <= new Date().toISOString()) {
+        throw new ValidationError('An attached document expired before it was sent.');
+      }
+      documentContext.push({
+        mediaId: docId,
+        contentType: media.content_type ?? 'application/pdf',
+      });
     }
   }
 
@@ -909,6 +985,13 @@ export async function acceptWebMessage(
         }),
       ]) : []),
 
+      ...(documentContext && params.command?.presentation !== 'control' ? documentContext.map((attachment, position) =>
+        db.prepare(
+          `INSERT INTO message_document_attachments (chat_message_id, media_id, workspace_id, position, created_at)
+           VALUES (?, ?, ?, ?, ?)`
+        ).bind(chatMessageId, attachment.mediaId, params.workspaceId, position, now)
+      ) : []),
+
       db
         .prepare(
           `INSERT INTO run_activity (id, workspace_id, chat_id, run_id, cursor, type, payload_json, created_at)
@@ -920,7 +1003,16 @@ export async function acceptWebMessage(
           params.chatId,
           runId,
           params.chatId,
-          JSON.stringify({ client_message_id: params.clientMessageId, text, media_id: mediaId, ...(imageContext ? { image_media_ids: imageContext.map((a) => a.mediaId) } : {}), ...(params.command?.presentation === 'control' ? { presentation: 'control' } : {}), ...(params.steerRunId ? { steering_message_id: chatMessageId } : {}) }),
+          JSON.stringify({
+            client_message_id: params.clientMessageId,
+            text,
+            media_id: mediaId,
+            ...(imageContext ? { image_media_ids: imageContext.map((a) => a.mediaId) } : {}),
+            ...(documentContext ? { document_media_ids: documentContext.map((d) => d.mediaId) } : {}),
+            ...(params.isPastedText ? { is_pasted_text: true } : {}),
+            ...(params.command?.presentation === 'control' ? { presentation: 'control' } : {}),
+            ...(params.steerRunId ? { steering_message_id: chatMessageId } : {}),
+          }),
           now,
         ),
 

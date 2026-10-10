@@ -19,6 +19,7 @@ import { Button } from './components/ui/button.js';
 import { Input } from './components/ui/input.js';
 import { clearUserOutbox } from './api/outbox.js';
 import { deleteDraftsForUser } from './api/drafts.js';
+import { purgeRecordsDraftsForUser } from './components/records/recordsDraftStore.js';
 import { deleteVoiceSessionsForUser } from './api/voiceSessions.js';
 import { unregisterFlushOwner } from './api/flush.js';
 import { clearUserQueries, createAppQueryClient } from './api/queries.js';
@@ -307,6 +308,7 @@ export function App() {
       unregisterFlushOwner(userId);
       clearUserQueries(queryClient, userId);
       clearUserOutbox(userId);
+      purgeRecordsDraftsForUser(userId);
       await Promise.allSettled([
         deleteDraftsForUser(userId),
         deleteVoiceSessionsForUser(userId),

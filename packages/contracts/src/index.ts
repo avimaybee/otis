@@ -6,6 +6,7 @@
 
 // --- Chat API DTOs (docs/contracts.md sections 7-9) ---
 // Re-exported so clients can import everything from the package root.
+import type { RecordsContext } from './records.js';
 export * from './chat.js';
 export * from './voice.js';
 export * from './media.js';
@@ -13,6 +14,7 @@ export * from './interactions.js';
 export * from './business.js';
 export * from './history.js';
 export * from './reminderRules.js';
+export * from './records.js';
 
 // --- Base Result & Error Types ---
 
@@ -463,6 +465,8 @@ export interface ChatMessage {
   media_id: string | null;
   /** Validated still-image uploads attached to this message, in send order. */
   image_media_ids?: string[] | null;
+  /** Validated document (PDF / text / Markdown) uploads attached to this message, in send order. */
+  document_media_ids?: string[] | null;
   run_id: string | null;
   sequence: number;
   created_at: string;
@@ -475,6 +479,10 @@ export interface CreateChatMessageRequest {
   media_id?: string;
   /** Validated still-image uploads attached to this message (at most IMAGE_BOUNDS.MAX_PER_MESSAGE). */
   image_media_ids?: string[];
+  /** Validated document (PDF / text / Markdown) uploads attached to this message (at most DOCUMENT_BOUNDS.MAX_PER_MESSAGE). */
+  document_media_ids?: string[];
+  /** Trusted marker indicating an automatically attached oversized paste; agent reads file before responding. */
+  is_pasted_text?: boolean;
   clarification_id?: string;
   /**
    * Device-reported IANA timezone of the sender, stored as the member's
@@ -482,6 +490,13 @@ export interface CreateChatMessageRequest {
    * required; invalid values are rejected like any other bad field.
    */
   timezone?: string;
+  /**
+   * Records-page context for assistant turns composed beside the grid:
+   * selected list, saved-or-draft target, visible order, and the accepted
+   * small delta. Frozen into the acceptance fingerprint, so a retry, a
+   * paused question, or later navigation cannot retarget the turn.
+   */
+  records_context?: RecordsContext;
 }
 
 export interface AcceptMessageResponse {
@@ -617,7 +632,8 @@ export type PublicActivityType =
   | 'partial_failure'
   | 'answer_saved'
   | 'run_finished'
-  | 'action_reverted';
+  | 'action_reverted'
+  | 'document_revision_updated';
 
 export interface PublicActivity<T = unknown> {
   schema_version: 1;
@@ -661,7 +677,22 @@ export type LedgerEventKind =
   | 'attachment_unlinked'
   | 'reminder_rule_changed'
   | 'attachment_updated'
-  | 'revert';
+  | 'revert'
+  | 'record_cell_changed'
+  | 'record_row_created'
+  | 'record_row_archived'
+  | 'record_row_restored'
+  | 'record_list_created'
+  | 'record_list_updated'
+  | 'record_list_archived'
+  | 'record_list_restored'
+  | 'record_column_created'
+  | 'record_column_updated'
+  | 'record_column_archived'
+  | 'record_column_restored'
+  | 'field_definition_created'
+  | 'field_definition_updated'
+  | 'calculation_defined';
 
 export type Provenance = 'stated' | 'inferred';
 
@@ -1065,3 +1096,4 @@ export const DOMAIN_BOUNDS = {
 export * from './entityFile.js';
 export * from './money.js';
 export * from './search.js';
+export * from './documents.js';

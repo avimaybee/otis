@@ -17,10 +17,12 @@ import type {
   UndoMode,
   UndoPreview,
   CreateChatMessageRequest,
+  RecordsContext,
 } from './index.js';
-import { DOMAIN_BOUNDS } from './index.js';
+import { DOMAIN_BOUNDS, validateRecordsContext } from './index.js';
 import { isValidMediaId } from './voice.js';
 import { IMAGE_BOUNDS } from './media.js';
+import { DOCUMENT_BOUNDS } from './documents.js';
 
 export type DtoValidation<T> = { valid: true; value: T } | { valid: false; message: string };
 /** Runtime request boundary shared by ordinary messages and command shortcuts. */
@@ -45,15 +47,29 @@ export function validateChatMessageRequest(value: unknown): DtoValidation<Create
     imageMediaIds = [...new Set(rawImageIds as string[])];
   }
   const hasImages = imageMediaIds.length > 0;
+  const rawDocIds = body.document_media_ids;
+  let documentMediaIds: string[] = [];
+  if (rawDocIds !== undefined && rawDocIds !== null) {
+    if (!Array.isArray(rawDocIds)) return { valid: false, message: 'document_media_ids must be an array of media IDs.' };
+    if (rawDocIds.length > DOCUMENT_BOUNDS.MAX_PER_MESSAGE) {
+      return { valid: false, message: `At most ${DOCUMENT_BOUNDS.MAX_PER_MESSAGE} documents may be attached to a message.` };
+    }
+    for (const id of rawDocIds) {
+      if (!isValidMediaId(id)) return { valid: false, message: 'Invalid document media ID.' };
+    }
+    documentMediaIds = [...new Set(rawDocIds as string[])];
+  }
+  const hasDocs = documentMediaIds.length > 0;
   const text = body.text;
   if (text !== undefined) {
     if (typeof text !== 'string' || text.length > DOMAIN_BOUNDS.MAX_INPUT_CHARS) {
       return { valid: false, message: `Text must contain 1–${DOMAIN_BOUNDS.MAX_INPUT_CHARS} characters.` };
     }
-    if (!hasMedia && !hasImages && !text.trim()) return { valid: false, message: `Text must contain 1–${DOMAIN_BOUNDS.MAX_INPUT_CHARS} characters.` };
-  } else if (!hasMedia && !hasImages) {
+    if (!hasMedia && !hasImages && !hasDocs && !text.trim()) return { valid: false, message: `Text must contain 1–${DOMAIN_BOUNDS.MAX_INPUT_CHARS} characters.` };
+  } else if (!hasMedia && !hasImages && !hasDocs) {
     return { valid: false, message: `Text must contain 1–${DOMAIN_BOUNDS.MAX_INPUT_CHARS} characters.` };
   }
+  const isPastedText = typeof body.is_pasted_text === 'boolean' ? body.is_pasted_text : undefined;
   if (body.clarification_id !== undefined && (typeof body.clarification_id !== 'string' || !/^[A-Za-z0-9_-]{1,128}$/.test(body.clarification_id))) return { valid: false, message: 'Invalid clarification_id.' };
   if (body.timezone !== undefined) {
     if (typeof body.timezone !== 'string' || body.timezone.length === 0 || body.timezone.length > 64) {
@@ -65,6 +81,12 @@ export function validateChatMessageRequest(value: unknown): DtoValidation<Create
       return { valid: false, message: 'Invalid timezone.' };
     }
   }
+  if (body.records_context !== undefined) {
+    const contextCheck = validateRecordsContext(body.records_context);
+    if (!contextCheck.valid) {
+      return { valid: false, message: `Invalid records_context: ${contextCheck.message}` };
+    }
+  }
   return {
     valid: true,
     value: {
@@ -72,8 +94,11 @@ export function validateChatMessageRequest(value: unknown): DtoValidation<Create
       ...(typeof text === 'string' ? { text } : {}),
       ...(hasMedia ? { media_id: mediaId as string } : {}),
       ...(hasImages ? { image_media_ids: imageMediaIds } : {}),
+      ...(hasDocs ? { document_media_ids: documentMediaIds } : {}),
+      ...(isPastedText !== undefined ? { is_pasted_text: isPastedText } : {}),
       ...(body.clarification_id ? { clarification_id: body.clarification_id as string } : {}),
       ...(typeof body.timezone === 'string' ? { timezone: body.timezone } : {}),
+      ...(body.records_context !== undefined ? { records_context: body.records_context as RecordsContext } : {}),
     },
   };
 }

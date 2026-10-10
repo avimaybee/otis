@@ -33,6 +33,43 @@ const VALID_LEAD_STATUSES = new Set([
 
 export { VALID_LEAD_STATUSES };
 
+/**
+ * Validate a custom-field value against its storage type. Null clears
+ * through the same path as core fields. Calculated fields are derived and
+ * never written directly.
+ */
+function validateCustomFieldValue(storageType: string, optionsJson: string | null | undefined, value: unknown): string | null {
+  if (value === null || value === undefined) return null;
+  switch (storageType) {
+    case 'number':
+      return typeof value === 'number' && Number.isFinite(value) ? null : 'Number field needs a finite number.';
+    case 'boolean':
+      return typeof value === 'boolean' ? null : 'Boolean field needs true or false.';
+    case 'currency':
+      if (typeof value !== 'object' || value === null || Array.isArray(value)) return 'Currency field needs an {amount, currency} value.';
+      return null;
+    case 'date':
+      return typeof value === 'string' || (typeof value === 'object' && value !== null)
+        ? null : 'Date field needs a date value.';
+    case 'enum': {
+      if (typeof value !== 'string') return 'Choice field needs a text option.';
+      if (optionsJson) {
+        try {
+          const options = JSON.parse(optionsJson) as { choices?: string[] };
+          if (Array.isArray(options.choices) && !options.choices.includes(value)) {
+            return `Option '${value}' is not one of ${options.choices.join(', ')}.`;
+          }
+        } catch {
+          // Unparseable options never block a save; the definition is repaired separately.
+        }
+      }
+      return null;
+    }
+    default:
+      return typeof value === 'string' ? null : 'Text field needs a text value.';
+  }
+}
+
 export function handleSetField(
   context: LedgerCommandContext,
   state: LedgerProjectionState,
@@ -55,16 +92,33 @@ export function handleSetField(
   }
 
   if (!ALLOWED_CORE_FIELDS.has(args.field_name)) {
-    return {
-      result: {
-        status: 'rejected',
-        error: {
-          code: 'disallowed_field',
-          message: `Field '${args.field_name}' is not in the core field allowlist.`,
+    // Registry-backed custom fields: a workspace field definition with a
+    // matching field name authorizes the write, with the value checked
+    // against the definition's storage type. Anything else keeps the
+    // historical disallowed_field rejection.
+    const def = state.fieldDefinitions?.get(`${context.workspace_id}:${args.field_name}`);
+    if (!def) {
+      return {
+        result: {
+          status: 'rejected',
+          error: {
+            code: 'disallowed_field',
+            message: `Field '${args.field_name}' is not in the core field allowlist.`,
+          },
         },
-      },
-      events: [],
-    };
+        events: [],
+      };
+    }
+    const typeError = validateCustomFieldValue(def.value_type, def.options_json, args.value);
+    if (typeError) {
+      return {
+        result: {
+          status: 'rejected',
+          error: { code: 'invalid_field_value', message: typeError },
+        },
+        events: [],
+      };
+    }
   }
 
   // --- Lead Status Enforcement ---

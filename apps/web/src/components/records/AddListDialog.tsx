@@ -8,7 +8,7 @@ import { Input } from '../ui/input.js';
 export interface AddListDialogProps {
   open: boolean;
   onClose: () => void;
-  onCreateList: (name: string, description?: string) => void;
+  onCreateList: (name: string) => void;
 }
 
 export function AddListDialog({
@@ -17,16 +17,14 @@ export function AddListDialog({
   onCreateList,
 }: AddListDialogProps) {
   const [name, setName] = useState('');
-  const [description, setDescription] = useState('');
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     const trimmed = name.trim();
     if (!trimmed) return;
 
-    onCreateList(trimmed, description.trim() || undefined);
+    onCreateList(trimmed);
     setName('');
-    setDescription('');
     onClose();
   };
 
@@ -55,18 +53,6 @@ export function AddListDialog({
               />
             </div>
 
-            <div className="flex flex-col gap-1">
-              <label htmlFor="list-desc" className="text-xs font-medium text-muted-foreground">
-                Description (optional)
-              </label>
-              <Input
-                id="list-desc"
-                value={description}
-                onChange={e => setDescription(e.target.value)}
-                placeholder="Brief purpose of this information list"
-                className="text-sm"
-              />
-            </div>
           </div>
 
           <DialogFooter className="flex items-center justify-end gap-2 pt-2">

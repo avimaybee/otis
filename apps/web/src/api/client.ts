@@ -165,8 +165,54 @@ export const api = {
       }>;
       total_candidates: number;
     }>(`/api/workspaces/${encodeURIComponent(workspaceId)}/duplicates`, { signal }),
-  uploadDocument: (workspace: string, file: File, uploadId: string, userId: string) => request<{ media_id: string; filename: string; extraction_state: string }>(`/api/workspaces/${encodeURIComponent(workspace)}/documents/uploads`, { method: 'POST', headers: { 'Content-Type': 'application/pdf', 'x-filename': encodeURIComponent(file.name), 'x-upload-id': uploadId, 'x-expected-user-id': userId }, body: file }),
-  retryDocument: (workspace: string, mediaId: string, userId: string) => request<{ media_id: string; state: string }>(`/api/workspaces/${encodeURIComponent(workspace)}/documents/${encodeURIComponent(mediaId)}/retry`, { method: 'POST', headers: { 'x-expected-user-id': userId } }),
+  uploadDocument: (workspace: string, file: File, uploadId: string, userId: string) => {
+    let contentType = file.type;
+    if (!contentType || contentType === 'application/octet-stream') {
+      const lower = file.name.toLowerCase();
+      if (lower.endsWith('.pdf')) contentType = 'application/pdf';
+      else if (lower.endsWith('.txt')) contentType = 'text/plain';
+      else if (lower.endsWith('.md')) contentType = 'text/markdown';
+      else contentType = 'application/pdf';
+    }
+    return request<{ media_id: string; filename: string; extraction_state: string }>(
+      `/api/workspaces/${encodeURIComponent(workspace)}/documents/uploads`,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': contentType,
+          'x-filename': encodeURIComponent(file.name),
+          'x-upload-id': uploadId,
+          'x-expected-user-id': userId,
+        },
+        body: file,
+      },
+    );
+  },
+  retryDocument: (workspace: string, mediaId: string, userId: string) =>
+    request<{ media_id: string; state: string }>(
+      `/api/workspaces/${encodeURIComponent(workspace)}/documents/${encodeURIComponent(mediaId)}/retry`,
+      { method: 'POST', headers: { 'x-expected-user-id': userId } },
+    ),
+  getDocument: (workspaceId: string, documentId: string, signal?: AbortSignal) =>
+    request<import('@otis/contracts').DocumentDetailResponse>(
+      `/api/workspaces/${encodeURIComponent(workspaceId)}/documents/${encodeURIComponent(documentId)}`,
+      signal ? { signal } : undefined,
+    ),
+  getDocumentRevision: (workspaceId: string, documentId: string, revisionId: string, signal?: AbortSignal) =>
+    request<import('@otis/contracts').DocumentDetailResponse>(
+      `/api/workspaces/${encodeURIComponent(workspaceId)}/documents/${encodeURIComponent(documentId)}/revisions/${encodeURIComponent(revisionId)}`,
+      signal ? { signal } : undefined,
+    ),
+  retryDocumentRender: (workspaceId: string, documentId: string, revisionId: string) =>
+    request<{ status: string; revision_id: string }>(
+      `/api/workspaces/${encodeURIComponent(workspaceId)}/documents/${encodeURIComponent(documentId)}/revisions/${encodeURIComponent(revisionId)}/retry`,
+      { method: 'POST' },
+    ),
+  listChatDocuments: (workspaceId: string, chatId: string, signal?: AbortSignal) =>
+    request<import('@otis/contracts').DocumentListResponse>(
+      `/api/workspaces/${encodeURIComponent(workspaceId)}/chats/${encodeURIComponent(chatId)}/documents`,
+      signal ? { signal } : undefined,
+    ),
   me: () => request<{ user: { id: string; display_name: string | null }; workspaces: { id: string; name: string; role: string }[] }>('/api/me'),
 
   listChats: (workspaceId: string, filter: 'mine' | 'team' = 'mine', cursor?: string, signal?: AbortSignal) =>
@@ -197,7 +243,22 @@ export const api = {
     );
   },
 
-  sendMessage: (workspaceId: string, chatId: string, clientMessageId: string, text: string, clarificationId?: string, mediaId?: string, expectedUserId?: string, imageMediaIds?: string[], timezone?: string) =>
+  sendMessage: (
+    workspaceId: string,
+    chatId: string,
+    clientMessageId: string,
+    text: string,
+    clarificationId?: string,
+    mediaId?: string,
+    expectedUserId?: string,
+    imageMediaIds?: string[],
+    timezone?: string,
+    extra?: {
+      recordsContext?: import('@otis/contracts').RecordsContext;
+      documentMediaIds?: string[];
+      isPastedText?: boolean;
+    },
+  ) =>
     request<AcceptMessageResponse>(`/api/workspaces/${workspaceId}/chats/${chatId}/messages`, {
       method: 'POST',
       headers: expectedUserId ? { 'x-expected-user-id': expectedUserId } : undefined,
@@ -207,7 +268,12 @@ export const api = {
         clarification_id: clarificationId,
         ...(mediaId ? { media_id: mediaId } : {}),
         ...(imageMediaIds && imageMediaIds.length > 0 ? { image_media_ids: imageMediaIds } : {}),
+        ...(extra?.documentMediaIds && extra.documentMediaIds.length > 0
+          ? { document_media_ids: extra.documentMediaIds }
+          : {}),
+        ...(extra?.isPastedText ? { is_pasted_text: true } : {}),
         ...(timezone ? { timezone } : {}),
+        ...(extra?.recordsContext ? { records_context: extra.recordsContext } : {}),
       }),
     }),
 
@@ -388,54 +454,44 @@ export const api = {
   activityStreamUrl: (workspaceId: string, chatId: string, after: number) =>
     `/api/workspaces/${workspaceId}/chats/${encodeURIComponent(chatId)}/activity?stream=sse&after=${after}`,
 
-  getRecords: (workspaceId: string, signal?: AbortSignal) =>
-    request<{
-      lists: Array<{
-        id: string;
-        name: string;
-        description?: string;
-        columns: Array<{
-          id: string;
-          name: string;
-          type: 'text' | 'status' | 'phone' | 'currency' | 'number' | 'date' | 'calculation';
-          width?: number;
-          isCore?: boolean;
-          options?: string[];
-        }>;
-        rows: Array<{
-          id: string;
-          source: 'entity' | 'task' | 'memory' | 'interaction' | 'draft' | 'custom';
-          cells: Record<string, string>;
-          provenance?: Record<string, string>;
-        }>;
-      }>;
-      history: Record<
-        string,
-        Array<{
-          id: string;
-          timestamp: string;
-          actor: 'user' | 'otis';
-          description: string;
-          affectedCount: number;
-          canRestore: boolean;
-        }>
-      >;
-    }>(`/api/workspaces/${encodeURIComponent(workspaceId)}/records`, signal ? { signal } : undefined),
+  getRecords: (
+    workspaceId: string,
+    query?: import('@otis/contracts').RecordsViewQuery,
+    signal?: AbortSignal,
+  ) => {
+    const params = new URLSearchParams();
+    if (query?.list_id) params.set('list', query.list_id);
+    if (query?.limit) params.set('limit', String(query.limit));
+    if (query?.cursor) params.set('cursor', query.cursor);
+    if (query?.search) params.set('search', query.search);
+    if (query?.sort) params.set('sort', `${query.sort.column_id}:${query.sort.direction}`);
+    const qs = params.toString();
+    return request<import('@otis/contracts').RecordsResponse>(
+      `/api/workspaces/${encodeURIComponent(workspaceId)}/records${qs ? `?${qs}` : ''}`,
+      signal ? { signal } : undefined,
+    );
+  },
 
   saveRecords: (
     workspaceId: string,
-    payload: {
-      listId: string;
-      dirtyCells?: Record<string, { columnId: string; currentValue: string }>;
-      addedRows?: Array<{ id: string; cells: Record<string, string> }>;
-      deletedRowIds?: string[];
-    },
+    payload:
+      | import('@otis/contracts').RecordsSaveRequest
+      | {
+          listId: string;
+          dirtyCells?: Record<string, { columnId: string; currentValue: string; baseValue?: string }>;
+          addedRows?: Array<{ id: string; cells: Record<string, string> }>;
+          deletedRowIds?: string[];
+        },
+    signal?: AbortSignal,
   ) =>
-    request<{ saved: boolean; affectedCount: number }>(
-      `/api/workspaces/${encodeURIComponent(workspaceId)}/records`,
-      {
-        method: 'POST',
-        body: JSON.stringify(payload),
-      },
-    ),
+    request<
+      import('@otis/contracts').RecordsSaveResponse & {
+        saved: boolean;
+        affectedCount: number;
+      }
+    >(`/api/workspaces/${encodeURIComponent(workspaceId)}/records`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+      signal,
+    }),
 };

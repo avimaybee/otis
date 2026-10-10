@@ -254,7 +254,12 @@ export function computeUndoPreview(
   }
   for (const evt of allEvents) {
     if (selectedActionSet.has(evt.action_id) && evt.kind !== 'revert' && !alreadyRevertedEventIds.has(evt.id)) {
-      if (['memory_note', 'memory_forgotten', 'draft_created', 'draft_updated', 'entity_deleted'].includes(evt.kind)) {
+      if (
+        ['memory_note', 'memory_forgotten', 'draft_created', 'draft_updated', 'entity_deleted'].includes(evt.kind) ||
+        evt.kind.startsWith('record_') ||
+        evt.kind.startsWith('field_definition_') ||
+        evt.kind === 'calculation_defined'
+      ) {
         const payload = (evt.payload ?? {}) as Record<string, unknown>;
         let desc = '';
         if (evt.kind === 'memory_note') {
@@ -273,6 +278,20 @@ export function computeUndoPreview(
         } else if (evt.kind === 'interaction_removed') {
           const target = String(payload['target_kind'] ?? 'entry');
           desc = `Removed ${target} will be restored to current use.`;
+        } else if (evt.kind === 'record_cell_changed') {
+          desc = `Cell change on column '${String(payload['column_id'] ?? 'field')}' will be reverted.`;
+        } else if (evt.kind === 'record_row_created') {
+          desc = `New row in list '${String(payload['list_id'] ?? 'records')}' will be removed.`;
+        } else if (evt.kind === 'record_row_archived') {
+          desc = `Archived row will be restored.`;
+        } else if (evt.kind === 'record_row_restored') {
+          desc = `Restored row will be re-archived.`;
+        } else if (evt.kind === 'record_list_created') {
+          desc = `New list '${String(payload['name'] ?? 'list')}' will be removed.`;
+        } else if (evt.kind === 'field_definition_created') {
+          desc = `Field definition '${String(payload['label'] ?? 'field')}' will be removed.`;
+        } else if (evt.kind === 'calculation_defined') {
+          desc = `Calculation rule will be removed.`;
         } else {
           desc = `${evt.kind.replace(/_/g, ' ')} record will be reverted.`;
         }
@@ -370,9 +389,13 @@ export function handleUndoCommit(
   // Re-reduce state with the new revert events
   const nextState = rebuildProjections([...allEvents, ...revertEvents]);
 
-  // Identify entities and tasks specifically created by the reverted events
+  // Identify entities, tasks, and records items specifically created by the reverted events
   const revertedEntityIds = new Set<string>();
   const revertedTaskIds = new Set<string>();
+  const revertedRecordRowIds = new Set<string>();
+  const revertedRecordListIds = new Set<string>();
+  const revertedFieldDefIds = new Set<string>();
+
   for (const eventId of preview.affected_event_ids) {
     const targetEvt = allEvents.find((e) => e.id === eventId);
     if (!targetEvt) continue;
@@ -382,6 +405,18 @@ export function handleUndoCommit(
     if (targetEvt.kind === 'task_created') {
       const p = targetEvt.payload as { task_id?: string };
       if (p?.task_id) revertedTaskIds.add(p.task_id);
+    }
+    if (targetEvt.kind === 'record_row_created') {
+      const p = targetEvt.payload as { row_ref?: { id?: string } };
+      if (p?.row_ref?.id) revertedRecordRowIds.add(p.row_ref.id);
+    }
+    if (targetEvt.kind === 'record_list_created') {
+      const p = targetEvt.payload as { list_id?: string };
+      if (p?.list_id) revertedRecordListIds.add(p.list_id);
+    }
+    if (targetEvt.kind === 'field_definition_created') {
+      const p = targetEvt.payload as { field_id?: string };
+      if (p?.field_id) revertedFieldDefIds.add(p.field_id);
     }
   }
 
@@ -395,6 +430,46 @@ export function handleUndoCommit(
   for (const [id, task] of currentState.tasks) {
     if (!revertedTaskIds.has(id) && !nextState.tasks.has(id)) {
       nextState.tasks.set(id, task);
+    }
+  }
+  if (currentState.recordsLists) {
+    if (!nextState.recordsLists) nextState.recordsLists = new Map();
+    for (const [id, list] of currentState.recordsLists) {
+      if (!revertedRecordListIds.has(list.id) && !nextState.recordsLists.has(id)) {
+        nextState.recordsLists.set(id, list);
+      }
+    }
+  }
+  if (currentState.recordsListColumns) {
+    if (!nextState.recordsListColumns) nextState.recordsListColumns = new Map();
+    for (const [id, col] of currentState.recordsListColumns) {
+      if (!nextState.recordsListColumns.has(id)) {
+        nextState.recordsListColumns.set(id, col);
+      }
+    }
+  }
+  if (currentState.recordsRows) {
+    if (!nextState.recordsRows) nextState.recordsRows = new Map();
+    for (const [id, row] of currentState.recordsRows) {
+      if (!revertedRecordRowIds.has(row.id) && !nextState.recordsRows.has(id)) {
+        nextState.recordsRows.set(id, row);
+      }
+    }
+  }
+  if (currentState.recordsValues) {
+    if (!nextState.recordsValues) nextState.recordsValues = new Map();
+    for (const [id, val] of currentState.recordsValues) {
+      if (!nextState.recordsValues.has(id)) {
+        nextState.recordsValues.set(id, val);
+      }
+    }
+  }
+  if (currentState.fieldDefinitions) {
+    if (!nextState.fieldDefinitions) nextState.fieldDefinitions = new Map();
+    for (const [id, def] of currentState.fieldDefinitions) {
+      if (!revertedFieldDefIds.has(def.field_name) && !nextState.fieldDefinitions.has(id)) {
+        nextState.fieldDefinitions.set(id, def);
+      }
     }
   }
 

@@ -21,6 +21,12 @@ import type {
   TaskDue,
   TaskStatus,
   WorkspaceContext,
+  PersistedRecordsList,
+  PersistedRecordsListColumn,
+  PersistedRecordsRow,
+  PersistedRecordsValue,
+  PersistedFieldDef,
+  RecordEdit,
 } from '@otis/contracts';
 
 export interface LedgerProjectionState {
@@ -40,6 +46,11 @@ export interface LedgerProjectionState {
   drafts: Map<string, DraftProjection>;
   memoryEntries: Map<string, MemoryEntry>; // key: `${id}`
   memorySuppressions: Map<string, MemorySuppression>; // key: `${id}`
+  recordsLists?: Map<string, PersistedRecordsList>;
+  recordsListColumns?: Map<string, PersistedRecordsListColumn>;
+  recordsRows?: Map<string, PersistedRecordsRow>;
+  recordsValues?: Map<string, PersistedRecordsValue>;
+  fieldDefinitions?: Map<string, PersistedFieldDef>;
 }
 
 export interface CreateEntityArgs {
@@ -149,6 +160,14 @@ export type CoverageScope = 'all' | Set<string>;
 export interface ProjectionCoverage {
   /** Only the trusted new-log footprint permits creating a root. */
   interactionCreate?: { entity_id: string | null; kind: string };
+  /**
+   * When 'all', created keys pass the bounds assertion in every collection:
+   * creations cannot misread unloaded state as absent, so a composing batch
+   * with server-generated ids stays provable while changed and deleted keys
+   * must still sit inside the loaded coverage. Absent for all existing
+   * footprints, which keep the strict created-key check.
+   */
+  createScope?: 'all' | 'none';
   entities: CoverageScope;
   aliases: CoverageScope;
   fields: CoverageScope;
@@ -157,6 +176,11 @@ export interface ProjectionCoverage {
   drafts: CoverageScope;
   memoryEntries: CoverageScope;
   memorySuppressions: CoverageScope;
+  recordsLists?: CoverageScope;
+  recordsListColumns?: CoverageScope;
+  recordsRows?: CoverageScope;
+  recordsValues?: CoverageScope;
+  fieldDefinitions?: CoverageScope;
 }
 
 export const FULL_PROJECTION_COVERAGE: ProjectionCoverage = {
@@ -168,7 +192,22 @@ export const FULL_PROJECTION_COVERAGE: ProjectionCoverage = {
   drafts: 'all',
   memoryEntries: 'all',
   memorySuppressions: 'all',
+  recordsLists: 'all',
+  recordsListColumns: 'all',
+  recordsRows: 'all',
+  recordsValues: 'all',
+  fieldDefinitions: 'all',
 };
+
+export interface RecordsBatchArgs {
+  schema_version?: 1;
+  save_id: string;
+  action_id?: string;
+  chunk_index?: number;
+  chunk_count?: number;
+  list_id: string;
+  operations: RecordEdit[];
+}
 
 export interface CreateTaskArgs {
   title: string;
@@ -203,6 +242,7 @@ export interface RecordDraftArgs {
   channel?: 'whatsapp' | 'email' | 'sms' | 'other';
   recipient_address?: string | null;
   content_text?: string;
+  status?: 'draft' | 'member_confirmed_sent' | 'archived';
   expected_revision?: number;
 }
 

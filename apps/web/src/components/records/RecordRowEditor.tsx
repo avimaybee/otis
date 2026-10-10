@@ -1,4 +1,4 @@
-import type { RecordColumn, RecordRow, DirtyCellState } from './types.js';
+import type { RecordColumn, RecordRow, DirtyCellState, RecordValue } from './types.js';
 import { lazy, Suspense, useState } from 'react';
 const EntityFilePane = lazy(() => import('../EntityFile.js').then(m => ({ default: m.EntityFilePane })));
 import {
@@ -23,8 +23,12 @@ export interface RecordRowEditorProps {
   columns: RecordColumn[];
   dirtyCells: Record<string, DirtyCellState>;
   onCellChange: (rowId: string, columnId: string, nextValue: string) => void;
+  onCellValue?: (rowId: string, columnId: string, nextValue: RecordValue) => void;
   onDeleteRow?: (rowId: string) => void;
   onAskOtisAboutRow?: (row: RecordRow, question?: string) => void;
+  dirtyCount?: number;
+  onSave?: () => void;
+  isSaving?: boolean;
 }
 
 export function RecordRowEditor({
@@ -37,8 +41,12 @@ export function RecordRowEditor({
   columns,
   dirtyCells,
   onCellChange,
+  onCellValue,
   onDeleteRow,
   onAskOtisAboutRow,
+  dirtyCount,
+  onSave,
+  isSaving,
 }: RecordRowEditorProps) {
   const [showFile, setShowFile] = useState(false);
   if (!row) return null;
@@ -124,10 +132,23 @@ export function RecordRowEditor({
                     placeholder={`Enter ${col.name.toLowerCase()}...`}
                     className="min-h-20 text-sm"
                   />
+                ) : col.type === 'date' && onCellValue ? (
+                  <DateValueInput
+                    id={`field-${col.id}`}
+                    current={row.record_cells?.[col.id]?.value ?? null}
+                    onCommit={next => onCellValue(row.id, col.id, next)}
+                  />
+                ) : (col.type === 'currency' || col.id === 'value') && onCellValue ? (
+                  <MoneyValueInput
+                    id={`field-${col.id}`}
+                    current={row.record_cells?.[col.id]?.value ?? null}
+                    offerRole={col.id === 'value' || col.id === 'quote'}
+                    onCommit={next => onCellValue(row.id, col.id, next)}
+                  />
                 ) : (
                   <Input
                     id={`field-${col.id}`}
-                    type={col.type === 'number' ? 'number' : 'text'}
+                    type={col.type === 'number' ? 'number' : col.id === 'phone' ? 'tel' : 'text'}
                     value={val}
                     onChange={e => onCellChange(row.id, col.id, e.target.value)}
                     placeholder={`Enter ${col.name.toLowerCase()}...`}
@@ -186,11 +207,123 @@ export function RecordRowEditor({
               <span>Delete row</span>
             </Button>
           )}
-          <Button variant="default" size="sm" onClick={onClose} className="ml-auto text-xs font-medium">
-            Done
-          </Button>
+          <div className="ml-auto flex items-center gap-2">
+            {(dirtyCount ?? 0) > 0 && onSave && (
+              <Button variant="default" size="sm" onClick={onSave} disabled={isSaving} className="text-xs font-medium">
+                {isSaving ? 'Saving…' : `Save ${dirtyCount} change${dirtyCount === 1 ? '' : 's'}`}
+              </Button>
+            )}
+            <Button variant={dirtyCount ? 'ghost' : 'default'} size="sm" onClick={onClose} className="text-xs font-medium">
+              Back to list
+            </Button>
+          </div>
         </SheetFooter>
       </SheetContent>
     </Sheet>
+  );
+}
+
+function toDateInputValue(current: RecordValue | null | undefined): string {
+  if (typeof current === 'string' && /^\d{4}-\d{2}-\d{2}/.test(current)) return current.slice(0, 10);
+  if (typeof current === 'object' && current !== null && 'local_date' in current) {
+    return String((current as { local_date: string }).local_date);
+  }
+  return '';
+}
+
+function DateValueInput({ id, current, onCommit }: { id: string; current: RecordValue | null | undefined; onCommit: (next: RecordValue) => void }) {
+  const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+  return (
+    <Input
+      id={id}
+      type="date"
+      value={toDateInputValue(current)}
+      onChange={e => {
+        const picked = e.target.value;
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(picked)) return;
+        onCommit({ kind: 'date', local_date: picked, timezone });
+      }}
+      className="text-sm"
+    />
+  );
+}
+
+function MoneyValueInput({ id, current, offerRole, onCommit }: {
+  id: string;
+  current: RecordValue | null | undefined;
+  offerRole: boolean;
+  onCommit: (next: RecordValue) => void;
+}) {
+  const [amountText, setAmountText] = useState(() => {
+    if (typeof current === 'object' && current !== null && 'amount' in current) {
+      return String(Number((current as { amount: number }).amount) / 100);
+    }
+    return typeof current === 'string' ? current.replace(/[^0-9.]/g, '') : '';
+  });
+  const [currency, setCurrency] = useState(() => {
+    if (typeof current === 'object' && current !== null && 'currency' in current) {
+      return String((current as { currency: string }).currency);
+    }
+    return 'USD';
+  });
+  const [role, setRole] = useState(() => {
+    if (typeof current === 'object' && current !== null && 'role' in current) {
+      return (current as { role: string }).role === 'expected' ? 'expected' : 'offered';
+    }
+    return 'offered';
+  });
+  return (
+    <div className="flex flex-col gap-2">
+      <div className="flex items-center gap-2">
+        <Input
+          id={id}
+          type="number"
+          min="0"
+          step="0.01"
+          value={amountText}
+          onChange={e => setAmountText(e.target.value)}
+          onBlur={() => {
+            const major = Number(amountText);
+            if (!Number.isFinite(major) || major < 0) return;
+            onCommit({ amount: Math.round(major * 100), currency, role });
+          }}
+          placeholder="0.00"
+          className="text-sm"
+          aria-label="Amount"
+        />
+        <ChoiceSelect
+          id={`${id}-currency`}
+          label="Currency"
+          value={currency}
+          options={['USD', 'EUR', 'GBP', 'RON', 'CHF'].map(code => ({ value: code, label: code }))}
+          onChange={next => {
+            setCurrency(next);
+            const major = Number(amountText);
+            if (Number.isFinite(major) && major >= 0) {
+              onCommit({ amount: Math.round(major * 100), currency: next, role });
+            }
+          }}
+        />
+      </div>
+      {offerRole && (
+        <ChoiceSelect
+          id={`${id}-role`}
+          label="Quote role"
+          value={role}
+          options={[
+            { value: 'offered', label: 'Offered by us' },
+            { value: 'expected', label: 'Expected budget' },
+          ]}
+          onChange={next => {
+            const picked = next === 'expected' ? 'expected' : 'offered';
+            setRole(picked);
+            const major = Number(amountText);
+            if (Number.isFinite(major) && major >= 0) {
+              onCommit({ amount: Math.round(major * 100), currency, role: picked });
+            }
+          }}
+        />
+      )}
+    </div>
   );
 }

@@ -41,6 +41,10 @@ export interface AskOtisPaneProps {
   chatId?: string | null;
   onSelectChat?: (chatId: string | null) => void;
   suggestedDraft?: string | null;
+  /** Frozen records target for turns composed here; see ConversationScreen. */
+  recordsContextProvider?: () => import('@otis/contracts').RecordsContext | null;
+  /** Durable table patches from run steps; applied once per patch id. */
+  onRecordsPatch?: (patch: import('@otis/contracts').RecordsPatch) => void;
 }
 
 export function AskOtisPane(props: AskOtisPaneProps) {
@@ -59,7 +63,6 @@ export function AskOtisPane(props: AskOtisPaneProps) {
     chatId = null,
     onSelectChat,
   } = props;
-
   const headerBanner = (
     <div className="flex flex-col border-b border-border bg-card/60 text-xs shrink-0">
       <div className="flex items-center gap-2 px-3 py-2 text-muted-foreground">
@@ -102,6 +105,8 @@ export function AskOtisPane(props: AskOtisPaneProps) {
         onClose={onClose}
         headerBanner={headerBanner}
         suggestedDraft={props.suggestedDraft}
+        recordsContextProvider={props.recordsContextProvider}
+        onRecordsPatch={props.onRecordsPatch}
       />
     </aside>
   );

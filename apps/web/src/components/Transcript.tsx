@@ -10,13 +10,16 @@ import { Button } from './ui/button.js';
 import { ThinkingDisclosure } from './Thinking.js';
 import { VoiceMessagePlayer } from './VoiceMessagePlayer.js';
 import { MessageImages } from './MessageImages.js';
+import { MessageDocuments } from './MessageDocuments.js';
+import { DocumentArtifactCard } from './DocumentArtifactCard.js';
+import type { GeneratedDocument, DocumentRevision } from '@otis/contracts';
 import { reduceThinking } from '../api/thinking.js';
 import { dayKeyInZone, formatClockTime, formatDayLabel } from '../i18n/format.js';
 import { transientTextForRun, type TransientPreview } from '../hooks/useActivityStream.js';
 
 export interface WorkingStep { id: string; label: string; state: 'queued' | 'running' | 'succeeded' | 'failed' | 'skipped' | 'undone'; actionId?: string | null; summary?: string | null; }
 export const STATES: Record<WorkingStep['state'], string> = { queued: 'Queued', running: 'Working', succeeded: 'Done', failed: 'Failed', skipped: 'Skipped', undone: 'Undone' };
-const LABELS: Record<string, string> = { find_entities: 'Finding the business', query: 'Reading saved records', search_memory: 'Searching workspace memory', get_memory: 'Reading the source', upsert_entity: 'Saving the business', create_entity: 'Saving the business', set_fields: 'Updating the record', set_field: 'Updating the record', log_event: 'Saving the note', create_task: 'Saving the follow-up', update_task: 'Updating the follow-up', draft_message: 'Preparing the draft', record_draft: 'Saving the draft', remember_context: 'Saving workspace context', forget_memory: 'Forgetting saved context', undo: 'Reverting the change', update_preference: 'Updating your preference' };
+const LABELS: Record<string, string> = { find_entities: 'Finding the business', query: 'Reading saved records', search_memory: 'Searching workspace memory', get_memory: 'Reading the source', upsert_entity: 'Saving the business', create_entity: 'Saving the business', set_fields: 'Updating the record', set_field: 'Updating the record', log_event: 'Saving the note', create_task: 'Saving the follow-up', update_task: 'Updating the follow-up', draft_message: 'Preparing the draft', record_draft: 'Saving the draft', remember_context: 'Saving workspace context', forget_memory: 'Forgetting saved context', undo: 'Reverting the change', update_preference: 'Updating your preference', document_start: 'Starting document', document_write_section: 'Writing document', document_publish: 'Publishing document' };
 export const stepLabel = (name?: string | null, target?: string | null) => {
   if (!name) return 'Working';
   const cleanTarget = target ? target.trim() : '';
@@ -44,6 +47,15 @@ export const stepLabel = (name?: string | null, target?: string | null) => {
   }
   if (name === 'remember_context') {
     return cleanTarget ? `Saving context: "${cleanTarget}"` : 'Saving workspace context';
+  }
+  if (name === 'document_start') {
+    return cleanTarget ? `Starting "${cleanTarget}"` : 'Starting document';
+  }
+  if (name === 'document_write_section') {
+    return cleanTarget ? `Writing "${cleanTarget}"` : 'Writing document';
+  }
+  if (name === 'document_publish') {
+    return cleanTarget ? `Publishing "${cleanTarget}"` : 'Publishing document';
   }
   if (cleanTarget && LABELS[name]) {
     return `${LABELS[name]}: "${cleanTarget}"`;
@@ -87,7 +99,7 @@ function StepIcon({ label, state }: { label: string; state: WorkingStep['state']
   if (state === 'undone') return <UndoIcon />;
   const lower = label.toLowerCase();
   if (lower.includes('search') || lower.includes('find') || lower.includes('reading')) return <SearchDocIcon />;
-  if (lower.includes('saving') || lower.includes('updating') || lower.includes('draft') || lower.includes('record')) return <FileTextIcon />;
+  if (lower.includes('saving') || lower.includes('updating') || lower.includes('draft') || lower.includes('record') || lower.includes('document') || lower.includes('publishing')) return <FileTextIcon />;
   if (lower.includes('command')) return <TerminalIcon />;
   return <CheckIcon />;
 }
@@ -411,6 +423,9 @@ const MessageBody = memo(function MessageBody({ message }: { message: ChatMessag
         {(message.image_media_ids?.length ?? 0) > 0 && (
           <MessageImages workspaceId={message.workspace_id} mediaIds={message.image_media_ids ?? []} />
         )}
+        {(message.document_media_ids?.length ?? 0) > 0 && (
+          <MessageDocuments workspaceId={message.workspace_id} mediaIds={message.document_media_ids ?? []} />
+        )}
         {message.media_id ? (
           <VoiceMessagePlayer
             workspaceId={message.workspace_id}
@@ -485,6 +500,28 @@ export function Transcript({ messages, members, currentUserId, steps, run, runs 
     }
     return computed;
   }, [activitiesByRun, messages, run, runs]);
+  const docsByRun = useMemo(() => {
+    const map = new Map<string, Array<{ document: GeneratedDocument; revision: DocumentRevision }>>();
+    for (const act of activities) {
+      const isDoc =
+        act.type === 'document_revision_updated' ||
+        (act.type === 'step_finished' && (act.payload as Record<string, unknown> | null)?.step === 'document_revision_updated');
+      if (isDoc && act.payload) {
+        const payload = act.payload as { document?: GeneratedDocument; revision?: DocumentRevision };
+        if (payload.document && payload.revision) {
+          const list = map.get(act.run_id) ?? [];
+          const existingIdx = list.findIndex(d => d.document.id === payload.document!.id);
+          if (existingIdx >= 0) {
+            list[existingIdx] = { document: payload.document, revision: payload.revision };
+          } else {
+            list.push({ document: payload.document, revision: payload.revision });
+          }
+          map.set(act.run_id, list);
+        }
+      }
+    }
+    return map;
+  }, [activities]);
   const restoredRef = useRef(false);
 
   const handleCopy = async (id: string, text: string) => {
@@ -575,6 +612,14 @@ export function Transcript({ messages, members, currentUserId, steps, run, runs 
             <article className={`otis-turn group otis-turn--${isMember ? 'member' : 'agent'}`} data-author-kind={message.author_kind}>
               {isMember && message.author_user_id !== currentUserId && <div className="otis-turn__meta text-xs text-subtle">{author}</div>}
               <MessageBody message={message} />
+              {!isMember && runId && docsByRun.get(runId)?.map(({ document, revision }) => (
+                <DocumentArtifactCard
+                  key={document.id}
+                  workspaceId={message.workspace_id}
+                  document={document}
+                  revision={revision}
+                />
+              ))}
               {!isMember && runData?.actions?.length ? (
                 <div className="otis-outcome mt-2 flex items-center gap-2 text-xs text-subtle" role="status">
                   <CheckIcon />
@@ -646,7 +691,14 @@ export function Transcript({ messages, members, currentUserId, steps, run, runs 
                 ) : null}
               </div>
             </article>
-            {noAnswerYet && <><RunWork run={runData} steps={runSteps} activities={runActivities} onInspectAction={onInspectAction} onReply={onReply} onRetryRun={onRetryRun} onRetryQuestions={onRetryQuestions} questionsFailed={questionsFailed} hasAgentMessage={false}/>{(() => {
+            {noAnswerYet && <><RunWork run={runData} steps={runSteps} activities={runActivities} onInspectAction={onInspectAction} onReply={onReply} onRetryRun={onRetryRun} onRetryQuestions={onRetryQuestions} questionsFailed={questionsFailed} hasAgentMessage={false}/>{runId && docsByRun.get(runId)?.map(({ document, revision }) => (
+              <DocumentArtifactCard
+                key={document.id}
+                workspaceId={message.workspace_id}
+                document={document}
+                revision={revision}
+              />
+            ))}{(() => {
               // Durable chunks plus live transient preview for rounds not yet
               // persisted. Transient frames carry each round's full text, so
               // joining is order-safe; durable coverage drops preview rounds.

@@ -49,6 +49,8 @@ export const qk = {
   models: (userId: string, workspaceId: string, chatId: string | null) =>
     ['otis', userId, workspaceId, 'models', chatId ?? 'none'] as const,
   commands: () => ['otis', 'commands'] as const,
+  records: (userId: string, workspaceId: string, listId?: string, query?: Record<string, unknown>) =>
+    ['otis', userId, workspaceId, 'records', listId ?? 'all', query ?? {}] as const,
 };
 
 export interface ChatListState {

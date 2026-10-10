@@ -3,45 +3,48 @@
  * Follows plans/editable-records.md and design-tokens.md.
  */
 
-export type RecordFieldType =
-  | 'text'
-  | 'status'
-  | 'phone'
-  | 'currency'
-  | 'number'
-  | 'date'
-  | 'calculation';
+import type {
+  RecordColumn as ContractRecordColumn,
+  RecordRow as ContractRecordRow,
+  RecordList as ContractRecordList,
+  RecordHistoryItem as ContractRecordHistoryItem,
+  ColumnType,
+  RecordCell,
+  RecordRef,
+  RecordValue,
+  CellState,
+  CellBinding,
+  RecordEdit,
+  RecordsSaveRequest,
+  RecordsSaveResponse,
+} from '@otis/contracts';
+
+export type {
+  ContractRecordColumn,
+  ContractRecordRow,
+  ContractRecordList,
+  ContractRecordHistoryItem,
+  ColumnType,
+  RecordCell,
+  RecordRef,
+  RecordValue,
+  CellState,
+  CellBinding,
+  RecordEdit,
+  RecordsSaveRequest,
+  RecordsSaveResponse,
+};
+
+export type RecordFieldType = ColumnType;
+export type RecordColumn = ContractRecordColumn;
+export type RecordRow = ContractRecordRow;
+export type RecordList = ContractRecordList;
+export type RecordHistoryItem = ContractRecordHistoryItem;
 
 export interface ColumnCalculation {
   expression: string;
   description: string;
   targetType?: 'number' | 'currency';
-}
-
-export interface RecordColumn {
-  id: string;
-  name: string;
-  type: RecordFieldType;
-  width?: number;
-  isCore?: boolean;
-  options?: string[];
-  calculation?: ColumnCalculation;
-}
-
-export interface RecordRow {
-  id: string;
-  source: 'entity' | 'task' | 'memory' | 'interaction' | 'draft' | 'custom';
-  cells: Record<string, string>;
-  updatedAt?: string;
-  provenance?: Record<string, string>;
-}
-
-export interface RecordList {
-  id: string;
-  name: string;
-  description?: string;
-  columns: RecordColumn[];
-  rows: RecordRow[];
 }
 
 export interface DirtyCellState {
@@ -66,12 +69,3 @@ export type DraftOperation =
   | { type: 'add_row'; row: RecordRow }
   | { type: 'delete_row'; row: RecordRow }
   | { type: 'add_column'; column: RecordColumn };
-
-export interface RecordHistoryItem {
-  id: string;
-  timestamp: string;
-  actor: 'user' | 'otis';
-  description: string;
-  affectedCount: number;
-  canRestore: boolean;
-}

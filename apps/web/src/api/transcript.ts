@@ -34,9 +34,10 @@ function localMessage(entry: OutboxEntry, sequence: number): ChatMessage {
     // echo carries a factual label so the bubble is not blank. Photos behave
     // the same: the server media identities are already finalized, so the
     // echo renders them through the private media route immediately.
-    content_text: entry.text || (entry.mediaId ? 'Voice note' : entry.imageMediaIds?.length ? 'Photos' : ''),
+    content_text: entry.text || (entry.mediaId ? 'Voice note' : entry.imageMediaIds?.length ? 'Photos' : entry.documentMediaIds?.length ? 'Documents' : ''),
     media_id: entry.mediaId ?? null,
     image_media_ids: entry.imageMediaIds ?? null,
+    document_media_ids: entry.documentMediaIds ?? null,
     run_id: entry.runId ?? null,
     sequence,
     created_at: entry.createdAt,

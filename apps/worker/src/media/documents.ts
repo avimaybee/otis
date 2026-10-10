@@ -75,7 +75,6 @@ export async function handleRetryDocument(
   );
 }
 
-/** PDFs share private original storage; extraction never holds the agent slot. */
 export async function handleUploadDocument(
   request: Request,
   env: Env,
@@ -88,7 +87,7 @@ export async function handleUploadDocument(
     return jsonError(503, 'storage_unavailable', 'File storage is unavailable.', requestId);
   const size = Number(request.headers.get('content-length'));
   if (size > DOCUMENT_MAX_BYTES)
-    return jsonError(413, 'file_too_large', 'PDFs can be up to 20 MB.', requestId);
+    return jsonError(413, 'file_too_large', 'Documents can be up to 20 MB.', requestId);
   const id = request.headers.get('x-upload-id');
   let filename: string;
   try {
@@ -106,38 +105,108 @@ export async function handleUploadDocument(
   }
   if (!id || !/^[A-Za-z0-9_-]{1,128}$/.test(id))
     return jsonError(400, 'invalid_upload_id', 'Use the same upload ID when retrying.', requestId);
-  // Bound a missing/false Content-Length while reading, rather than buffering
-  // an unbounded body and only then applying the product limit.
+
+  const isPdfExt = /\.pdf$/i.test(filename);
+  const isTxtExt = /\.(txt|text)$/i.test(filename);
+  const isMdExt = /\.(md|markdown)$/i.test(filename);
+  const contentTypeHdr = (request.headers.get('content-type') ?? '').toLowerCase();
+
+  const isPdf = isPdfExt || contentTypeHdr === 'application/pdf';
+  const isText = isTxtExt || isMdExt || contentTypeHdr.startsWith('text/');
+
+  if (!isPdf && !isText) {
+    return jsonError(
+      400,
+      'invalid_document_type',
+      'Supported formats are PDF (.pdf), plain text (.txt), and Markdown (.md).',
+      requestId,
+    );
+  }
+
+  const maxAllowedBytes = isPdf ? DOCUMENT_MAX_BYTES : 2 * 1024 * 1024;
+  if (size > maxAllowedBytes) {
+    return jsonError(
+      413,
+      'file_too_large',
+      isPdf ? 'PDFs can be up to 20 MB.' : 'Text files can be up to 2 MB.',
+      requestId,
+    );
+  }
+
   const reader = request.body?.getReader();
-  if (!reader) return jsonError(400, 'empty_document', 'Choose a PDF.', requestId);
+  if (!reader) return jsonError(400, 'empty_document', 'Choose a document.', requestId);
   const parts: Uint8Array[] = [];
   let length = 0;
   while (true) {
     const part = await reader.read();
     if (part.done) break;
     length += part.value.byteLength;
-    if (length > DOCUMENT_MAX_BYTES) {
+    if (length > maxAllowedBytes) {
       await reader.cancel();
-      return jsonError(413, 'file_too_large', 'PDFs can be up to 20 MB.', requestId);
+      return jsonError(
+        413,
+        'file_too_large',
+        isPdf ? 'PDFs can be up to 20 MB.' : 'Text files can be up to 2 MB.',
+        requestId,
+      );
     }
     parts.push(part.value);
   }
+  if (length === 0) {
+    return jsonError(400, 'empty_document', 'The document is empty.', requestId);
+  }
+
   const bytes = new Uint8Array(length);
   let offset = 0;
   for (const part of parts) {
     bytes.set(part, offset);
     offset += part.length;
   }
-  if (length < 8 || new TextDecoder().decode(bytes.subarray(0, 5)) !== '%PDF-')
-    return jsonError(
-      400,
-      'invalid_pdf',
-      'This file is not a PDF. The extension alone is insufficient.',
-      requestId,
-    );
+
+  let finalContentType = 'application/pdf';
+  let storageExt = 'pdf';
+  let extractedText: string | null = null;
+
+  if (isPdf) {
+    if (length < 8 || new TextDecoder().decode(bytes.subarray(0, 5)) !== '%PDF-') {
+      return jsonError(
+        400,
+        'invalid_pdf',
+        'This file is not a PDF. The extension alone is insufficient.',
+        requestId,
+      );
+    }
+  } else {
+    // Text or Markdown validation
+    try {
+      extractedText = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+    } catch {
+      return jsonError(400, 'invalid_encoding', 'Text files must be valid UTF-8.', requestId);
+    }
+    if (extractedText.charCodeAt(0) === 0xfeff) {
+      extractedText = extractedText.slice(1);
+    }
+    if (extractedText.includes('\0')) {
+      return jsonError(
+        400,
+        'invalid_text_file',
+        'Binary files with null bytes are not accepted as text documents.',
+        requestId,
+      );
+    }
+    if (isMdExt || contentTypeHdr === 'text/markdown') {
+      finalContentType = 'text/markdown';
+      storageExt = 'md';
+    } else {
+      finalContentType = 'text/plain';
+      storageExt = 'txt';
+    }
+  }
+
   const hash = await checksum(bytes.buffer),
     now = new Date().toISOString(),
-    key = `${workspace}/documents/${id}/original.pdf`;
+    key = `${workspace}/documents/${id}/original.${storageExt}`;
+
   const existing = await env.DB.prepare(
     `SELECT d.*, m.uploader_user_id, m.state AS media_state, m.retained, m.expires_at, m.deletion_claimed_at FROM document_extractions d JOIN media_objects m ON m.id = d.media_id AND m.workspace_id = d.workspace_id WHERE d.workspace_id = ? AND d.media_id = ?
     AND EXISTS (SELECT 1 FROM workspace_users member WHERE member.workspace_id = d.workspace_id AND member.user_id = ?)`,
@@ -173,14 +242,13 @@ export async function handleUploadDocument(
       );
     return jsonSuccess({ media_id: id, filename, extraction_state: existing.state }, 200);
   }
-  // Claim before the external write. A reused ID never overwrites another
-  // workspace's or uploader's file, even across concurrent requests.
+
   const claim = await env.DB.prepare(
     `INSERT INTO media_objects(id, workspace_id, uploader_user_id, state, object_key, content_type, byte_size, filename, upload_token_hash, upload_token_expires_at, expires_at, created_at, updated_at)
-    SELECT ?, ?, ?, 'quarantine', ?, 'application/pdf', ?, ?, ?, ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM workspace_users WHERE workspace_id = ? AND user_id = ?)
+    SELECT ?, ?, ?, 'quarantine', ?, ?, ?, ?, ?, ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM workspace_users WHERE workspace_id = ? AND user_id = ?)
     ON CONFLICT(id) DO UPDATE SET updated_at = excluded.updated_at, upload_token_expires_at = excluded.upload_token_expires_at
       WHERE media_objects.workspace_id = excluded.workspace_id AND media_objects.uploader_user_id = excluded.uploader_user_id
-        AND media_objects.upload_token_hash = excluded.upload_token_hash AND media_objects.content_type = 'application/pdf'
+        AND media_objects.upload_token_hash = excluded.upload_token_hash
         AND media_objects.state IN ('quarantine', 'ready') AND media_objects.deletion_claimed_at IS NULL RETURNING id`,
   )
     .bind(
@@ -188,6 +256,7 @@ export async function handleUploadDocument(
       workspace,
       scope.user.id,
       key,
+      finalContentType,
       length,
       filename,
       hash,
@@ -206,19 +275,57 @@ export async function handleUploadDocument(
       'This upload is already being saved. Retry with the same ID.',
       requestId,
     );
-  // The checksum claim survives failure so retry can resume safely.
-  await env.STORAGE.put(key, bytes, { httpMetadata: { contentType: 'application/pdf' } });
+
+  await env.STORAGE.put(key, bytes, { httpMetadata: { contentType: finalContentType } });
+
+  let textResultKey: string | null = null;
+  let textChunksJson: string | null = null;
+  let initialExtractionState = 'pending';
+
+  if (extractedText !== null) {
+    // Direct chunking for text/markdown
+    const chunks: string[] = [];
+    for (let at = 0; at < extractedText.length; ) {
+      let end = Math.min(at + 6000, extractedText.length);
+      if (end < extractedText.length) {
+        const paragraph = extractedText.lastIndexOf('\n', end);
+        if (paragraph > at + 3000) end = paragraph + 1;
+      }
+      chunks.push(extractedText.slice(at, end));
+      at = end;
+    }
+    textResultKey = `${workspace}/documents/${id}/text-direct.json`;
+    await env.STORAGE.put(textResultKey, JSON.stringify(chunks), {
+      httpMetadata: { contentType: 'application/json' },
+    });
+    textChunksJson = JSON.stringify(chunks.map((c, n) => ({ index: n, characters: c.length })));
+    initialExtractionState = extractedText.length >= 20 ? 'ready' : 'needs_visual';
+  }
+
   const committed = await env.DB.batch([
     env.DB.prepare(
       `UPDATE media_objects SET state = 'ready', validated_at = ?, upload_completed_at = ?, updated_at = ? WHERE id = ? AND workspace_id = ? AND state IN ('quarantine', 'ready') AND upload_token_hash = ? AND deletion_claimed_at IS NULL AND EXISTS (SELECT 1 FROM workspace_users WHERE workspace_id = ? AND user_id = ?) RETURNING id`,
     ).bind(now, now, now, id, workspace, hash, workspace, scope.user.id),
     env.DB.prepare(
-      `INSERT INTO document_extractions(media_id, workspace_id, checksum, state, updated_at) SELECT ?, ?, ?, 'pending', ? FROM media_objects WHERE id = ? AND workspace_id = ? AND state = 'ready' AND deletion_claimed_at IS NULL AND EXISTS (SELECT 1 FROM workspace_users WHERE workspace_id = ? AND user_id = ?) ON CONFLICT(media_id) DO NOTHING`,
-    ).bind(id, workspace, hash, now, id, workspace, workspace, scope.user.id),
+      `INSERT INTO document_extractions(media_id, workspace_id, checksum, state, result_key, chunks_json, updated_at)
+       SELECT ?, ?, ?, ?, ?, ?, ? FROM media_objects WHERE id = ? AND workspace_id = ? AND state = 'ready' AND deletion_claimed_at IS NULL AND EXISTS (SELECT 1 FROM workspace_users WHERE workspace_id = ? AND user_id = ?)
+       ON CONFLICT(media_id) DO UPDATE SET state = excluded.state, result_key = excluded.result_key, chunks_json = excluded.chunks_json, updated_at = excluded.updated_at`,
+    ).bind(
+      id,
+      workspace,
+      hash,
+      initialExtractionState,
+      textResultKey,
+      textChunksJson,
+      now,
+      id,
+      workspace,
+      workspace,
+      scope.user.id,
+    ),
   ]);
+
   if (!committed[0]!.results?.length) {
-    // An erased workspace has no row left for ordinary cleanup to discover.
-    // Do not remove bytes belonging to a concurrent accepted retry.
     const survivor = await env.DB.prepare(
       'SELECT id FROM media_objects WHERE workspace_id = ? AND id = ?',
     )
@@ -227,13 +334,16 @@ export async function handleUploadDocument(
     if (!survivor) await env.STORAGE.delete(key);
     return jsonError(403, 'access_lost', 'Workspace access changed during upload.', requestId);
   }
-  if (env.DISPATCH_QUEUE)
+
+  if (isPdf && env.DISPATCH_QUEUE) {
     await env.DISPATCH_QUEUE.send({
       kind: 'document_extract',
       workspace_id: workspace,
       job_id: id,
     }).catch(() => undefined);
-  return jsonSuccess({ media_id: id, filename, extraction_state: 'pending' }, 201, {
+  }
+
+  return jsonSuccess({ media_id: id, filename, extraction_state: initialExtractionState }, 201, {
     'cache-control': 'no-store',
   });
 }
@@ -370,7 +480,70 @@ export async function readDocument(
         deletion_claimed_at: string | null;
       }
     >();
-  if (!row) throw new Error('Document not found in this workspace.');
+  if (!row) {
+    const genDoc = await env.DB.prepare(
+      `SELECT r.id, r.title, r.source_key, r.checksum, r.render_state, d.title as doc_title
+       FROM document_revisions r
+       JOIN generated_documents d ON d.id = r.document_id AND d.workspace_id = r.workspace_id
+       WHERE (r.id = ? OR r.output_media_id = ? OR d.id = ?) AND r.workspace_id = ?
+         AND EXISTS (SELECT 1 FROM workspace_users WHERE workspace_id = r.workspace_id AND user_id = ?)`
+    )
+      .bind(args.media_id, args.media_id, args.media_id, workspace, user)
+      .first<{ id: string; title: string; source_key: string; checksum: string; render_state: string; doc_title: string }>();
+
+    if (!genDoc) {
+      throw new Error('Document not found in this workspace.');
+    }
+    if (!genDoc.source_key) {
+      throw new Error('This document draft has not been published yet.');
+    }
+    const sourceObj = await env.STORAGE?.get(genDoc.source_key);
+    if (!sourceObj) {
+      throw new Error('Document source is unavailable.');
+    }
+    const markdown = await sourceObj.text();
+    const chunks: string[] = [];
+    for (let at = 0; at < markdown.length; ) {
+      let end = Math.min(at + 6000, markdown.length);
+      if (end < markdown.length) {
+        const paragraph = markdown.lastIndexOf('\n', end);
+        if (paragraph > at + 3000) end = paragraph + 1;
+      }
+      chunks.push(markdown.slice(at, end));
+      at = end;
+    }
+    let start = 0;
+    if (args.cursor) {
+      try {
+        const c = JSON.parse(atob(args.cursor)) as { workspace: string; media: string; start: number };
+        if (c.workspace === workspace && c.media === args.media_id && Number.isInteger(c.start)) {
+          start = c.start;
+        }
+      } catch {
+        throw new Error('This document page is invalid.');
+      }
+    }
+    const end = Math.min(start + limit, chunks.length);
+    return {
+      media_id: args.media_id,
+      filename: `${genDoc.title || genDoc.doc_title}.md`,
+      state: 'ready',
+      error: null,
+      sections: chunks.slice(start, end).map((text, n) => ({ section: start + n + 1, text })),
+      next_cursor:
+        end < chunks.length
+          ? btoa(JSON.stringify({ workspace, media: args.media_id, start: end }))
+          : null,
+      coverage: {
+        total_sections: chunks.length,
+        from_section: start + 1,
+        through_section: end,
+        complete: start === 0 && end === chunks.length,
+        page_numbers_available: false,
+      },
+      original_media_id: args.media_id,
+    };
+  }
   if (
     row.media_state !== 'ready' ||
     row.deletion_claimed_at ||

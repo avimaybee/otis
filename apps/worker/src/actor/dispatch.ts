@@ -15,7 +15,8 @@ import { resolveDateAnswer } from './clarificationFields.js';
  */
 
 import { claimWorkspaceLease, releaseWorkspaceLease, renewWorkspaceLease } from './leases.js';
-import type { PendingOperationPayload } from '@otis/contracts';
+import type { PendingOperationPayload, RecordsContext } from '@otis/contracts';
+import { validateRecordsContext } from '@otis/contracts';
 import { workerDebug } from '../observability.js';
 import { liveChatBus } from '../chat/liveBus.js';
 import {
@@ -86,6 +87,12 @@ export interface TurnContext {
   sourceText: string;
   channel: string;
   sourceTrust?: 'member' | 'forwarded_client' | 'memory';
+  /**
+   * Records-page target frozen at acceptance. Overrides nothing by itself;
+   * the agent's table tools stage into it (draft) or commit through it
+   * (saved) instead of guessing scope from prose.
+   */
+  recordsContext?: RecordsContext;
   /** Durable answer from the resolved clarification, if this turn resumes one. */
   answerText: string | null;
   answerMessageId: string | null;
@@ -329,7 +336,12 @@ async function resolveRunActor(db: D1Database, run: LoadedRun): Promise<string |
   return null;
 }
 
-async function loadSourceText(db: D1Database, run: LoadedRun): Promise<{ text: string; channel: string; sourceTrust?: 'member' | 'forwarded_client' | 'memory' }> {
+async function loadSourceText(db: D1Database, run: LoadedRun): Promise<{
+  text: string;
+  channel: string;
+  sourceTrust?: 'member' | 'forwarded_client' | 'memory';
+  recordsContext?: RecordsContext;
+}> {
   if (!run.source_message_id) return { text: '', channel: 'system', sourceTrust: 'member' };
   const row = await db
     .prepare(
@@ -341,7 +353,31 @@ async function loadSourceText(db: D1Database, run: LoadedRun): Promise<{ text: s
   if (!row) return { text: '', channel: 'web', sourceTrust: 'member' };
   const authorKind = row['author_kind'];
   const sourceTrust: 'member' | 'forwarded_client' | 'memory' = authorKind === 'member' ? 'member' : 'forwarded_client';
-  return { text: String(row['content_text'] ?? ''), channel: String(row['channel'] ?? 'web'), sourceTrust };
+  // The records target froze at acceptance inside messages_in.raw_payload.
+  // An unreadable target degrades to no context, never to a guessed one.
+  let recordsContext: RecordsContext | undefined;
+  try {
+    const inbound = await db
+      .prepare(`SELECT raw_payload FROM messages_in WHERE id = ?`)
+      .bind(run.source_message_id)
+      .first<{ raw_payload: string | null }>();
+    if (inbound?.raw_payload) {
+      const canonical = JSON.parse(inbound.raw_payload) as { records_context?: unknown };
+      if (typeof canonical.records_context === 'string') {
+        const parsed: unknown = JSON.parse(canonical.records_context);
+        const check = validateRecordsContext(parsed);
+        if (check.valid) recordsContext = parsed as RecordsContext;
+      }
+    }
+  } catch {
+    recordsContext = undefined;
+  }
+  return {
+    text: String(row['content_text'] ?? ''),
+    channel: String(row['channel'] ?? 'web'),
+    sourceTrust,
+    ...(recordsContext ? { recordsContext } : {}),
+  };
 }
 
 /**
@@ -1259,6 +1295,7 @@ export async function dispatchOutboxItem(
           sourceText: source.text,
           channel: source.channel,
           sourceTrust: source.sourceTrust,
+          recordsContext: source.recordsContext,
           answerText: answer?.text ?? null,
           answerMessageId: answer?.messageId ?? null,
           signal: turnAbort.signal,

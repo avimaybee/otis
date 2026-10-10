@@ -108,7 +108,7 @@ describe('model catalog prompt section', () => {
   });
 
   it('instructs model never to reveal literal tool names and bumps prompt version', () => {
-    expect(PROMPT_VERSION).toBe('2026-10-09-v7');
+    expect(PROMPT_VERSION).toBe('2026-10-10-v1');
     const prompt = renderSystemPrompt({ workspaceName: 'Kerning' });
     expect(prompt).toContain('Never reveal literal tool names');
     expect(prompt).toContain('Never mention, cite, quote, or reveal literal internal tool names');

@@ -4,6 +4,7 @@
  */
 
 import type { User, Workspace, WorkspaceSummary } from '@otis/contracts';
+import { BUILT_IN_RECORDS_LISTS } from '@otis/contracts';
 
 /**
  * Retrieves a user by Firebase UID or creates a new user if not found.
@@ -281,6 +282,13 @@ export async function createWorkspace(
   const nowIso = new Date().toISOString();
   const auditId = crypto.randomUUID();
 
+  // Built-in records lists (leads/tasks/notes/drafts) belong to every new
+  // workspace, matching the 0030 migration seed for existing ones. The table
+  // check keeps databases predating that migration working unchanged.
+  const hasRecordsLists = await db
+    .prepare(`SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'records_lists'`)
+    .first<{ name: string }>();
+
   await db.batch([
     db
       .prepare(
@@ -313,6 +321,16 @@ export async function createWorkspace(
         nowIso,
         JSON.stringify({ reason: 'user_created' }),
       ),
+    ...(hasRecordsLists
+      ? BUILT_IN_RECORDS_LISTS.map((list) =>
+        db
+          .prepare(
+            `INSERT OR IGNORE INTO records_lists (workspace_id, id, name, source_kind, status, revision, created_at, updated_at)
+             VALUES (?, ?, ?, ?, 'active', 1, ?, ?)`,
+          )
+          .bind(workspaceId, list.id, list.name, list.source_kind, nowIso, nowIso),
+      )
+      : []),
   ]);
 
   return {
@@ -412,6 +430,10 @@ const WORKSPACE_ERASURE_TABLES = [
   'reminder_rule_cursors',
   'document_extractions',
   'media_annotations',
+  'records_values',
+  'records_rows',
+  'records_list_columns',
+  'records_lists',
 ];
 
 /**

@@ -14,6 +14,7 @@ export { formatQuoteText, reduceFields } from './reducers/fields.js';
 export { reduceTasks } from './reducers/tasks.js';
 export { reduceDrafts } from './reducers/drafts.js';
 export { reduceMemory } from './reducers/memory.js';
+export { reduceRecords } from './reducers/records.js';
 export { rebuildProjections } from './reducers/rebuild.js';
 
 // Command Handlers & Factory
@@ -85,6 +86,8 @@ export { CURRENT_INTERACTION_COLUMNS, CURRENT_INTERACTION_JOINS, mapCurrentInter
 export { handleChangeContact, validContactValue } from './commands/contacts.js';
 export { handleLinkAttachment, handleUnlinkAttachment } from './commands/attachments.js';
 export { handleMergeEntities, previewEntityMerge } from './commands/mergeEntity.js';
-export { getBusinessProjectionState } from './repository/queries.js';
+export { getBusinessProjectionState, getRecordsProjectionState, recordsScopeFor } from './repository/queries.js';
 export { ENTITY_FAMILY_SQL, familyBinds } from './repository/canonical.js';
 export { contactComparison } from './reducers/business.js';
+export { handleRecordsBatch } from './commands/recordsBatch.js';
+export { hydrateRecordsDetails, recordsDetailStatements } from './repository/records.js';

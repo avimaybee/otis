@@ -954,4 +954,39 @@ describe('006A: Pure Policy Rules', () => {
       runAppliedBusinessMutation([{ name: 'log_event', result: { status: 'already_applied' } }]),
     ).toBe(true);
   });
+
+  it('classifies edit_records as mutating while excluding staged patches from acted work', () => {
+    expect(MUTATING_TOOL_NAMES.has('edit_records')).toBe(true);
+    expect(
+      runAppliedBusinessMutation([{ name: 'edit_records', result: { status: 'applied' } }]),
+    ).toBe(true);
+    // A staged draft patch performed zero business writes: proposing is not acting.
+    expect(
+      runAppliedBusinessMutation([{
+        name: 'edit_records',
+        result: { status: 'applied', data: { records_patch: { patch_id: 'ptc_x', save_required: true } } },
+      }]),
+    ).toBe(false);
+    expect(
+      runAppliedBusinessMutation([{ name: 'query', result: { status: 'applied' } }]),
+    ).toBe(false);
+  });
+
+  it('validates edit_records and the records discovery resource', () => {
+    expect(validateToolCall('edit_records', {
+      list_id: 'leads',
+      operations: [{ op: 'cell.clear', op_id: 'op1', row_ref: { kind: 'entity', id: 'e1' }, column_id: 'name' }],
+    }).ok).toBe(true);
+    expect(validateToolCall('edit_records', { list_id: 'leads', operations: [] }).ok).toBe(false);
+    expect(validateToolCall('edit_records', {
+      list_id: 'leads',
+      operations: [{ op: 'cell.frobnicate', op_id: 'op1' }],
+    }).ok).toBe(false);
+    expect(validateToolCall('edit_records', {
+      list_id: 'leads', operations: [{ op: 'cell.clear', op_id: 'op1', row_ref: { kind: 'entity', id: 'e1' }, column_id: 'name' }],
+      workspace_id: 'ws_x',
+    }).ok).toBe(false);
+    expect(validateToolCall('query', { resource: 'records', filters: { list_id: 'leads' }, limit: 20 }).ok).toBe(true);
+    expect(validateToolCall('query', { resource: 'records', filters: { bogus: 1 } }).ok).toBe(false);
+  });
 });

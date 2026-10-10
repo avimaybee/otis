@@ -15,8 +15,13 @@ import type {
   CommandResult,
   LeadStatus,
   MergeEntitiesArgs,
+  RecordEdit,
+  RecordRef,
+  RecordsContext,
+  RecordValue,
   SearchWorkspaceHistoryArgs,
 } from '@otis/contracts';
+import { validateRecordEdit } from '@otis/contracts';
 import { readDocument } from '../media/documents.js';
 import {
   canonicalEntityId,
@@ -38,6 +43,7 @@ import {
   type CreateTaskToolArgs,
   type DeleteEntityToolArgs,
   type DraftMessageToolArgs,
+  type EditRecordsToolArgs,
   type FindEntitiesToolArgs,
   type ForgetMemoryToolArgs,
   type GetMemoryToolArgs,
@@ -86,15 +92,393 @@ import { getChat } from '../inbox/repository.js';
 import { sanitizeFtsQuery } from './context.js';
 import { readLeadOverview, type LeadOverviewColumn } from './leadOverview.js';
 import { FileReadError, readEntityFile } from '../entities/file.js';
+import { readRecordsPage } from '../records/read.js';
 import {
   HistoryReadError,
   readWorkspaceMessageSource,
   searchWorkspaceHistory,
 } from '../conversationSearch.js';
 import { cancelReminder, createReminder, updateReminder } from '../reminders/service.js';
+import type {
+  DocumentStartArgs,
+  DocumentWriteSectionArgs,
+  DocumentPublishArgs,
+} from '@otis/contracts';
+import {
+  startDocument,
+  writeDocumentSections,
+  publishDocument,
+  listChatDocuments,
+} from '../media/generatedDocuments.js';
+import type { Env } from '../index.js';
+
+
+/** Draft-target gate: table-writing tools stage, clarify, or reject; all others execute normally. */
+
+function draftScopeKeys(context: RecordsContext): Set<string> {
+  const keys = new Set<string>();
+  for (const ref of [...context.selected_rows, ...context.visible_row_order]) {
+    keys.add(`${ref.kind}:${ref.id}`);
+  }
+  return keys;
+}
+
+function draftScopeViolation(
+  context: RecordsContext,
+  actionId: string,
+  refs: RecordRef[],
+  what: string,
+): CommandResult | null {
+  const allowed = draftScopeKeys(context);
+  const outside = refs.filter((ref) => !allowed.has(`${ref.kind}:${ref.id}`));
+  if (outside.length === 0) return null;
+  const names = outside.map((ref) => `${ref.kind} ${ref.id}`).join(', ');
+  return {
+    status: 'needs_clarification',
+    action_id: actionId,
+    summary: `The table edit targets ${names}, outside the open ${context.list_id} selection.`,
+    clarification: {
+      prompt: `Which records should '${what}' change? It currently reaches ${names}, outside the rows in view. Name the exact records or open their list first.`,
+      missing_fields: ['records_scope'],
+    },
+  };
+}
+
+function draftPatchResult(
+  actionId: string,
+  context: RecordsContext,
+  listId: string,
+  ops: RecordEdit[],
+  summary: string,
+): CommandResult {
+  for (const op of ops) {
+    const check = validateRecordEdit(op);
+    if (!check.valid) {
+      return {
+        status: 'rejected',
+        action_id: actionId,
+        error: {
+          code: check.code,
+          message: check.op_id ? `[op ${check.op_id}] ${check.message}` : check.message,
+        },
+      };
+    }
+  }
+  return {
+    status: 'applied',
+    action_id: actionId,
+    summary: `${summary} Staged ${ops.length} table edits into the open draft — Save when ready. No business writes happened.`,
+    data: {
+      records_patch: {
+        patch_id: `ptc_${actionId}`,
+        draft: context.target,
+        list_id: listId,
+        operations: ops,
+        op_count: ops.length,
+        save_required: true,
+      },
+    },
+  };
+}
+
+function cellOp(
+  toolName: string,
+  index: number,
+  rowRef: RecordRef,
+  columnId: string,
+  value: unknown,
+): RecordEdit {
+  return {
+    op: 'cell.set',
+    op_id: `op_${toolName}_${index}`,
+    row_ref: rowRef,
+    column_id: columnId,
+    value: value as RecordValue,
+  };
+}
+
+/**
+ * Translate a legacy table-writing tool call into shared record operations.
+ * Returns null when the tool is not draft-gated (it executes normally).
+ * Staging never commits: the member reviews the patch and still saves it.
+ */
+function translateLegacyToolToOps(
+  context: RecordsContext,
+  toolName: string,
+  args: unknown,
+): { ops: RecordEdit[]; listId: string } | { clarify: string } | { reject: string } | null {
+  const listId = context.list_id;
+  const a = (args ?? {}) as Record<string, unknown>;
+  switch (toolName) {
+    case 'set_fields': {
+      const entityId = a['entity_id'];
+      const fields = a['fields'];
+      if (typeof entityId !== 'string' || !Array.isArray(fields)) return null;
+      const ops: RecordEdit[] = fields.flatMap((field, index) => {
+        const item = (field ?? {}) as Record<string, unknown>;
+        if (typeof item['field_name'] !== 'string' || !('value' in item)) return [];
+        return [cellOp(toolName, index, { kind: 'entity', id: entityId }, item['field_name'], item['value'])];
+      });
+      return { ops, listId };
+    }
+    case 'upsert_entity': {
+      if (typeof a['name'] !== 'string' || !a['name'].trim()) return null;
+      return {
+        ops: [{
+          op: 'row.create', op_id: `op_${toolName}_0`,
+          row_ref: { kind: 'entity', id: `tmp_${toolName}_0` }, list_id: listId,
+          initial_values: { name: a['name'] },
+        }],
+        listId,
+      };
+    }
+    case 'rename_entity': {
+      if (typeof a['entity_id'] !== 'string' || typeof a['new_name'] !== 'string') return null;
+      return {
+        ops: [cellOp(toolName, 0, { kind: 'entity', id: a['entity_id'] }, 'name', a['new_name'])],
+        listId,
+      };
+    }
+    case 'delete_entity': {
+      if (typeof a['entity_id'] !== 'string') return null;
+      return {
+        ops: [{ op: 'row.remove', op_id: `op_${toolName}_0`, row_ref: { kind: 'entity', id: a['entity_id'] } }],
+        listId,
+      };
+    }
+    case 'change_contact': {
+      if (typeof a['entity_id'] !== 'string') return null;
+      if (a['operation'] === 'make_primary') {
+        return { clarify: 'Choosing a primary contact needs the member to pick one in the open draft.' };
+      }
+      const method = a['method'];
+      if (method !== 'phone' && method !== 'email') return null;
+      if (a['operation'] === 'remove' || a['value'] === null) {
+        return {
+          ops: [{ op: 'cell.clear', op_id: `op_${toolName}_0`, row_ref: { kind: 'entity', id: a['entity_id'] }, column_id: method }],
+          listId,
+        };
+      }
+      if (typeof a['value'] !== 'string') return null;
+      return {
+        ops: [cellOp(toolName, 0, { kind: 'entity', id: a['entity_id'] }, method, a['value'])],
+        listId,
+      };
+    }
+    case 'log_event': {
+      const kind = a['kind'];
+      const payload = (a['payload'] ?? {}) as Record<string, unknown>;
+      const entityId = typeof a['entity_id'] === 'string' && a['entity_id'] ? a['entity_id'] : null;
+      if (kind === 'note' && typeof payload['text'] === 'string' && payload['text'].trim()) {
+        if (entityId) {
+          return {
+            ops: [cellOp(toolName, 0, { kind: 'entity', id: entityId }, 'notes', payload['text'])],
+            listId,
+          };
+        }
+        return {
+          ops: [{
+            op: 'row.create', op_id: `op_${toolName}_0`,
+            row_ref: { kind: 'interaction', id: `tmp_${toolName}_0` }, list_id: 'notes',
+            initial_values: { text: payload['text'] },
+          }],
+          listId: 'notes',
+        };
+      }
+      if (kind === 'quote' && payload['amount'] !== undefined) {
+        if (!entityId) return { clarify: 'Which record should carry this quote? Name the exact row first.' };
+        return {
+          ops: [cellOp(toolName, 0, { kind: 'entity', id: entityId }, 'value', {
+            amount: payload['amount'], currency: payload['currency'], role: payload['role'],
+          })],
+          listId,
+        };
+      }
+      return { clarify: 'This entry needs its typed fields in the open draft. Describe which record and which values.' };
+    }
+    case 'revise_interaction': {
+      if (typeof a['interaction_id'] !== 'string') return null;
+      return {
+        ops: [{
+          op: 'item.edit', op_id: `op_${toolName}_0`,
+          source_ref: { kind: 'interaction', id: a['interaction_id'] },
+          payload: (a['payload'] ?? {}) as Record<string, unknown>,
+        }],
+        listId,
+      };
+    }
+    case 'remove_interaction': {
+      if (typeof a['interaction_id'] !== 'string') return null;
+      return {
+        ops: [{ op: 'item.remove', op_id: `op_${toolName}_0`, source_ref: { kind: 'interaction', id: a['interaction_id'] } }],
+        listId,
+      };
+    }
+    case 'create_task': {
+      if (typeof a['title'] !== 'string' || !a['title'].trim()) return null;
+      return {
+        ops: [{
+          op: 'row.create', op_id: `op_${toolName}_0`,
+          row_ref: { kind: 'task', id: `tmp_${toolName}_0` }, list_id: 'tasks',
+          initial_values: {
+            title: a['title'],
+            ...(typeof a['due'] === 'object' && a['due'] !== null ? { due: a['due'] as RecordValue } : {}),
+            ...(typeof a['assignee_user_id'] === 'string' ? { assignee: a['assignee_user_id'] } : {}),
+          },
+        }],
+        listId: 'tasks',
+      };
+    }
+    case 'update_task': {
+      if (typeof a['task_id'] !== 'string') return null;
+      const ops: RecordEdit[] = [];
+      let index = 0;
+      for (const [key, column] of [['title', 'title'], ['status', 'status'], ['due', 'due']] as const) {
+        if (a[key] !== undefined) {
+          ops.push(cellOp(toolName, index++, { kind: 'task', id: a['task_id'] }, column, a[key]));
+        }
+      }
+      if (typeof a['assignee_user_id'] === 'string') {
+        ops.push(cellOp(toolName, index++, { kind: 'task', id: a['task_id'] }, 'assignee', a['assignee_user_id']));
+      }
+      if (ops.length === 0) return { clarify: 'Snoozes and other task options need the member to choose them in the open draft.' };
+      return { ops, listId };
+    }
+    case 'draft_message': {
+      if (typeof a['content'] !== 'string' || !a['content'].trim()) return null;
+      if (typeof a['channel'] !== 'string') return null;
+      return {
+        ops: [{
+          op: 'row.create', op_id: `op_${toolName}_0`,
+          row_ref: { kind: 'draft', id: `tmp_${toolName}_0` }, list_id: 'drafts',
+          initial_values: {
+            content_text: a['content'],
+            channel: a['channel'],
+            ...(typeof a['recipient'] === 'string' ? { recipient_address: a['recipient'] } : {}),
+          },
+        }],
+        listId: 'drafts',
+      };
+    }
+    case 'update_draft': {
+      if (typeof a['draft_id'] !== 'string') return null;
+      const ops: RecordEdit[] = [];
+      if (typeof a['content'] === 'string') {
+        ops.push(cellOp(toolName, 0, { kind: 'draft', id: a['draft_id'] }, 'content', a['content']));
+      }
+      if (typeof a['recipient'] === 'string') {
+        ops.push(cellOp(toolName, 1, { kind: 'draft', id: a['draft_id'] }, 'recipient', a['recipient']));
+      }
+      if (ops.length === 0) return null;
+      return { ops, listId };
+    }
+    case 'resolve_conflict': {
+      if (typeof a['entity_id'] !== 'string' || typeof a['field_name'] !== 'string' || !('resolved_value' in a)) return null;
+      return {
+        ops: [cellOp(toolName, 0, { kind: 'entity', id: a['entity_id'] }, a['field_name'], a['resolved_value'])],
+        listId,
+      };
+    }
+    case 'undo': {
+      return { reject: 'Undo applies to saved changes. Save or discard the open draft first, then undo.' };
+    }
+    case 'merge_entities': {
+      return { clarify: 'Combining records needs the member to confirm the pair in the open draft first.' };
+    }
+    case 'mark_message_sent': {
+      return { clarify: 'Sending needs explicit member confirmation and cannot ride on an unsaved draft.' };
+    }
+    default:
+      return null;
+  }
+}
+
+/**
+ * Draft-target gate for table-writing tools. Staged patches validate and
+ * scope-check exactly like manual saves; anything out of scope asks narrowly
+ * instead of painting another list, and anything unst stageable rejects
+ * with its reason. Returns null for tools that execute normally.
+ */
+function stageDraftToolResult(
+  context: RecordsContext,
+  toolName: string,
+  args: unknown,
+  actionId: string,
+): CommandResult | null {
+  if (toolName === 'edit_records') {
+    const erArgs = args as Partial<EditRecordsToolArgs>;
+    if (typeof erArgs.list_id !== 'string' || !Array.isArray(erArgs.operations)) return null;
+    const ops = erArgs.operations as RecordEdit[];
+    const refs: RecordRef[] = [];
+    for (const op of ops) {
+      if (!op || typeof op !== 'object') continue;
+      if (op.op === 'cell.set' || op.op === 'cell.clear' || op.op === 'row.remove' || op.op === 'row.restore') {
+        refs.push(op.row_ref);
+      } else if (op.op === 'item.edit' || op.op === 'item.remove') {
+        refs.push(op.source_ref);
+      } else if (op.op === 'row.create') {
+        if (op.list_id !== context.list_id) {
+          return {
+            status: 'needs_clarification',
+            action_id: actionId,
+            summary: `The table edit creates rows in '${op.list_id}' while '${context.list_id}' is open.`,
+            clarification: {
+              prompt: `This change creates rows in '${op.list_id}', but '${context.list_id}' is open. Open '${op.list_id}' first, or confirm the rows belong there.`,
+              missing_fields: ['records_scope'],
+            },
+          };
+        }
+      } else if (op.op === 'field.create' || op.op === 'calculation.define') {
+        const fieldList = op.op === 'field.create' ? op.list_id : undefined;
+        if (fieldList !== undefined && fieldList !== context.list_id) {
+          return {
+            status: 'needs_clarification',
+            action_id: actionId,
+            summary: 'The table edit defines a field for another list.',
+            clarification: {
+              prompt: `This change defines a field outside '${context.list_id}'. Open that list first, or confirm the field belongs there.`,
+              missing_fields: ['records_scope'],
+            },
+          };
+        }
+      }
+    }
+    const scoped = draftScopeViolation(context, actionId, refs, toolName);
+    if (scoped) return scoped;
+    return draftPatchResult(actionId, context, erArgs.list_id, ops, 'Table edits proposed.');
+  }
+  // The translator returns null for tools that execute normally; every
+  // other table writer stages, clarifies, or rejects explicitly below.
+  const translated = translateLegacyToolToOps(context, toolName, args);
+  if (translated === null) return null;
+  if ('reject' in translated) {
+    return { status: 'rejected', action_id: actionId, error: { code: 'draft_target_unsupported', message: translated.reject } };
+  }
+  if ('clarify' in translated) {
+    return {
+      status: 'needs_clarification',
+      action_id: actionId,
+      summary: translated.clarify,
+      clarification: { prompt: translated.clarify, missing_fields: ['records_scope'] },
+    };
+  }
+  const refs: RecordRef[] = [];
+  for (const op of translated.ops) {
+    if (op.op === 'cell.set' || op.op === 'cell.clear' || op.op === 'row.remove' || op.op === 'row.restore') {
+      refs.push(op.row_ref);
+    } else if (op.op === 'item.edit' || op.op === 'item.remove') {
+      refs.push(op.source_ref);
+    }
+  }
+  const scoped = draftScopeViolation(context, actionId, refs, toolName);
+  if (scoped) return scoped;
+  return draftPatchResult(actionId, context, translated.listId, translated.ops, `Proposed via ${toolName}.`);
+}
 
 export interface ExecuteAgentToolParams {
   storage?: R2Bucket;
+  pdfQueue?: Queue;
+  browser?: Fetcher;
   db: D1Database;
   workspaceId: string;
   actorUserId: string;
@@ -107,6 +491,8 @@ export interface ExecuteAgentToolParams {
   chatId?: string;
   sourceTrust?: 'member' | 'forwarded_client' | 'memory';
   sourceText?: string;
+  /** Frozen records target from the accepted turn, if composed beside the grid. */
+  recordsContext?: import('@otis/contracts').RecordsContext;
   toolName: string;
   toolArgs: unknown;
   maxDailyActions?: number;
@@ -187,6 +573,16 @@ export async function executeAgentTool(params: ExecuteAgentToolParams): Promise<
       error: { code: 'access_lost', message: 'Workspace access is no longer available.' },
     };
   const effectiveExpectedRevision = expectedBusinessRevision ?? wsRow.business_revision;
+
+  // 3b. Draft-target enforcement (R16 Slice E). When the turn was composed
+  // beside the grid with unsaved edits, table-writing tools stage validated
+  // operations into the member's draft instead of committing: the member
+  // still clicks Save. Anything that cannot stage asks narrowly or rejects
+  // explicitly; a prompt instruction alone is not enforcement.
+  if (params.recordsContext && params.recordsContext.target.mode === 'draft') {
+    const staged = stageDraftToolResult(params.recordsContext, toolName, args, actionId);
+    if (staged) return staged;
+  }
 
   // Common ledger context
   const ledgerContext: LedgerCommandContext = {
@@ -420,6 +816,66 @@ export async function executeAgentTool(params: ExecuteAgentToolParams): Promise<
         };
       }
     }
+    case 'document_start': {
+      try {
+        const res = await startDocument(
+          { DB: db, STORAGE: params.storage, PDF_QUEUE: params.pdfQueue, BROWSER: params.browser } as unknown as Env,
+          workspaceId,
+          actorUserId,
+          chatId ?? '',
+          runId ?? null,
+          args as DocumentStartArgs,
+        );
+        return { status: 'applied', action_id: actionId, data: res };
+      } catch (err) {
+        return {
+          status: 'rejected',
+          action_id: actionId,
+          error: {
+            code: 'document_start_failed',
+            message: err instanceof Error ? err.message : 'Failed to start document.',
+          },
+        };
+      }
+    }
+    case 'document_write_section': {
+      try {
+        const res = await writeDocumentSections(
+          { DB: db, STORAGE: params.storage, PDF_QUEUE: params.pdfQueue, BROWSER: params.browser } as unknown as Env,
+          workspaceId,
+          args as DocumentWriteSectionArgs,
+        );
+        return { status: 'applied', action_id: actionId, data: res };
+      } catch (err) {
+        return {
+          status: 'rejected',
+          action_id: actionId,
+          error: {
+            code: 'document_write_failed',
+            message: err instanceof Error ? err.message : 'Failed to write document section.',
+          },
+        };
+      }
+    }
+    case 'document_publish': {
+      try {
+        const res = await publishDocument(
+          { DB: db, STORAGE: params.storage, PDF_QUEUE: params.pdfQueue, BROWSER: params.browser } as unknown as Env,
+          workspaceId,
+          args as DocumentPublishArgs,
+        );
+        return { status: 'applied', action_id: actionId, data: res };
+      } catch (err) {
+        return {
+          status: 'rejected',
+          action_id: actionId,
+          error: {
+            code: 'document_publish_failed',
+            message: err instanceof Error ? err.message : 'Failed to publish document.',
+          },
+        };
+      }
+    }
     case 'query': {
       try {
         const qArgs = args as QueryToolArgs;
@@ -523,6 +979,28 @@ export async function executeAgentTool(params: ExecuteAgentToolParams): Promise<
           to: qArgs.filters?.to,
         });
         return { status: 'applied', action_id: actionId, data };
+      }
+      if (qArgs.resource === 'records') {
+        // Same shared reader as the route and dossier refreshes: lists,
+        // columns with bindings, bounded rows with versions, and honest
+        // cursors. Compact by default; fetch wider pages only when needed.
+        const page = await readRecordsPage(db, workspaceId, {
+          list: qArgs.filters?.list_id,
+          limit: Math.min(Math.max(1, qArgs.limit ?? 20), 100),
+          cursor: qArgs.cursor,
+          search: qArgs.filters?.text ?? qArgs.text ?? '',
+          sortParam: '',
+        });
+        return { status: 'applied', action_id: actionId, data: page };
+      }
+      if (qArgs.resource === 'documents') {
+        const docs = await listChatDocuments(
+          { DB: db, STORAGE: params.storage, PDF_QUEUE: params.pdfQueue, BROWSER: params.browser } as unknown as Env,
+          workspaceId,
+          actorUserId,
+          qArgs.filters?.chat_id ?? chatId ?? '',
+        );
+        return { status: 'applied', action_id: actionId, data: docs };
       }
       if (qArgs.resource === 'members') {
         const members = await listMembers(db, workspaceId);
@@ -2367,6 +2845,28 @@ export async function executeAgentTool(params: ExecuteAgentToolParams): Promise<
         },
         (ctx, state, seq, undoReq) =>
           handleUndoCommit(ctx, allEvents, allActions, state, seq, undoReq),
+        undefined,
+        { deferRunTransition: true },
+      );
+    }
+
+    case 'edit_records': {
+      const erArgs = args as EditRecordsToolArgs;
+      // Saved target (or no records turn): commit through the guarded ledger
+      // exactly like a manual Save, with a retry-stable save identity.
+      return executeLedgerCommand(
+        db,
+        ledgerContext,
+        'records_batch',
+        {
+          save_id: `save_${actionId}`,
+          action_id: actionId,
+          list_id: erArgs.list_id,
+          chunk_index: 0,
+          chunk_count: 1,
+          operations: erArgs.operations,
+        },
+        DEFAULT_COMMAND_HANDLERS['records_batch']!,
         undefined,
         { deferRunTransition: true },
       );

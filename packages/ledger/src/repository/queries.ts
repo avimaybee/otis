@@ -18,6 +18,7 @@ import type {
 import type { LedgerProjectionState, ProjectionCoverage } from '../types.js';
 import { CURRENT_INTERACTION_COLUMNS, CURRENT_INTERACTION_JOINS, mapCurrentInteraction } from './interactions.js';
 import { hydrateBusinessDetails } from './business.js';
+import { hydrateRecordsDetails, hydrateRecordsScope } from './records.js';
 import { ENTITY_FAMILY_SQL, familyBinds } from './canonical.js';
 
 export async function getWorkspaceRevision(
@@ -450,6 +451,9 @@ export async function getWorkspaceProjectionState(
   }
 
   try { await hydrateBusinessDetails(db, workspaceId, state); }
+  catch (error) { if (!String(error).includes('no such table')) throw error; }
+
+  try { await hydrateRecordsDetails(db, workspaceId, state); }
   catch (error) { if (!String(error).includes('no such table')) throw error; }
   return state;
 }
@@ -910,4 +914,341 @@ export async function getActionReceiptsByIds(
     committed_revision: Number(r['committed_revision']),
     created_at: String(r['created_at']),
   }));
+}
+
+export interface RecordsOperationScope {
+  entityIds: string[];
+  taskIds: string[];
+  draftIds: string[];
+  rootIds: string[];
+  listIds: string[];
+  rowIds: string[];
+  fieldIds: string[];
+  columnIds: string[];
+}
+
+function scopeId(value: unknown): string | null {
+  return typeof value === 'string' && value && value.length <= 256 ? value : null;
+}
+
+/**
+ * Trusted scope selection for the records_batch footprint: collect every
+ * touched id straight from the operations. Anything structurally
+ * unexpected returns null so hydration stays fail-open to full state; the
+ * handler itself rejects malformed batches before any effect.
+ */
+export function recordsScopeFor(handler: unknown, args: unknown): RecordsOperationScope | null {
+  // Identity is checked by the caller against the registered handler; this
+  // guard keeps direct calls honest too.
+  if (!handler || !args || typeof args !== 'object') return null;
+  const record = args as Record<string, unknown>;
+  if (!Array.isArray(record['operations']) || record['operations'].length > 100) return null;
+  const scope: RecordsOperationScope = {
+    entityIds: [], taskIds: [], draftIds: [], rootIds: [],
+    listIds: [], rowIds: [], fieldIds: [], columnIds: [],
+  };
+  const pushRef = (kind: unknown, id: unknown): boolean => {
+    const clean = scopeId(id);
+    if (typeof kind !== 'string' || !clean) return false;
+    if (kind === 'entity') scope.entityIds.push(clean);
+    else if (kind === 'task') scope.taskIds.push(clean);
+    else if (kind === 'draft') scope.draftIds.push(clean);
+    else if (kind === 'interaction') scope.rootIds.push(clean);
+    else if (kind === 'custom') scope.rowIds.push(clean);
+    else if (kind === 'memory') return true;
+    else return false;
+    return true;
+  };
+  const listId = scopeId(record['list_id']);
+  if (!listId) return null;
+  scope.listIds.push(listId);
+  for (const op of record['operations']) {
+    if (!op || typeof op !== 'object' || Array.isArray(op)) return null;
+    const edit = op as Record<string, unknown>;
+    if (typeof edit['op'] !== 'string' || typeof edit['op_id'] !== 'string') return null;
+    switch (edit['op']) {
+      case 'cell.set':
+      case 'cell.clear': {
+        const ref = edit['row_ref'] as Record<string, unknown> | undefined;
+        if (!ref || !pushRef(ref['kind'], ref['id'])) return null;
+        const columnId = scopeId(edit['column_id']);
+        if (!columnId) return null;
+        scope.columnIds.push(columnId);
+        break;
+      }
+      case 'item.edit':
+      case 'item.remove': {
+        const ref = edit['source_ref'] as Record<string, unknown> | undefined;
+        if (!ref || !pushRef(ref['kind'], ref['id'])) return null;
+        const origin = edit['origin'] as Record<string, unknown> | undefined;
+        if (origin !== undefined) {
+          const originRef = origin['row_ref'] as Record<string, unknown> | undefined;
+          if (!originRef || !pushRef(originRef['kind'], originRef['id'])) return null;
+        }
+        break;
+      }
+      case 'row.create': {
+        const ref = edit['row_ref'] as Record<string, unknown> | undefined;
+        if (!ref || !pushRef(ref['kind'], ref['id'])) return null;
+        const opList = scopeId(edit['list_id']);
+        if (!opList) return null;
+        scope.listIds.push(opList);
+        break;
+      }
+      case 'row.remove':
+      case 'row.restore': {
+        const ref = edit['row_ref'] as Record<string, unknown> | undefined;
+        if (!ref || !pushRef(ref['kind'], ref['id'])) return null;
+        break;
+      }
+      case 'field.create':
+      case 'field.update':
+      case 'field.archive':
+      case 'field.restore': {
+        const fieldId = scopeId(edit['field_id']);
+        if (!fieldId) return null;
+        scope.fieldIds.push(fieldId);
+        scope.columnIds.push(fieldId);
+        const opList = edit['list_id'];
+        if (opList !== undefined) {
+          const clean = scopeId(opList);
+          if (!clean) return null;
+          scope.listIds.push(clean);
+        }
+        break;
+      }
+      case 'list.create':
+      case 'list.update':
+      case 'list.archive':
+      case 'list.restore': {
+        const opList = scopeId(edit['list_id']);
+        if (!opList) return null;
+        scope.listIds.push(opList);
+        break;
+      }
+      case 'calculation.define': {
+        const fieldId = scopeId(edit['field_id']);
+        if (!fieldId) return null;
+        scope.fieldIds.push(fieldId);
+        break;
+      }
+      default:
+        return null;
+    }
+  }
+  return scope;
+}
+
+function chunkIn(ids: string[], size = 80): string[][] {
+  const unique = [...new Set(ids)];
+  const chunks: string[][] = [];
+  for (let i = 0; i < unique.length; i += size) chunks.push(unique.slice(i, i + size));
+  return chunks;
+}
+
+/**
+ * Targeted hydration for records_batch: the touched entity families with
+ * fields, contacts, aliases, and quote siblings; touched tasks, drafts, and
+ * interaction roots plus the touched entities' full lifecycle rows (so
+ * deletion cascades see exactly what the full loader would); entity-scoped
+ * memories; and the touched records lists, columns, rows, values, and
+ * field definitions. Cost follows touched state, never workspace size.
+ * Creations stay provable through coverage createScope; changed and deleted
+ * keys must sit inside the loaded sets.
+ */
+export async function getRecordsProjectionState(
+  db: D1Database,
+  workspaceId: string,
+  scope: RecordsOperationScope,
+): Promise<{ state: LedgerProjectionState; coverage: ProjectionCoverage }> {
+  const business = await getBusinessProjectionState(db, workspaceId, [...new Set(scope.entityIds)], true);
+  const state = business.state;
+  if (!state.tasks) state.tasks = new Map();
+  if (!state.drafts) state.drafts = new Map();
+  if (!state.memoryEntries) state.memoryEntries = new Map();
+  if (!state.memorySuppressions) state.memorySuppressions = new Map();
+
+  const entityKeys = [...state.entities.keys()];
+  const statements: D1PreparedStatement[] = [];
+  const readers: Array<(rows: Record<string, unknown>[]) => void> = [];
+
+  const taskIdChunks = chunkIn(scope.taskIds);
+  const entityChunks = chunkIn(entityKeys);
+  for (const idChunk of taskIdChunks.length ? taskIdChunks : [[]]) {
+    for (const entChunk of entityChunks.length ? entityChunks : [[]]) {
+      if (!idChunk.length && !entChunk.length) continue;
+      const conditions: string[] = [];
+      const binds: unknown[] = [workspaceId];
+      if (idChunk.length) {
+        conditions.push(`id IN (${idChunk.map(() => '?').join(',')})`);
+        binds.push(...idChunk);
+      }
+      if (entChunk.length) {
+        conditions.push(`entity_id IN (${entChunk.map(() => '?').join(',')})`);
+        binds.push(...entChunk);
+      }
+      statements.push(
+        db.prepare(`SELECT * FROM tasks WHERE workspace_id = ? AND (${conditions.join(' OR ')})`).bind(...binds),
+      );
+      readers.push((rows) => {
+        for (const r of rows) {
+          const t: Task = {
+            id: String(r['id']),
+            workspace_id: String(r['workspace_id']),
+            entity_id: r['entity_id'] ? String(r['entity_id']) : null,
+            title: String(r['title']),
+            assignee_user_id: r['assignee_user_id'] ? String(r['assignee_user_id']) : null,
+            status: r['status'] as Task['status'],
+            due_kind: (r['due_kind'] as Task['due_kind']) || null,
+            due_local_date: r['due_local_date'] ? String(r['due_local_date']) : null,
+            due_instant: r['due_instant'] ? String(r['due_instant']) : null,
+            due_timezone: r['due_timezone'] ? String(r['due_timezone']) : null,
+            snooze_until: r['snooze_until'] ? String(r['snooze_until']) : null,
+            explicit_no_deadline: Number(r['explicit_no_deadline'] ?? 0) === 1,
+            is_promise: Number(r['is_promise'] ?? 0) === 1,
+            source_event_id: String(r['source_event_id']),
+            revision: Number(r['revision']),
+            created_at: String(r['created_at']),
+            updated_at: String(r['updated_at']),
+          };
+          state.tasks.set(t.id, t);
+        }
+      });
+    }
+  }
+
+  for (const idChunk of chunkIn(scope.draftIds).length ? chunkIn(scope.draftIds) : [[]]) {
+    for (const entChunk of entityChunks.length ? entityChunks : [[]]) {
+      if (!idChunk.length && !entChunk.length) continue;
+      const conditions: string[] = [];
+      const binds: unknown[] = [workspaceId];
+      if (idChunk.length) {
+        conditions.push(`id IN (${idChunk.map(() => '?').join(',')})`);
+        binds.push(...idChunk);
+      }
+      if (entChunk.length) {
+        conditions.push(`entity_id IN (${entChunk.map(() => '?').join(',')})`);
+        binds.push(...entChunk);
+      }
+      statements.push(
+        db.prepare(`SELECT * FROM draft_projections WHERE workspace_id = ? AND (${conditions.join(' OR ')})`).bind(...binds),
+      );
+      readers.push((rows) => {
+        for (const r of rows) {
+          const d: DraftProjection = {
+            id: String(r['id']),
+            workspace_id: String(r['workspace_id']),
+            entity_id: r['entity_id'] ? String(r['entity_id']) : null,
+            channel: r['channel'] as DraftProjection['channel'],
+            recipient_address: r['recipient_address'] ? String(r['recipient_address']) : null,
+            content_text: String(r['content_text']),
+            status: r['status'] as DraftProjection['status'],
+            source_event_id: String(r['source_event_id']),
+            revision: Number(r['revision']),
+            created_at: String(r['created_at']),
+            updated_at: String(r['updated_at']),
+          };
+          state.drafts.set(d.id, d);
+        }
+      });
+    }
+  }
+
+  for (const rootChunk of chunkIn(scope.rootIds).length ? chunkIn(scope.rootIds) : [[]]) {
+    for (const entChunk of entityChunks.length ? entityChunks : [[]]) {
+      if (!rootChunk.length && !entChunk.length) continue;
+      const conditions: string[] = [];
+      const binds: unknown[] = [workspaceId];
+      if (rootChunk.length) {
+        conditions.push(`root_event_id IN (${rootChunk.map(() => '?').join(',')})`);
+        binds.push(...rootChunk);
+      }
+      if (entChunk.length) {
+        conditions.push(`entity_id IN (${entChunk.map(() => '?').join(',')})`);
+        binds.push(...entChunk);
+      }
+      statements.push(
+        db.prepare(`SELECT ${INTERACTION_COLUMNS} FROM interaction_state WHERE workspace_id = ? AND (${conditions.join(' OR ')})`).bind(...binds),
+      );
+      readers.push((rows) => {
+        for (const r of rows) {
+          const row = mapInteractionRow(r);
+          state.interactions.set(row.root_event_id, row);
+        }
+      });
+    }
+  }
+
+  for (const entChunk of entityChunks) {
+    statements.push(
+      db.prepare(
+        `SELECT id, workspace_id, scope, subject_id, category, content, status, provenance,
+                source_event_id, source_message_id, author_user_id, observed_at, created_at,
+                superseding_event_id, business_revision
+         FROM memory_entries WHERE workspace_id = ? AND scope = 'entity' AND subject_id IN (${entChunk.map(() => '?').join(',')})`,
+      ).bind(workspaceId, ...entChunk),
+    );
+    readers.push((rows) => {
+      for (const r of rows) {
+        const m: MemoryEntry = {
+          id: String(r['id']),
+          workspace_id: String(r['workspace_id']),
+          scope: r['scope'] as MemoryEntry['scope'],
+          subject_id: r['subject_id'] ? String(r['subject_id']) : null,
+          category: r['category'] as MemoryEntry['category'],
+          content: String(r['content']),
+          status: r['status'] as MemoryEntry['status'],
+          provenance: r['provenance'] as MemoryEntry['provenance'],
+          source_event_id: r['source_event_id'] ? String(r['source_event_id']) : null,
+          source_message_id: r['source_message_id'] ? String(r['source_message_id']) : null,
+          author_user_id: r['author_user_id'] ? String(r['author_user_id']) : null,
+          observed_at: String(r['observed_at']),
+          created_at: String(r['created_at']),
+          superseding_event_id: r['superseding_event_id'] ? String(r['superseding_event_id']) : null,
+          business_revision: Number(r['business_revision']),
+        };
+        state.memoryEntries.set(m.id, m);
+      }
+    });
+  }
+
+  if (statements.length) {
+    try {
+      const loaded = await db.batch(statements);
+      loaded.forEach((result, index) => {
+        readers[index]?.(((result as unknown as { results?: Record<string, unknown>[] }).results ?? []));
+      });
+    } catch (err) {
+      if (!String(err).includes('no such table')) throw err;
+    }
+  }
+
+  try {
+    await hydrateRecordsScope(db, workspaceId, state, {
+      listIds: scope.listIds,
+      rowIds: scope.rowIds,
+      // Targeted columns ride along so guards see their definitions
+      // (calculated columns reject direct writes).
+      fieldIds: [...scope.fieldIds, ...scope.columnIds],
+      columnIds: scope.columnIds,
+    });
+  } catch (err) {
+    if (!String(err).includes('no such table')) throw err;
+  }
+
+  const coverage: ProjectionCoverage = {
+    ...business.coverage,
+    createScope: 'all',
+    tasks: new Set(state.tasks.keys()),
+    drafts: new Set(state.drafts.keys()),
+    interactions: new Set(state.interactions.keys()),
+    memoryEntries: new Set(state.memoryEntries.keys()),
+    memorySuppressions: new Set(),
+    recordsLists: new Set((state.recordsLists ?? new Map()).keys()),
+    recordsListColumns: new Set((state.recordsListColumns ?? new Map()).keys()),
+    recordsRows: new Set((state.recordsRows ?? new Map()).keys()),
+    recordsValues: new Set((state.recordsValues ?? new Map()).keys()),
+    fieldDefinitions: new Set((state.fieldDefinitions ?? new Map()).keys()),
+  };
+  return { state, coverage };
 }

@@ -21,7 +21,7 @@ import type { LedgerCommandContext, LedgerProjectionState, CoverageScope, Projec
 import { handleLinkAttachment, handleUnlinkAttachment, handleUpdateAttachment } from '../commands/attachments.js';
 import { handleChangeReminderRule } from '../commands/reminderRules.js';
 import { FULL_PROJECTION_COVERAGE } from '../types.js';
-import { expandCanonicalProjectionState, getActionReceipt, getBusinessProjectionState, getEntityInteractions, getFieldProjectionState, getInteractionProjectionState, getLogEventProjectionState, getWorkspaceProjectionState, getWorkspaceRevision } from './queries.js';
+import { expandCanonicalProjectionState, getActionReceipt, getBusinessProjectionState, getEntityInteractions, getFieldProjectionState, getInteractionProjectionState, getLogEventProjectionState, getRecordsProjectionState, getWorkspaceProjectionState, getWorkspaceRevision, recordsScopeFor } from './queries.js';
 import { businessDetailStatements, hydrateBusinessDetails } from './business.js';
 import { ENTITY_FAMILY_SQL, familyBinds } from './canonical.js';
 import { reduceBusinessDetails } from '../reducers/business.js';
@@ -39,6 +39,8 @@ import { handleRecordDraft } from '../commands/recordDraft.js';
 import { handleResolveConflict } from '../commands/resolveConflict.js';
 import { handleRememberContext, handleForgetMemory } from '../commands/memory.js';
 import { handleMarkMessageSent } from '../commands/markMessageSent.js';
+import { handleRecordsBatch } from '../commands/recordsBatch.js';
+import { recordsDetailStatements } from './records.js';
 
 /**
  * Computes SHA-256 hash using Web standard SubtleCrypto API.
@@ -92,6 +94,7 @@ export const DEFAULT_COMMAND_HANDLERS: Record<string, AnyCommandHandler> = {
   remember_context: handleRememberContext,
   forget_memory: handleForgetMemory,
   mark_message_sent: handleMarkMessageSent,
+  records_batch: handleRecordsBatch,
 };
 
 /**
@@ -701,6 +704,17 @@ function snapSuppressions(state: LedgerProjectionState): ProjectionSnap {
   return { records };
 }
 
+function snapRecordMaps<V>(
+  map: Map<string, V> | undefined,
+  del: (row: V) => unknown[],
+): ProjectionSnap {
+  const records = new Map<string, { fingerprint: string; del: unknown[] }>();
+  for (const [key, row] of map ?? new Map<string, V>()) {
+    records.set(key, { fingerprint: JSON.stringify(row), del: del(row) });
+  }
+  return { records };
+}
+
 interface ProjectionSnapshots {
   entities: ProjectionSnap;
   aliases: ProjectionSnap;
@@ -710,6 +724,11 @@ interface ProjectionSnapshots {
   drafts: ProjectionSnap;
   memoryEntries: ProjectionSnap;
   memorySuppressions: ProjectionSnap;
+  recordsLists: ProjectionSnap;
+  recordsListColumns: ProjectionSnap;
+  recordsRows: ProjectionSnap;
+  recordsValues: ProjectionSnap;
+  fieldDefinitions: ProjectionSnap;
 }
 
 function snapshotProjections(state: LedgerProjectionState): ProjectionSnapshots {
@@ -722,6 +741,11 @@ function snapshotProjections(state: LedgerProjectionState): ProjectionSnapshots 
     drafts: snapDrafts(state),
     memoryEntries: snapMemoryEntries(state),
     memorySuppressions: snapSuppressions(state),
+    recordsLists: snapRecordMaps(state.recordsLists, (r) => [r.workspace_id, r.id]),
+    recordsListColumns: snapRecordMaps(state.recordsListColumns, (r) => [r.workspace_id, r.id]),
+    recordsRows: snapRecordMaps(state.recordsRows, (r) => [r.workspace_id, r.id]),
+    recordsValues: snapRecordMaps(state.recordsValues, (r) => [r.workspace_id, r.row_id, r.column_id]),
+    fieldDefinitions: snapRecordMaps(state.fieldDefinitions, (r) => [r.workspace_id, r.id]),
   };
 }
 
@@ -820,7 +844,10 @@ function checkInteractions(
     if (scope.has(key)) continue;
     const prior = snap.get(key);
     if (!prior) {
-      // Created key: allowed only for the footprint's own entity scope.
+      // Created key: allowed for composing batches (whose server-owned ids
+      // cannot be enumerated before the run), and otherwise only for the
+      // footprint's own entity scope.
+      if (coverage.createScope === 'all') continue;
       const allowed = coverage.interactionCreate;
       const covered = allowed && (value.entity_id ?? null) === allowed.entity_id && value.kind === allowed.kind;
       if (!covered) violations.push(`created interaction '${key}' outside loaded coverage`);
@@ -874,6 +901,24 @@ function logEventFootprintFor(
 }
 
 /**
+ * Trusted footprint selection for records_batch. Matches the actual
+ * registered handler identity, never the caller's command-name string.
+ * Structurally unexpected args return null so hydration stays fail-open to
+ * full state; the handler itself rejects malformed batches.
+ */
+async function recordsTargetedState(
+  db: D1Database,
+  workspaceId: string,
+  handler: CommandHandler<unknown>,
+  args: unknown,
+): Promise<{ state: LedgerProjectionState; coverage: ProjectionCoverage } | null> {
+  if (handler !== (handleRecordsBatch as AnyCommandHandler)) return null;
+  const scope = recordsScopeFor(handler, args);
+  if (!scope) return null;
+  return getRecordsProjectionState(db, workspaceId, scope);
+}
+
+/**
  * Pure post-handler bounds assertion for targeted hydration: any created,
  * changed or deleted key outside the loaded coverage is rejected before any
  * commit, so a partial state can never persist as the whole workspace.
@@ -885,24 +930,31 @@ function coverageViolations(
 ): string[] {
   if (!next) return [];
   const violations: string[] = [];
+  // Composing batches create server-owned rows (entities, tasks, contacts,
+  // custom rows) whose ids cannot be enumerated before the run. Creations
+  // cannot misread unloaded state as absent, so the records footprint
+  // permits them while changed and deleted keys stay strictly covered.
+  const allowCreate = coverage.createScope === 'all';
   const check = <V>(
     label: string,
-    scope: CoverageScope,
+    scope: CoverageScope | undefined,
     snap: Map<string, { fingerprint: string; del: unknown[] }>,
-    values: Map<string, V>,
+    values: Map<string, V> | undefined,
     fingerprint: (value: V) => string,
   ) => {
-    if (scope === 'all') return;
-    for (const [key, value] of values) {
-      if (scope.has(key)) continue;
+    const effective: CoverageScope = scope ?? 'all';
+    if (effective === 'all') return;
+    for (const [key, value] of values ?? new Map<string, V>()) {
+      if (effective.has(key)) continue;
       const prior = snap.get(key);
-      if (!prior) violations.push(`created ${label} '${key}' outside loaded coverage`);
-      else if (prior.fingerprint !== fingerprint(value)) {
+      if (!prior) {
+        if (!allowCreate) violations.push(`created ${label} '${key}' outside loaded coverage`);
+      } else if (prior.fingerprint !== fingerprint(value)) {
         violations.push(`changed ${label} '${key}' outside loaded coverage`);
       }
     }
     for (const key of snap.keys()) {
-      if (!scope.has(key) && !values.has(key)) violations.push(`deleted ${label} '${key}' outside loaded coverage`);
+      if (!effective.has(key) && !(values ?? new Map()).has(key)) violations.push(`deleted ${label} '${key}' outside loaded coverage`);
     }
   };
   check('entity', coverage.entities, before.entities.records, next.entities, fpEntity);
@@ -913,6 +965,12 @@ function coverageViolations(
   check('draft', coverage.drafts, before.drafts.records, next.drafts, fpDraft);
   check('memory entry', coverage.memoryEntries, before.memoryEntries.records, next.memoryEntries, fpMemory);
   check('suppression', coverage.memorySuppressions, before.memorySuppressions.records, next.memorySuppressions, fpSuppression);
+  const fpJson = (value: unknown): string => JSON.stringify(value);
+  check('records list', coverage.recordsLists, before.recordsLists.records, next.recordsLists, fpJson);
+  check('records column', coverage.recordsListColumns, before.recordsListColumns.records, next.recordsListColumns, fpJson);
+  check('records row', coverage.recordsRows, before.recordsRows.records, next.recordsRows, fpJson);
+  check('records value', coverage.recordsValues, before.recordsValues.records, next.recordsValues, fpJson);
+  check('field definition', coverage.fieldDefinitions, before.fieldDefinitions.records, next.fieldDefinitions, fpJson);
   return violations;
 }
 
@@ -1217,7 +1275,7 @@ export async function executeLedgerCommand<TArgs>(
           logFootprint.entityId,
           logFootprint.kind,
         )
-        : null);
+        : await recordsTargetedState(db, context.workspace_id, handler as CommandHandler<unknown>, args));
   // Only known handlers can opt out of lifecycle hydration. Unknown/custom
   // handlers (including the Undo closure) always receive the complete state.
   const registeredHandler = Object.values(DEFAULT_COMMAND_HANDLERS).includes(handler);
@@ -1249,6 +1307,11 @@ export async function executeLedgerCommand<TArgs>(
     attachmentLinks: currentState.attachmentLinks && new Map([...currentState.attachmentLinks].map(([id, row]) => [id, { ...row }])),
     mediaAnnotations: currentState.mediaAnnotations && new Map([...currentState.mediaAnnotations].map(([id, row]) => [id, { ...row }])),
     reminderRules: currentState.reminderRules && new Map([...currentState.reminderRules].map(([id, row]) => [id, { ...row }])),
+    recordsLists: currentState.recordsLists && new Map([...currentState.recordsLists].map(([id, row]) => [id, { ...row }])),
+    recordsListColumns: currentState.recordsListColumns && new Map([...currentState.recordsListColumns].map(([id, row]) => [id, { ...row }])),
+    recordsRows: currentState.recordsRows && new Map([...currentState.recordsRows].map(([id, row]) => [id, { ...row }])),
+    recordsValues: currentState.recordsValues && new Map([...currentState.recordsValues].map(([id, row]) => [id, { ...row }])),
+    fieldDefinitions: currentState.fieldDefinitions && new Map([...currentState.fieldDefinitions].map(([id, row]) => [id, { ...row }])),
   };
   const nextSeq = wsMeta.last_event_sequence + 1;
   const { result, events, nextState, actionCost } = handler(resolvedContext, currentState, nextSeq, args);
@@ -1631,6 +1694,7 @@ export async function executeLedgerCommand<TArgs>(
   };
 
   statements.push(...businessDetailStatements(db, beforeBusiness, nextState));
+  statements.push(...recordsDetailStatements(db, beforeBusiness, nextState));
   const reminderEntities = new Set(events.filter(e => ['quote', 'contact', 'visit', 'message_sent_by_member', 'interaction_removed', 'entity_merged', 'revert'].includes(e.kind) && e.entity_id).map(e => e.entity_id!));
   for (const entityId of reminderEntities) statements.push(db.prepare(`${ENTITY_FAMILY_SQL} UPDATE reminder_rule_cursors SET dirty = 1
     WHERE rule_id IN (SELECT id FROM reminder_rules WHERE workspace_id = ? AND entity_id IN (SELECT id FROM family) AND status = 'active' AND json_extract(spec_json, '$.kind') = 'after_quote') AND dirty = 0`).bind(...familyBinds(context.workspace_id, entityId), context.workspace_id));

@@ -16,14 +16,21 @@ import type {
   ChangeContactArgs,
   MergeEntitiesArgs,
   SearchWorkspaceHistoryArgs,
+  DocumentStartArgs,
+  DocumentSectionInput,
+  DocumentWriteSectionArgs,
+  DocumentPublishArgs,
 } from '@otis/contracts';
 import {
+  DOCUMENT_BOUNDS,
   ENTITY_FILE_SECTIONS,
   normalizeInteractionOccurredAt,
   validateInteractionPayload,
+  validateRecordEdit,
   validateReminderSpec,
   validReminderTimezone,
   type EntityFileSection,
+  type RecordEdit,
 } from '@otis/contracts';
 
 // Forbidden authority keys that model proposals are never permitted to provide
@@ -260,7 +267,9 @@ export interface QueryToolArgs {
     | 'followups'
     | 'members'
     | 'duplicates'
-    | 'search';
+    | 'search'
+    | 'records'
+    | 'documents';
   section?: EntityFileSection;
   order?: 'occurred' | 'recorded' | 'overdue_first';
   entity_id?: string;
@@ -293,6 +302,12 @@ export interface QueryToolArgs {
     without_next_step?: boolean;
     /** Display column subset (lead_overview only). */
     columns?: string[];
+    /** Records list id (records resource only). */
+    list_id?: string;
+    /** Chat id filter (documents resource only). */
+    chat_id?: string;
+    /** Specific document id filter (documents resource only). */
+    document_id?: string;
   };
   limit?: number;
   cursor?: string;
@@ -1073,6 +1088,43 @@ export function validateUpdateDraftArgs(raw: unknown): ValidationResult<UpdateDr
   };
 }
 
+export interface EditRecordsToolArgs {
+  list_id: string;
+  operations: RecordEdit[];
+}
+
+export function validateEditRecordsArgs(raw: unknown): ValidationResult<EditRecordsToolArgs> {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw))
+    return fail('invalid_type', 'Expected object.');
+  const obj = raw as Record<string, unknown>;
+  const sec = checkNoForbiddenKeys(obj);
+  if (sec) return sec;
+  const unk = checkNoUnknownKeys(obj, new Set(['list_id', 'operations']), 'edit_records');
+  if (unk) return unk;
+
+  if (typeof obj['list_id'] !== 'string' || !obj['list_id'].trim()) {
+    return fail('invalid_argument', "Field 'list_id' must be a non-empty string.");
+  }
+  if (!Array.isArray(obj['operations']) || obj['operations'].length === 0) {
+    return fail('invalid_argument', "Field 'operations' must be a non-empty array of record edits.");
+  }
+  if (obj['operations'].length > 100) {
+    return fail('invalid_argument', 'At most 100 operations travel in one edit_records call.');
+  }
+  const operations: RecordEdit[] = [];
+  for (const rawOp of obj['operations']) {
+    const check = validateRecordEdit(rawOp);
+    if (!check.valid) {
+      return fail(
+        'invalid_argument',
+        check.op_id ? `[op ${check.op_id}] ${check.message}` : check.message,
+      );
+    }
+    operations.push(rawOp as RecordEdit);
+  }
+  return { ok: true, data: { list_id: obj['list_id'].trim(), operations } };
+}
+
 export function validateMarkMessageSentArgs(
   raw: unknown,
 ): ValidationResult<MarkMessageSentToolArgs> {
@@ -1342,11 +1394,13 @@ export function validateQueryArgs(raw: unknown): ValidationResult<QueryToolArgs>
     'members',
     'duplicates',
     'search',
+    'records',
+    'documents',
   ]);
   if (typeof obj['resource'] !== 'string' || !validResources.has(obj['resource'])) {
     return fail(
       'invalid_argument',
-      'Unknown query resource. Use entities, tasks, events, interactions, drafts, attachments, lead_overview, entity_file, followups, members, duplicates, or search.',
+      'Unknown query resource. Use entities, tasks, events, interactions, drafts, attachments, lead_overview, entity_file, followups, members, duplicates, search, records, or documents.',
     );
   }
 
@@ -1394,6 +1448,9 @@ export function validateQueryArgs(raw: unknown): ValidationResult<QueryToolArgs>
         'overdue_only',
         'without_next_step',
         'columns',
+        'list_id',
+        'chat_id',
+        'document_id',
       ]),
       'query.filters',
     );
@@ -1444,6 +1501,9 @@ export function validateQueryArgs(raw: unknown): ValidationResult<QueryToolArgs>
       kind: typeof fObj['kind'] === 'string' ? fObj['kind'].trim() : undefined,
       text: typeof fObj['text'] === 'string' ? fObj['text'].trim() : undefined,
       overdue_only: typeof fObj['overdue_only'] === 'boolean' ? fObj['overdue_only'] : undefined,
+      list_id: typeof fObj['list_id'] === 'string' ? fObj['list_id'].trim() : undefined,
+      chat_id: typeof fObj['chat_id'] === 'string' ? fObj['chat_id'].trim() : undefined,
+      document_id: typeof fObj['document_id'] === 'string' ? fObj['document_id'].trim() : undefined,
     };
     if (filters.kind !== undefined && (filters.kind.length === 0 || filters.kind.length > 64)) {
       return fail(
@@ -2302,6 +2362,170 @@ function validateCapabilityArgs(name: string, raw: unknown): ValidationResult<un
   return { ok: true, data: o };
 }
 
+export function validateDocumentStartArgs(raw: unknown): ValidationResult<DocumentStartArgs> {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    return fail('invalid_type', 'Expected object.');
+  }
+  const obj = raw as Record<string, unknown>;
+  const sec = checkNoForbiddenKeys(obj);
+  if (sec) return sec;
+  const unk = checkNoUnknownKeys(
+    obj,
+    new Set(['title', 'intended_sections', 'document_id', 'base_revision_id']),
+    'document_start',
+  );
+  if (unk) return unk;
+
+  if (typeof obj['title'] !== 'string' || !obj['title'].trim()) {
+    return fail('invalid_argument', "Field 'title' must be a non-empty string.");
+  }
+  if (obj['title'].trim().length > DOCUMENT_BOUNDS.MAX_TITLE_CHARS) {
+    return fail('invalid_argument', `Field 'title' cannot exceed ${DOCUMENT_BOUNDS.MAX_TITLE_CHARS} characters.`);
+  }
+
+  if (!Array.isArray(obj['intended_sections']) || obj['intended_sections'].length === 0) {
+    return fail('invalid_argument', "Field 'intended_sections' must be a non-empty array of section titles.");
+  }
+  if (obj['intended_sections'].length > DOCUMENT_BOUNDS.MAX_SECTIONS_PER_ROUND) {
+    return fail('invalid_argument', `Field 'intended_sections' cannot exceed ${DOCUMENT_BOUNDS.MAX_SECTIONS_PER_ROUND} sections.`);
+  }
+  const intendedSections: string[] = [];
+  for (const item of obj['intended_sections']) {
+    if (typeof item !== 'string' || !item.trim()) {
+      return fail('invalid_argument', "Each item in 'intended_sections' must be a non-empty string.");
+    }
+    intendedSections.push(item.trim());
+  }
+
+  let documentId: string | undefined;
+  if (obj['document_id'] !== undefined) {
+    if (typeof obj['document_id'] !== 'string' || !obj['document_id'].trim()) {
+      return fail('invalid_argument', "Field 'document_id' must be a non-empty string.");
+    }
+    documentId = obj['document_id'].trim();
+  }
+
+  let baseRevisionId: string | undefined;
+  if (obj['base_revision_id'] !== undefined) {
+    if (typeof obj['base_revision_id'] !== 'string' || !obj['base_revision_id'].trim()) {
+      return fail('invalid_argument', "Field 'base_revision_id' must be a non-empty string.");
+    }
+    baseRevisionId = obj['base_revision_id'].trim();
+  }
+
+  return {
+    ok: true,
+    data: {
+      title: obj['title'].trim(),
+      intended_sections: intendedSections,
+      ...(documentId ? { document_id: documentId } : {}),
+      ...(baseRevisionId ? { base_revision_id: baseRevisionId } : {}),
+    },
+  };
+}
+
+export function validateDocumentWriteSectionArgs(raw: unknown): ValidationResult<DocumentWriteSectionArgs> {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    return fail('invalid_type', 'Expected object.');
+  }
+  const obj = raw as Record<string, unknown>;
+  const sec = checkNoForbiddenKeys(obj);
+  if (sec) return sec;
+  const unk = checkNoUnknownKeys(
+    obj,
+    new Set(['document_id', 'revision_id', 'sections']),
+    'document_write_section',
+  );
+  if (unk) return unk;
+
+  if (typeof obj['document_id'] !== 'string' || !obj['document_id'].trim()) {
+    return fail('invalid_argument', "Field 'document_id' must be a non-empty string.");
+  }
+  if (typeof obj['revision_id'] !== 'string' || !obj['revision_id'].trim()) {
+    return fail('invalid_argument', "Field 'revision_id' must be a non-empty string.");
+  }
+
+  if (!Array.isArray(obj['sections']) || obj['sections'].length === 0) {
+    return fail('invalid_argument', "Field 'sections' must be a non-empty array.");
+  }
+  if (obj['sections'].length > DOCUMENT_BOUNDS.MAX_SECTIONS_PER_ROUND) {
+    return fail('invalid_argument', `Cannot write more than ${DOCUMENT_BOUNDS.MAX_SECTIONS_PER_ROUND} sections per call.`);
+  }
+
+  const sections: DocumentSectionInput[] = [];
+  for (const s of obj['sections']) {
+    if (!s || typeof s !== 'object' || Array.isArray(s)) {
+      return fail('invalid_argument', 'Each section must be an object.');
+    }
+    const sObj = s as Record<string, unknown>;
+    if (typeof sObj['id'] !== 'string' || !sObj['id'].trim()) {
+      return fail('invalid_argument', "Section 'id' must be a non-empty string.");
+    }
+    if (typeof sObj['title'] !== 'string' || !sObj['title'].trim()) {
+      return fail('invalid_argument', "Section 'title' must be a non-empty string.");
+    }
+    if (typeof sObj['content_markdown'] !== 'string') {
+      return fail('invalid_argument', "Section 'content_markdown' must be a string.");
+    }
+    if (sObj['content_markdown'].length > DOCUMENT_BOUNDS.MAX_SECTION_CHARS) {
+      return fail('invalid_argument', `Section '${sObj['title']}' exceeds maximum allowed length of ${DOCUMENT_BOUNDS.MAX_SECTION_CHARS} characters.`);
+    }
+    sections.push({
+      id: sObj['id'].trim(),
+      title: sObj['title'].trim(),
+      content_markdown: sObj['content_markdown'],
+    });
+  }
+
+  return {
+    ok: true,
+    data: {
+      document_id: obj['document_id'].trim(),
+      revision_id: obj['revision_id'].trim(),
+      sections,
+    },
+  };
+}
+
+export function validateDocumentPublishArgs(raw: unknown): ValidationResult<DocumentPublishArgs> {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    return fail('invalid_type', 'Expected object.');
+  }
+  const obj = raw as Record<string, unknown>;
+  const sec = checkNoForbiddenKeys(obj);
+  if (sec) return sec;
+  const unk = checkNoUnknownKeys(
+    obj,
+    new Set(['document_id', 'revision_id', 'render_pdf']),
+    'document_publish',
+  );
+  if (unk) return unk;
+
+  if (typeof obj['document_id'] !== 'string' || !obj['document_id'].trim()) {
+    return fail('invalid_argument', "Field 'document_id' must be a non-empty string.");
+  }
+  if (typeof obj['revision_id'] !== 'string' || !obj['revision_id'].trim()) {
+    return fail('invalid_argument', "Field 'revision_id' must be a non-empty string.");
+  }
+
+  let renderPdf: boolean | undefined;
+  if (obj['render_pdf'] !== undefined) {
+    if (typeof obj['render_pdf'] !== 'boolean') {
+      return fail('invalid_argument', "Field 'render_pdf' must be a boolean.");
+    }
+    renderPdf = obj['render_pdf'];
+  }
+
+  return {
+    ok: true,
+    data: {
+      document_id: obj['document_id'].trim(),
+      revision_id: obj['revision_id'].trim(),
+      render_pdf: renderPdf ?? true,
+    },
+  };
+}
+
 export function validateToolCall(name: string, rawArgs: unknown): ValidationResult<unknown> {
   switch (name) {
     case 'find_entities':
@@ -2330,6 +2554,8 @@ export function validateToolCall(name: string, rawArgs: unknown): ValidationResu
       return validateDraftMessageArgs(rawArgs);
     case 'update_draft':
       return validateUpdateDraftArgs(rawArgs);
+    case 'edit_records':
+      return validateEditRecordsArgs(rawArgs);
     case 'mark_message_sent':
       return validateMarkMessageSentArgs(rawArgs);
     case 'search_workspace_history':
@@ -2377,6 +2603,12 @@ export function validateToolCall(name: string, rawArgs: unknown): ValidationResu
       return validateUndoArgs(rawArgs);
     case 'request_clarification':
       return validateRequestClarificationArgs(rawArgs);
+    case 'document_start':
+      return validateDocumentStartArgs(rawArgs);
+    case 'document_write_section':
+      return validateDocumentWriteSectionArgs(rawArgs);
+    case 'document_publish':
+      return validateDocumentPublishArgs(rawArgs);
     default:
       return fail('unknown_tool', `Unknown tool name '${name}'.`);
   }
@@ -2406,6 +2638,7 @@ export const MUTATING_TOOL_NAMES: ReadonlySet<string> = new Set([
   'update_task',
   'draft_message',
   'update_draft',
+  'edit_records',
   'mark_message_sent',
   'create_reminder',
   'update_reminder',
@@ -2415,6 +2648,9 @@ export const MUTATING_TOOL_NAMES: ReadonlySet<string> = new Set([
   'update_preference',
   'execute_command',
   'undo',
+  'document_start',
+  'document_write_section',
+  'document_publish',
 ]);
 
 /** Tools that never change business records: reads, questions and chat configuration. */
@@ -2439,12 +2675,17 @@ export const READ_ONLY_TOOL_NAMES: ReadonlySet<string> = new Set([
  * or words has not acted, and the correction guard may steer one more round.
  */
 export function runAppliedBusinessMutation(
-  results: Array<{ name: string; result: { status: string } }>,
+  results: Array<{ name: string; result: { status: string; data?: unknown } }>,
 ): boolean {
   return results.some(
     (entry) =>
       MUTATING_TOOL_NAMES.has(entry.name) &&
-      (entry.result.status === 'applied' || entry.result.status === 'already_applied'),
+      (entry.result.status === 'applied' || entry.result.status === 'already_applied') &&
+      // A staged draft patch performed zero business writes: proposing is
+      // not acting, so the correction guard may still steer one more round.
+      !(entry.result.data !== null &&
+        typeof entry.result.data === 'object' &&
+        'records_patch' in (entry.result.data as Record<string, unknown>)),
   );
 }
 
@@ -2475,7 +2716,7 @@ export const ALL_AGENT_TOOLS: ProviderToolDeclaration[] = [
   {
     name: 'read_document',
     description:
-      'Read bounded extracted PDF sections from a private retained file. Discover media IDs in entity_file attachments. Pending/failed/needs_visual conversion is not successful reading. Follow next_cursor for more; never claim unread sections or invented PDF page numbers.',
+      'Read bounded extracted sections from a private retained file (PDF, text, markdown) or a generated document revision. Discover media IDs in message document attachments, entity_file attachments, or query documents. Follow next_cursor for more; never claim unread sections or invented page numbers.',
     parameters: {
       type: 'object',
       properties: {
@@ -2912,9 +3153,27 @@ export const ALL_AGENT_TOOLS: ProviderToolDeclaration[] = [
     },
   },
   {
+    name: 'edit_records',
+    description:
+      'Edit Your information table cells, rows, columns, and lists through the shared record operations: cell.set, cell.clear, item.edit, item.remove, row.create, row.remove, row.restore, field.create, field.update, field.archive, field.restore, list.create, list.update, list.archive, list.restore, calculation.define. Every op needs a unique op_id; edits carry the base_token shown with the value. On a saved target the batch commits atomically; on a draft target it stages a patch the member still saves. Discover lists, columns, and bindings with query records first.',
+    parameters: {
+      type: 'object',
+      properties: {
+        list_id: { type: 'string', description: 'Records list carrying the edits.' },
+        operations: {
+          type: 'array',
+          items: { type: 'object' },
+          description: 'Record edits with unique op_ids and base preconditions.',
+        },
+      },
+      required: ['list_id', 'operations'],
+      additionalProperties: false,
+    },
+  },
+  {
     name: 'query',
     description:
-      'Query scoped business records. entity_file returns the complete client-file overview with facts, contacts, work, quotes, notes, files, attribution and honest section coverage. members returns the workspace team roster, their names, emails, roles, and user IDs. duplicates scans for similar entity pairs to compare or merge. search performs a unified search across clients, notes, quotes, tasks, files, and conversation history. merge_preview compares entity_id and target_entity_id before an explicitly requested combination. interactions is current editable entries with root/head IDs; events is immutable history. lead_overview gives full filtered counts and paged next steps.',
+      'Query scoped business records. entity_file returns the complete client-file overview with facts, contacts, work, quotes, notes, files, attribution and honest section coverage. members returns the workspace team roster, their names, emails, roles, and user IDs. duplicates scans for similar entity pairs to compare or merge. search performs a unified search across clients, notes, quotes, tasks, files, and conversation history. merge_preview compares entity_id and target_entity_id before an explicitly requested combination. interactions is current editable entries with root/head IDs; events is immutable history. lead_overview gives full filtered counts and paged next steps. records reads an information list page with columns, stable row refs, typed values, versions, and bindings: discover lists and columns there before edit_records. documents lists generated documents in the chat or workspace with their revision state, title, and PDF render status.',
     parameters: {
       type: 'object',
       properties: {
@@ -2934,6 +3193,8 @@ export const ALL_AGENT_TOOLS: ProviderToolDeclaration[] = [
             'members',
             'duplicates',
             'search',
+            'records',
+            'documents',
           ],
         },
         section: {
@@ -2977,6 +3238,8 @@ export const ALL_AGENT_TOOLS: ProviderToolDeclaration[] = [
                 enum: ['status', 'next_step', 'due', 'owner', 'last_contact'],
               },
             },
+            chat_id: { type: 'string', description: 'Chat ID filter (documents resource only).' },
+            document_id: { type: 'string', description: 'Document ID filter (documents resource only).' },
           },
           additionalProperties: false,
         },
@@ -3249,6 +3512,78 @@ export const ALL_AGENT_TOOLS: ProviderToolDeclaration[] = [
         candidates: { type: 'array', items: { type: 'string' } },
       },
       required: ['question', 'intended_operation', 'missing_fields'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'document_start',
+    description:
+      'Start a new generated document draft or a new revision of an existing document. Specify the title and intended sections. For a revision, pass document_id and optionally base_revision_id.',
+    parameters: {
+      type: 'object',
+      properties: {
+        title: { type: 'string', description: 'The title of the document.' },
+        intended_sections: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'List of planned section titles or topics.',
+        },
+        document_id: {
+          type: 'string',
+          description: 'Optional ID of an existing document to create a new revision for.',
+        },
+        base_revision_id: {
+          type: 'string',
+          description: 'Optional base revision ID to branch from.',
+        },
+      },
+      required: ['title', 'intended_sections'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'document_write_section',
+    description:
+      'Write or update one or more sections of a document draft. Each section has an id, title, and rich markdown content.',
+    parameters: {
+      type: 'object',
+      properties: {
+        document_id: { type: 'string', description: 'The ID of the document being drafted.' },
+        revision_id: { type: 'string', description: 'The ID of the draft revision.' },
+        sections: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              id: { type: 'string', description: "Section slug or identifier, e.g. 'sec-intro'." },
+              title: { type: 'string', description: 'Section heading title.' },
+              content_markdown: { type: 'string', description: 'Markdown content for this section.' },
+            },
+            required: ['id', 'title', 'content_markdown'],
+            additionalProperties: false,
+          },
+          description: 'Sections to save in this round (up to 16).',
+        },
+      },
+      required: ['document_id', 'revision_id', 'sections'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'document_publish',
+    description:
+      'Finalize and publish a document draft revision, assembling sections into a complete markdown document and queuing background PDF rendering.',
+    parameters: {
+      type: 'object',
+      properties: {
+        document_id: { type: 'string', description: 'The ID of the document to publish.' },
+        revision_id: { type: 'string', description: 'The draft revision ID to publish.' },
+        render_pdf: {
+          type: 'boolean',
+          description: 'Whether to generate a printable PDF artifact (defaults to true).',
+        },
+      },
+      required: ['document_id', 'revision_id'],
       additionalProperties: false,
     },
   },

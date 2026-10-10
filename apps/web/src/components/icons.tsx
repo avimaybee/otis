@@ -4,12 +4,13 @@ import {
   SlidersHorizontal, Mic, Play, Pause, MoreVertical, Trash2, Plus,
   Table, Filter, Sparkles, History, Save, Redo2, LayoutList,
   Calculator, Calendar, DollarSign, Phone, Hash, Type, Download,
-  User, Users, Briefcase, RefreshCw, PanelLeft, ArrowLeft, LogOut
+  User, Users, Briefcase, RefreshCw, PanelLeft, ArrowLeft, LogOut, Image
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 function icon(Component: LucideIcon, defaultSize = 18) {
   return function Icon({ size = defaultSize, className }: { size?: number; className?: string }) { return <Component size={size} strokeWidth={2} aria-hidden="true" focusable="false" className={className}/> };
 }
+export const ImageIcon = icon(Image, 16);
 export const MenuIcon = icon(Menu);
 export const ComposeIcon = icon(SquarePen);
 export const SendIcon = icon(ArrowUp, 18);

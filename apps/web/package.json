@@ -29,7 +29,6 @@
     "lucide-react": "^1.49.0",
     "radix-ui": "^1.6.7",
     "react": "^19.0.0",
-    "react-data-grid": "7.0.0-beta.61",
     "react-dom": "^19.0.0",
     "react-markdown": "^10.1.0",
     "react-textarea-autosize": "^8.5.9",

@@ -276,6 +276,7 @@ export function applyAcceptedMessage(
     content_text: string;
     media_id: string | null;
     image_media_ids?: string[] | null;
+    document_media_ids?: string[] | null;
     run_id: string;
     sequence: number;
     created_at: string;
@@ -284,6 +285,7 @@ export function applyAcceptedMessage(
   const row: ChatMessage = {
     ...message,
     image_media_ids: message.image_media_ids ?? null,
+    document_media_ids: message.document_media_ids ?? null,
     author_display_name: null,
     author_kind: 'member',
     channel: 'web',

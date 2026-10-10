@@ -58,6 +58,10 @@ export interface WorkspaceExport {
   reminder_rules: unknown[];
   document_extractions: unknown[];
   media_annotations: unknown[];
+  records_lists: unknown[];
+  records_list_columns: unknown[];
+  records_rows: unknown[];
+  records_values: unknown[];
 }
 
 /**
@@ -148,6 +152,10 @@ export async function handleExportWorkspace(
     reminder_rules: sections.reminderRules ?? [],
     document_extractions: (sections.documentExtractions ?? []).map(({ result_key: _key, ...extraction }) => extraction),
     media_annotations: sections.mediaAnnotations ?? [],
+    records_lists: sections.recordsLists ?? [],
+    records_list_columns: sections.recordsListColumns ?? [],
+    records_rows: sections.recordsRows ?? [],
+    records_values: sections.recordsValues ?? [],
   };
 
   return jsonSuccess(document, 200, {
@@ -163,6 +171,10 @@ export interface ExportSections {
   reminderRules?: Record<string, unknown>[];
   documentExtractions?: Record<string, unknown>[];
   mediaAnnotations?: Record<string, unknown>[];
+  recordsLists?: Record<string, unknown>[];
+  recordsListColumns?: Record<string, unknown>[];
+  recordsRows?: Record<string, unknown>[];
+  recordsValues?: Record<string, unknown>[];
   users: Record<string, unknown>[];
   memberships: Record<string, unknown>[];
   settings: Record<string, unknown>[];
@@ -266,13 +278,14 @@ export async function collectWorkspaceExportSections(
     // Pre-images migration databases simply have no v2 inventory.
   }
 
-  const detailTables = ['interaction_state', 'entity_contacts', 'entity_redirects', 'attachment_links', 'reminder_rules', 'document_extractions', 'media_annotations'];
+  const detailTables = ['interaction_state', 'entity_contacts', 'entity_redirects', 'attachment_links', 'reminder_rules', 'document_extractions', 'media_annotations', 'records_lists', 'records_list_columns', 'records_rows', 'records_values'];
   const present = new Set((await db.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all<{ name: string }>()).results.map(r => r.name));
   const available = detailTables.filter(table => present.has(table));
   const details = available.length ? await db.batch(available.map(table => q(`SELECT * FROM ${table} WHERE workspace_id = ?`))) : [];
   const detail = (table: string) => (details[available.indexOf(table)]?.results ?? []) as Record<string, unknown>[];
   return {
     interactions: detail('interaction_state'), contacts: detail('entity_contacts'), redirects: detail('entity_redirects'), attachmentLinks: detail('attachment_links'), reminderRules: detail('reminder_rules'), documentExtractions: detail('document_extractions'), mediaAnnotations: detail('media_annotations'),
+    recordsLists: detail('records_lists'), recordsListColumns: detail('records_list_columns'), recordsRows: detail('records_rows'), recordsValues: detail('records_values'),
     users: rowsAt(0),
     memberships: rowsAt(1),
     settings: rowsAt(2),
@@ -370,6 +383,8 @@ export function workspaceExportToSheets(
     ['Memory notes', sections.memoryEntries.length],
     ['Briefs', sections.briefs.length],
     ['Reminders', sections.reminders.length],
+    ['Records lists', sections.recordsLists?.length ?? 0],
+    ['Records rows', sections.recordsRows?.length ?? 0],
   ];
   const sheets: SheetData[] = [
     {
@@ -477,6 +492,10 @@ export function workspaceExportToSheets(
     ['Follow-up rules', sections.reminderRules],
     ['Document text inventory', sections.documentExtractions],
     ['Media annotations', sections.mediaAnnotations],
+    ['Records lists', sections.recordsLists],
+    ['Records columns', sections.recordsListColumns],
+    ['Records rows', sections.recordsRows],
+    ['Records values', sections.recordsValues],
   ] as const) {
     if (!rows?.length) continue;
     const headers = Object.keys(rows[0]!);

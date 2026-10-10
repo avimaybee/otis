@@ -4,52 +4,69 @@
  * POST /api/workspaces/:workspaceId/records
  *
  * Connects the "Your information" records spreadsheet/card views directly
- * to the authoritative D1 ledger tables (entities, entity_state, tasks,
- * draft_projections, events, action_receipts).
+ * to the authoritative D1 ledger tables through executeLedgerCommand with
+ * atomic conditional D1 batch guards.
+ *
+ * In accordance with plans/editable-records.md Sections 6, 8, and 12 (Slice B).
  */
 
 import { jsonError, jsonSuccess } from '../middleware/errors.js';
 import { readJsonBody, requireWorkspaceScope } from './scope.js';
+import { readRecordsPage } from '../records/read.js';
 import type { Env } from '../index.js';
-import { formatQuoteText, readCurrentInteractions } from '@otis/ledger';
+import {
+  executeLedgerCommand,
+  getWorkspaceRevision,
+  handleRecordsBatch,
+} from '@otis/ledger';
+import type {
+  ColumnType,
+  RecordCell,
+  RecordColumn,
+  RecordEdit,
+  RecordHistoryItem,
+  RecordList,
+  RecordRef,
+  RecordRow,
+  RecordsResponse,
+  RecordsSaveRequest,
+  RecordsSaveResponse,
+  RecordsViewQuery,
+  RecordValue,
+} from '@otis/contracts';
+import { validateRecordsSaveRequest } from '@otis/contracts';
 
-export interface RecordColumn {
-  id: string;
-  name: string;
-  type: 'text' | 'status' | 'number' | 'currency' | 'date' | 'phone';
-  width: number;
-  isCore?: boolean;
-  options?: string[];
+async function readMembershipRevision(db: D1Database, workspaceId: string): Promise<number> {
+  const row = await db
+    .prepare(`SELECT membership_revision FROM workspaces WHERE id = ?`)
+    .bind(workspaceId)
+    .first<{ membership_revision: number }>();
+  return row?.membership_revision ?? 0;
 }
 
-export interface RecordRow {
-  id: string;
-  source: 'entity' | 'custom';
-  cells: Record<string, string>;
-  provenance?: Record<string, string>;
+async function computeHash(data: string): Promise<string> {
+  const encoder = new TextEncoder();
+  const buffer = await crypto.subtle.digest('SHA-256', encoder.encode(data));
+  const hashArray = Array.from(new Uint8Array(buffer));
+  return hashArray.map((b) => b.toString(16).padStart(2, '0')).join('');
 }
 
-export interface RecordList {
-  id: string;
-  name: string;
-  description?: string;
-  columns: RecordColumn[];
-  rows: RecordRow[];
-}
-
-export interface RecordHistoryItem {
-  id: string;
-  timestamp: string;
-  actor: 'user' | 'otis';
-  description: string;
-  affectedCount: number;
-  canRestore: boolean;
-}
-
-export interface RecordsResponse {
-  lists: RecordList[];
-  history: Record<string, RecordHistoryItem[]>;
-}
+// Re-export contract types for backward compatibility
+export type {
+  ColumnType,
+  RecordCell,
+  RecordColumn,
+  RecordEdit,
+  RecordHistoryItem,
+  RecordList,
+  RecordRef,
+  RecordRow,
+  RecordsResponse,
+  RecordsSaveRequest,
+  RecordsSaveResponse,
+  RecordsViewQuery,
+  RecordValue,
+};
 
 export async function handleGetRecords(
   request: Request,
@@ -61,625 +78,25 @@ export async function handleGetRecords(
     const scope = await requireWorkspaceScope(request, env.DB, workspaceId, requestId);
     if (scope instanceof Response) return scope;
 
-  // 1. Fetch workspace users to resolve assignee IDs to display names
-  const usersResult = await env.DB.prepare(
-    `SELECT u.id, u.display_name FROM users u JOIN workspace_users wu ON wu.user_id = u.id WHERE wu.workspace_id = ?`,
-  )
-    .bind(workspaceId)
-    .all<{ id: string; display_name: string | null }>();
-  const memberMap: Record<string, string> = {};
-  for (const u of usersResult.results || []) {
-    memberMap[u.id] = u.display_name || 'Teammate';
-  }
 
-  // 2. Fetch entities & their current projection state
-  const [
-    entitiesResult,
-    fieldsResult,
-    tasksResult,
-    draftsResult,
-    eventsResult,
-    receiptsResult,
-    redirectsResult,
-    contactsResult,
-    activeInteractionsResult,
-  ] = await Promise.all([
-    env.DB.prepare(
-      `SELECT id, name, kind, status, assigned_user_id, created_at, updated_at
-         FROM entities WHERE workspace_id = ? ORDER BY created_at ASC`,
-    )
-      .bind(workspaceId)
-      .all<{
-        id: string;
-        name: string;
-        kind: string;
-        status: string;
-        assigned_user_id: string | null;
-        created_at: string;
-        updated_at: string;
-      }>(),
-    env.DB.prepare(
-      `SELECT entity_id, field_name, state, value_text, value_json, provenance, updated_at
-         FROM entity_state WHERE workspace_id = ?`,
-    )
-      .bind(workspaceId)
-      .all<{
-        entity_id: string;
-        field_name: string;
-        state: string;
-        value_text: string | null;
-        value_json: string | null;
-        provenance: string;
-        updated_at: string;
-      }>(),
-    env.DB.prepare(
-      `SELECT id, entity_id, title, assignee_user_id, status, due_kind, due_local_date, due_instant, due_timezone, snooze_until, created_at, updated_at
-         FROM tasks WHERE workspace_id = ? ORDER BY created_at ASC`,
-    )
-      .bind(workspaceId)
-      .all<{
-        id: string;
-        entity_id: string | null;
-        title: string;
-        assignee_user_id: string | null;
-        status: string;
-        due_kind: string | null;
-        due_local_date: string | null;
-        due_instant: string | null;
-        due_timezone: string | null;
-        snooze_until: string | null;
-        created_at: string;
-        updated_at: string;
-      }>(),
-    env.DB.prepare(
-      `SELECT id, entity_id, channel, recipient_address, content_text, updated_at
-         FROM draft_projections WHERE workspace_id = ? ORDER BY updated_at DESC`,
-    )
-      .bind(workspaceId)
-      .all<{
-        id: string;
-        entity_id: string | null;
-        channel: string;
-        recipient_address: string | null;
-        content_text: string;
-        updated_at: string;
-      }>(),
-    readCurrentInteractions(env.DB, workspaceId, { limit: 50 }).then((page) => ({
-      results: page.rows,
-      has_more: page.has_more,
-    })),
-    env.DB.prepare(
-      `SELECT action_id, command_name, result_status, result_json, created_at
-         FROM action_receipts WHERE workspace_id = ? ORDER BY created_at DESC LIMIT 20`,
-    )
-      .bind(workspaceId)
-      .all<{
-        action_id: string;
-        command_name: string;
-        result_status: string;
-        result_json: string;
-        created_at: string;
-      }>(),
-    env.DB.prepare(
-      'SELECT source_entity_id, target_entity_id FROM entity_redirects WHERE workspace_id = ?',
-    )
-      .bind(workspaceId)
-      .all<{ source_entity_id: string; target_entity_id: string }>(),
-    env.DB.prepare(
-      "SELECT entity_id, method, value, is_primary, state FROM entity_contacts WHERE workspace_id = ? AND state != 'removed' ORDER BY is_primary DESC, updated_at ASC",
-    )
-      .bind(workspaceId)
-      .all<{ entity_id: string; method: string; value: string; is_primary: number; state: string }>(),
-    env.DB.prepare(
-      `SELECT i.entity_id, i.kind, i.occurred_at, e.payload_json
-         FROM interaction_state i
-         JOIN events e ON e.workspace_id = i.workspace_id AND e.id = i.head_event_id
-        WHERE i.workspace_id = ? AND i.state = 'active' AND i.entity_id IS NOT NULL
-        ORDER BY i.occurred_at DESC`,
-    )
-      .bind(workspaceId)
-      .all<{ entity_id: string; kind: string; occurred_at: string; payload_json: string }>(),
-  ]);
-
-  const redirects = new Map(
-    (redirectsResult.results ?? []).map((r) => [r.source_entity_id, r.target_entity_id]),
-  );
-  const canonical = (id: string) => {
-    for (let depth = 0; depth < 32 && redirects.has(id); depth++) id = redirects.get(id)!;
-    return id;
-  };
-  const allEntities = entitiesResult.results || [];
-  const rawEntities = allEntities.filter((e) => canonical(e.id) === e.id);
-  const rawFields = fieldsResult.results || [];
-  const rawTasks = tasksResult.results || [];
-  const rawDrafts = draftsResult.results || [];
-  const rawEvents = eventsResult.results || [];
-  const rawReceipts = receiptsResult.results || [];
-  const rawInteractions = activeInteractionsResult.results || [];
-
-  // Group entity state fields by entity_id
-  const fieldsByEntity = new Map<
-    string,
-    Array<{ field_name: string; value: string; provenance?: string }>
-  >();
-  for (const f of rawFields) {
-    const id = canonical(f.entity_id);
-    let list = fieldsByEntity.get(id);
-    if (!list) {
-      list = [];
-      fieldsByEntity.set(id, list);
-    }
-    let val = f.state === 'disputed' ? 'Disputed' : (f.value_text ?? '');
-    if (!val && f.value_json) {
-      try {
-        const parsed = JSON.parse(f.value_json);
-        val = typeof parsed === 'string' ? parsed : JSON.stringify(parsed);
-      } catch {
-        val = f.value_json;
-      }
-    }
-    list.push({ field_name: f.field_name, value: val, provenance: f.provenance });
-  }
-
-  // Name map for linking entities
-  const entityNameMap: Record<string, string> = {};
-  const canonicalNames = new Map(rawEntities.map((entity) => [entity.id, entity.name]));
-  for (const e of allEntities) {
-    entityNameMap[e.id] = canonicalNames.get(canonical(e.id)) ?? e.name;
-  }
-
-  // Group contacts by entity
-  const contactsByEntity = new Map<
-    string,
-    Array<{ method: string; value: string; is_primary: number; state: string }>
-  >();
-  for (const c of contactsResult.results ?? []) {
-    const id = canonical(c.entity_id);
-    let list = contactsByEntity.get(id);
-    if (!list) {
-      list = [];
-      contactsByEntity.set(id, list);
-    }
-    list.push(c);
-  }
-
-  // Extract latest notes and quotes from interaction_state
-  const latestNotesByEntity = new Map<string, { text: string; date: string }>();
-  const latestQuotesByEntity = new Map<string, { quote: string; date: string }>();
-
-  for (const inter of rawInteractions) {
-    const id = canonical(inter.entity_id);
-    if (inter.kind === 'note' && !latestNotesByEntity.has(id)) {
-      try {
-        const p = JSON.parse(inter.payload_json) as Record<string, unknown>;
-        const text = String(p['text'] || p['summary'] || p['notes'] || p['description'] || '');
-        if (text) {
-          latestNotesByEntity.set(id, { text, date: inter.occurred_at });
-        }
-      } catch {
-        // ignore parse error
-      }
-    } else if (inter.kind === 'quote' && !latestQuotesByEntity.has(id)) {
-      try {
-        const p = JSON.parse(inter.payload_json) as Record<string, unknown>;
-        if (typeof p['amount'] === 'number' && typeof p['currency'] === 'string') {
-          const formatted = formatQuoteText(p['amount'], p['currency'], String(p['role'] || 'quoted'));
-          latestQuotesByEntity.set(id, { quote: formatted, date: inter.occurred_at });
-        }
-      } catch {
-        // ignore parse error
-      }
-    }
-  }
-
-  // Extract earliest open tasks per entity
-  const openTasksByEntity = new Map<string, { title: string; due?: string }>();
-  for (const t of rawTasks) {
-    if (t.entity_id && t.status === 'open') {
-      const id = canonical(t.entity_id);
-      if (!openTasksByEntity.has(id)) {
-        openTasksByEntity.set(id, {
-          title: t.title,
-          due: t.due_local_date || t.due_instant || undefined,
-        });
-      }
-    }
-  }
-
-  // Build rows from entities with real ledger projections
-  const buildEntityRows = (entities: typeof rawEntities): RecordRow[] => {
-    return entities.map((e) => {
-      const cells: Record<string, string> = {
-        name: e.name,
-        status: e.status || 'new',
-      };
-      const prov: Record<string, string> = {};
-
-      if (e.assigned_user_id) {
-        cells.assignee = memberMap[e.assigned_user_id] ?? 'Teammate';
-      }
-
-      // 1. Phone and email from entity_contacts
-      const entContacts = contactsByEntity.get(e.id) || [];
-      const phones = entContacts.filter((c) => c.method === 'phone');
-      const emails = entContacts.filter((c) => c.method === 'email');
-
-      if (phones.length > 0) {
-        const primary = phones.find((c) => c.is_primary && c.state === 'active') || phones.find((c) => c.state === 'active');
-        if (primary) {
-          cells.phone = primary.value;
-          prov.phone = 'Contact from business memory';
-        } else if (phones.some((c) => c.state === 'disputed')) {
-          cells.phone = 'Disputed';
-        }
-      }
-
-      if (emails.length > 0) {
-        const primary = emails.find((c) => c.is_primary && c.state === 'active') || emails.find((c) => c.state === 'active');
-        if (primary) {
-          cells.email = primary.value;
-          prov.email = 'Contact from business memory';
-        } else if (emails.some((c) => c.state === 'disputed')) {
-          cells.email = 'Disputed';
-        }
-      }
-
-      // 2. Entity state fields
-      const fieldItems = fieldsByEntity.get(e.id) || [];
-      for (const item of fieldItems) {
-        const key = item.field_name;
-        if (key === 'phone' && !cells.phone) {
-          cells.phone = item.value;
-        } else if (key === 'email' && !cells.email) {
-          cells.email = item.value;
-        } else if (key === 'assigned_user_id') {
-          if (!cells.assignee) {
-            cells.assignee = item.value === 'Disputed' ? 'Disputed' : (memberMap[item.value] ?? '');
-          }
-        } else if (key === 'preferred_language' || key === 'language') {
-          cells.language = item.value;
-        } else if (key === 'quote' || key === 'deal_value' || key === 'value') {
-          cells.value = item.value;
-        } else if (key === 'access' || key === 'access_instructions') {
-          cells.access = item.value;
-        } else if (key === 'notes' && !cells.notes) {
-          cells.notes = item.value;
-        } else if (key === 'company') {
-          cells.company = item.value;
-        } else if (key === 'address') {
-          cells.address = item.value;
-        } else if (key !== 'name' && key !== 'status' && key !== 'id' && key !== 'workspace_id') {
-          cells[key] = item.value;
-        }
-
-        if (item.provenance) {
-          prov[key] = item.provenance;
-        }
-      }
-
-      // 3. Genuine ledger interactions (notes & quotes)
-      if (!cells.notes && latestNotesByEntity.has(e.id)) {
-        const note = latestNotesByEntity.get(e.id)!;
-        cells.notes = note.text;
-        prov.notes = `Logged on ${note.date.slice(0, 10)}`;
-      }
-
-      if (!cells.value && latestQuotesByEntity.has(e.id)) {
-        const quote = latestQuotesByEntity.get(e.id)!;
-        cells.value = quote.quote;
-        prov.value = `Quote from ${quote.date.slice(0, 10)}`;
-      }
-
-      // 4. Open tasks / Next action
-      if (openTasksByEntity.has(e.id)) {
-        const t = openTasksByEntity.get(e.id)!;
-        cells.next_action = t.due ? `${t.title} (${t.due})` : t.title;
-        prov.next_action = 'Open task';
-      }
-
-      // 5. Kind badge if distinct
-      if (e.kind && e.kind !== 'lead') {
-        cells.kind = e.kind.charAt(0).toUpperCase() + e.kind.slice(1);
-      }
-
-      return {
-        id: e.id,
-        source: 'entity',
-        cells,
-        ...(Object.keys(prov).length > 0 ? { provenance: prov } : {}),
-      };
+    const url = new URL(request.url);
+    const payload = await readRecordsPage(env.DB, workspaceId, {
+      list: url.searchParams.get('list') || url.searchParams.get('list_id') || undefined,
+      limit: Math.min(Math.max(1, Number(url.searchParams.get('limit')) || 50), 100),
+      cursor: url.searchParams.get('cursor') || undefined,
+      search: (url.searchParams.get('search') || url.searchParams.get('q') || '').trim(),
+      sortParam: (url.searchParams.get('sort') || '').trim(),
     });
-  };
-
-  // Build clean, deduplicated columns reflecting actual populated data
-  const buildColumnsForRows = (rows: RecordRow[], isLeadsList: boolean): RecordColumn[] => {
-    const hasData = (colId: string) =>
-      rows.some((r) => r.cells[colId] && r.cells[colId].trim().length > 0);
-
-    const cols: RecordColumn[] = [
-      { id: 'name', name: isLeadsList ? 'Lead name' : 'Name', type: 'text', width: 200, isCore: true },
-      {
-        id: 'status',
-        name: 'Status',
-        type: 'status',
-        width: 120,
-        isCore: true,
-        options: ['new', 'warm', 'hot', 'won', 'cold', 'lost', 'deprioritized'],
-      },
-    ];
-
-    if (isLeadsList) {
-      cols.push({ id: 'phone', name: 'Phone', type: 'phone', width: 160, isCore: true });
-      if (hasData('email')) {
-        cols.push({ id: 'email', name: 'Email', type: 'text', width: 180 });
-      }
-      if (hasData('company')) {
-        cols.push({ id: 'company', name: 'Company', type: 'text', width: 160 });
-      }
-      if (hasData('value') || rows.length === 0) {
-        cols.push({ id: 'value', name: 'Deal value', type: 'currency', width: 130 });
-      }
-      if (hasData('notes') || rows.length === 0) {
-        cols.push({ id: 'notes', name: 'Notes', type: 'text', width: 280 });
-      }
-      if (hasData('next_action')) {
-        cols.push({ id: 'next_action', name: 'Next action', type: 'text', width: 200 });
-      }
-      if (hasData('assignee')) {
-        cols.push({ id: 'assignee', name: 'Assignee', type: 'text', width: 140 });
-      }
-      if (hasData('kind')) {
-        cols.push({ id: 'kind', name: 'Type', type: 'text', width: 110 });
-      }
-      if (hasData('address')) {
-        cols.push({ id: 'address', name: 'Address', type: 'text', width: 200 });
-      }
-      if (hasData('language')) {
-        cols.push({ id: 'language', name: 'Language', type: 'text', width: 120 });
-      }
-      if (hasData('access')) {
-        cols.push({ id: 'access', name: 'Access instructions', type: 'text', width: 240 });
-      }
-    } else {
-      if (hasData('phone')) cols.push({ id: 'phone', name: 'Phone', type: 'phone', width: 160 });
-      if (hasData('email')) cols.push({ id: 'email', name: 'Email', type: 'text', width: 180 });
-      if (hasData('value')) cols.push({ id: 'value', name: 'Value', type: 'currency', width: 130 });
-      if (hasData('notes')) cols.push({ id: 'notes', name: 'Notes', type: 'text', width: 280 });
-      if (hasData('assignee')) cols.push({ id: 'assignee', name: 'Assignee', type: 'text', width: 140 });
-    }
-
-    // Dynamic custom columns from row cells
-    const knownIds = new Set(cols.map((c) => c.id));
-    for (const row of rows) {
-      for (const [cellKey, cellVal] of Object.entries(row.cells)) {
-        if (!knownIds.has(cellKey) && cellVal && cellVal.trim().length > 0) {
-          knownIds.add(cellKey);
-          cols.push({
-            id: cellKey,
-            name: cellKey.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase()),
-            type: /price|cost|amount|val/i.test(cellKey)
-              ? 'currency'
-              : /^\d+$/.test(cellVal.trim())
-                ? 'number'
-                : 'text',
-            width: 160,
-          });
-        }
-      }
-    }
-
-    // STRICT DEDUPLICATION
-    const seen = new Set<string>();
-    return cols.filter((c) => {
-      if (seen.has(c.id)) return false;
-      seen.add(c.id);
-      return true;
+    return jsonSuccess(payload, 200, {
+      'x-request-id': requestId,
     });
-  };
-
-  // Group entities into core business records (Leads & Contacts) and custom collections
-  const CORE_BUSINESS_KINDS = new Set([
-    'lead',
-    'client',
-    'prospect',
-    'contact',
-    'person',
-    'business',
-    'company',
-    'organization',
-    'partner',
-    'vendor',
-    '',
-  ]);
-  const isCoreBusinessEntity = (kind?: string | null) =>
-    !kind || CORE_BUSINESS_KINDS.has(kind.toLowerCase());
-
-  const coreEntities = rawEntities.filter((e) => isCoreBusinessEntity(e.kind));
-  const leadRows = buildEntityRows(coreEntities);
-  const leadColumns = buildColumnsForRows(leadRows, true);
-
-  // 4. Assemble Tasks list
-  const taskRows: RecordRow[] = rawTasks.map((t) => ({
-    id: t.id,
-    source: 'custom',
-    cells: {
-      title: t.title,
-      status: t.status,
-      due:
-        t.due_local_date ||
-        t.due_instant ||
-        (t.snooze_until ? `Snoozed until ${t.snooze_until}` : ''),
-      assignee: t.assignee_user_id ? (memberMap[t.assignee_user_id] ?? 'Teammate') : '',
-      entity: t.entity_id ? (entityNameMap[t.entity_id] ?? '') : '',
-    },
-  }));
-
-  const taskColumns: RecordColumn[] = [
-    { id: 'title', name: 'Task', type: 'text', width: 260, isCore: true },
-    {
-      id: 'status',
-      name: 'Status',
-      type: 'status',
-      width: 120,
-      isCore: true,
-      options: ['open', 'done', 'cancelled'],
-    },
-    { id: 'due', name: 'Due date', type: 'date', width: 140 },
-    { id: 'assignee', name: 'Assignee', type: 'text', width: 140 },
-    { id: 'entity', name: 'Related record', type: 'text', width: 180 },
-  ];
-
-  // 5. Assemble Notes & interactions list
-  const noteRows: RecordRow[] = rawEvents.map((ev) => {
-    let summary = '';
-    try {
-      const p = ev.payload;
-      summary = String(p['text'] || p['summary'] || p['notes'] || p['description'] || ev.kind);
-      if (
-        ev.kind === 'quote' &&
-        typeof p['amount'] === 'number' &&
-        typeof p['currency'] === 'string' &&
-        typeof p['role'] === 'string'
-      ) {
-        const quote = formatQuoteText(p['amount'], p['currency'], p['role']);
-        summary = summary === 'quote' ? quote : `${quote} · ${summary}`;
-      }
-    } catch {
-      summary = ev.kind;
-    }
-    return {
-      id: ev.interaction_id,
-      source: 'custom',
-      cells: {
-        date: ev.occurred_at,
-        type: ev.kind,
-        summary,
-        entity: ev.entity_id ? (entityNameMap[ev.entity_id] ?? '') : '',
-        actor: ev.actor_user_id
-          ? (memberMap[ev.actor_user_id] ?? 'Teammate')
-          : ev.actor_kind === 'system'
-            ? 'Otis'
-            : '',
-      },
-    };
-  });
-
-  const noteColumns: RecordColumn[] = [
-    { id: 'date', name: 'Date', type: 'text', width: 160, isCore: true },
-    { id: 'type', name: 'Type', type: 'text', width: 110, isCore: true },
-    { id: 'summary', name: 'Summary / note', type: 'text', width: 340, isCore: true },
-    { id: 'entity', name: 'Related record', type: 'text', width: 180 },
-    { id: 'actor', name: 'Logged by', type: 'text', width: 140 },
-  ];
-
-  // 6. Assemble Drafts list
-  const draftRows: RecordRow[] = rawDrafts.map((d) => ({
-    id: d.id,
-    source: 'custom',
-    cells: {
-      channel: d.channel,
-      recipient: d.recipient_address || '',
-      content: d.content_text,
-      entity: d.entity_id ? (entityNameMap[d.entity_id] ?? '') : '',
-    },
-  }));
-
-  const draftColumns: RecordColumn[] = [
-    { id: 'channel', name: 'Channel', type: 'text', width: 120, isCore: true },
-    { id: 'recipient', name: 'Recipient', type: 'text', width: 180 },
-    { id: 'content', name: 'Draft message', type: 'text', width: 360, isCore: true },
-    { id: 'entity', name: 'Related record', type: 'text', width: 180 },
-  ];
-
-  // 7. Custom lists (for genuinely non-core entities e.g. properties, products, inventory)
-  const customLists: RecordList[] = [];
-  const customKinds = new Set(
-    rawEntities
-      .map((e) => e.kind)
-      .filter((k): k is string => Boolean(k) && !isCoreBusinessEntity(k)),
-  );
-  for (const kind of customKinds) {
-    const kindEntities = rawEntities.filter((e) => e.kind === kind);
-    const kindRows = buildEntityRows(kindEntities);
-    const kindName = kind.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
-    customLists.push({
-      id: kind,
-      name: kindName,
-      description: `Custom ${kindName.toLowerCase()} tracked in business memory.`,
-      columns: buildColumnsForRows(kindRows, false),
-      rows: kindRows,
-    });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.stack || err.message : String(err);
+    console.error('[otis:records get error]:', msg);
+    return jsonError(500, 'internal_error', 'Unable to load records. Retry from the list; the saved data is unchanged.', requestId);
   }
-
-  const lists: RecordList[] = [
-    {
-      id: 'leads',
-      name: 'Leads',
-      description: 'Active client and prospect records tracked by you and Otis.',
-      columns: leadColumns,
-      rows: leadRows,
-    },
-    {
-      id: 'tasks',
-      name: 'Tasks',
-      description: 'Action items, commitments and upcoming deadlines.',
-      columns: taskColumns,
-      rows: taskRows,
-    },
-    {
-      id: 'notes',
-      name: 'Notes & interactions',
-      description: eventsResult.has_more
-        ? 'Latest 50 current notes, calls, visits and quotes.'
-        : 'Current notes, calls, visits and quotes captured in conversation.',
-      columns: noteColumns,
-      rows: noteRows,
-    },
-    {
-      id: 'drafts',
-      name: 'Drafts',
-      description: 'Prepared outward messages ready for review.',
-      columns: draftColumns,
-      rows: draftRows,
-    },
-    ...customLists,
-  ];
-
-  // History entries from action receipts
-  const historyItems: Record<string, RecordHistoryItem[]> = {
-    leads: rawReceipts.map((r) => {
-      let desc = r.command_name.replace(/_/g, ' ');
-      try {
-        const parsed = JSON.parse(r.result_json);
-        if (parsed.summary) desc = parsed.summary;
-      } catch {
-        // fallback
-      }
-      return {
-        id: r.action_id,
-        timestamp: r.created_at,
-        actor: 'user',
-        description: desc,
-        affectedCount: 1,
-        canRestore: false,
-      };
-    }),
-  };
-
-  const responsePayload: RecordsResponse = {
-    lists,
-    history: historyItems,
-  };
-
-  return jsonSuccess(responsePayload, 200, {
-    'x-request-id': requestId,
-  });
-} catch (err: unknown) {
-  const msg = err instanceof Error ? err.stack || err.message : String(err);
-  console.error('[otis:records get error]:', msg);
-  return jsonError(500, 'internal_error', msg, requestId);
 }
-}
+
 
 export async function handleSaveRecords(
   request: Request,
@@ -698,340 +115,273 @@ export async function handleSaveRecords(
   }
   const body = parsed.body as {
     listId?: string;
-    dirtyCells?: Record<string, { columnId: string; currentValue: string }>;
-    addedRows?: Array<{ id: string; cells: Record<string, string> }>;
+    list_id?: string;
+    save_id?: string;
+    action_id?: string;
+    chunk_index?: number;
+    chunk_count?: number;
+    expected_revision?: number;
+    operations?: RecordEdit[];
+    dirtyCells?: Record<string, { columnId?: string; currentValue?: unknown; baseValue?: unknown }>;
+    addedRows?: Array<{ id?: string; source?: string; cells: Record<string, unknown> }>;
     deletedRowIds?: string[];
   };
 
-  if (!body.listId) {
+  const listId = body.list_id || body.listId;
+  if (!listId) {
     return jsonError(400, 'bad_request', 'Invalid save payload: listId is required.', requestId);
   }
 
-  const listId = body.listId;
+  const saveId = body.save_id || `save_${crypto.randomUUID()}`;
+  const actionId = body.action_id || `act_rec_${crypto.randomUUID()}`;
+
+  // 1. Convert payload into RecordEdit[] union
+  const operations: RecordEdit[] = [];
+
+  if (Array.isArray(body.operations)) {
+    operations.push(...body.operations);
+  } else {
+    const isTask = listId === 'tasks';
+    const isDraft = listId === 'drafts';
+    const isNotes = listId === 'notes';
+    const defaultKind = isTask ? 'task' : isDraft ? 'draft' : isNotes ? 'interaction' : (listId === 'leads' ? 'entity' : 'custom');
+
+    // Deletions
+    if (body.deletedRowIds && body.deletedRowIds.length > 0) {
+      for (const delId of body.deletedRowIds) {
+        operations.push({
+          op: 'row.remove',
+          op_id: `op_del_${delId}`,
+          row_ref: { kind: defaultKind, id: delId },
+        });
+      }
+    }
+
+    // Additions
+    if (body.addedRows && body.addedRows.length > 0) {
+      for (const row of body.addedRows) {
+        const rowId = row.id || `row_${crypto.randomUUID()}`;
+        operations.push({
+          op: 'row.create',
+          op_id: `op_add_${rowId}`,
+          row_ref: { kind: defaultKind, id: rowId },
+          list_id: listId,
+          initial_values: row.cells as Record<string, RecordValue>,
+        });
+      }
+    }
+
+    // Cell updates. Legacy keys are `${rowId}:${columnId}`; row ids are
+    // server-generated and never contain a colon, while column ids may
+    // (e.g. `leads:name`), so the row id ends at the FIRST colon. New
+    // clients send the operations union directly and skip this parsing.
+    if (body.dirtyCells) {
+      for (const [cellKey, dirty] of Object.entries(body.dirtyCells)) {
+        if (!dirty) continue;
+        const separator = cellKey.indexOf(':');
+        if (separator <= 0) continue;
+        const rowId = cellKey.slice(0, separator);
+        const colId = cellKey.slice(separator + 1);
+        if (!colId) continue;
+        operations.push({
+          op: 'cell.set',
+          op_id: `op_set_${rowId}_${colId}`,
+          row_ref: { kind: defaultKind, id: rowId },
+          column_id: colId,
+          value: (dirty.currentValue as RecordValue) ?? null,
+          base_token: dirty.baseValue !== undefined && dirty.baseValue !== null ? String(dirty.baseValue) : undefined,
+        });
+      }
+    }
+  }
+
+  // 2. Validate bounds and the whole envelope before any effect. The ledger
+  // handler re-validates; this boundary rejection keeps malformed saves out
+  // with the offending op identified.
+  if (operations.length > 100) {
+    return jsonError(422, 'validation_error', 'Records save chunk cannot exceed 100 operations.', requestId);
+  }
+
+  if (operations.length === 0) {
+    return jsonSuccess({
+      saved: true,
+      status: 'already_applied',
+      save_id: saveId,
+      action_id: actionId,
+      affected_count: 0,
+      affectedCount: 0,
+    }, 200, { 'x-request-id': requestId });
+  }
+
+  const envelopeCheck = validateRecordsSaveRequest({
+    schema_version: 1,
+    save_id: saveId,
+    action_id: actionId,
+    list_id: listId,
+    operations,
+  });
+  if (!envelopeCheck.valid) {
+    return jsonError(400, envelopeCheck.code, envelopeCheck.op_id ? `[op ${envelopeCheck.op_id}] ${envelopeCheck.message}` : envelopeCheck.message, requestId);
+  }
+
+  // 3. Pre-validate row existence and workspace ownership on edits and
+  // deletions: one batched read per touched kind, never one query per op.
+  // The ledger handler re-checks against its hydrated footprint; this early
+  // pass turns foreign or unknown ids into precise 404s before any commit.
+  {
+    const idsByKind = new Map<string, Set<string>>();
+    const labelFor = (kind: string): string =>
+      kind === 'entity' ? 'Entity' : kind === 'task' ? 'Task' : kind === 'draft' ? 'Draft'
+        : kind === 'interaction' ? 'Interaction' : 'Row';
+    for (const op of operations) {
+      const ref = op.op === 'cell.set' || op.op === 'cell.clear' || op.op === 'row.remove' ? op.row_ref
+        : op.op === 'item.edit' || op.op === 'item.remove' ? op.source_ref : null;
+      if (!ref) continue;
+      let ids = idsByKind.get(ref.kind);
+      if (!ids) {
+        ids = new Set();
+        idsByKind.set(ref.kind, ids);
+      }
+      ids.add(ref.id);
+    }
+    const tableFor: Record<string, { table: string; column: string }> = {
+      entity: { table: 'entities', column: 'id' },
+      task: { table: 'tasks', column: 'id' },
+      draft: { table: 'draft_projections', column: 'id' },
+      interaction: { table: 'interaction_state', column: 'root_event_id' },
+      custom: { table: 'records_rows', column: 'id' },
+    };
+    const checks: Array<Promise<{ kind: string; found: Set<string> }>> = [];
+    for (const [kind, ids] of idsByKind) {
+      const mapping = tableFor[kind];
+      // Definitions, lists, and memory refs resolve inside the handler.
+      if (!mapping) continue;
+      const idList = [...ids];
+      const placeholders = idList.map(() => '?').join(',');
+      checks.push(
+        (async () => {
+          try {
+            const res = await env.DB.prepare(
+              `SELECT ${mapping.column} AS id FROM ${mapping.table} WHERE workspace_id = ? AND ${mapping.column} IN (${placeholders})`,
+            ).bind(workspaceId, ...idList).all<{ id: string }>();
+            return { kind, found: new Set((res.results || []).map((r) => r.id)) };
+          } catch (err) {
+            // Pre-records databases have no custom-row table: every custom
+            // ref is then unknown, which the handler reports as not_found.
+            if (!String(err).includes('no such table')) throw err;
+            return { kind, found: new Set<string>() };
+          }
+        })(),
+      );
+    }
+    const settled = await Promise.all(checks);
+    for (const { kind, found } of settled) {
+      for (const id of idsByKind.get(kind) ?? []) {
+        if (!found.has(id)) {
+          return jsonError(404, 'not_found', `${labelFor(kind)} '${id}' not found in this workspace.`, requestId);
+        }
+      }
+    }
+  }
+
+  // 4. Inbound message tracking for ledger provenance (inserted inside the guarded batch)
   const now = new Date().toISOString();
-  const stmts: D1PreparedStatement[] = [];
-  let affectedCount = 0;
-
-  // Resolve users & entities for foreign-key resolution if needed
-  const [usersResult, entitiesResult] = await Promise.all([
+  const msgId = `min_${crypto.randomUUID()}`;
+  const msgFingerprint = await computeHash(JSON.stringify({ save_id: saveId, action_id: actionId, list_id: listId }));
+  const extraStatements = [
     env.DB.prepare(
-      `SELECT u.id, u.display_name FROM users u JOIN workspace_users wu ON wu.user_id = u.id WHERE wu.workspace_id = ?`,
-    )
-      .bind(workspaceId)
-      .all<{ id: string; display_name: string | null }>(),
-    env.DB.prepare(`SELECT id, name FROM entities WHERE workspace_id = ?`)
-      .bind(workspaceId)
-      .all<{ id: string; name: string }>(),
-  ]);
+      `INSERT INTO messages_in (id, workspace_id, user_id, channel, external_id, payload_fingerprint, raw_payload, status, created_at, updated_at)
+       VALUES (?, ?, ?, 'web', ?, ?, ?, 'processed', ?, ?)`,
+    ).bind(
+      msgId,
+      workspaceId,
+      scope.user.id,
+      `records_save_${actionId}`,
+      msgFingerprint,
+      JSON.stringify({ save_id: saveId, action_id: actionId, list_id: listId, op_count: operations.length }),
+      now,
+      now,
+    ),
+  ];
 
-  const userNameToId: Record<string, string> = {};
-  for (const u of usersResult.results || []) {
-    if (u.display_name) userNameToId[u.display_name.toLowerCase()] = u.id;
-    userNameToId[u.id] = u.id;
+  // 6. Read workspace revision and execute guarded ledger command
+  const wsMeta = await getWorkspaceRevision(env.DB, workspaceId);
+  if (!wsMeta) {
+    return jsonError(404, 'workspace_not_found', 'Workspace not found.', requestId);
   }
-  const entityNameToId: Record<string, string> = {};
-  for (const e of entitiesResult.results || []) {
-    entityNameToId[e.name.toLowerCase()] = e.id;
-    entityNameToId[e.id] = e.id;
-  }
+  const expectedRevision = body.expected_revision ?? wsMeta.business_revision;
+  const membershipRevision = await readMembershipRevision(env.DB, workspaceId);
 
-  const isTask = listId === 'tasks';
-  const isDraft = listId === 'drafts';
-  const isNotes = listId === 'notes';
-  const entityKind = listId === 'leads' ? 'lead' : listId;
+  const commandContext = {
+    workspace_id: workspaceId,
+    action_id: actionId,
+    expected_business_revision: expectedRevision,
+    actor: { kind: 'member' as const, user_id: scope.user.id },
+    membership_revision: membershipRevision,
+    request_id: requestId,
+    source_channel: 'web' as const,
+    source_message_id: msgId,
+  };
 
-  // 1. Process deletions
-  if (body.deletedRowIds && body.deletedRowIds.length > 0) {
-    for (const delId of body.deletedRowIds) {
-      if (isTask) {
-        stmts.push(
-          env.DB.prepare(`DELETE FROM tasks WHERE workspace_id = ? AND id = ?`).bind(
-            workspaceId,
-            delId,
-          ),
-        );
-        affectedCount++;
-      } else if (!isDraft && !isNotes) {
-        stmts.push(
-          env.DB.prepare(`DELETE FROM entities WHERE workspace_id = ? AND id = ?`).bind(
-            workspaceId,
-            delId,
-          ),
-          env.DB.prepare(`DELETE FROM entity_state WHERE workspace_id = ? AND entity_id = ?`).bind(
-            workspaceId,
-            delId,
-          ),
-        );
-        affectedCount++;
-      }
-    }
-  }
+  const result = await executeLedgerCommand(
+    env.DB,
+    commandContext,
+    'records_batch',
+    {
+      save_id: saveId,
+      action_id: actionId,
+      list_id: listId,
+      chunk_index: body.chunk_index ?? 0,
+      chunk_count: body.chunk_count ?? 1,
+      operations,
+    },
+    handleRecordsBatch,
+    extraStatements,
+    { extrasBeforeGuard: true },
+  );
 
-  // 2. Process added rows
-  if (body.addedRows && body.addedRows.length > 0) {
-    for (const row of body.addedRows) {
-      if (isTask) {
-        const taskId = row.id || `tsk_${crypto.randomUUID()}`;
-        const title = row.cells.title?.trim() || 'New task';
-        const status = ['open', 'done', 'cancelled'].includes(row.cells.status || '')
-          ? row.cells.status
-          : 'open';
-        const dueVal = row.cells.due?.trim() || '';
-        let dueKind: 'date' | 'instant' | null = null;
-        let dueLocalDate: string | null = null;
-        let dueInstant: string | null = null;
-        if (dueVal) {
-          if (/^\d{4}-\d{2}-\d{2}$/.test(dueVal)) {
-            dueKind = 'date';
-            dueLocalDate = dueVal;
-          } else {
-            dueKind = 'instant';
-            dueInstant = dueVal;
-          }
-        }
-        const assigneeVal = row.cells.assignee?.trim();
-        const assigneeId = assigneeVal ? (userNameToId[assigneeVal.toLowerCase()] ?? null) : null;
-        const entityVal = row.cells.entity?.trim();
-        const entityId = entityVal ? (entityNameToId[entityVal.toLowerCase()] ?? null) : null;
-
-        // 1. Inbound message tracking for ledger provenance
-        const msgId = `min_${crypto.randomUUID()}`;
-        stmts.push(
-          env.DB.prepare(
-            `INSERT INTO messages_in (id, workspace_id, user_id, channel, external_id, payload_fingerprint, raw_payload, status, created_at, updated_at)
-             VALUES (?, ?, ?, 'web', ?, ?, ?, 'processed', ?, ?)`,
-          ).bind(
-            msgId,
-            workspaceId,
-            scope.user.id,
-            `records_task_${taskId}`,
-            taskId,
-            JSON.stringify({ title, status, dueVal }),
-            now,
-            now,
-          ),
-        );
-
-        // 2. Immutable ledger event
-        const eventId = `evt_${crypto.randomUUID()}`;
-        const actionId = `act_${crypto.randomUUID()}`;
-        stmts.push(
-          env.DB.prepare(
-            `INSERT INTO events (id, workspace_id, sequence, entity_id, actor_kind, actor_user_id, kind, schema_version, payload_json, occurred_at, recorded_at, channel, source_message_id, source_job_id, action_id, provenance, created_at)
-             VALUES (?, ?, (SELECT COALESCE(MAX(sequence), 0) + 1 FROM events WHERE workspace_id = ?), ?, 'member', ?, 'task_created', 1, ?, ?, ?, 'web', ?, NULL, ?, 'stated', ?)`,
-          ).bind(
-            eventId,
-            workspaceId,
-            workspaceId,
-            entityId,
-            scope.user.id,
-            JSON.stringify({
-              title,
-              status,
-              due_local_date: dueLocalDate,
-              due_instant: dueInstant,
-            }),
-            now,
-            now,
-            msgId,
-            actionId,
-            now,
-          ),
-        );
-
-        // 3. Projected task row
-        stmts.push(
-          env.DB.prepare(
-            `INSERT INTO tasks (id, workspace_id, entity_id, title, assignee_user_id, status, due_kind, due_local_date, due_instant, due_timezone, snooze_until, source_event_id, revision, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, 1, ?, ?)`,
-          ).bind(
-            taskId,
-            workspaceId,
-            entityId,
-            title,
-            assigneeId,
-            status,
-            dueKind,
-            dueLocalDate,
-            dueInstant,
-            eventId,
-            now,
-            now,
-          ),
-        );
-        affectedCount++;
-      } else if (!isDraft && !isNotes) {
-        const entityId = row.id;
-        const name = row.cells.name?.trim() || 'New record';
-        const status = ['new', 'warm', 'hot', 'won', 'cold', 'lost', 'deprioritized'].includes(
-          row.cells.status || '',
-        )
-          ? row.cells.status
-          : 'new';
-
-        stmts.push(
-          env.DB.prepare(
-            `INSERT INTO entities (id, workspace_id, name, kind, status, assigned_user_id, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-             ON CONFLICT(id) DO UPDATE SET name = excluded.name, status = excluded.status, updated_at = excluded.updated_at`,
-          ).bind(entityId, workspaceId, name, entityKind, status, scope.user.id, now, now),
-        );
-
-        // Store custom / core fields in entity_state
-        for (const [colId, val] of Object.entries(row.cells)) {
-          if (colId === 'name' || colId === 'status' || !val) continue;
-          const fieldKey =
-            colId === 'language' ? 'preferred_language' : colId === 'value' ? 'quote' : colId;
-          stmts.push(
-            env.DB.prepare(
-              `INSERT INTO entity_state (id, workspace_id, entity_id, field_name, state, value_text, provenance, revision, updated_at)
-               VALUES (?, ?, ?, ?, 'clear', ?, 'stated', 1, ?)
-               ON CONFLICT(workspace_id, entity_id, field_name) DO UPDATE SET value_text = excluded.value_text, updated_at = excluded.updated_at`,
-            ).bind(`es_${crypto.randomUUID()}`, workspaceId, entityId, fieldKey, val, now),
-          );
-        }
-        affectedCount++;
-      }
-    }
+  if (result.status === 'conflict') {
+    const detail = (result as unknown as { data?: { conflict?: unknown }; summary?: string })?.data?.conflict
+      ?? (result as unknown as { summary?: string })?.summary;
+    return jsonError(409, 'conflict', result.error?.message || 'Conflict detected.', requestId, false, {
+      conflict: detail,
+    });
   }
 
-  // 3. Process cell edits
-  if (body.dirtyCells) {
-    for (const [cellKey, dirty] of Object.entries(body.dirtyCells)) {
-      const [rowId, colId] = cellKey.split(':');
-      if (!rowId || !colId || !dirty) continue;
-      const cellVal =
-        typeof dirty.currentValue === 'string'
-          ? dirty.currentValue
-          : String(dirty.currentValue ?? '');
-
-      if (isTask) {
-        if (colId === 'title') {
-          stmts.push(
-            env.DB.prepare(
-              `UPDATE tasks SET title = ?, updated_at = ? WHERE workspace_id = ? AND id = ?`,
-            ).bind(cellVal, now, workspaceId, rowId),
-          );
-          affectedCount++;
-        } else if (colId === 'status') {
-          const status = ['open', 'done', 'cancelled'].includes(cellVal) ? cellVal : 'open';
-          stmts.push(
-            env.DB.prepare(
-              `UPDATE tasks SET status = ?, updated_at = ? WHERE workspace_id = ? AND id = ?`,
-            ).bind(status, now, workspaceId, rowId),
-          );
-          affectedCount++;
-        } else if (colId === 'due') {
-          let dueKind: 'date' | 'instant' | null = null;
-          let dueLocalDate: string | null = null;
-          let dueInstant: string | null = null;
-          if (cellVal.trim()) {
-            if (/^\d{4}-\d{2}-\d{2}$/.test(cellVal.trim())) {
-              dueKind = 'date';
-              dueLocalDate = cellVal.trim();
-            } else {
-              dueKind = 'instant';
-              dueInstant = cellVal.trim();
-            }
-          }
-          stmts.push(
-            env.DB.prepare(
-              `UPDATE tasks SET due_kind = ?, due_local_date = ?, due_instant = ?, updated_at = ? WHERE workspace_id = ? AND id = ?`,
-            ).bind(dueKind, dueLocalDate, dueInstant, now, workspaceId, rowId),
-          );
-          affectedCount++;
-        } else if (colId === 'assignee') {
-          const assigneeId = cellVal.trim()
-            ? (userNameToId[cellVal.trim().toLowerCase()] ?? null)
-            : null;
-          stmts.push(
-            env.DB.prepare(
-              `UPDATE tasks SET assignee_user_id = ?, updated_at = ? WHERE workspace_id = ? AND id = ?`,
-            ).bind(assigneeId, now, workspaceId, rowId),
-          );
-          affectedCount++;
-        } else if (colId === 'entity') {
-          const entityId = cellVal.trim()
-            ? (entityNameToId[cellVal.trim().toLowerCase()] ?? null)
-            : null;
-          stmts.push(
-            env.DB.prepare(
-              `UPDATE tasks SET entity_id = ?, updated_at = ? WHERE workspace_id = ? AND id = ?`,
-            ).bind(entityId, now, workspaceId, rowId),
-          );
-          affectedCount++;
-        }
-      } else if (!isDraft && !isNotes) {
-        if (colId === 'name') {
-          stmts.push(
-            env.DB.prepare(
-              `UPDATE entities SET name = ?, updated_at = ? WHERE workspace_id = ? AND id = ?`,
-            ).bind(cellVal, now, workspaceId, rowId),
-          );
-          affectedCount++;
-        } else if (colId === 'status') {
-          const status = ['new', 'warm', 'hot', 'won', 'cold', 'lost', 'deprioritized'].includes(
-            cellVal,
-          )
-            ? cellVal
-            : 'new';
-          stmts.push(
-            env.DB.prepare(
-              `UPDATE entities SET status = ?, updated_at = ? WHERE workspace_id = ? AND id = ?`,
-            ).bind(status, now, workspaceId, rowId),
-          );
-          affectedCount++;
-        } else {
-          const fieldKey =
-            colId === 'language' ? 'preferred_language' : colId === 'value' ? 'quote' : colId;
-          stmts.push(
-            env.DB.prepare(
-              `INSERT INTO entity_state (id, workspace_id, entity_id, field_name, state, value_text, provenance, revision, updated_at)
-               VALUES (?, ?, ?, ?, 'clear', ?, 'stated', 1, ?)
-               ON CONFLICT(workspace_id, entity_id, field_name) DO UPDATE SET value_text = excluded.value_text, updated_at = excluded.updated_at`,
-            ).bind(`es_${crypto.randomUUID()}`, workspaceId, rowId, fieldKey, cellVal, now),
-          );
-          affectedCount++;
-        }
-      }
-    }
+  if (result.status === 'rejected') {
+    return jsonError(400, result.error?.code || 'rejected', result.error?.message || 'Operation rejected.', requestId);
   }
 
-  // 4. Record action receipt in ledger for auditability
-  if (affectedCount > 0) {
-    const actionId = `act_${crypto.randomUUID()}`;
-    stmts.push(
-      env.DB.prepare(
-        `INSERT INTO action_receipts (id, workspace_id, action_id, payload_hash, command_name, result_status, result_json, actor_kind, actor_user_id, committed_revision, created_at)
-         VALUES (?, ?, ?, 'manual_save', 'records_batch_save', 'applied', ?, 'member', ?, 1, ?)`,
-      ).bind(
-        `rcpt_${crypto.randomUUID()}`,
-        workspaceId,
-        actionId,
-        JSON.stringify({
-          summary: `Saved ${affectedCount} change(s) to ${listId} in business memory`,
-        }),
-        scope.user.id,
-        now,
-      ),
-    );
+  if (result.status === 'needs_clarification') {
+    return jsonError(422, 'needs_clarification', result.summary || 'This save needs a missing detail before it can commit.', requestId);
   }
 
-  try {
-    if (stmts.length > 0) {
-      // Chunk statements by 100 to stay well under SQLite / D1 batch limits
-      const chunkSize = 100;
-      for (let i = 0; i < stmts.length; i += chunkSize) {
-        await env.DB.batch(stmts.slice(i, i + chunkSize));
-      }
-    }
-  } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : String(err);
-    console.error('[otis:records] batch save failed:', msg);
-    return jsonError(500, 'batch_failed', msg, requestId);
+  const resultData = (result.data || {}) as {
+    affected_count?: number;
+    affected_values?: Array<{ row_ref: RecordRef; column_id: string; value: RecordValue; version: string }>;
+    id_mappings?: Record<string, string>;
+  };
+  const affectedCount = resultData.affected_count ?? 0;
+
+  let committedRevision = result.committed_revision;
+  if (committedRevision === undefined) {
+    const refreshed = await getWorkspaceRevision(env.DB, workspaceId);
+    committedRevision = refreshed?.business_revision;
   }
 
-  return jsonSuccess({ saved: true, affectedCount }, 200, {
+  const responsePayload: RecordsSaveResponse & { saved: boolean; affectedCount: number } = {
+    saved: true,
+    status: result.status as 'applied' | 'already_applied',
+    save_id: saveId,
+    action_id: actionId,
+    affected_count: affectedCount,
+    affectedCount,
+    affected_values: resultData.affected_values,
+    id_mappings: resultData.id_mappings,
+    committed_revision: committedRevision,
+  };
+
+  return jsonSuccess(responsePayload, 200, {
     'x-request-id': requestId,
   });
 }

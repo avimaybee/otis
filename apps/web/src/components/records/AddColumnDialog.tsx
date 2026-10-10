@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import type { RecordColumn, RecordFieldType } from './types.js';
+import type { RecordFieldType } from './types.js';
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter
 } from '../ui/dialog.js';
@@ -10,7 +10,7 @@ import { ChoiceSelect } from '../ui/select.js';
 export interface AddColumnDialogProps {
   open: boolean;
   onClose: () => void;
-  onAddColumn: (column: RecordColumn) => void;
+  onAddColumn: (label: string, type: RecordFieldType) => void;
 }
 
 export function AddColumnDialog({
@@ -20,7 +20,6 @@ export function AddColumnDialog({
 }: AddColumnDialogProps) {
   const [name, setName] = useState('');
   const [type, setType] = useState<RecordFieldType>('text');
-  const [calculationExpr, setCalculationExpr] = useState('');
 
   const typeOptions: { value: RecordFieldType; label: string }[] = [
     { value: 'text', label: 'Text' },
@@ -29,7 +28,6 @@ export function AddColumnDialog({
     { value: 'currency', label: 'Currency' },
     { value: 'number', label: 'Number' },
     { value: 'date', label: 'Date' },
-    { value: 'calculation', label: 'Calculation (conversational formula)' },
   ];
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -37,22 +35,9 @@ export function AddColumnDialog({
     const trimmed = name.trim();
     if (!trimmed) return;
 
-    const id = trimmed.toLowerCase().replace(/[^a-z0-9]/g, '_');
-    const newCol: RecordColumn = {
-      id: id || `col_${Date.now()}`,
-      name: trimmed,
-      type,
-      width: type === 'text' ? 200 : 140,
-      calculation: type === 'calculation' ? {
-        expression: calculationExpr || 'unitPrice * quantity',
-        description: calculationExpr ? `Calculated: ${calculationExpr}` : 'Unit price × Quantity',
-      } : undefined,
-    };
-
-    onAddColumn(newCol);
+    onAddColumn(trimmed, type);
     setName('');
     setType('text');
-    setCalculationExpr('');
     onClose();
   };
 
@@ -92,25 +77,10 @@ export function AddColumnDialog({
                 options={typeOptions}
                 onChange={val => setType(val as RecordFieldType)}
               />
+              <span className="text-xs text-subtle pt-1">
+                Totals and rules are described to Otis, which proposes a validated calculation.
+              </span>
             </div>
-
-            {type === 'calculation' && (
-              <div className="flex flex-col gap-1 rounded-md border border-border bg-card p-3">
-                <label htmlFor="calculation-expr" className="text-xs font-medium text-highlight">
-                  Calculation rule
-                </label>
-                <Input
-                  id="calculation-expr"
-                  value={calculationExpr}
-                  onChange={e => setCalculationExpr(e.target.value)}
-                  placeholder="e.g. price * quantity or rate * hours"
-                  className="text-sm"
-                />
-                <span className="text-xs text-subtle pt-1">
-                  Otis validates references and keeps totals updated without spreadsheet formula complexity.
-                </span>
-              </div>
-            )}
           </div>
 
           <DialogFooter className="flex items-center justify-end gap-2 pt-2">

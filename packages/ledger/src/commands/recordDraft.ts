@@ -75,6 +75,7 @@ export function handleRecordDraft(
           draft_id: draftId,
           content_text: trimmedText,
           recipient_address: args.recipient_address !== undefined ? (args.recipient_address || null) : undefined,
+          status: args.status,
         }
       : {
           draft_id: draftId,

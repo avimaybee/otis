@@ -13,6 +13,7 @@ import { reduceTasks } from './tasks.js';
 import { reduceDrafts } from './drafts.js';
 import { reduceMemory } from './memory.js';
 import { reduceBusinessDetails } from './business.js';
+import { reduceRecords } from './records.js';
 
 export function rebuildProjections(events: LedgerEvent[]): LedgerProjectionState {
   // 1. Identify all reverted event IDs from causal revert events
@@ -45,6 +46,11 @@ export function rebuildProjections(events: LedgerEvent[]): LedgerProjectionState
     memoryEntries: new Map(),
     memorySuppressions: new Map(),
     contacts: new Map(), redirects: new Map(), attachmentLinks: new Map(), reminderRules: new Map(), mediaAnnotations: new Map(),
+    recordsLists: new Map(),
+    recordsListColumns: new Map(),
+    recordsRows: new Map(),
+    recordsValues: new Map(),
+    fieldDefinitions: new Map(),
   };
 
   // 4. Apply pure reducers in strict sequence order. Interactions reduce
@@ -58,6 +64,7 @@ export function rebuildProjections(events: LedgerEvent[]): LedgerProjectionState
     reduceDrafts(state.drafts, evt);
     reduceMemory(state.memoryEntries, state.memorySuppressions, evt);
     reduceBusinessDetails(state, evt);
+    reduceRecords(state, evt);
   }
 
   return state;

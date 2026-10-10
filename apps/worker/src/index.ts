@@ -70,6 +70,13 @@ import { processTranscriptionJobs, scheduleNextTranscriptionWake, type Transcrip
 import { cleanupExpiredMedia } from './media/cleanup.js';
 import { handleUploadDocument, handleRetryDocument, processDocumentExtractions, type MarkdownBinding } from './media/documents.js';
 import {
+  handleGetGeneratedDocument,
+  handleGetDocumentRevision,
+  handleRetryDocumentRender,
+  handleListChatDocuments,
+} from './routes/documents.js';
+import { processDocumentRenderJobs } from './media/generatedDocuments.js';
+import {
   handleAcceptInvite,
   handleCreateInvite,
   handleLeaveWorkspace,
@@ -144,6 +151,14 @@ export interface Env {
    * real network call.
    */
   TRANSCRIPTION_TEST_FETCH?: FetchFn;
+  /** Cloudflare Browser Rendering binding */
+  BROWSER?: Fetcher;
+  /** Cloudflare Browser Rendering REST account ID */
+  BROWSER_RUN_ACCOUNT_ID?: string;
+  /** Cloudflare Browser Rendering REST API key */
+  BROWSER_RUN_API_KEY?: string;
+  /** Synthetic PDF render transport for tests only */
+  PDF_RENDER_TRANSPORT?: (html: string) => Promise<Uint8Array>;
 }
 
 /**
@@ -284,6 +299,8 @@ export async function createWorkerAgentHandler(env: Env): Promise<TurnHandler> {
     limits,
     storage: env.STORAGE,
     images: env.IMAGES,
+    pdfQueue: env.DISPATCH_QUEUE,
+    browser: env.BROWSER,
     telegramBotToken: env.TELEGRAM_BOT_TOKEN,
   });
 }
@@ -939,6 +956,23 @@ export default {
       const fileAction = /^\/api\/workspaces\/([^/]+)\/entities\/([^/]+)\/actions$/.exec(url.pathname);
       if (fileAction && request.method === 'POST') return await handleEntityFileAction(request, env, decodeURIComponent(fileAction[1]!), decodeURIComponent(fileAction[2]!), requestId);
       if (documentUpload && request.method === 'POST') return await handleUploadDocument(request, env, decodeURIComponent(documentUpload[1]!), requestId);
+
+      const docRetryRender = /^\/api\/workspaces\/([^/]+)\/documents\/([^/]+)\/revisions\/([^/]+)\/retry-render$/.exec(url.pathname);
+      if (docRetryRender && request.method === 'POST') {
+        return await handleRetryDocumentRender(request, env, decodeURIComponent(docRetryRender[1]!), decodeURIComponent(docRetryRender[2]!), decodeURIComponent(docRetryRender[3]!), requestId);
+      }
+      const docRevMatch = /^\/api\/workspaces\/([^/]+)\/documents\/([^/]+)\/revisions\/([^/]+)$/.exec(url.pathname);
+      if (docRevMatch && request.method === 'GET') {
+        return await handleGetDocumentRevision(request, env, decodeURIComponent(docRevMatch[1]!), decodeURIComponent(docRevMatch[2]!), decodeURIComponent(docRevMatch[3]!), requestId);
+      }
+      const docDetailMatch = /^\/api\/workspaces\/([^/]+)\/documents\/([^/]+)$/.exec(url.pathname);
+      if (docDetailMatch && request.method === 'GET') {
+        return await handleGetGeneratedDocument(request, env, decodeURIComponent(docDetailMatch[1]!), decodeURIComponent(docDetailMatch[2]!), requestId);
+      }
+      const chatDocsMatch = /^\/api\/workspaces\/([^/]+)\/chats\/([^/]+)\/documents$/.exec(url.pathname);
+      if (chatDocsMatch && request.method === 'GET') {
+        return await handleListChatDocuments(request, env, decodeURIComponent(chatDocsMatch[1]!), decodeURIComponent(chatDocsMatch[2]!), requestId);
+      }
       // 12c. Voice media surface: private upload claims, byte transport,
       // finalize/status, streaming reads and shared voice settings. Mounted
       // once; every route re-checks current membership itself and the outer
@@ -1127,6 +1161,11 @@ export default {
 
       if (kind === 'document_extract' && typeof workspaceId === 'string') {
         await processDocumentExtractions(env, workspaceId, typeof message.body.job_id === 'string' ? message.body.job_id : undefined);
+        continue;
+      }
+
+      if (kind === 'document_render_pdf' && typeof workspaceId === 'string') {
+        await processDocumentRenderJobs(env, workspaceId, typeof message.body?.job_id === 'string' ? message.body.job_id : undefined);
         continue;
       }
 

@@ -55,6 +55,7 @@ import {
 } from './api/outbox.js';
 import { classifySendError, computeBackoffMs, registerFlushOwner, requestFlush, unregisterFlushOwner } from './api/flush.js';
 import { deleteDraftsForUser, draftSession, moveDraft } from './api/drafts.js';
+import { purgeRecordsDraftsForUser } from './components/records/recordsDraftStore.js';
 import { voiceUploadAdapter } from './api/voice.js';
 import { deleteVoiceSessionsForUser } from './api/voiceSessions.js';
 import { deriveTranscript, reconciledClientIds } from './api/transcript.js';
@@ -106,6 +107,17 @@ export interface ConversationScreenProps {
   headerBanner?: React.ReactNode;
   /** An explicit helper prepares a visible, editable draft; it never sends it. */
   suggestedDraft?: string | null;
+  /**
+   * Records-page target provider, called once per send to freeze the current
+   * draft target, selection, and delta into the accepted input. Only turns
+   * composed beside the grid pass one; ordinary chat sends nothing.
+   */
+  recordsContextProvider?: () => import('@otis/contracts').RecordsContext | null;
+  /**
+   * Durable assistant table patches discovered in run step results. Called
+   * once per patch id with the persisted patch; ordinary turns never call it.
+   */
+  onRecordsPatch?: (patch: import('@otis/contracts').RecordsPatch) => void;
 }
 function safeError(error: unknown, fallback: string) { if (error instanceof ApiError && error.status === 401) return 'Your session has expired. Sign in again.'; if (error instanceof ApiError && error.status === 404) return 'This conversation is unavailable or your access has changed.'; return fallback; }
 /**
@@ -158,7 +170,7 @@ function runKnownQuestion(
   return undefined;
 }
 
-export function ConversationScreen({ workspaceId, chat: routeChat, chatParamPresent, workspaces, userId, members, onSignOut, onNavigate, onNavigateToRecords, onRefreshSession, embedded, onClose, headerBanner, suggestedDraft }: ConversationScreenProps) {
+export function ConversationScreen({ workspaceId, chat: routeChat, chatParamPresent, workspaces, userId, members, onSignOut, onNavigate, onNavigateToRecords, onRefreshSession, embedded, onClose, headerBanner, suggestedDraft, recordsContextProvider, onRecordsPatch }: ConversationScreenProps) {
   const activeChatId = routeChat;
   const [drawerOpen, setDrawerOpen] = useState(false); const [settingsOpen, setSettingsOpen] = useState(false); const [detailActionId, setDetailActionId] = useState<string | null>(null);
   const [streamStatus, setStreamStatus] = useState<StreamStatus>('idle'); const [error, setError] = useState<string | null>(null); const [accessLost, setAccessLost] = useState(false);
@@ -212,6 +224,7 @@ export function ConversationScreen({ workspaceId, chat: routeChat, chatParamPres
   const controlLock = useRef(false);
   const controlOperation = useRef<{ text: string; id: string; chatId: string } | null>(null);
   const epoch = useRef(0);
+  const seenPatchIds = useRef(new Set<string>());
   // Latest committed route plus synchronous programmatic intent. Updated by
   // navigate() immediately and by the committed-selection effect below, but
   // never during render: a stale-props render must not clobber navigate()'s
@@ -247,6 +260,7 @@ export function ConversationScreen({ workspaceId, chat: routeChat, chatParamPres
     clearUserOutbox(userId);
     clearCurrentUserQuestionState(userId);
     void deleteDraftsForUser(userId);
+    purgeRecordsDraftsForUser(userId);
     void deleteVoiceSessionsForUser(userId);
     unregisterFlushOwner(userId);
     setDetailActionId(null); setSourceId(null); setDrawerOpen(false); setSettingsOpen(false); setAccessLost(true); setReplyId(null); setDismissedClarificationIds([]);
@@ -423,10 +437,28 @@ export function ConversationScreen({ workspaceId, chat: routeChat, chatParamPres
     scheduleRefresh(`run:${runId}`, async () => {
       const run = await api.run(scopeWorkspaceId, runId);
       if (selected.current.workspace !== scopeWorkspaceId || selected.current.chat !== chatId) return;
+      // Table-aware turns: surface durable patches once, and refresh saved
+      // lists when a completed turn touched table tools. Both read the
+      // persisted step results, never live actor state.
+      let touchedRecords = false;
+      for (const step of run.steps ?? []) {
+        if (step.tool_name === 'edit_records') touchedRecords = true;
+        const patch = (step.result as { data?: { records_patch?: import('@otis/contracts').RecordsPatch } } | null)?.data?.records_patch;
+        if (patch && typeof patch.patch_id === 'string') {
+          touchedRecords = true;
+          if (onRecordsPatch && !seenPatchIds.current.has(patch.patch_id)) {
+            seenPatchIds.current.add(patch.patch_id);
+            onRecordsPatch(patch);
+          }
+        }
+      }
+      if (touchedRecords && (run.status === 'succeeded' || run.status === 'partial' || run.status === 'failed' || run.status === 'cancelled')) {
+        void queryClient.invalidateQueries({ queryKey: ['otis', userId, scopeWorkspaceId, 'records'] });
+      }
       queryClient.setQueryData<ChatSnapshot>(qk.chat(userId, scopeWorkspaceId, chatId), previous =>
         previous ? applyRunSnapshot(previous, run) : previous);
     });
-  }, [queryClient, userId, scheduleRefresh]);
+  }, [queryClient, userId, scheduleRefresh, onRecordsPatch]);
 
   const refreshMessages = useCallback((scopeWorkspaceId: string, chatId: string) => {
     scheduleRefresh(`messages:${chatId}`, async () => {
@@ -767,7 +799,39 @@ export function ConversationScreen({ workspaceId, chat: routeChat, chatParamPres
       } catch {
         deviceZone = undefined;
       }
-      const accepted = await api.sendMessage(entryWorkspaceId, chatId, entry.clientId, entry.text, entry.clarificationId, entry.mediaId, entryUserId, entry.imageMediaIds?.length ? entry.imageMediaIds : undefined, deviceZone);
+      const hasExtra = Boolean(
+        entry.recordsContext ||
+        (entry.documentMediaIds && entry.documentMediaIds.length > 0) ||
+        entry.isPastedText
+      );
+      const accepted = hasExtra
+        ? await api.sendMessage(
+            entryWorkspaceId,
+            chatId,
+            entry.clientId,
+            entry.text,
+            entry.clarificationId,
+            entry.mediaId,
+            entryUserId,
+            entry.imageMediaIds?.length ? entry.imageMediaIds : undefined,
+            deviceZone,
+            {
+              recordsContext: entry.recordsContext,
+              documentMediaIds: entry.documentMediaIds?.length ? entry.documentMediaIds : undefined,
+              isPastedText: entry.isPastedText,
+            },
+          )
+        : await api.sendMessage(
+            entryWorkspaceId,
+            chatId,
+            entry.clientId,
+            entry.text,
+            entry.clarificationId,
+            entry.mediaId,
+            entryUserId,
+            entry.imageMediaIds?.length ? entry.imageMediaIds : undefined,
+            deviceZone,
+          );
       debugLog('send', 'accepted; run queued server-side', { chatId, message_id: accepted.message_id, run_id: accepted.run_id, sequence: accepted.acceptance_sequence });
       markOutboxSaved(entry.clientId, { messageId: accepted.message_id, runId: accepted.run_id, sequence: accepted.acceptance_sequence });
       if (!sameView(chatId)) return true;
@@ -800,9 +864,10 @@ export function ConversationScreen({ workspaceId, chat: routeChat, chatParamPres
             chat_id: chatId,
             author_user_id: entryUserId,
             client_message_id: entry.clientId,
-            content_text: entry.text || (entry.mediaId ? 'Voice note' : entry.imageMediaIds?.length ? 'Photos' : ''),
+            content_text: entry.text || (entry.mediaId ? 'Voice note' : entry.imageMediaIds?.length ? 'Photos' : entry.documentMediaIds?.length ? 'Documents' : ''),
             media_id: entry.mediaId ?? null,
             image_media_ids: entry.imageMediaIds ?? null,
+            document_media_ids: entry.documentMediaIds ?? null,
             run_id: accepted.run_id,
             sequence: accepted.acceptance_sequence,
             created_at: acceptedAt,
@@ -879,28 +944,36 @@ export function ConversationScreen({ workspaceId, chat: routeChat, chatParamPres
     }
   }, [epoch, queryClient, userId, workspaceId, workspaces, navigate, loseAccess, refreshRun, refreshMessages, refreshQuestions, replyId, switchWorkspace]);
 
-  const send = useCallback(async (text: string, imageMediaIds?: string[]): Promise<boolean> => {
-    if (readOnly || accessLost) return false;
-    // Ordinary chat never carries a question identity, even with a panel
-    // open: only the panel's explicit submit may attach clarificationId.
-    createOutboxEntry({
-      userId,
-      workspaceId,
-      chatId: activeChatId,
-      text,
-      ...(imageMediaIds && imageMediaIds.length > 0 ? { imageMediaIds } : {}),
-    });
-    // Explicit send-triggered return to the newly sent message, taken at the
-    // local acceptance moment. Delayed HTTP acceptance, retries and
-    // reconciled snapshots must never force follow on their own.
-    setFollowSignal(value => value + 1);
-    // Local acceptance is instant (the echo above renders before any network
-    // work below), while network acceptance dispatch joins the single
-    // per-chat/claim flush path: a follow-up submit never overtakes a still-
-    // unacknowledged first POST, and the flush runs promptly when uncontended.
-    requestFlush('send');
-    return true;
-  }, [readOnly, accessLost, userId, workspaceId, activeChatId]);
+  const send = useCallback(
+    async (
+      text: string,
+      imageMediaIds?: string[],
+      documentMediaIds?: string[],
+      isPastedText?: boolean,
+    ): Promise<boolean> => {
+      if (readOnly || accessLost) return false;
+      let frozenRecordsContext: import('@otis/contracts').RecordsContext | undefined;
+      try {
+        frozenRecordsContext = recordsContextProvider?.() ?? undefined;
+      } catch {
+        frozenRecordsContext = undefined;
+      }
+      createOutboxEntry({
+        userId,
+        workspaceId,
+        chatId: activeChatId,
+        text,
+        ...(imageMediaIds && imageMediaIds.length > 0 ? { imageMediaIds } : {}),
+        ...(documentMediaIds && documentMediaIds.length > 0 ? { documentMediaIds } : {}),
+        ...(isPastedText ? { isPastedText: true } : {}),
+        ...(frozenRecordsContext ? { recordsContext: frozenRecordsContext } : {}),
+      });
+      setFollowSignal(value => value + 1);
+      requestFlush('send');
+      return true;
+    },
+    [readOnly, accessLost, userId, workspaceId, activeChatId, recordsContextProvider, requestFlush],
+  );
 
   /**
    * Explicit question answer (question plan step 1): the sole path that may
@@ -1296,7 +1369,7 @@ export function ConversationScreen({ workspaceId, chat: routeChat, chatParamPres
       {streamStatus === 'resyncing' && <p className="otis-connection text-xs" role="status">Reconnecting to activity… Your conversation is retained.</p>}
       <Transcript key={`${workspaceId}:${activeChatId ?? 'new'}`} messages={derived.messages} members={members} currentUserId={userId} runs={snapshot?.runs ?? {}} activities={snapshot?.activities ?? []} steps={[]} transients={transients} delivery={derived.delivery} onRetryMessage={(clientId) => void retryMessage(clientId)} onRetryRun={readOnly ? undefined : (runId) => void retryRun(runId)} onRetryQuestions={activeChatId && snapshot?.questionsFailed ? () => refreshQuestions(activeChatId) : undefined} questionsFailed={snapshot?.questionsFailed ?? false} onDiscardMessage={discardMessage} onInspectSource={setSourceId} onInspectAction={setDetailActionId} onReply={readOnly ? undefined : (id) => openQuestionPanel(id, true)} onEditMessage={readOnly ? undefined : setDraftValue} loading={loading} hasOlder={Boolean(fullSnapshot?.older)} loadingOlder={loadingOlder} olderError={olderError} followSignal={followSignal} positionKey={`${userId}:${workspaceId}:${activeChatId ?? 'new'}`} onLoadOlder={() => void loadOlder()}/>
       {error && <div className="otis-chat-error text-sm" role="alert"><p>{error}</p>{activeChatId && !loading && <Button variant="ghost" size="sm" type="button" onClick={() => { setError(null); void resyncChat(activeChatId); }}>Reload conversation</Button>}</div>}
-      {readOnly ? <div className="otis-readonly text-sm"><p>This is {currentDetail!.chat.author_display_name ?? members[currentDetail!.chat.author_user_id] ?? 'a teammate'}’s conversation.</p><Button variant="ghost" size="sm" type="button" onClick={() => navigate(workspaceId, ownChats[0]?.id ?? null)}>Continue in your own chat</Button></div> : <div ref={composerRef} className="otis-composer-slot"><div className="flex flex-col gap-2">{panelQuestion && activeChatId && <div className="mx-auto w-full max-w-[760px] px-4"><QuestionPanel key={panelQuestion.id} question={panelQuestion} draftKey={`otis:draft:${userId}:${workspaceId}:${activeChatId}:${panelQuestion.id}`} focusSignal={panelFocusId === panelQuestion.id ? panelFocusSignal : 0} onSubmit={(questionId, text) => answerQuestion(questionId, text)} onSkip={dismissQuestion} onClose={dismissQuestion}/></div>}<Composer key={`${workspaceId}:${userId}:${activeChatId ?? 'new'}`} draftKey={`otis:draft:${userId}:${workspaceId}:${activeChatId ?? 'new'}`} draftValue={draftValue} disabled={Boolean(activeChatId && !snapshot)} disabledReason={error ? 'Conversation unavailable' : 'Opening conversation…'} running={Boolean(running)} commands={commands} models={models} workspaces={workspaces} controlPending={controlPending} modelReady={models.some(model => model.is_current && model.available)} modelsLoading={modelsQuery.isLoading} modelsError={modelsQuery.isError ? (modelsQuery.error instanceof Error ? modelsQuery.error.message : 'Could not load models.') : undefined} onRetryModels={() => void modelsQuery.refetch()} voice={{ available: voiceAvailable, adapter: voiceAdapter, scope: { userId, workspaceId, chatId: activeChatId }, onSent: voiceSend }} images={{ available: !readOnly && !accessLost, workspaceId, chatId: activeChatId, onEnsureChat: ensureChatForImages, upload: request => uploadImageFile(imageTransport, request) }} onCommand={applyCommand} onStop={running ? async () => { await api.stopRun(workspaceId, running.run.id); if (activeChatId) refreshRun(workspaceId, activeChatId, running.run.id); } : undefined} onSend={send}/></div></div>}
+      {readOnly ? <div className="otis-readonly text-sm"><p>This is {currentDetail!.chat.author_display_name ?? members[currentDetail!.chat.author_user_id] ?? 'a teammate'}’s conversation.</p><Button variant="ghost" size="sm" type="button" onClick={() => navigate(workspaceId, ownChats[0]?.id ?? null)}>Continue in your own chat</Button></div> : <div ref={composerRef} className="otis-composer-slot"><div className="flex flex-col gap-2">{panelQuestion && activeChatId && <div className="mx-auto w-full max-w-[760px] px-4"><QuestionPanel key={panelQuestion.id} question={panelQuestion} draftKey={`otis:draft:${userId}:${workspaceId}:${activeChatId}:${panelQuestion.id}`} focusSignal={panelFocusId === panelQuestion.id ? panelFocusSignal : 0} onSubmit={(questionId, text) => answerQuestion(questionId, text)} onSkip={dismissQuestion} onClose={dismissQuestion}/></div>}<Composer key={`${workspaceId}:${userId}:${activeChatId ?? 'new'}`} draftKey={`otis:draft:${userId}:${workspaceId}:${activeChatId ?? 'new'}`} draftValue={draftValue} disabled={Boolean(activeChatId && !snapshot)} disabledReason={error ? 'Conversation unavailable' : 'Opening conversation…'} running={Boolean(running)} commands={commands} models={models} workspaces={workspaces} controlPending={controlPending} modelReady={models.some(model => model.is_current && model.available)} modelsLoading={modelsQuery.isLoading} modelsError={modelsQuery.isError ? (modelsQuery.error instanceof Error ? modelsQuery.error.message : 'Could not load models.') : undefined} onRetryModels={() => void modelsQuery.refetch()} voice={{ available: voiceAvailable, adapter: voiceAdapter, scope: { userId, workspaceId, chatId: activeChatId }, onSent: voiceSend }} images={{ available: !readOnly && !accessLost, workspaceId, chatId: activeChatId, onEnsureChat: ensureChatForImages, upload: request => uploadImageFile(imageTransport, request) }} documents={{ available: !readOnly && !accessLost, workspaceId, userId, chatId: activeChatId, onEnsureChat: ensureChatForImages, upload: async req => { const res = await api.uploadDocument(req.workspaceId, req.file, req.uploadId, req.userId); return { mediaId: res.media_id, filename: res.filename }; } }} onCommand={applyCommand} onStop={running ? async () => { await api.stopRun(workspaceId, running.run.id); if (activeChatId) refreshRun(workspaceId, activeChatId, running.run.id); } : undefined} onSend={(text, imageMediaIds, extra) => send(text, imageMediaIds, extra?.documentMediaIds, extra?.isPastedText)}/></div></div>}
     </div>}</main>
     {controlResult && (
       <Overlay label="Command result" className="otis-overlay--dialog otis-overlay--wide" onClose={() => setControlResult(null)}>

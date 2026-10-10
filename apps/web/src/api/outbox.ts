@@ -49,8 +49,21 @@ export interface OutboxEntry {
    * across retry like the voice recording above.
    */
   imageMediaIds?: string[];
+  /**
+   * Validated document uploads attached to this message (PDF, text, markdown).
+   * Immutable server media identities finalized before submit, preserved across retry.
+   */
+  documentMediaIds?: string[];
+  /** Whether this turn text originated from an oversized pasted text conversion. */
+  isPastedText?: boolean;
   /** Immutable clarification linkage, preserved across retry. */
   clarificationId?: string;
+  /**
+   * Immutable records-page target frozen at send, preserved across retry
+   * like the text itself. Only turns composed beside the grid carry one;
+   * ordinary chat never invents it.
+   */
+  recordsContext?: import('@otis/contracts').RecordsContext;
   createdAt: string;
   state: OutboxDeliveryState;
   attempts: number;
@@ -490,7 +503,12 @@ export function createOutboxEntry(input: {
   mediaId?: string;
   /** Validated still-image identities to attach through the acceptance path. */
   imageMediaIds?: string[];
+  /** Validated document identities to attach through the acceptance path. */
+  documentMediaIds?: string[];
+  isPastedText?: boolean;
   clarificationId?: string;
+  /** Frozen records target, preserved across retry like the text itself. */
+  recordsContext?: import('@otis/contracts').RecordsContext;
 }): OutboxEntry {
   const now = new Date().toISOString();
   const entry: OutboxEntry = {
@@ -503,7 +521,10 @@ export function createOutboxEntry(input: {
     text: input.text,
     ...(input.mediaId ? { mediaId: input.mediaId } : {}),
     ...(input.imageMediaIds && input.imageMediaIds.length > 0 ? { imageMediaIds: input.imageMediaIds } : {}),
+    ...(input.documentMediaIds && input.documentMediaIds.length > 0 ? { documentMediaIds: input.documentMediaIds } : {}),
+    ...(input.isPastedText ? { isPastedText: true } : {}),
     ...(input.clarificationId ? { clarificationId: input.clarificationId } : {}),
+    ...(input.recordsContext ? { recordsContext: input.recordsContext } : {}),
     createdAt: now,
     state: 'sending',
     attempts: 0,
