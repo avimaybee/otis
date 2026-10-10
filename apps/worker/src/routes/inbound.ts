@@ -15,10 +15,12 @@ import { validateTelegramWebhookSecret } from '@otis/channels';
 import type { Env } from '../index.js';
 import { jsonError, jsonSuccess } from '../middleware/errors.js';
 import { acceptTelegramInbound } from '../inbox/telegram.js';
-import { deliverTelegramOutbox, sendTelegramChatAction } from '../inbox/telegramDelivery.js';
+import { deliverTelegramOutbox, sendTelegramChatAction, setTelegramCommands } from '../inbox/telegramDelivery.js';
 import { publishDispatchHint, publishTelegramDeliveryHint } from '../dispatchHint.js';
 import { processTranscriptionJobs, scheduleNextTranscriptionWake } from '../media/transcription.js';
 import { extractPlatformKeys } from '../providers/service.js';
+
+let telegramCommandsSynced = false;
 
 export async function handleTelegramWebhook(
   request: Request,
@@ -73,6 +75,16 @@ export async function handleTelegramWebhook(
       fileTransport: env.ENVIRONMENT === 'test' ? undefined : fetch,
       platformKeys: extractPlatformKeys(env),
     });
+
+    // Ensure native Telegram commands (/new, /undo, /model, etc.) and Menu button are registered
+    if (!telegramCommandsSynced && env.TELEGRAM_BOT_TOKEN && env.ENVIRONMENT !== 'test') {
+      const syncTask = setTelegramCommands(env.TELEGRAM_BOT_TOKEN).then((res) => {
+        if (res.ok) telegramCommandsSynced = true;
+      }).catch(() => undefined);
+      if (ctx) ctx.waitUntil(syncTask);
+      else void syncTask;
+    }
+
     // Voice acceptance creates a durable transcription intent; run a bounded
     // best-effort pass so Telegram notes also land without waiting for cron.
     if (result.status === 'accepted' && result.workspace_id && env.STORAGE && env.ENVIRONMENT !== 'test') {
@@ -82,6 +94,12 @@ export async function handleTelegramWebhook(
         ...(env.GROQ_API_KEY ? { platformApiKey: env.GROQ_API_KEY } : {}),
         limit: 2,
       }).then(async (outcome) => {
+        // Once transcription completes, immediately wake dispatch and delivery
+        // so the deferred voice run does not sleep waiting for cron.
+        if (outcome && outcome.ready.length > 0) {
+          publishDispatchHint(ctx, env, result.workspace_id!);
+          publishTelegramDeliveryHint(ctx, env, result.workspace_id!);
+        }
         // A deferred retry with no wake behind it would sleep until the cron
         // sweep: anchor the follow-up to the job's own durable due instant.
         if (outcome && outcome.deferred > 0) {

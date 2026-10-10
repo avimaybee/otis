@@ -64,7 +64,7 @@ The question experience follows the user's Codex reference: a question panel sho
 
 Default Undo from here reverses the selected successful write and later successful writes in that same run. Single-action undo is secondary. Preview concrete effects and dependencies; preserve teammate and unrelated-run work. Undo appends reverts rather than deleting events or restoring an entire workspace.
 
-A failed/stopped run can have committed useful work. Explain that accurately and expose its successful actions. Receipt-aware continuation of terminal failed work is intended but currently open; blindly resending the original text is not equivalent.
+A failed/stopped run can have committed useful work. Explain that accurately and expose its successful actions. Failed/partial runs have an author-scoped Retry run action that retains receipts and progress; blindly resending the original text is not equivalent. Successful, cancelled and live runs are not restarted by this action. Empty final output fails visibly; precise wording when earlier actions committed still has local follow-on changes and needs acceptance.
 
 ## 8. Voice and images
 

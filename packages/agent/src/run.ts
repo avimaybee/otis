@@ -115,6 +115,9 @@ export class AgentStreamError extends Error {
    * blanket stream error. Never a raw upstream body.
    */
   public readonly providerCode?: string;
+  public readonly retryable?: boolean;
+  public readonly retryAfterMs?: number | null;
+  public readonly status?: number;
 
   constructor(
     code:
@@ -129,12 +132,63 @@ export class AgentStreamError extends Error {
       | 'length_exceeded',
     message: string,
     providerCode?: string,
+    retryable?: boolean,
+    retryAfterMs?: number | null,
+    status?: number,
   ) {
     super(message);
     this.name = 'AgentStreamError';
     this.code = code;
     if (providerCode !== undefined) this.providerCode = providerCode;
+    if (retryable !== undefined) this.retryable = retryable;
+    if (retryAfterMs !== undefined) this.retryAfterMs = retryAfterMs;
+    if (status !== undefined) this.status = status;
   }
+}
+
+/**
+ * Returns true if an error from a provider turn is transient and safe to retry automatically.
+ * Covers upstream rate limits (429), outages / gateway failures (502, 503, 504), network timeouts,
+ * and premature stream disconnections.
+ */
+export function isRetryableStreamError(err: unknown): boolean {
+  if (err instanceof AgentStreamError) {
+    if (err.code === 'stream_cancelled' || err.code === 'unknown_tool' || err.code === 'refusal') {
+      return false;
+    }
+    if (err.retryable === true) return true;
+    if (err.code === 'stream_interrupted') return true;
+    if (err.status === 429 || err.status === 502 || err.status === 503 || err.status === 504) return true;
+    if (err.providerCode === 'rate_limited' || err.providerCode === 'transient' || err.providerCode === 'timeout') return true;
+  }
+  if (err && typeof err === 'object') {
+    if ('detail' in err) {
+      const detail = (err as { detail: unknown }).detail;
+      if (detail && typeof detail === 'object') {
+        const d = detail as { retryable?: boolean; status?: number; code?: string };
+        if (d.retryable === true) return true;
+        if (d.status === 429 || (d.status !== undefined && d.status >= 500 && d.status <= 504)) return true;
+        if (d.code === 'rate_limited' || d.code === 'transient' || d.code === 'timeout') return true;
+      }
+    }
+    const anyErr = err as { status?: number; code?: string; retryable?: boolean };
+    if (anyErr.retryable === true) return true;
+    if (anyErr.status === 429 || (anyErr.status !== undefined && anyErr.status >= 500 && anyErr.status <= 504)) return true;
+    if (anyErr.code === 'rate_limited' || anyErr.code === 'transient' || anyErr.code === 'timeout') return true;
+  }
+  return false;
+}
+
+/**
+ * Calculates a backoff delay in milliseconds for a retryable stream error, honoring upstream
+ * retryAfterMs hints and exponential backoff, bounded within Cloudflare Worker lifecycle.
+ */
+export function getStreamRetryDelayMs(err: unknown, attempt: number): number {
+  let delay = 500 * Math.pow(2, attempt);
+  if (err instanceof AgentStreamError && typeof err.retryAfterMs === 'number' && err.retryAfterMs > 0) {
+    delay = Math.max(delay, err.retryAfterMs);
+  }
+  return Math.min(Math.max(delay, 200), 3000);
 }
 
 /**
@@ -206,6 +260,9 @@ export async function collectAndValidateProviderStream(
           'provider_error',
           event.error.message || `Provider returned error code: ${event.error.code}`,
           event.error.code,
+          event.error.retryable,
+          event.error.retryAfterMs,
+          event.error.status,
         );
     }
   }

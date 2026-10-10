@@ -2,7 +2,9 @@
 
 Otis is a mobile-first conversational business memory: record what happened, retrieve what the team knows, correct it, and act on a useful follow-up. Web and Telegram share workspace records. It is built for Kerning today without hardcoded customer or member identities.
 
-The app includes a durable workspace ledger, conversational capture and recall, a sourced client file, cross-chat search, retained photos/PDFs, explicit follow-ups, JSON/XLSX export and owner-controlled workspace erasure. Otis can compose general tables; wide tables can use the available transcript width and copy as tab-separated data. Some work remains incomplete: the Records page's manual Save path still needs ledger-backed repair, and live browser/device and production-cost acceptance is separate. [Implementation status](docs/status.md) is the maintained record of what exists, what was tested and what remains open. Package names, old DONE labels and fake-provider replies are not release evidence.
+The app includes conversational capture/recall, a sourced client dossier with individual-entry correction, multiple contact methods and reversible duplicate merging, workspace-wide search, retained photos/PDFs/audio, and explicit one-off/weekly/after-quote follow-ups. General tables adapt to available transcript width and copy as tab-separated data. Failed/partial runs expose Retry while retaining completed work. Settings provides JSON/XLSX downloads and owner-controlled workspace deletion.
+
+Some work remains incomplete: Records manual Save needs ledger-backed repair; erasure inventory and failed media cleanup need completion; local ordering/Telegram/provider-retry work is uncommitted. Current browser/device, deployment and production-cost acceptance remain separate. [Implementation status](docs/status.md) records source presence, dated checks and open work. Package names, old DONE labels and fake-provider replies are not release evidence.
 
 ## Read only what the task needs
 

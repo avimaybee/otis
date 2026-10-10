@@ -24,6 +24,7 @@ import { sha256 } from '@otis/identity';
 import type { Env } from '../index.js';
 import { jsonError, jsonSuccess } from '../middleware/errors.js';
 import { pathSegment, requireWorkspaceScope } from './scope.js';
+import { setTelegramCommands } from '../inbox/telegramDelivery.js';
 
 /** 24 random bytes render as exactly 32 unpadded base64url characters. */
 export function mintLinkCode(randomBytes: Uint8Array = crypto.getRandomValues(new Uint8Array(24))): string {
@@ -74,6 +75,10 @@ export async function handleIssueTelegramLink(
     ]);
   } catch {
     return jsonError(500, 'internal_error', 'Could not issue a Telegram link. Retry shortly.', requestId);
+  }
+
+  if (env.TELEGRAM_BOT_TOKEN) {
+    void setTelegramCommands(env.TELEGRAM_BOT_TOKEN).catch(() => undefined);
   }
 
   const body: TelegramLinkResponse = {

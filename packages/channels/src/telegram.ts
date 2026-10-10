@@ -19,6 +19,25 @@ export interface TelegramChatObject {
   username?: string;
 }
 
+export interface TelegramLocationObject {
+  latitude: number;
+  longitude: number;
+  horizontal_accuracy?: number;
+  live_period?: number;
+  heading?: number;
+  proximity_alert_radius?: number;
+}
+
+export interface TelegramVenueObject {
+  location: TelegramLocationObject;
+  title: string;
+  address: string;
+  foursquare_id?: string;
+  foursquare_type?: string;
+  google_place_id?: string;
+  google_place_type?: string;
+}
+
 export interface TelegramMessageObject {
   message_id: number;
   from?: TelegramUserObject;
@@ -27,7 +46,8 @@ export interface TelegramMessageObject {
   text?: string;
   caption?: string;
   photo?: unknown[];
-  location?: unknown;
+  location?: TelegramLocationObject;
+  venue?: TelegramVenueObject;
   document?: unknown;
   video?: unknown;
   voice?: unknown;
@@ -36,15 +56,26 @@ export interface TelegramMessageObject {
   sticker?: unknown;
 }
 
+export interface TelegramCallbackQueryObject {
+  id: string;
+  from: TelegramUserObject;
+  message?: TelegramMessageObject;
+  inline_message_id?: string;
+  data?: string;
+}
+
 export interface TelegramUpdate {
   update_id: number;
   message?: TelegramMessageObject;
+  callback_query?: TelegramCallbackQueryObject;
 }
 
 export type TelegramMessageKind =
   | 'text'
   | 'voice'
+  | 'location'
   | 'start_command'
+  | 'callback_query'
   | 'unsupported_media_only'
   | 'unsupported_media_with_text';
 
@@ -65,6 +96,10 @@ export interface NormalizedTelegramUpdate {
   kind: TelegramMessageKind;
   text?: string;
   startCode?: string;
+  callbackQueryId?: string;
+  callbackData?: string;
+  location?: TelegramLocationObject;
+  venue?: TelegramVenueObject;
   unsupportedMediaTypes: string[];
   rawUpdate: unknown;
 }
@@ -103,8 +138,40 @@ export function normalizeTelegramUpdate(
     throw new Error('Invalid Telegram update: missing or invalid update_id.');
   }
 
+  if (u.callback_query && typeof u.callback_query === 'object') {
+    const cb = u.callback_query;
+    const telegramUserId = cb.from ? String(cb.from.id) : '';
+    if (!telegramUserId) {
+      throw new Error('Invalid Telegram update: callback_query missing sender information.');
+    }
+    const senderIsBot = cb.from?.is_bot === true;
+    const msg = cb.message;
+    const telegramChatId = msg && typeof msg.chat?.id === 'number' ? String(msg.chat.id) : telegramUserId;
+    const telegramMessageId = msg && typeof msg.message_id === 'number' ? String(msg.message_id) : '';
+    const isPrivate = msg?.chat ? msg.chat.type === 'private' : true;
+    const externalId = `${botInstallationId}:${u.update_id}`;
+
+    return {
+      updateId: u.update_id,
+      externalId,
+      botInstallationId,
+      telegramUserId,
+      telegramChatId,
+      telegramMessageId,
+      senderIsBot,
+      replyToMessageId: null,
+      isPrivateChat: isPrivate,
+      kind: 'callback_query',
+      callbackQueryId: cb.id,
+      callbackData: cb.data || '',
+      text: cb.data || '',
+      unsupportedMediaTypes: [],
+      rawUpdate: update,
+    };
+  }
+
   if (!u.message || typeof u.message !== 'object') {
-    throw new Error('Unsupported Telegram update: only direct messages are supported.');
+    throw new Error('Unsupported Telegram update: only direct messages and callback queries are supported.');
   }
 
   const msg = u.message;
@@ -132,10 +199,16 @@ export function normalizeTelegramUpdate(
     replyToMessageId,
   };
 
+  const venue = msg.venue;
+  const location = venue?.location || msg.location;
+  const hasValidLocation = Boolean(
+    location && typeof location.latitude === 'number' && typeof location.longitude === 'number',
+  );
+
   // Check for unsupported media
   const unsupportedMediaTypes: string[] = [];
   if (Array.isArray(msg.photo) && msg.photo.length > 0) unsupportedMediaTypes.push('photo');
-  if (msg.location) unsupportedMediaTypes.push('location');
+  if (msg.location && !hasValidLocation) unsupportedMediaTypes.push('location');
   if (msg.document) unsupportedMediaTypes.push('document');
   if (msg.video) unsupportedMediaTypes.push('video');
   if (msg.contact) unsupportedMediaTypes.push('contact');
@@ -186,6 +259,25 @@ export function normalizeTelegramUpdate(
       ...baseIds,
       isPrivateChat: isPrivate,
       kind: 'unsupported_media_only',
+      unsupportedMediaTypes,
+      rawUpdate: update,
+    };
+  }
+
+  if (hasValidLocation && location) {
+    const locText = venue
+      ? `📍 Check-in at ${venue.title} (${venue.address}) [Coordinates: ${location.latitude}, ${location.longitude}]${trimmedText ? ` - ${trimmedText}` : ''}`
+      : `📍 Shared location [Coordinates: ${location.latitude}, ${location.longitude}]${trimmedText ? ` - ${trimmedText}` : ''}`;
+    return {
+      updateId: u.update_id,
+      externalId,
+      botInstallationId,
+      ...baseIds,
+      isPrivateChat: isPrivate,
+      kind: 'location',
+      text: locText,
+      location,
+      venue,
       unsupportedMediaTypes,
       rawUpdate: update,
     };

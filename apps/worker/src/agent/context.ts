@@ -4,7 +4,7 @@
  * In accordance with docs/archive/plans/006-implementation-handoff.md Section 8 & 10.
  */
 
-import { listAvailableModels, PRODUCTION_REGISTRY, renderSystemPrompt, type DynamicPromptContext } from '@otis/agent';
+import { listAvailableModels, PRODUCTION_REGISTRY, renderSystemPrompt, type CapabilityState, type DynamicPromptContext } from '@otis/agent';
 
 export interface TurnContextParams {
   workspaceId: string;
@@ -18,7 +18,7 @@ export interface TurnContextParams {
   limitNotes?: number;
   nowIso?: string;
   /** Presence (never values) of platform fallback keys per provider. */
-  platformKeyPresent?: { gemini?: boolean; opencode_go?: boolean };
+  platformKeyPresent?: { gemini?: boolean; opencode_go?: boolean; groq?: boolean };
   /** Pinned run model for marking the current catalog entry. */
   currentModelKey?: string | null;
   /** Persisted effort label for the current model, if any. */
@@ -153,7 +153,7 @@ export async function getTurnContext(
        LIMIT 10`,
     ).bind(workspaceId),
     db.prepare(
-      `SELECT provider, status FROM provider_credentials WHERE workspace_id = ? AND provider IN ('gemini', 'opencode_go')`
+      `SELECT provider, status FROM provider_credentials WHERE workspace_id = ? AND provider IN ('gemini', 'opencode_go', 'groq')`
     ).bind(workspaceId),
     // Alias index for mention matching below: bounded by construction so a
     // workspace with heavy rename history cannot bloat the turn.
@@ -500,8 +500,17 @@ export async function getTurnContext(
     gemini: statusFor('gemini'),
     opencode_go: statusFor('opencode_go'),
   };
+  const groqSttAvailable =
+    credentialByProvider.get('groq') === 'available' || params.platformKeyPresent?.groq === true;
   const availableModels = listAvailableModels(PRODUCTION_REGISTRY, statuses).map((entry) => {
     const supported = entry.thinking?.state === 'supported' && entry.thinking.choices.length > 0;
+    // In Otis, incoming voice notes are transcribed for the model via Groq STT
+    // or native provider audio. When a voice transcription route is available,
+    // all models receive transcripts and can answer voice notes.
+    const voiceSupported: CapabilityState =
+      groqSttAvailable || entry.capabilities.audio === 'supported'
+        ? 'supported'
+        : (entry.capabilities.audio ?? 'unsupported');
     return {
       name: entry.displayName,
       current: entry.commandKey === params.currentModelKey,
@@ -511,7 +520,7 @@ export async function getTurnContext(
         : {}),
       modalities: {
         images: entry.capabilities.vision,
-        voiceNotes: entry.capabilities.audio,
+        voiceNotes: voiceSupported,
       },
     };
   });

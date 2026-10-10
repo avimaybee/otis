@@ -73,6 +73,14 @@ export const COMMAND_REGISTRY: readonly CommandDefinition[] = [
     surfaces: ['web', 'telegram'],
   },
   {
+    name: 'export',
+    summary: 'Export workspace data to spreadsheet or JSON.',
+    usage: '/export',
+    available: true,
+    deterministic: true,
+    surfaces: ['web', 'telegram'],
+  },
+  {
     name: 'start',
     summary: 'Link your Telegram account to Otis.',
     usage: '/start <code>',

@@ -370,6 +370,11 @@ export async function handleCreateMessage(
         ...(env.GROQ_API_KEY ? { platformApiKey: env.GROQ_API_KEY } : {}),
         limit: 2,
       }).then(async (outcome) => {
+        // Once transcription completes, immediately wake dispatch so the
+        // deferred voice run does not sleep waiting for cron.
+        if (outcome && outcome.ready.length > 0) {
+          publishDispatchHint(ctx, env, workspaceId);
+        }
         // Same parked-work rule as Telegram acceptance: a deferred retry
         // with no wake behind it would otherwise sleep until the cron sweep.
         if (outcome && outcome.deferred > 0) {

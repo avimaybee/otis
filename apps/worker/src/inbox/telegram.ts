@@ -12,8 +12,9 @@ import { parseCommandText } from '@otis/commands';
 import { sha256 } from '@otis/identity';
 import { resumeRun } from '../actor/dispatch.js';
 import { createChat, generateChatTitle, resolveThinkingSnapshot, updateChatTitle } from './repository.js';
-import { buildTelegramDeliveryInserts, sendTelegramText, type TelegramSendFetch } from './telegramDelivery.js';
+import { buildTelegramDeliveryInserts, sendTelegramReaction, sendTelegramText, type TelegramSendFetch } from './telegramDelivery.js';
 import { executeTelegramCommand } from './telegramCommands.js';
+import { handleTelegramCallbackQuery } from './telegramCallback.js';
 import type { PlatformKeys } from '../providers/service.js';
 import {
   acceptTelegramVoiceMessage,
@@ -712,6 +713,24 @@ export async function acceptTelegramInbound(
     };
   }
 
+  // 1b. Callback query handling (interactive inline keyboard buttons)
+  if (normalized.kind === 'callback_query') {
+    return await handleTelegramCallbackQuery({
+      db,
+      botInstallationId: normalized.botInstallationId,
+      telegramUserId: normalized.telegramUserId,
+      telegramChatId: normalized.telegramChatId,
+      telegramMessageId: normalized.telegramMessageId || undefined,
+      callbackQueryId: normalized.callbackQueryId ?? '',
+      callbackData: normalized.callbackData,
+      externalId: normalized.externalId,
+      fingerprint,
+      persistedPayload,
+      now,
+      options,
+    });
+  }
+
   // 2. Command handling (/start and /start <code>)
   // Commands are administrative signals, never conversational text turns.
   // They are handled before any conversation routing or chat message creation,
@@ -1284,7 +1303,7 @@ export async function acceptTelegramInbound(
     }
   }
 
-  const dynamicTopic = normalized.kind === 'text' && normalized.text
+  const dynamicTopic = (normalized.kind === 'text' || normalized.kind === 'location') && normalized.text
     ? generateChatTitle(normalized.text)
     : normalized.kind === 'voice'
     ? 'Voice Note'
@@ -1306,7 +1325,7 @@ export async function acceptTelegramInbound(
       )
       .bind(chatId, now, normalized.telegramUserId)
       .run();
-  } else if (normalized.kind === 'text' && normalized.text) {
+  } else if ((normalized.kind === 'text' || normalized.kind === 'location') && normalized.text) {
     const existing = await db
       .prepare(`SELECT title FROM chats WHERE id = ? AND workspace_id = ?`)
       .bind(chatId, workspaceId)
@@ -1642,6 +1661,15 @@ export async function acceptTelegramInbound(
       text: normalized.text!,
       now,
     });
+    if (options?.botToken && normalized.telegramMessageId) {
+      sendTelegramReaction(
+        options.botToken,
+        normalized.telegramChatId,
+        normalized.telegramMessageId,
+        '✍️',
+        options.adminTransport,
+      ).catch(() => null);
+    }
     return {
       status: 'accepted',
       message_in_id: accepted.messageInId,

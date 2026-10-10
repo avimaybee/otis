@@ -6,7 +6,7 @@
 
 [Provider service](../apps/worker/src/providers/service.ts) resolves optional encrypted workspace BYOK first and the matching Worker platform secret otherwise. Platform keys support default use without per-workspace setup. The identity credential service owns encryption/replacement/status guards; raw keys never return to the client or enter prompts/logs/exports.
 
-Conversation providers and Groq STT are separate roles. Remove/replace a key through the existing authorized route; reverify the current credential version. A old probe's success cannot mark a replacement key verified.
+Conversation providers and Groq STT are separate roles. Remove/replace a key through the existing authorized route; reverify the current credential version. An old probe's success cannot mark a replacement key verified.
 
 ## Exact route and continuation
 
@@ -16,6 +16,8 @@ Conversation providers and Groq STT are separate roles. Remove/replace a key thr
 - Run model/effort snapshots remain fixed for accepted work. Later selection affects subsequent work and does not rewrite an in-flight run.
 
 Use [Gemini API documentation](https://ai.google.dev/gemini-api/docs), [OpenCode providers](https://opencode.ai/v2/docs/providers/), [OpenCode Go](https://opencode.ai/v2/docs/console/go) and [Groq speech documentation](https://console.groq.com/docs/speech-to-text) when implementing/changing wire behavior. Private Go dogfood integration is settled; commercial reliance remains separate. This cleanup did not rerun live provider probes or approve new models.
+
+The current working tree adds automatic retries for classified transient provider-stream failures in the existing [handler](../apps/worker/src/agent/handler.ts) and [stream collector](../packages/agent/src/run.ts), with three attempts and bounded backoff. This is uncommitted, unaccepted work. Check interrupted previews, Stop during backoff, partial effects, exact call replay and upstream retry hints before making a reliability claim. It neither selects another model nor authorizes another provider. User-triggered Retry run is already a separate implemented recovery path.
 
 ## Voice and vision
 
@@ -30,5 +32,7 @@ Thinking displays only the adapter's verified exposed channel and accurate norma
 [Historical live-provider report](005-live-provider-evidence.md) remains at its stable path because registry/test evidence references point there. Treat every dated model/route/case as historical evidence, not a fresh all-capabilities claim.
 
 Later synthetic live cases remain in [Telegram/provider evidence](../plans/qa/telegram-capabilities-live-evidence.json); its [audit narrative](archive/plans/2026-10-06-telegram-and-model-integration-audit.md) records limitations and request shape. Consult each entry's actual evidence reference; official metadata and completed live cases have different strength.
+
+The 2026-10-09 [Gemini table review](../plans/qa/2026-10-09-capabilities-live.json) and [capability response](../plans/qa/2026-10-09-capabilities-live-gemini-v5.json) add actual model evidence on synthetic information. The final table sample took 14.8 seconds to first text and 15.5 seconds total, with 8,129 input tokens and no cache read. These are dated cases, not general latency/quality or native-harness parity. [Status](status.md#c2q-implementation-2026-10-08) retains broader results and failures.
 
 `pnpm smoke:providers` is opt-in. Normal root tests use fake/mock transport and skip explicit live voice execution. Never print keys or load secrets into a client/browser to run a probe. Measure first useful token/complete response/round count with fixed model, effort, prompt/history and tool set; a single historical latency sample is not a native-harness parity result.

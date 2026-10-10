@@ -144,4 +144,18 @@ describe('transcript reconciliation', () => {
     const derived = deriveTranscript([second, first], [entry], true);
     expect(derived.messages.map(message => message.id)).toEqual(['msg-1', 'msg-2', `local:${entry.clientId}`]);
   });
+
+  it('preserves acknowledged sequence when assistant reply arrives before message in snapshot (M0 race)', () => {
+    const first = serverMessage({ id: 'msg-1', sequence: 1 });
+    // Assistant message sequence 3 arrives via streaming or partial sync before msg-2 is reflected in server array
+    const assistantReply = serverMessage({ id: 'msg-3', sequence: 3, author_kind: 'assistant', content_text: 'Answer' });
+    const created = createOutboxEntry({ userId: 'avi', workspaceId: 'ws', chatId: 'chat', text: 'Question' });
+    // User message acknowledged by server with sequence 2
+    const saved = markOutboxSaved(created.clientId, { messageId: 'msg-2', runId: 'run-1', sequence: 2 })!;
+
+    const derived = deriveTranscript([first, assistantReply], [saved], true);
+    // User message (sequence 2) MUST come before assistant reply (sequence 3)
+    expect(derived.messages.map(m => m.id)).toEqual(['msg-1', `local:${saved.clientId}`, 'msg-3']);
+    expect(derived.messages[1]!.sequence).toBe(2);
+  });
 });

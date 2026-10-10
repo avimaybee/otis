@@ -174,6 +174,14 @@ const WS_TABLES = [
   'briefs',
   'message_image_attachments',
   'reminders',
+  'interaction_state',
+  'entity_contacts',
+  'entity_redirects',
+  'attachment_links',
+  'reminder_rules',
+  'reminder_rule_cursors',
+  'document_extractions',
+  'media_annotations',
 ];
 
 describe('Workspace erasure drill', () => {
@@ -326,6 +334,41 @@ describe('Workspace erasure drill', () => {
       env.DB.prepare(
         `INSERT INTO workspace_daily_actions (workspace_id, date_utc, action_count, updated_at) VALUES (?, '2026-10-06', 1, ?)`,
       ).bind(WS_E, now),
+      env.DB.prepare(
+        `INSERT INTO interaction_state (workspace_id, root_event_id, entity_id, kind, head_event_id, revision, state, occurred_at, sequence, updated_at)
+         VALUES (?, 'evt-erase-1', ?, 'note', 'evt-erase-1', 1, 'active', ?, 1, ?)`,
+      ).bind(WS_E, entityId, now, now),
+      env.DB.prepare(
+        `INSERT INTO entity_contacts (id, workspace_id, entity_id, method, value, comparison_key, label, is_primary, state, revision, source_event_id, original_event_id, updated_at)
+         VALUES ('ctc-erase-1', ?, ?, 'email', 'erase@example.com', 'erase@example.com', NULL, 1, 'active', 1, 'evt-erase-1', 'evt-erase-1', ?)`,
+      ).bind(WS_E, entityId, now),
+      env.DB.prepare(
+        `INSERT INTO entities (id, workspace_id, name, created_at, updated_at) VALUES ('ent-other-erase', ?, 'Other', ?, ?)`,
+      ).bind(WS_E, now, now),
+      env.DB.prepare(
+        `INSERT INTO entity_redirects (workspace_id, source_entity_id, target_entity_id, source_event_id, decisions_json, revision, updated_at)
+         VALUES (?, ?, 'ent-other-erase', 'evt-erase-1', '{}', 1, ?)`,
+      ).bind(WS_E, entityId, now),
+      env.DB.prepare(
+        `INSERT INTO attachment_links (id, workspace_id, entity_id, interaction_id, media_id, label, state, revision, source_event_id, updated_at)
+         VALUES ('lnk-erase-1', ?, ?, NULL, 'med-erase-1', NULL, 'active', 1, 'evt-erase-1', ?)`,
+      ).bind(WS_E, entityId, now),
+      env.DB.prepare(
+        `INSERT INTO reminder_rules (id, workspace_id, user_id, entity_id, text, timezone, channel, spec_json, status, revision, source_event_id, updated_at)
+         VALUES ('rul-erase-1', ?, ?, ?, 'Check client', 'UTC', 'web', '{}', 'active', 1, 'evt-erase-1', ?)`,
+      ).bind(WS_E, OWNER, entityId, now),
+      env.DB.prepare(
+        `INSERT INTO reminder_rule_cursors (rule_id, workspace_id, rule_revision, next_due, dirty, last_delivered_at, updated_at)
+         VALUES ('rul-erase-1', ?, 1, ?, 0, NULL, ?)`,
+      ).bind(WS_E, future, now),
+      env.DB.prepare(
+        `INSERT INTO document_extractions (media_id, workspace_id, checksum, extractor_version, state, result_key, updated_at)
+         VALUES ('med-erase-1', ?, 'chk123', 1, 'ready', ?, ?)`,
+      ).bind(WS_E, `workspace/${WS_E}/docs/doc-erase-1`, now),
+      env.DB.prepare(
+        `INSERT INTO media_annotations (media_id, workspace_id, transcript, retention, release_after, revision, source_event_id, updated_at)
+         VALUES ('med-erase-1', ?, 'erase doc transcript', 'retain', ?, 1, 'evt-erase-1', ?)`,
+      ).bind(WS_E, future, now),
     ]);
 
     // Person-scoped pointers aimed at the doomed workspace.
@@ -342,11 +385,14 @@ describe('Workspace erasure drill', () => {
       .bind(MEMBER, WS_E, chat.id, now, now)
       .run();
 
-    // Real R2 bytes: the original plus its deterministic rendition.
+    // Real R2 bytes: the original plus its deterministic rendition and document extraction.
     const objectKey = `workspace/${WS_E}/media/med-erase-1`;
+    const docResultKey = `workspace/${WS_E}/docs/doc-erase-1`;
     await env.STORAGE!.put(objectKey, new TextEncoder().encode('erase-bytes'));
     await env.STORAGE!.put(renditionKeyFor('med-erase-1'), new TextEncoder().encode('rendition'));
+    await env.STORAGE!.put(docResultKey, new TextEncoder().encode('doc-bytes'));
     expect(await env.STORAGE!.get(objectKey)).not.toBeNull();
+    expect(await env.STORAGE!.get(docResultKey)).not.toBeNull();
 
     // Sanity: the drill workspace is fully populated before deletion.
     for (const table of ['events', 'entities', 'tasks', 'chat_messages', 'media_objects', 'reminders', 'briefs']) {
@@ -391,6 +437,7 @@ describe('Workspace erasure drill', () => {
     // R2 bytes are gone with their rows.
     expect(await env.STORAGE!.get(objectKey)).toBeNull();
     expect(await env.STORAGE!.get(renditionKeyFor('med-erase-1'))).toBeNull();
+    expect(await env.STORAGE!.get(docResultKey)).toBeNull();
 
     // The tombstone records what left, by whom, without business content.
     const tomb = await env.DB.prepare(
@@ -408,9 +455,17 @@ describe('Workspace erasure drill', () => {
     expect(tomb?.actor_user_id).toBe(OWNER);
     const counts = JSON.parse(tomb!.counts_json) as Record<string, number>;
     expect(counts['events']).toBeGreaterThanOrEqual(3);
-    expect(counts['entities']).toBe(1);
+    expect(counts['entities']).toBe(2);
     expect(counts['chats']).toBe(1);
     expect(counts['reminders']).toBe(1);
+    expect(counts['interaction_state']).toBe(1);
+    expect(counts['entity_contacts']).toBe(1);
+    expect(counts['entity_redirects']).toBe(1);
+    expect(counts['attachment_links']).toBe(1);
+    expect(counts['reminder_rules']).toBe(1);
+    expect(counts['reminder_rule_cursors']).toBe(1);
+    expect(counts['document_extractions']).toBe(1);
+    expect(counts['media_annotations']).toBe(1);
     expect(tomb?.media_objects_deleted).toBe(1);
     expect(tomb!.counts_json).not.toContain('erase-bytes');
 

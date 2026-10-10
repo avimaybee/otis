@@ -29,13 +29,16 @@ describe('collect provider round failure typing', () => {
     const err = await collect([
       {
         type: 'error',
-        error: { code: 'rate_limited', message: 'Rate limit.', retryable: true, retryAfterMs: 1000 },
+        error: { code: 'rate_limited', message: 'Rate limit.', retryable: true, retryAfterMs: 1000, status: 429 },
       },
     ]);
     expect(err).toBeInstanceOf(AgentStreamError);
     const typed = err as AgentStreamError;
     expect(typed.code).toBe('provider_error');
     expect(typed.providerCode).toBe('rate_limited');
+    expect(typed.retryable).toBe(true);
+    expect(typed.retryAfterMs).toBe(1000);
+    expect(typed.status).toBe(429);
   });
 
   it('leaves providerCode unset for stream-shape failures', async () => {
@@ -44,6 +47,30 @@ describe('collect provider round failure typing', () => {
     const typed = err as AgentStreamError;
     expect(typed.code).toBe('stream_interrupted');
     expect(typed.providerCode).toBeUndefined();
+  });
+});
+
+describe('stream retry helpers', () => {
+  it('identifies retryable stream errors correctly', async () => {
+    const { isRetryableStreamError, getStreamRetryDelayMs } = await import('../src/run.js');
+    const rateLimited = new AgentStreamError('provider_error', 'Rate limited', 'rate_limited', true, 1500, 429);
+    expect(isRetryableStreamError(rateLimited)).toBe(true);
+
+    const serverDown = new AgentStreamError('provider_error', 'Service unavailable', 'transient', true, null, 503);
+    expect(isRetryableStreamError(serverDown)).toBe(true);
+
+    const interrupted = new AgentStreamError('stream_interrupted', 'Dropped connection');
+    expect(isRetryableStreamError(interrupted)).toBe(true);
+
+    const cancelled = new AgentStreamError('stream_cancelled', 'Cancelled');
+    expect(isRetryableStreamError(cancelled)).toBe(false);
+
+    const unknownTool = new AgentStreamError('unknown_tool', 'Invalid tool');
+    expect(isRetryableStreamError(unknownTool)).toBe(false);
+
+    expect(getStreamRetryDelayMs(rateLimited, 0)).toBe(1500);
+    expect(getStreamRetryDelayMs(serverDown, 0)).toBe(500);
+    expect(getStreamRetryDelayMs(serverDown, 1)).toBe(1000);
   });
 });
 

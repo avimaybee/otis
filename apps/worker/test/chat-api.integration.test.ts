@@ -1316,6 +1316,8 @@ describe('Chat API: command registry and models', () => {
     const text = new TextDecoder('utf-8', { fatal: false }).decode(bytes);
     expect(text).toContain('xl/workbook.xml');
     expect(text).toContain('xl/worksheets/sheet1.xml');
+    expect(text).toContain('Reminders');
+    expect(text).toContain('Briefs');
   });
 
   it('answers /sheet on Telegram with the web path instead of a dead link', async () => {

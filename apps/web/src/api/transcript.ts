@@ -50,12 +50,33 @@ export function deriveTranscript(server: ChatMessage[], outbox: OutboxEntry[], d
     if (message.client_message_id) byClientId.set(message.client_message_id, message);
   }
   const delivery: DerivedTranscript['delivery'] = {};
-  const ordered = [...server].sort((left, right) => left.sequence - right.sequence);
-  let sequence = ordered.length > 0 ? ordered[ordered.length - 1]!.sequence + 1 : 1;
+  const ordered: ChatMessage[] = [...server];
+
+  // Calculate highest known sequence among server messages and saved outbox entries
+  let maxSeq = 0;
+  for (const msg of server) {
+    if (typeof msg.sequence === 'number' && msg.sequence > maxSeq) {
+      maxSeq = msg.sequence;
+    }
+  }
+  for (const entry of outbox) {
+    if (typeof entry.sequence === 'number' && entry.sequence > maxSeq) {
+      maxSeq = entry.sequence;
+    }
+  }
+
+  let nextProjectedSeq = maxSeq + 1;
+
   for (const entry of outbox) {
     if (byClientId.has(entry.clientId)) continue;
-    ordered.push(localMessage(entry, sequence));
-    sequence += 1;
+
+    // Preserve acknowledged server sequence; otherwise project monotonically past maxSeq
+    const seq = typeof entry.sequence === 'number' && entry.sequence > 0
+      ? entry.sequence
+      : nextProjectedSeq++;
+
+    ordered.push(localMessage(entry, seq));
+
     if (entry.state !== 'saved') {
       delivery[entry.clientId] = {
         state: entry.state,
@@ -67,6 +88,22 @@ export function deriveTranscript(server: ChatMessage[], outbox: OutboxEntry[], d
       delivery[entry.clientId] = { state: 'saved', durable };
     }
   }
+
+  // Strictly sort all messages: primary sequence ascending, then createdAt, then member before non-member, then stable ID
+  ordered.sort((left, right) => {
+    if (left.sequence !== right.sequence) {
+      return left.sequence - right.sequence;
+    }
+    const leftTime = new Date(left.created_at).getTime();
+    const rightTime = new Date(right.created_at).getTime();
+    if (!Number.isNaN(leftTime) && !Number.isNaN(rightTime) && leftTime !== rightTime) {
+      return leftTime - rightTime;
+    }
+    if (left.author_kind === 'member' && right.author_kind !== 'member') return -1;
+    if (left.author_kind !== 'member' && right.author_kind === 'member') return 1;
+    return left.id.localeCompare(right.id);
+  });
+
   return { messages: ordered, delivery };
 }
 

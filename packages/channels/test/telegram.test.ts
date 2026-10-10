@@ -95,14 +95,14 @@ describe('Telegram Channel Normalization & Validation', () => {
         from: { id: 98765 },
         chat: { id: 98765, type: 'private' },
         date: 1700000000,
-        location: { latitude: 52.52, longitude: 13.405 },
+        document: { file_id: 'doc_123', file_name: 'report.pdf' },
         caption: 'Meet me at this location Friday',
       },
     };
 
     const res = normalizeTelegramUpdate(update, botId);
     expect(res.kind).toBe('unsupported_media_with_text');
-    expect(res.unsupportedMediaTypes).toContain('location');
+    expect(res.unsupportedMediaTypes).toContain('document');
     expect(res.text).toBe('Meet me at this location Friday');
   });
 
@@ -175,6 +175,75 @@ describe('Telegram Channel Normalization & Validation', () => {
     };
     expect(normalizeTelegramUpdate(update, botId).kind).toBe('text');
   });
+
+  it('normalizes callback_query update with button press data', () => {
+    const update = {
+      update_id: 2001,
+      callback_query: {
+        id: 'cb_query_999',
+        from: { id: 98765, is_bot: false, first_name: 'Avi' },
+        message: {
+          message_id: 55,
+          chat: { id: 98765, type: 'private' },
+          date: 1700000000,
+        },
+        data: 'cb:undo:act_123',
+      },
+    };
+
+    const res = normalizeTelegramUpdate(update, botId);
+    expect(res.kind).toBe('callback_query');
+    expect(res.callbackQueryId).toBe('cb_query_999');
+    expect(res.callbackData).toBe('cb:undo:act_123');
+    expect(res.telegramUserId).toBe('98765');
+    expect(res.telegramChatId).toBe('98765');
+    expect(res.isPrivateChat).toBe(true);
+    expect(res.senderIsBot).toBe(false);
+  });
+
+  it('normalizes location message into first-class field check-in', () => {
+    const update = {
+      update_id: 1007,
+      message: {
+        message_id: 48,
+        from: { id: 98765 },
+        chat: { id: 98765, type: 'private' },
+        date: 1700000000,
+        location: { latitude: 46.7712, longitude: 23.5932 },
+      },
+    };
+
+    const res = normalizeTelegramUpdate(update, botId);
+    expect(res.kind).toBe('location');
+    expect(res.location?.latitude).toBe(46.7712);
+    expect(res.location?.longitude).toBe(23.5932);
+    expect(res.text).toContain('46.7712, 23.5932');
+    expect(res.unsupportedMediaTypes).toEqual([]);
+  });
+
+  it('normalizes venue message with address and venue title', () => {
+    const update = {
+      update_id: 1008,
+      message: {
+        message_id: 49,
+        from: { id: 98765 },
+        chat: { id: 98765, type: 'private' },
+        date: 1700000000,
+        venue: {
+          title: 'Bistro Paprika',
+          address: 'Strada Paris 14',
+          location: { latitude: 46.7712, longitude: 23.5932 },
+        },
+      },
+    };
+
+    const res = normalizeTelegramUpdate(update, botId);
+    expect(res.kind).toBe('location');
+    expect(res.venue?.title).toBe('Bistro Paprika');
+    expect(res.venue?.address).toBe('Strada Paris 14');
+    expect(res.text).toContain('Check-in at Bistro Paprika (Strada Paris 14)');
+    expect(res.unsupportedMediaTypes).toEqual([]);
+  });
 });
 
 describe('Telegram send formatting', () => {
@@ -205,5 +274,23 @@ describe('Telegram send formatting', () => {
     expect(replyMarkupForPart(true, true)).toEqual({ force_reply: true, selective: true });
     expect(replyMarkupForPart(true, false)).toBeUndefined();
     expect(replyMarkupForPart(false, true)).toBeUndefined();
+  });
+
+  it('builds inline keyboard markup with action buttons', async () => {
+    const { buildInlineKeyboard } = await import('../src/telegramSend.js');
+    const markup = buildInlineKeyboard([
+      [
+        { text: 'Undo', callback_data: 'cb:undo' },
+        { text: 'Help', callback_data: 'cb:help' },
+      ],
+    ]);
+    expect(markup).toEqual({
+      inline_keyboard: [
+        [
+          { text: 'Undo', callback_data: 'cb:undo' },
+          { text: 'Help', callback_data: 'cb:help' },
+        ],
+      ],
+    });
   });
 });

@@ -123,6 +123,54 @@ function textUpdate(id: number, from: number, text: string, replyTo?: number) {
   };
 }
 
+function callbackUpdate(id: number, from: number, data: string, messageId = 100) {
+  return {
+    update_id: id,
+    callback_query: {
+      id: `cq_${id}`,
+      from: { id: from, is_bot: false },
+      message: {
+        message_id: messageId,
+        from: { id: 999, is_bot: true },
+        chat: { id: from, type: 'private' },
+        date: 1700000000,
+        text: 'Previous question',
+      },
+      data,
+    },
+  };
+}
+
+function locationUpdate(id: number, from: number, latitude: number, longitude: number) {
+  return {
+    update_id: id,
+    message: {
+      message_id: id,
+      from: { id: from },
+      chat: { id: from, type: 'private' },
+      date: 1700000000,
+      location: { latitude, longitude },
+    },
+  };
+}
+
+function venueUpdate(id: number, from: number, title: string, address: string, latitude: number, longitude: number) {
+  return {
+    update_id: id,
+    message: {
+      message_id: id,
+      from: { id: from },
+      chat: { id: from, type: 'private' },
+      date: 1700000000,
+      venue: {
+        title,
+        address,
+        location: { latitude, longitude },
+      },
+    },
+  };
+}
+
 async function outboxIdForRun(runId: string): Promise<string> {
   const row = await env.DB
     .prepare(`SELECT id FROM outbox WHERE json_extract(payload_json, '$.run_id') = ? ORDER BY created_at DESC LIMIT 1`)
@@ -1817,5 +1865,99 @@ describe('009A Telegram text loop (workerd + D1)', () => {
     const freshBody = (await freshStart.json()) as { status: string; user_id?: string };
     expect(freshBody.status).toBe('linked');
     expect(freshBody.user_id).toBe(AVI);
+  });
+
+  describe('Telegram interactive buttons & callback queries (R15)', () => {
+    it('rejects callback queries from unlinked users', async () => {
+      const res = await postWebhook(callbackUpdate(8000, 999999, 'cb:undo'));
+      const body = (await res.json()) as { status: string };
+      expect(body.status).toBe('unrouted');
+    });
+
+    it('handles cb:model:<key> and cb:thinking:<level> via callback queries', async () => {
+      const modelRes = await postWebhook(callbackUpdate(8001, 777001, 'cb:model:gemini-flash'));
+      expect(((await modelRes.json()) as { status: string }).status).toBe('accepted');
+
+      const thinkingRes = await postWebhook(callbackUpdate(8002, 777001, 'cb:thinking:low'));
+      expect(((await thinkingRes.json()) as { status: string }).status).toBe('accepted');
+    });
+
+    it('handles cb:draft:sent:<draftId> and marks draft sent', async () => {
+      const draftId = 'drf_cb_test_1';
+      const now = nowIso();
+      const existingEvt = await env.DB.prepare('SELECT id FROM events WHERE workspace_id = ? LIMIT 1').bind(WS).first<{ id: string }>();
+      const fallbackEvt = existingEvt ? null : await env.DB.prepare('SELECT id FROM events LIMIT 1').first<{ id: string }>();
+      const sourceEvtId = existingEvt?.id ?? fallbackEvt?.id ?? 'evt_source_fallback';
+      await env.DB.prepare(
+        `INSERT INTO draft_projections (id, workspace_id, entity_id, channel, recipient_address, content_text, status, revision, source_event_id, created_at, updated_at)
+         VALUES (?, ?, NULL, 'whatsapp', '+1234567890', 'Quote attached', 'draft', 1, ?, ?, ?)`,
+      )
+        .bind(draftId, WS, sourceEvtId, now, now)
+        .run();
+
+      const res = await postWebhook(callbackUpdate(8003, 777001, `cb:draft:sent:${draftId}`));
+      expect(((await res.json()) as { status: string }).status).toBe('accepted');
+
+      const updated = await env.DB.prepare(`SELECT status FROM draft_projections WHERE id = ?`).bind(draftId).first<{ status: string }>();
+      expect(updated?.status).toBe('member_confirmed_sent');
+    });
+
+    it('handles cb:clarify:<id>:<value> and resumes waiting run', async () => {
+      const runId = 'run_clar_cb_1';
+      const clarId = 'clr_cb_1';
+      const now = nowIso();
+
+      const chat = await env.DB.prepare(`SELECT active_chat_id FROM telegram_users WHERE telegram_user_id = ?`).bind('777001').first<{ active_chat_id: string }>();
+      const chatId = chat?.active_chat_id ?? 'cht_tg_test';
+      const existingMin = await env.DB.prepare('SELECT id FROM messages_in WHERE workspace_id = ? LIMIT 1').bind(WS).first<{ id: string }>();
+
+      await env.DB.batch([
+        env.DB.prepare(`INSERT INTO agent_runs (id, workspace_id, chat_id, source_message_id, status, created_at, updated_at) VALUES (?, ?, ?, ?, 'waiting_for_input', ?, ?)`).bind(runId, WS, chatId, existingMin!.id, now, now),
+        env.DB.prepare(
+          `INSERT INTO pending_clarifications (
+             id, workspace_id, chat_id, run_id, source_message_id, requester_user_id,
+             question, intended_operation, missing_fields, source_revision, status,
+             candidates_json, created_at, updated_at
+           ) VALUES (?, ?, ?, ?, ?, ?, 'Which date?', 'create_task', '["due"]', 1, 'pending', '["Tomorrow", "Next week"]', ?, ?)`
+        ).bind(clarId, WS, chatId, runId, existingMin!.id, AVI, now, now),
+      ]);
+
+      const res = await postWebhook(callbackUpdate(8004, 777001, `cb:clarify:${clarId}:Tomorrow`));
+      expect(((await res.json()) as { status: string }).status).toBe('accepted');
+
+      const answerMsg = await env.DB.prepare(`SELECT content_text FROM chat_messages WHERE run_id = ? AND content_text = 'Tomorrow'`).bind(runId).first<{ content_text: string }>();
+      expect(answerMsg?.content_text).toBe('Tomorrow');
+    });
+
+    it('handles cb:undo via callback query', async () => {
+      const undoRes = await postWebhook(callbackUpdate(8005, 777001, 'cb:undo'));
+      expect(((await undoRes.json()) as { status: string }).status).toBe('accepted');
+    });
+
+    it('handles cb:export:xlsx and cb:export:json document delivery', async () => {
+      const xlsxRes = await postWebhook(callbackUpdate(8010, 777001, 'cb:export:xlsx'));
+      expect(((await xlsxRes.json()) as { status: string }).status).toBe('accepted');
+
+      const jsonRes = await postWebhook(callbackUpdate(8011, 777001, 'cb:export:json'));
+      expect(((await jsonRes.json()) as { status: string }).status).toBe('accepted');
+    });
+
+    it('ingests native Telegram location and venue updates as check-in notes', async () => {
+      const venueRes = await postWebhook(venueUpdate(8020, 777001, 'Acme Corp HQ', '100 Market St', 37.7749, -122.4194));
+      expect(((await venueRes.json()) as { status: string }).status).toBe('accepted');
+
+      const venueMsg = await env.DB.prepare(
+        `SELECT content_text FROM chat_messages WHERE content_text LIKE '%📍 Check-in at Acme Corp HQ%' ORDER BY created_at DESC LIMIT 1`
+      ).first<{ content_text: string }>();
+      expect(venueMsg?.content_text).toContain('📍 Check-in at Acme Corp HQ (100 Market St)');
+
+      const locRes = await postWebhook(locationUpdate(8021, 777001, 37.7749, -122.4194));
+      expect(((await locRes.json()) as { status: string }).status).toBe('accepted');
+
+      const locMsg = await env.DB.prepare(
+        `SELECT content_text FROM chat_messages WHERE content_text LIKE '%📍 Shared location%' ORDER BY created_at DESC LIMIT 1`
+      ).first<{ content_text: string }>();
+      expect(locMsg?.content_text).toContain('📍 Shared location [Coordinates: 37.7749, -122.4194]');
+    });
   });
 });

@@ -194,7 +194,7 @@ Briefs contain at most five useful distinct items with reason/source and working
 
 ## 13. Current interface and coverage
 
-The current production UI includes ordinary chat and the separate Codex-style question panel; adaptive Markdown tables with local scroll and tab-separated copy; workspace search across clients, notes, quotes, tasks, files and chats; client-file inspection; the Records page; and mobile history navigation with responsive settings. Search and detail routes preserve workspace scope and source context. The Records page's direct Save path remains unaccepted under [R16](plans/editable-records.md).
+The current production UI includes ordinary chat and the separate Codex-style question panel; adaptive Markdown tables with local scroll and tab-separated copy; six-category workspace search; a sourced client dossier with selected-entry Save/history/Undo, contacts and duplicate merge previews; retained-file gallery/document controls; failed/partial Run Retry; the Records page; and mobile history navigation with responsive settings. Settings → Audit exposes JSON/XLSX download and owner-only deletion. The reply-language picker and manual brief schedule card were removed; these removals do not establish a new scheduling flow. Search/detail routes remain workspace scoped. Records direct Save remains unaccepted under [R16](plans/editable-records.md).
 
 The current branch has no Storybook stories, Storybook build command or `check:stories` script. Keep the approved behavior here and the detailed implementation verdicts in [status](docs/status.md); do not describe a planned fixture as an existing story.
 

@@ -17,7 +17,7 @@
  * original sender cannot overwrite that transition.
  */
 
-import { replyMarkupForPart, splitTelegramText } from '@otis/channels';
+import { replyMarkupForPart, splitTelegramText, type TelegramReplyMarkup } from '@otis/channels';
 
 export const TELEGRAM_API_BASE = 'https://api.telegram.org';
 export const TELEGRAM_SEND_TIMEOUT_MS = 10_000;
@@ -61,6 +61,8 @@ export interface TelegramDeliveryPayload {
    * (still pending, member intact) instead of a source update.
    */
   reminder_id?: string | null;
+  /** Optional reply markup, such as inline keyboard buttons. */
+  reply_markup?: TelegramReplyMarkup | null;
 }
 
 export interface TelegramDeliveryTarget {
@@ -281,6 +283,8 @@ export interface TelegramDeliveryInput {
    * rows, so the caller — which already verified everything — supplies it.
    */
   target?: TelegramDeliveryTarget;
+  /** Optional reply markup, such as inline keyboard buttons. Attached to the final part. */
+  replyMarkup?: TelegramReplyMarkup | null;
 }
 
 /**
@@ -300,6 +304,7 @@ export function buildTelegramDeliveryStatements(
   return parts.map((text, partIndex) => {
     const id = `tgdl_${input.sourceMessageId}_${input.kind}_${input.key}_${partIndex}`;
     const previousPartId = partIndex === 0 ? null : `tgdl_${input.sourceMessageId}_${input.kind}_${input.key}_${partIndex - 1}`;
+    const isFinalPart = partIndex === parts.length - 1;
     const payload: TelegramDeliveryPayload = {
       payload_version: TELEGRAM_DELIVERY_PAYLOAD_VERSION,
       user_id: input.userId,
@@ -320,6 +325,7 @@ export function buildTelegramDeliveryStatements(
       reminder_id: input.reminderId ?? null,
       text,
       telegram_message_id: null,
+      reply_markup: isFinalPart && input.replyMarkup ? input.replyMarkup : null,
     };
     return db.prepare(
       `INSERT OR IGNORE INTO outbox (id, workspace_id, destination, topic, payload_json, status, created_at, updated_at)
@@ -362,7 +368,7 @@ export async function sendTelegramText(
   botToken: string,
   telegramChatId: string,
   text: string,
-  replyMarkup: { force_reply?: true; selective?: true } | undefined,
+  replyMarkup: TelegramReplyMarkup | undefined,
   fetchFn: TelegramSendFetch = fetch,
   timeoutMs = TELEGRAM_SEND_TIMEOUT_MS,
 ): Promise<TelegramSendResult> {
@@ -467,6 +473,349 @@ export async function sendTelegramChatAction(
     return response.ok;
   } catch {
     return false;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
+ * Answers a Telegram callback query to dismiss the client loading indicator.
+ * Optionally displays an in-app toast notification or modal alert.
+ */
+export async function answerCallbackQuery(
+  botToken: string,
+  callbackQueryId: string,
+  text?: string,
+  showAlert = false,
+  fetchFn: TelegramSendFetch = fetch,
+  timeoutMs = TELEGRAM_SEND_TIMEOUT_MS,
+): Promise<{ ok: boolean; reason?: string }> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetchFn(`${TELEGRAM_API_BASE}/bot${botToken}/answerCallbackQuery`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      signal: controller.signal,
+      body: JSON.stringify({
+        callback_query_id: callbackQueryId,
+        ...(text ? { text } : {}),
+        ...(showAlert ? { show_alert: true } : {}),
+      }),
+    });
+    let body: unknown = null;
+    try {
+      body = await response.json();
+    } catch {
+      body = null;
+    }
+    const parsed = (body ?? {}) as { ok?: unknown; description?: unknown };
+    if (response.ok && parsed.ok === true) {
+      return { ok: true };
+    }
+    const reason = typeof parsed.description === 'string' ? parsed.description : `HTTP ${response.status}`;
+    return { ok: false, reason: sanitizeReason(`answerCallbackQuery failed: ${reason}`) };
+  } catch (err) {
+    const reason = err instanceof Error ? err.name : String(err);
+    return { ok: false, reason: sanitizeReason(`answerCallbackQuery transport failure: ${reason}`) };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
+ * Reacts to a user's message with a native emoji reaction (Telegram Bot API 7.0+).
+ * Delivers immediate tactile feedback on message arrival.
+ */
+export async function sendTelegramReaction(
+  botToken: string,
+  telegramChatId: string | number,
+  telegramMessageId: string | number,
+  emoji = '✍️',
+  fetchFn: TelegramSendFetch = fetch,
+  timeoutMs = TELEGRAM_SEND_TIMEOUT_MS,
+): Promise<{ ok: boolean; reason?: string }> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetchFn(`${TELEGRAM_API_BASE}/bot${botToken}/setMessageReaction`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      signal: controller.signal,
+      body: JSON.stringify({
+        chat_id: telegramChatId,
+        message_id: Number(telegramMessageId),
+        reaction: [{ type: 'emoji', emoji }],
+      }),
+    });
+    let body: unknown = null;
+    try {
+      body = await response.json();
+    } catch {
+      body = null;
+    }
+    const parsed = (body ?? {}) as { ok?: unknown; description?: unknown };
+    if (response.ok && parsed.ok === true) {
+      return { ok: true };
+    }
+    const reason = typeof parsed.description === 'string' ? parsed.description : `HTTP ${response.status}`;
+    return { ok: false, reason: sanitizeReason(`setMessageReaction failed: ${reason}`) };
+  } catch (err) {
+    const reason = err instanceof Error ? err.name : String(err);
+    return { ok: false, reason: sanitizeReason(`setMessageReaction transport failure: ${reason}`) };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
+ * Updates an existing Telegram message's inline keyboard markup in place,
+ * e.g. dismissing buttons once an option or action has been selected.
+ */
+export async function editTelegramMessageReplyMarkup(
+  botToken: string,
+  telegramChatId: string | number,
+  telegramMessageId: string | number,
+  replyMarkup?: TelegramReplyMarkup | null,
+  fetchFn: TelegramSendFetch = fetch,
+  timeoutMs = TELEGRAM_SEND_TIMEOUT_MS,
+): Promise<{ ok: boolean; reason?: string }> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetchFn(`${TELEGRAM_API_BASE}/bot${botToken}/editMessageReplyMarkup`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      signal: controller.signal,
+      body: JSON.stringify({
+        chat_id: telegramChatId,
+        message_id: Number(telegramMessageId),
+        reply_markup: replyMarkup ?? { inline_keyboard: [] },
+      }),
+    });
+    let body: unknown = null;
+    try {
+      body = await response.json();
+    } catch {
+      body = null;
+    }
+    const parsed = (body ?? {}) as { ok?: unknown; description?: unknown };
+    if (response.ok && parsed.ok === true) {
+      return { ok: true };
+    }
+    const reason = typeof parsed.description === 'string' ? parsed.description : `HTTP ${response.status}`;
+    return { ok: false, reason: sanitizeReason(`editMessageReplyMarkup failed: ${reason}`) };
+  } catch (err) {
+    const reason = err instanceof Error ? err.name : String(err);
+    return { ok: false, reason: sanitizeReason(`editMessageReplyMarkup transport failure: ${reason}`) };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
+ * Edits the text and optional markup of an existing Telegram message in place.
+ */
+export async function editTelegramMessageText(
+  botToken: string,
+  telegramChatId: string | number,
+  telegramMessageId: string | number,
+  text: string,
+  replyMarkup?: TelegramReplyMarkup | null,
+  fetchFn: TelegramSendFetch = fetch,
+  timeoutMs = TELEGRAM_SEND_TIMEOUT_MS,
+): Promise<{ ok: boolean; reason?: string }> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetchFn(`${TELEGRAM_API_BASE}/bot${botToken}/editMessageText`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      signal: controller.signal,
+      body: JSON.stringify({
+        chat_id: telegramChatId,
+        message_id: Number(telegramMessageId),
+        text,
+        ...(replyMarkup ? { reply_markup: replyMarkup } : {}),
+      }),
+    });
+    let body: unknown = null;
+    try {
+      body = await response.json();
+    } catch {
+      body = null;
+    }
+    const parsed = (body ?? {}) as { ok?: unknown; description?: unknown };
+    if (response.ok && parsed.ok === true) {
+      return { ok: true };
+    }
+    const reason = typeof parsed.description === 'string' ? parsed.description : `HTTP ${response.status}`;
+    return { ok: false, reason: sanitizeReason(`editMessageText failed: ${reason}`) };
+  } catch (err) {
+    const reason = err instanceof Error ? err.name : String(err);
+    return { ok: false, reason: sanitizeReason(`editMessageText transport failure: ${reason}`) };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
+ * Sends a native file document (.xlsx workbook, .json export) directly to the Telegram chat.
+ * Uses standard multipart/form-data upload.
+ */
+export async function sendTelegramDocument(
+  botToken: string,
+  telegramChatId: string | number,
+  documentBytes: Uint8Array | ArrayBuffer,
+  filename: string,
+  contentType: string,
+  caption?: string,
+  replyMarkup?: TelegramReplyMarkup | null,
+  fetchFn: TelegramSendFetch = fetch,
+  timeoutMs = 15000,
+): Promise<TelegramSendResult> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const form = new FormData();
+    form.append('chat_id', String(telegramChatId));
+    form.append('document', new Blob([documentBytes as unknown as BlobPart], { type: contentType }), filename);
+    if (caption) {
+      form.append('caption', caption);
+    }
+    if (replyMarkup) {
+      form.append('reply_markup', JSON.stringify(replyMarkup));
+    }
+
+    const response = await fetchFn(`${TELEGRAM_API_BASE}/bot${botToken}/sendDocument`, {
+      method: 'POST',
+      signal: controller.signal,
+      body: form,
+    });
+
+    let body: unknown = null;
+    try {
+      body = await response.json();
+    } catch {
+      body = null;
+    }
+    const parsed = (body ?? {}) as {
+      ok?: unknown;
+      result?: { message_id?: unknown; chat?: { id?: unknown } };
+      error_code?: unknown;
+      description?: unknown;
+    };
+    if (response.ok && parsed.ok === true) {
+      const messageId = parsed.result?.message_id;
+      const chatId = parsed.result?.chat?.id;
+      if (
+        typeof messageId === 'number' && Number.isSafeInteger(messageId) && messageId > 0 &&
+        String(chatId) === String(telegramChatId)
+      ) {
+        return { ok: true, chatId: Number(chatId), messageId };
+      }
+      return { ok: true };
+    }
+    const description = typeof parsed.description === 'string' ? parsed.description : `HTTP ${response.status}`;
+    return { ok: false, reason: sanitizeReason(`sendDocument rejected: ${description}`) };
+  } catch (err) {
+    const reason = err instanceof Error ? err.name : String(err);
+    return { ok: false, reason: sanitizeReason(`sendDocument transport failure: ${reason}`) };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+export interface TelegramBotCommand {
+  command: string;
+  description: string;
+}
+
+export const OTIS_TELEGRAM_COMMANDS: TelegramBotCommand[] = [
+  { command: 'new', description: 'Start a new conversation' },
+  { command: 'undo', description: 'Undo the latest change' },
+  { command: 'model', description: 'View or switch model' },
+  { command: 'thinking', description: 'View or set thinking level' },
+  { command: 'workspace', description: 'Switch active workspace' },
+  { command: 'export', description: 'Download spreadsheet snapshot' },
+  { command: 'status', description: 'Check assistant status' },
+  { command: 'help', description: 'View available commands' },
+];
+
+/**
+ * Configures the native Telegram chat Menu button to open the command menu.
+ */
+export async function setTelegramMenuButton(
+  botToken: string,
+  fetchFn: TelegramSendFetch = fetch,
+  timeoutMs = TELEGRAM_SEND_TIMEOUT_MS,
+): Promise<{ ok: boolean; reason?: string }> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetchFn(`${TELEGRAM_API_BASE}/bot${botToken}/setChatMenuButton`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      signal: controller.signal,
+      body: JSON.stringify({
+        menu_button: { type: 'commands' },
+      }),
+    });
+    let body: unknown = null;
+    try {
+      body = await response.json();
+    } catch {
+      body = null;
+    }
+    const parsed = (body ?? {}) as { ok?: unknown; description?: unknown };
+    if (response.ok && parsed.ok === true) {
+      return { ok: true };
+    }
+    const reason = typeof parsed.description === 'string' ? parsed.description : `HTTP ${response.status}`;
+    return { ok: false, reason: sanitizeReason(`setChatMenuButton failed: ${reason}`) };
+  } catch (err) {
+    const reason = err instanceof Error ? err.name : String(err);
+    return { ok: false, reason: sanitizeReason(`setChatMenuButton transport failure: ${reason}`) };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
+ * Registers native bot commands in Telegram via setMyCommands, and configures the Menu button.
+ */
+export async function setTelegramCommands(
+  botToken: string,
+  commands: TelegramBotCommand[] = OTIS_TELEGRAM_COMMANDS,
+  fetchFn: TelegramSendFetch = fetch,
+  timeoutMs = TELEGRAM_SEND_TIMEOUT_MS,
+): Promise<{ ok: boolean; reason?: string }> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetchFn(`${TELEGRAM_API_BASE}/bot${botToken}/setMyCommands`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      signal: controller.signal,
+      body: JSON.stringify({ commands }),
+    });
+    let body: unknown = null;
+    try {
+      body = await response.json();
+    } catch {
+      body = null;
+    }
+    const parsed = (body ?? {}) as { ok?: unknown; description?: unknown };
+    if (response.ok && parsed.ok === true) {
+      // Best-effort also configure the Menu button pill to open commands
+      await setTelegramMenuButton(botToken, fetchFn, timeoutMs).catch(() => null);
+      return { ok: true };
+    }
+    const reason = typeof parsed.description === 'string' ? parsed.description : `HTTP ${response.status}`;
+    return { ok: false, reason: sanitizeReason(`setMyCommands failed: ${reason}`) };
+  } catch (err) {
+    const reason = err instanceof Error ? err.name : String(err);
+    return { ok: false, reason: sanitizeReason(`setMyCommands transport failure: ${reason}`) };
   } finally {
     clearTimeout(timer);
   }
@@ -916,7 +1265,7 @@ export async function deliverTelegramOutbox(
       botToken,
       sendChatId,
       payload.text,
-      replyMarkupForPart(payload.kind === 'question', payload.part_index === payload.part_count - 1),
+      payload.reply_markup ?? replyMarkupForPart(payload.kind === 'question', payload.part_index === payload.part_count - 1),
       options.fetchFn,
     );
     // Result timestamps come from AFTER the send returned: a slow request

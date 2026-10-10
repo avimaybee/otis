@@ -280,4 +280,17 @@ describe('Turn context batching (workerd)', () => {
     const total = context.activeNotes.reduce((sum, n) => sum + n.content.length, 0);
     expect(total).toBeLessThanOrEqual(6000);
   });
+
+  it('marks voice notes supported for all models when Groq STT is available', async () => {
+    const context = await getTurnContext(env.DB, {
+      workspaceId: ws,
+      actorUserId: aviId,
+      chatId: chat,
+      sourceText: 'hi',
+      platformKeyPresent: { groq: true, opencode_go: true },
+    });
+    // In Otis, all models can receive and answer voice notes via Groq STT
+    expect(context.systemPrompt).toContain('Muse Spark 1.3 Contributor');
+    expect(context.systemPrompt).toMatch(/Muse Spark 1\.3 Contributor.*voice notes: yes/);
+  });
 });

@@ -1650,5 +1650,42 @@ describe('Worker Agent Loop, Recovery & Clarification Integration (006B workerd)
     expect(progressJson.length).toBeLessThan(30000);
   });
 
+  it('automatically retries transient provider errors (503 / 429) and recovers cleanly', async () => {
+    const accepted = await acceptWebMessage(env.DB, {
+      workspaceId: ws,
+      chatId: chatAvi,
+      userId: aviId,
+      clientMessageId: 'msg-retry-test-1',
+      text: 'Test transient retry',
+    });
+    let callCount = 0;
+    const retryAdapter: ProviderAdapter = {
+      provider: 'gemini',
+      audioSupport: () => ({ support: 'unsupported', detail: 'test' }),
+      async *streamTurn() {
+        callCount++;
+        if (callCount === 1) {
+          yield {
+            type: 'error',
+            error: { code: 'transient', message: 'Gemini service error (503).', retryable: true, retryAfterMs: 50, status: 503 },
+          };
+          return;
+        }
+        yield { type: 'text_delta', text: 'Recovered cleanly from 503.' };
+        yield { type: 'finish', reason: 'success', continuation: null };
+      },
+    };
+    const handler = new AgentHandler({ providerAdapter: retryAdapter, maxRoundsPerSlice: 3, limits: defaultTestLimits });
+    const result = await dispatchOutboxItem(env.DB, await outboxIdForRun(accepted.run_id), ws, { handler });
+    expect(result.status).toBe('completed');
+    expect(callCount).toBe(2);
+
+    const savedMessage = await env.DB.prepare(
+      `SELECT content_text FROM chat_messages WHERE chat_id = ? AND author_kind = 'assistant' ORDER BY created_at DESC LIMIT 1`,
+    )
+      .bind(chatAvi)
+      .first<{ content_text: string }>();
+    expect(savedMessage?.content_text).toBe('Recovered cleanly from 503.');
+  });
 });
 

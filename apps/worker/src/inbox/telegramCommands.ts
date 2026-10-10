@@ -27,6 +27,7 @@ import {
   handleUndoCommit as commitLedgerUndo,
 } from '@otis/ledger';
 import { parseCommandText } from '@otis/commands';
+import type { TelegramReplyMarkup } from '@otis/channels';
 import { executeCommand } from '../routes/commands.js';
 import type { PlatformKeys } from '../providers/service.js';
 import { getChat } from './repository.js';
@@ -349,7 +350,7 @@ export async function executeTelegramCommand(
     );
   }
 
-  const deliveryStatements = (replyText: string) =>
+  const deliveryStatements = (replyText: string, replyMarkup?: TelegramReplyMarkup | null) =>
     buildTelegramDeliveryStatements(db, {
       workspaceId,
       userId: input.userId,
@@ -359,6 +360,7 @@ export async function executeTelegramCommand(
       kind: 'command',
       key: input.sourceMessageId,
       text: replyText,
+      replyMarkup,
       // The source row is written in this same batch: resolution reads would
       // not see it, so routing is supplied explicitly from the normalized
       // private update the caller already verified.
@@ -492,9 +494,21 @@ export async function executeTelegramCommand(
     }
   }
 
+  const commandReplyMarkup: TelegramReplyMarkup | undefined =
+    parsed.kind === 'command' && (parsed.name === 'sheet' || parsed.name === 'export')
+      ? {
+          inline_keyboard: [
+            [
+              { text: '📊 Download Excel (.xlsx)', callback_data: 'cb:export:xlsx' },
+              { text: '📦 Download JSON', callback_data: 'cb:export:json' },
+            ],
+          ],
+        }
+      : undefined;
+
   const finalStatements = [...baseStatements];
   appendReplyActivity(finalStatements, reply);
-  finalStatements.push(...deliveryStatements(reply));
+  finalStatements.push(...deliveryStatements(reply, commandReplyMarkup));
   const racedOutcome = await runCommandBatch(finalStatements);
   if (racedOutcome) return racedOutcome;
   return { handled: true, reply, workspaceId: selectedWorkspaceId ?? workspaceId };

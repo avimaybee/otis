@@ -448,8 +448,36 @@ export function workspaceExportToSheets(
         cellText(draft['content_text']),
       ]),
     },
+    {
+      name: 'Reminders',
+      headers: ['Title', 'Due at (UTC)', 'Status', 'Created at (UTC)'],
+      rows: sections.reminders.map((reminder) => [
+        cellText(reminder['title']),
+        rowDate(reminder['due_at']),
+        cellText(reminder['status']),
+        rowDate(reminder['created_at']),
+      ]),
+    },
+    {
+      name: 'Briefs',
+      headers: ['Member', 'Channel', 'Status', 'Delivery time', 'Created at (UTC)'],
+      rows: sections.briefs.map((brief) => [
+        cellText(memberName(brief['member_user_id']) ?? brief['member_user_id']),
+        cellText(brief['delivery_channel']),
+        cellText(brief['status']),
+        cellText(brief['delivery_time']),
+        rowDate(brief['created_at']),
+      ]),
+    },
   ];
-  for (const [name, rows] of [['Contacts', sections.contacts], ['Combined clients', sections.redirects], ['File links', sections.attachmentLinks], ['Follow-up rules', sections.reminderRules], ['Document text inventory', sections.documentExtractions]] as const) {
+  for (const [name, rows] of [
+    ['Contacts', sections.contacts],
+    ['Combined clients', sections.redirects],
+    ['File links', sections.attachmentLinks],
+    ['Follow-up rules', sections.reminderRules],
+    ['Document text inventory', sections.documentExtractions],
+    ['Media annotations', sections.mediaAnnotations],
+  ] as const) {
     if (!rows?.length) continue;
     const headers = Object.keys(rows[0]!);
     sheets.push({ name, headers, rows: rows.map(row => headers.map(key => cellText(row[key]))) });

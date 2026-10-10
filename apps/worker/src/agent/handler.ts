@@ -31,7 +31,9 @@ import {
   collectAndValidateProviderStream,
   createInitialProgress,
   getOrderedToolDeclarations,
+  getStreamRetryDelayMs,
   isExplicitCorrection,
+  isRetryableStreamError,
   MUTATING_TOOL_NAMES,
   PRODUCTION_REGISTRY,
   PROMPT_VERSION,
@@ -603,6 +605,7 @@ export class AgentHandler implements TurnHandler {
     const platformKeyPresent = {
       gemini: Boolean(this.options?.platformKeys?.gemini),
       opencode_go: Boolean(this.options?.platformKeys?.opencode_go),
+      groq: Boolean(this.options?.platformKeys?.groq),
     };
     let currentEffortLabel: string | null = null;
     try {
@@ -1124,22 +1127,9 @@ export class AgentHandler implements TurnHandler {
           };
         }
 
-        // Stream from provider
-        let stream: AsyncIterable<ProviderEvent>;
-        if (this.options?.providerAdapter) {
-          stream = this.options.providerAdapter.streamTurn({
-            ...turnInput,
-            model: {
-              commandKey: modelSnapshot.commandKey,
-              provider: modelSnapshot.provider as ProviderName,
-              modelId: modelSnapshot.modelId,
-              endpointFamily: modelSnapshot.endpointFamily as EndpointFamily,
-              endpointUrl: 'https://fake.provider/v1',
-            },
-          });
-        } else {
-          // effectiveEntry is always pinned during setup above; this guard
-          // only documents the invariant (the old re-resolution read was dead).
+        // Provider stream setup with pre-resolved credentials
+        let preResolvedRawKey: string | null = null;
+        if (!this.options?.providerAdapter) {
           if (!effectiveEntry) {
             return { kind: 'failed', errorCode: 'model_unavailable', errorMessage: 'No model pinned for this turn.' };
           }
@@ -1149,10 +1139,6 @@ export class AgentHandler implements TurnHandler {
             return { kind: 'failed', errorCode: 'misconfigured', errorMessage: `No credentials configured for provider '${effectiveEntry.provider}'.` };
           }
 
-          // Eagerly resolved (cached per turn above); a resolution failure
-          // maps to the same provider_stream_error outcome the lazy path
-          // produced, never a raw throw into the dispatch retry loop.
-          let preResolvedRawKey: string | null;
           try {
             preResolvedRawKey = await providerKeyFor(effectiveEntry);
           } catch (keyErr) {
@@ -1173,116 +1159,177 @@ export class AgentHandler implements TurnHandler {
                 : keyErr instanceof Error ? keyErr.message : String(keyErr),
             };
           }
+        }
 
-          stream = runProviderTurn(ctx.db, {
+        const createStream = (): AsyncIterable<ProviderEvent> => {
+          if (this.options?.providerAdapter) {
+            return this.options.providerAdapter.streamTurn({
+              ...turnInput,
+              model: {
+                commandKey: modelSnapshot.commandKey,
+                provider: modelSnapshot.provider as ProviderName,
+                modelId: modelSnapshot.modelId,
+                endpointFamily: modelSnapshot.endpointFamily as EndpointFamily,
+                endpointUrl: 'https://fake.provider/v1',
+              },
+            });
+          }
+          return runProviderTurn(ctx.db, {
             workspaceId: ctx.workspaceId,
             actorUserId,
-            entry: effectiveEntry,
+            entry: effectiveEntry!,
             wrappingKey: this.options?.wrappingKey,
             platformKeys: this.options?.platformKeys,
             preResolvedRawKey,
             input: turnInput,
             fetchFn: this.options?.fetchFn,
           });
-        }
+        };
 
-        // Collect and validate round (throws AgentStreamError on incomplete/malformed stream)
+        // Collect and validate round (with automatic retry on transient upstream outages / rate limits)
         let collectedRound;
         const roundIndex = progress.roundIndex;
-        const publisher = new StreamPublisher(
-          (key, type, payload) => publishAgentActivity(ctx, key, type, payload),
-          roundIndex,
-          modelSnapshot.provider,
-          (err) => workerFailure('agent', 'stream flush failed; remainder retries on next tick', {
-            workspaceId: ctx.workspaceId,
-            runId: ctx.runId,
-            round: progress.roundIndex,
-            error: err instanceof Error ? err.message : String(err),
-          }),
-          thinkingBudget,
-          // Transient preview: live frames bypass D1 entirely and stream
-          // straight to actor-local SSE subscribers; the durable remainder
-          // persists once on close. Telegram runs additionally fold the
-          // round text into a coalesced private-chat draft.
-          (text, seq) => {
-            if (!ctx.chatId) return;
-            liveChatBus.broadcast(ctx.workspaceId, ctx.chatId, {
-              name: 'activity',
-              id: undefined,
-              data: {
-                schema_version: 1,
-                id: `preview_${ctx.runId}_r${roundIndex}_${seq}`,
-                cursor: 0,
-                workspace_id: ctx.workspaceId,
-                chat_id: ctx.chatId,
-                run_id: ctx.runId,
-                created_at: new Date().toISOString(),
-                type: 'text_preview',
-                payload: { text, round_index: roundIndex, seq },
-              },
-            });
-            telegramDraft?.update(roundIndex, text);
-          },
-          () => ctx.signal?.aborted ?? false,
-        );
-        // One serialized owner for size- and timer-triggered flushes; every
-        // exit below clears it. The final flush is authorized remainder only:
-        // fence/membership guards still reject stale writes after Stop or
-        // lease loss, and the run terminal state resolves the rest.
-        // 100 ms drives preview cadence; thinking still gates on its own
-        // 400 ms budget inside tick().
-        const publishTimer = setInterval(() => {
-          void publisher.tick().catch(() => undefined);
-        }, 100);
-        let streamOutcome: 'complete' | 'interrupted' = 'complete';
-        try {
-          const publicStream = async function* () {
-            for await (const event of stream) {
-              if (event.type === 'text_delta') {
-                publisher.pushText(event.text);
-              } else if (event.type === 'provider_thought_summary') {
-                publisher.pushThinking({
-                  text: event.text,
-                  blockId: event.blockId,
-                  contentKind: event.contentKind,
-                  mode: event.mode,
-                });
+        const MAX_STREAM_ATTEMPTS = 3;
+        let lastStreamErr: unknown;
+
+        for (let streamAttempt = 0; streamAttempt < MAX_STREAM_ATTEMPTS; streamAttempt++) {
+          if (ctx.signal?.aborted) {
+            return { kind: 'failed', errorCode: 'aborted', errorMessage: 'Run cancelled.' };
+          }
+
+          const stream = createStream();
+          const publisher = new StreamPublisher(
+            (key, type, payload) => publishAgentActivity(ctx, key, type, payload),
+            roundIndex,
+            modelSnapshot.provider,
+            (err) => workerFailure('agent', 'stream flush failed; remainder retries on next tick', {
+              workspaceId: ctx.workspaceId,
+              runId: ctx.runId,
+              round: progress.roundIndex,
+              error: err instanceof Error ? err.message : String(err),
+            }),
+            thinkingBudget,
+            (text, seq) => {
+              if (!ctx.chatId) return;
+              liveChatBus.broadcast(ctx.workspaceId, ctx.chatId, {
+                name: 'activity',
+                id: undefined,
+                data: {
+                  schema_version: 1,
+                  id: `preview_${ctx.runId}_r${roundIndex}_${seq}`,
+                  cursor: 0,
+                  workspace_id: ctx.workspaceId,
+                  chat_id: ctx.chatId,
+                  run_id: ctx.runId,
+                  created_at: new Date().toISOString(),
+                  type: 'text_preview',
+                  payload: { text, round_index: roundIndex, seq },
+                },
+              });
+              telegramDraft?.update(roundIndex, text);
+            },
+            () => ctx.signal?.aborted ?? false,
+          );
+
+          let publishTimer: ReturnType<typeof setInterval> | null = setInterval(() => {
+            void publisher.tick().catch(() => undefined);
+          }, 100);
+          let streamOutcome: 'complete' | 'interrupted' = 'complete';
+
+          try {
+            const publicStream = async function* () {
+              for await (const event of stream) {
+                if (event.type === 'text_delta') {
+                  publisher.pushText(event.text);
+                } else if (event.type === 'provider_thought_summary') {
+                  publisher.pushThinking({
+                    text: event.text,
+                    blockId: event.blockId,
+                    contentKind: event.contentKind,
+                    mode: event.mode,
+                  });
+                }
+                yield event;
               }
-              yield event;
+            };
+            collectedRound = await collectAndValidateProviderStream(publicStream());
+            streamOutcome = 'complete';
+            clearInterval(publishTimer);
+            publishTimer = null;
+            const drained = await publisher.close(streamOutcome);
+            if (!drained) {
+              workerFailure('agent', 'live preview incomplete; authoritative answer persists separately', {
+                workspaceId: ctx.workspaceId,
+                runId: ctx.runId,
+                round: progress.roundIndex,
+              });
             }
-          };
-          collectedRound = await collectAndValidateProviderStream(publicStream());
-        } catch (streamErr) {
-          streamOutcome = 'interrupted';
+            break;
+          } catch (streamErr) {
+            lastStreamErr = streamErr;
+            if (publishTimer) {
+              clearInterval(publishTimer);
+              publishTimer = null;
+            }
+            const isRetryable = isRetryableStreamError(streamErr);
+            const isLastAttempt = streamAttempt >= MAX_STREAM_ATTEMPTS - 1;
+            const isAborted = Boolean(ctx.signal?.aborted);
+
+            if (isRetryable && !isLastAttempt && !isAborted) {
+              const delayMs = getStreamRetryDelayMs(streamErr, streamAttempt);
+              workerDebug('agent', 'retrying transient provider stream error', {
+                workspaceId: ctx.workspaceId,
+                runId: ctx.runId,
+                round: progress.roundIndex,
+                attempt: streamAttempt,
+                delayMs,
+                error: streamErr instanceof Error ? streamErr.message : String(streamErr),
+              });
+              await new Promise((resolve) => setTimeout(resolve, delayMs));
+              continue;
+            }
+
+            streamOutcome = 'interrupted';
+            const drained = await publisher.close(streamOutcome);
+            if (!drained) {
+              workerFailure('agent', 'live preview incomplete; authoritative answer persists separately', {
+                workspaceId: ctx.workspaceId,
+                runId: ctx.runId,
+                round: progress.roundIndex,
+              });
+            }
+
+            const appliedCount = progress.completedToolResults.filter((r) => r.result.status === 'applied').length;
+            const providerCode = streamErr instanceof AgentStreamError ? streamErr.providerCode : undefined;
+            const agentCode = streamErr instanceof AgentStreamError ? streamErr.code : undefined;
+            workerFailure('agent', 'provider round failed', {
+              workspaceId: ctx.workspaceId,
+              runId: ctx.runId,
+              round: progress.roundIndex,
+              provider: modelSnapshot.provider,
+              model: modelSnapshot.commandKey,
+              agentCode,
+              ...(providerCode ? { providerCode } : {}),
+            });
+            return {
+              kind: 'failed',
+              errorCode: 'provider_stream_error',
+              errorMessage: appliedCount > 0
+                ? `Partial success: ${appliedCount} actions committed before stream error: ${streamErr instanceof Error ? streamErr.message : String(streamErr)}`
+                : streamErr instanceof Error ? streamErr.message : String(streamErr),
+            };
+          }
+        }
+
+        if (!collectedRound) {
           const appliedCount = progress.completedToolResults.filter((r) => r.result.status === 'applied').length;
-          const providerCode = streamErr instanceof AgentStreamError ? streamErr.providerCode : undefined;
-          const agentCode = streamErr instanceof AgentStreamError ? streamErr.code : undefined;
-          workerFailure('agent', 'provider round failed', {
-            workspaceId: ctx.workspaceId,
-            runId: ctx.runId,
-            round: progress.roundIndex,
-            provider: modelSnapshot.provider,
-            model: modelSnapshot.commandKey,
-            agentCode,
-            ...(providerCode ? { providerCode } : {}),
-          });
           return {
             kind: 'failed',
             errorCode: 'provider_stream_error',
             errorMessage: appliedCount > 0
-              ? `Partial success: ${appliedCount} actions committed before stream error: ${streamErr instanceof Error ? streamErr.message : String(streamErr)}`
-              : streamErr instanceof Error ? streamErr.message : String(streamErr),
+              ? `Partial success: ${appliedCount} actions committed before stream error: ${lastStreamErr instanceof Error ? lastStreamErr.message : String(lastStreamErr)}`
+              : lastStreamErr instanceof Error ? lastStreamErr.message : String(lastStreamErr),
           };
-        } finally {
-          clearInterval(publishTimer);
-          const drained = await publisher.close(streamOutcome);
-          if (!drained) {
-            workerFailure('agent', 'live preview incomplete; authoritative answer persists separately', {
-              workspaceId: ctx.workspaceId,
-              runId: ctx.runId,
-              round: progress.roundIndex,
-            });
-          }
         }
 
         // An input accepted while the provider was streaming changes the next
@@ -1376,7 +1423,11 @@ export class AgentHandler implements TurnHandler {
           // file an empty message and mark the run succeeded. Fail honestly
           // instead so the run reports failed and the member can retry.
           if (!collectedRound.text.trim()) {
-            return { kind: 'failed', errorCode: 'empty_response', errorMessage: 'The model returned an empty reply. Nothing was saved.' };
+            const appliedCount = progress.completedToolResults.filter((r) => r.result.status === 'applied').length;
+            const errorMessage = appliedCount > 0
+              ? `Partial success: ${appliedCount} action(s) committed before empty model reply.`
+              : 'The model returned an empty reply. Nothing was saved.';
+            return { kind: 'failed', errorCode: 'empty_response', errorMessage };
           }
           // An explicit value correction answered with words alone is never
           // a completed fix: the member believes the record changed while

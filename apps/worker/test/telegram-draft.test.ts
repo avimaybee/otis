@@ -4,6 +4,9 @@ import {
   draftIdForRun,
   sendTelegramMessageDraft,
   TELEGRAM_DRAFT_TEXT_LIMIT,
+  answerCallbackQuery,
+  setTelegramCommands,
+  OTIS_TELEGRAM_COMMANDS,
 } from '../src/inbox/telegramDelivery.js';
 
 interface RecordedCall {
@@ -114,5 +117,32 @@ describe('Telegram draft preview', () => {
     expect(createTelegramDraftPreview({ botToken: 't', telegramChatId: '-100123', runId: 'r' })).toBeNull();
     expect(createTelegramDraftPreview({ botToken: 't', telegramChatId: 'not-a-number', runId: 'r' })).toBeNull();
     expect(createTelegramDraftPreview({ botToken: 't', telegramChatId: '777002', runId: 'r' })).not.toBeNull();
+  });
+
+  it('answers callback queries via answerCallbackQuery', async () => {
+    const { calls, fetchFn } = recordingFetch();
+    const res = await answerCallbackQuery('token', 'cq_123', 'Saved', false, fetchFn);
+    expect(res.ok).toBe(true);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.url).toContain('/answerCallbackQuery');
+    expect(calls[0]!.body).toEqual({
+      callback_query_id: 'cq_123',
+      text: 'Saved',
+    });
+  });
+
+  it('registers bot commands via setTelegramCommands and configures menu button', async () => {
+    const { calls, fetchFn } = recordingFetch();
+    const res = await setTelegramCommands('token', OTIS_TELEGRAM_COMMANDS, fetchFn);
+    expect(res.ok).toBe(true);
+    expect(calls).toHaveLength(2);
+    expect(calls[0]!.url).toContain('/setMyCommands');
+    expect(calls[0]!.body).toMatchObject({
+      commands: OTIS_TELEGRAM_COMMANDS,
+    });
+    expect(calls[1]!.url).toContain('/setChatMenuButton');
+    expect(calls[1]!.body).toMatchObject({
+      menu_button: { type: 'commands' },
+    });
   });
 });

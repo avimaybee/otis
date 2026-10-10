@@ -323,6 +323,7 @@ export class WorkspaceActor {
   public state: DurableObjectState;
   public env: Env;
   private inflight: Promise<void> | null = null;
+  private pendingWake = false;
 
   constructor(state: DurableObjectState, env: Env) {
     this.state = state;
@@ -439,9 +440,15 @@ export class WorkspaceActor {
           return jsonSuccess({ status: 'ok', ...result }, 200);
         }
         if (this.inflight) {
+          this.pendingWake = true;
           return jsonSuccess({ status: 'accepted', deduped: true }, 202);
         }
-        this.startBackground(() => this.runDispatchAction(workspaceId, budget).then(() => undefined));
+        this.startBackground(async () => {
+          do {
+            this.pendingWake = false;
+            await this.runDispatchAction(workspaceId, budget);
+          } while (this.pendingWake);
+        });
         return jsonSuccess({ status: 'accepted', deduped: false }, 202);
       }
       if (body.action === 'recover') {

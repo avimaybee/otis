@@ -56,9 +56,27 @@ export function splitTelegramText(text: string, maxChars = TELEGRAM_MAX_PART_CHA
   return parts;
 }
 
-export interface TelegramReplyMarkup {
-  force_reply?: true;
-  selective?: true;
+export interface TelegramInlineKeyboardButton {
+  text: string;
+  callback_data?: string;
+  url?: string;
+}
+
+export interface TelegramInlineKeyboardMarkup {
+  inline_keyboard: TelegramInlineKeyboardButton[][];
+}
+
+export type TelegramReplyMarkup =
+  | { force_reply?: true; selective?: true }
+  | TelegramInlineKeyboardMarkup;
+
+/**
+ * Builds an inline keyboard markup object from rows of buttons.
+ */
+export function buildInlineKeyboard(
+  rows: Array<Array<{ text: string; callback_data?: string; url?: string }>>,
+): TelegramInlineKeyboardMarkup {
+  return { inline_keyboard: rows };
 }
 
 /**

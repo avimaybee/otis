@@ -404,6 +404,14 @@ const WORKSPACE_ERASURE_TABLES = [
   'briefs',
   'message_image_attachments',
   'reminders',
+  'interaction_state',
+  'entity_contacts',
+  'entity_redirects',
+  'attachment_links',
+  'reminder_rules',
+  'reminder_rule_cursors',
+  'document_extractions',
+  'media_annotations',
 ];
 
 /**
@@ -441,27 +449,39 @@ export async function deleteWorkspace(
   if (!ws) throw new Error('not_found');
 
   // Per-store counts for the erasure tombstone, read before deletion.
-  const counted = await db.batch([
-    ...WORKSPACE_ERASURE_TABLES.map((table) =>
+  const masterTables = new Set(
+    (await db.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all<{ name: string }>()).results.map((r) => r.name),
+  );
+  const tablesToCount = WORKSPACE_ERASURE_TABLES.filter((t) => masterTables.has(t));
+
+  const countStatements = [
+    ...tablesToCount.map((table) =>
       db.prepare(`SELECT COUNT(*) AS n FROM ${table} WHERE workspace_id = ?`).bind(params.workspaceId),
     ),
-    db.prepare(
-      `SELECT COUNT(*) AS n FROM brief_items WHERE brief_id IN (SELECT id FROM briefs WHERE workspace_id = ?)`,
-    ).bind(params.workspaceId),
-    db.prepare(
-      `SELECT COUNT(*) AS n FROM invite_redemptions WHERE invite_id IN (SELECT id FROM invites WHERE workspace_id = ?)`,
-    ).bind(params.workspaceId),
-  ]);
+    ...(masterTables.has('briefs')
+      ? [db.prepare(`SELECT COUNT(*) AS n FROM brief_items WHERE brief_id IN (SELECT id FROM briefs WHERE workspace_id = ?)`).bind(params.workspaceId)]
+      : []),
+    ...(masterTables.has('invites')
+      ? [db.prepare(`SELECT COUNT(*) AS n FROM invite_redemptions WHERE invite_id IN (SELECT id FROM invites WHERE workspace_id = ?)`).bind(params.workspaceId)]
+      : []),
+  ];
+
+  const counted = countStatements.length ? await db.batch(countStatements) : [];
   const counts: Record<string, number> = {};
-  WORKSPACE_ERASURE_TABLES.forEach((table, index) => {
+  tablesToCount.forEach((table, index) => {
     counts[table] = Number((counted[index] as unknown as { results?: Array<{ n: number }> }).results?.[0]?.n ?? 0);
   });
-  counts['brief_items'] = Number(
-    (counted[WORKSPACE_ERASURE_TABLES.length] as unknown as { results?: Array<{ n: number }> }).results?.[0]?.n ?? 0,
-  );
-  counts['invite_redemptions'] = Number(
-    (counted[WORKSPACE_ERASURE_TABLES.length + 1] as unknown as { results?: Array<{ n: number }> }).results?.[0]?.n ?? 0,
-  );
+  WORKSPACE_ERASURE_TABLES.forEach((table) => {
+    if (counts[table] === undefined) counts[table] = 0;
+  });
+  const briefItemsIdx = tablesToCount.length;
+  counts['brief_items'] = masterTables.has('briefs')
+    ? Number((counted[briefItemsIdx] as unknown as { results?: Array<{ n: number }> }).results?.[0]?.n ?? 0)
+    : 0;
+  const inviteRedemptionsIdx = briefItemsIdx + (masterTables.has('briefs') ? 1 : 0);
+  counts['invite_redemptions'] = masterTables.has('invites')
+    ? Number((counted[inviteRedemptionsIdx] as unknown as { results?: Array<{ n: number }> }).results?.[0]?.n ?? 0)
+    : 0;
 
   const erasureId = crypto.randomUUID();
   const nowIso = new Date().toISOString();
@@ -487,6 +507,12 @@ export async function deleteWorkspace(
     db.prepare(`DELETE FROM entity_state WHERE workspace_id = ?`).bind(wid),
     db.prepare(`DELETE FROM tasks WHERE workspace_id = ?`).bind(wid),
     db.prepare(`DELETE FROM draft_projections WHERE workspace_id = ?`).bind(wid),
+    ...(masterTables.has('interaction_state') ? [db.prepare(`DELETE FROM interaction_state WHERE workspace_id = ?`).bind(wid)] : []),
+    ...(masterTables.has('entity_contacts') ? [db.prepare(`DELETE FROM entity_contacts WHERE workspace_id = ?`).bind(wid)] : []),
+    ...(masterTables.has('entity_redirects') ? [db.prepare(`DELETE FROM entity_redirects WHERE workspace_id = ?`).bind(wid)] : []),
+    ...(masterTables.has('attachment_links') ? [db.prepare(`DELETE FROM attachment_links WHERE workspace_id = ?`).bind(wid)] : []),
+    ...(masterTables.has('reminder_rule_cursors') ? [db.prepare(`DELETE FROM reminder_rule_cursors WHERE workspace_id = ?`).bind(wid)] : []),
+    ...(masterTables.has('reminder_rules') ? [db.prepare(`DELETE FROM reminder_rules WHERE workspace_id = ?`).bind(wid)] : []),
     db.prepare(`DELETE FROM entity_aliases WHERE workspace_id = ?`).bind(wid),
     db.prepare(`DELETE FROM entities WHERE workspace_id = ?`).bind(wid),
     db.prepare(`DELETE FROM field_defs WHERE workspace_id = ?`).bind(wid),
@@ -501,6 +527,8 @@ export async function deleteWorkspace(
     db.prepare(`DELETE FROM agent_runs WHERE workspace_id = ?`).bind(wid),
     db.prepare(`DELETE FROM brief_items WHERE brief_id IN (SELECT id FROM briefs WHERE workspace_id = ?)`).bind(wid),
     db.prepare(`DELETE FROM briefs WHERE workspace_id = ?`).bind(wid),
+    ...(masterTables.has('document_extractions') ? [db.prepare(`DELETE FROM document_extractions WHERE workspace_id = ?`).bind(wid)] : []),
+    ...(masterTables.has('media_annotations') ? [db.prepare(`DELETE FROM media_annotations WHERE workspace_id = ?`).bind(wid)] : []),
     db.prepare(`DELETE FROM message_image_attachments WHERE workspace_id = ?`).bind(wid),
     db.prepare(`DELETE FROM media_transcriptions WHERE workspace_id = ?`).bind(wid),
     db.prepare(`DELETE FROM media_objects WHERE workspace_id = ?`).bind(wid),

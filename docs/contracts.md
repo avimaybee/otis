@@ -83,14 +83,14 @@ All workspace paths are under `/api/workspaces/:workspaceId`; use the source han
 | Media/voice | Private claim/upload/finalize, retained attachment access, transcript/STT configuration and validation |
 | Client files/actions | `GET /entities/:id/file` with section/sort/author/date/bookmark; `POST /entities/:id/actions` for one actor-bound ledger edit |
 | Workspace history | `GET /history/search` with query/chat/author/date/bookmark; authenticated source opening |
-| Unified workspace search | `GET /search?q=...&limit=...` across clients, notes, quotes, tasks, files and chats; workspace scoped |
+| Unified workspace search / duplicates | `GET /search?q=...&limit=...` across clients, notes, quotes, tasks, files and chats; `GET /duplicates` returns merge candidates; both workspace scoped |
 | Follow-ups | `GET /followups` lists own rules; `POST /followups` pauses/resumes/cancels one current rule |
 | Documents | `POST /documents/uploads` saves a private PDF; `POST /documents/:id/retry` retries conversion; originals use the existing private media route |
 | Telegram | Webhook/linking/scoped selection and replay-safe channel delivery |
 | Export | Member-scoped JSON document and spreadsheet snapshot downloads; secrets never enter either format; unknown formats rejected |
-| Workspace erasure | Owner-only audited cross-store erasure with R2 byte removal and a content-free tombstone; person-scoped rows survive with workspace pointers nulled |
+| Workspace erasure | Owner-only inventoried D1 erasure/tombstone followed by R2 deletion; person-scoped rows survive with workspace pointers nulled. Later-table coverage and failed R2 cleanup remain open |
 
-Terminal failed-run Continue is not an implemented route contract. One-off reminder delivery is also not supplied by a task due date.
+Run Retry requeues the same failed/partial run with existing progress/receipts; it does not create another accepted message. Ordinary message delivery retry and targeted clarification answers have their own identities. One-off reminder delivery is not supplied by a task due date.
 
 ## 6. Composer and question answers
 

@@ -49,7 +49,7 @@ Use actual local Workers/D1/DO/R2 for binding/transaction boundaries. Scripted p
 
 Use the existing [34-case corpus](../plans/qa/2026-10-07-agent-response-cases.md), covering capture/recall/correction/ordinal references/partial success and varied tables. Ground expected records/tool authority, then assess usefulness, requested detail, scope coverage and necessary clarifications.
 
-Compare fixed provider/model/effort on equivalent synthetic data. Include supplied comparisons, quotes, timelines, multi-owner tasks and arbitrary columns; one lead table is insufficient. Follow-ups must refer to the relevant result, and tables/recommendations must not perform unrequested writes. Record failures and token/round/latency differences, not exact prose snapshots. Live comparison has not been run by this documentation audit.
+Compare fixed provider/model/effort on equivalent synthetic data. Include supplied comparisons, quotes, timelines, multi-owner tasks and arbitrary columns; one lead table is insufficient. Follow-ups must refer to the relevant result, and tables/recommendations must not perform unrequested writes. Record failures and token/round/latency differences, not exact prose snapshots. Dated 2026-10-09 live cases are recorded in [status](status.md#c2q-implementation-2026-10-08); the documentation refresh does not rerun them or establish broader quality acceptance.
 
 ## 4. Native browser and device review
 
