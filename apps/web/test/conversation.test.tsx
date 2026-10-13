@@ -459,6 +459,19 @@ describe('Activity handling', () => {
     expect(transientTextForRun(state, 'run_1')).toBe('');
     expect(clearTransientPreview({ run_1: { 0: { seq: 1, text: 'x' } } }, 'run_1')).toEqual({});
   });
+  it('replaces a failed request provisional display when the generation changes (BG06)', () => {
+    const gen0 = activity('p1', 0, 'text_preview', { text: 'Hello', round_index: 0, seq: 5, generation: 'abc123s0' });
+    const gen1first = activity('p2', 0, 'text_preview', { text: 'H', round_index: 0, seq: 1, generation: 'abc123s1' });
+    let state = mergeTransientPreview({}, gen0);
+    expect(transientTextForRun(state, 'run_1')).toBe('Hello');
+    // A new generation replaces even with a lower sequence number.
+    state = mergeTransientPreview(state, gen1first);
+    expect(transientTextForRun(state, 'run_1')).toBe('H');
+    // Within the new generation, stale sequences are still refused.
+    const gen1stale = activity('p0', 0, 'text_preview', { text: '', round_index: 0, seq: 1, generation: 'abc123s1' });
+    state = mergeTransientPreview(state, gen1stale);
+    expect(transientTextForRun(state, 'run_1')).toBe('H');
+  });
 });
 
 describe('History navigation', () => {  it('uses a drawer on mobile with functional history and settings actions', async () => {

@@ -41,12 +41,14 @@ export interface DraftGroup {
   opIds: string[];
   label: string;
   ops: RecordEdit[];
+  replaced?: RecordEdit[];
 }
 
 export interface ConflictInfo {
   opId: string | null;
   message: string;
   currentValue?: RecordValue;
+  currentToken?: string;
 }
 
 export interface SaveManifest {
@@ -54,6 +56,9 @@ export interface SaveManifest {
   actionId: string;
   opIds: string[];
   operations: RecordEdit[];
+  listId: string;
+  chunkIndex: number;
+  chunkCount: number;
 }
 
 export type SaveStatus =
@@ -70,6 +75,19 @@ export interface OverlayRow extends RecordRow {
 
 function newOpId(prefix: string): string {
   return `${prefix}_${crypto.randomUUID().slice(0, 8)}`;
+}
+
+/**
+ * Predecessor for a coalesced cell edit group: always the value from before
+ * the group started, never intermediates and never the just-displaced edit.
+ * Undo of `one → two → three` therefore restores the pre-`one` baseline
+ * instead of staging a competing `one`. An empty and an unset predecessor
+ * both mean "nothing unsaved before this group".
+ */
+export function mergeEditPredecessors(
+  lastReplaced: RecordEdit[] | undefined,
+): RecordEdit[] {
+  return lastReplaced ?? [];
 }
 
 /** Best-effort display text for a semantic value (server owns canonical formatting). */
@@ -308,10 +326,14 @@ export interface RecordsContextInput {
 /**
  * Build the frozen assistant target for a turn composed beside the grid.
  * Called once per send; returns null instead of a malformed target so
- * ordinary chat never invents table scope.
+ * ordinary chat never invents table scope. An oversized delta retains its
+ * draft target without the inline delta and asks for a narrower scope,
+ * instead of silently dropping draft write protection.
  */
 export function buildRecordsContext(input: RecordsContextInput): RecordsContext | null {
   try {
+    const ops = input.operations;
+    const omitted = ops.length > 100;
     const context: RecordsContext = {
       list_id: input.listId,
       target: input.dirty
@@ -325,10 +347,25 @@ export function buildRecordsContext(input: RecordsContextInput): RecordsContext 
         ...(input.search ? { search: input.search } : {}),
         sort: { column_id: input.sort.column_id, direction: input.sort.direction },
       },
-      ...(input.operations.length > 0 ? { draft_delta: input.operations } : {}),
+      ...(ops.length > 0 ? { draft_delta: ops.slice(0, 100) } : {}),
+      ...(omitted ? { draft_delta_omitted: true as const } : {}),
     };
     const check = validateRecordsContext(context);
-    return check.valid ? context : null;
+    if (check.valid) return context;
+    const tooLarge = !check.valid && check.message.includes('over the') && check.message.includes('inline limit');
+    if (tooLarge) {
+      const narrowed: RecordsContext = {
+        ...context,
+        selected_rows: context.selected_rows.slice(0, 20),
+        selected_columns: context.selected_columns.slice(0, 20),
+        visible_row_order: context.visible_row_order.slice(0, 20),
+      };
+      delete (narrowed as { draft_delta?: unknown }).draft_delta;
+      if (ops.length > 0) narrowed.draft_delta_omitted = true;
+      const recheck = validateRecordsContext(narrowed);
+      return recheck.valid ? narrowed : null;
+    }
+    return null;
   } catch {
     return null;
   }
@@ -366,12 +403,12 @@ export interface RecordsDraftApi {
   undo: () => void;
   redo: () => void;
   discard: () => void;
-  beginSave: () => SaveManifest | null;
+  beginSave: (chunk?: { operations: RecordEdit[]; chunkIndex: number; chunkCount: number; saveId?: string }) => SaveManifest | null;
   stageOps: (label: string, ops: RecordEdit[]) => void;
   ackSave: (
     manifest: SaveManifest,
     response: { affected_values?: Array<{ row_ref: RecordRef; column_id: string; version: string }>; id_mappings?: Record<string, string> },
-  ) => void;
+  ) => RecordEdit[];
   failSave: (manifest: SaveManifest, message: string, unknownOutcome: boolean) => void;
   setConflict: (info: ConflictInfo) => void;
   clearConflict: (strategy: 'keep-mine' | 'use-saved') => void;
@@ -379,7 +416,9 @@ export interface RecordsDraftApi {
 
 export function useRecordsDraft(options: UseRecordsDraftOptions): RecordsDraftApi {
   const { userId, workspaceId, listId, base } = options;
-  const [draftId] = useState(() => `drd_${crypto.randomUUID()}`);
+  const scopeKey = `${userId}:${workspaceId}:${listId}`;
+  const scopeRef = useRef(scopeKey);
+  const [draftId, setDraftId] = useState(() => `drd_${crypto.randomUUID()}`);
   const [generation, setGeneration] = useState(0);
   const [ops, setOps] = useState<RecordEdit[]>([]);
   const [undoStack, setUndoStack] = useState<DraftGroup[]>([]);
@@ -387,48 +426,123 @@ export function useRecordsDraft(options: UseRecordsDraftOptions): RecordsDraftAp
   const [saveStatus, setSaveStatus] = useState<SaveStatus>({ status: 'clean' });
   const [resumed, setResumed] = useState(false);
   const persistTimer = useRef<number | null>(null);
+  const opsRef = useRef(ops);
+  opsRef.current = ops;
+  const saveStatusRef = useRef(saveStatus);
+  saveStatusRef.current = saveStatus;
+  // Synchronous mirrors: acknowledged/persisted state must never depend on
+  // whether React has flushed a render yet (RR16). Mutators that run back
+  // to back in one tick (ackSave → beginSave) observe exact values.
+  const generationRef = useRef(generation);
+
+  // Explicit scope ownership: switching list/workspace/account flushes the
+  // previous scope synchronously and resets hook state, so edits never leak
+  // across scopes and the recovery flag cannot retain a prior scope.
+  useEffect(() => {
+    if (scopeRef.current === scopeKey) return;
+    const [prevUser, prevWs, prevList] = scopeRef.current.split(':');
+    const prevOps = opsRef.current;
+    const prevStatus = saveStatusRef.current;
+    try {
+      if (prevOps.length > 0 && prevUser && prevWs && prevList) {
+        const pending = prevStatus.status === 'unknown' || prevStatus.status === 'saving'
+          ? (prevStatus as { manifest?: SaveManifest }).manifest ?? null
+          : null;
+        storeRecordsDraft(prevUser, prevWs, prevList, {
+          draftId: `drd_flushed_${Date.now()}`,
+          generation: 0,
+          baseRevision: -1,
+          operations: prevOps,
+          ...(pending ? { pendingSave: { saveId: pending.saveId, actionId: pending.actionId, opIds: pending.opIds, operations: pending.operations, listId: pending.listId, chunkIndex: pending.chunkIndex, chunkCount: pending.chunkCount } } : {}),
+        });
+      }
+    } catch {
+      // Best effort flush; new scope still resets.
+    }
+    scopeRef.current = scopeKey;
+    setDraftId(`drd_${crypto.randomUUID()}`);
+    setOps([]);
+    setUndoStack([]);
+    setRedoStack([]);
+    setSaveStatus({ status: 'clean' });
+    generationRef.current = 0;
+    setGeneration(0);
+    setResumed(false);
+  }, [scopeKey]);
 
   // Resume a persisted draft for this exact scope once its base arrives.
   useEffect(() => {
     if (resumed) return;
     setResumed(true);
     const stored = loadRecordsDraft(userId, workspaceId, listId);
+    if (!stored) return;
+    if (stored.pendingSave && Array.isArray(stored.pendingSave.operations) && stored.pendingSave.operations.length > 0) {
+      const manifest: SaveManifest = {
+        saveId: stored.pendingSave.saveId,
+        actionId: stored.pendingSave.actionId,
+        opIds: stored.pendingSave.opIds,
+        operations: stored.pendingSave.operations as RecordEdit[],
+        listId: stored.pendingSave.listId,
+        chunkIndex: stored.pendingSave.chunkIndex,
+        chunkCount: stored.pendingSave.chunkCount,
+      };
+      const valid = (stored.operations as unknown[]).filter(
+        (op): op is RecordEdit => !!op && typeof op === 'object' && typeof (op as RecordEdit).op === 'string' && typeof (op as RecordEdit).op_id === 'string',
+      );
+      setOps(valid);
+      generationRef.current = stored.generation + 1;
+      setGeneration(stored.generation + 1);
+      setUndoStack([{ id: newOpId('grp'), opIds: valid.map((op) => op.op_id), label: 'Recovered draft', ops: valid }]);
+      setSaveStatus({ status: 'unknown', manifest, message: 'A previous save response was lost. Retry with the same save before editing further.' });
+      return;
+    }
     if (!stored || stored.operations.length === 0) return;
     const valid = (stored.operations as unknown[]).filter(
       (op): op is RecordEdit => !!op && typeof op === 'object' && typeof (op as RecordEdit).op === 'string' && typeof (op as RecordEdit).op_id === 'string',
     );
     if (valid.length === 0) return;
     setOps(valid);
+    generationRef.current = stored.generation + 1;
     setGeneration(stored.generation + 1);
     setUndoStack([{ id: newOpId('grp'), opIds: valid.map((op) => op.op_id), label: 'Recovered draft', ops: valid }]);
   }, [resumed, userId, workspaceId, listId]);
 
   // Persist coalesced: at most one write per 400ms of editing, plus flush
-  // on hide/unload. Storage failure keeps memory editing usable.
+  // on hide/unload. The in-flight/unknown manifest travels with the ops so a
+  // reload recovers the exact immutable retry payload. Storage failure keeps
+  // memory editing usable.
   useEffect(() => {
     if (!resumed) return;
     if (persistTimer.current !== null) window.clearTimeout(persistTimer.current);
     persistTimer.current = window.setTimeout(() => {
-      if (ops.length === 0) {
+      const pending = saveStatus.status === 'unknown' || saveStatus.status === 'saving' ? saveStatus.manifest : null;
+      generationRef.current = generation;
+      if (ops.length === 0 && !pending) {
         clearRecordsDraft(userId, workspaceId, listId);
       } else {
         storeRecordsDraft(userId, workspaceId, listId, {
           draftId, generation, baseRevision: base.revision, operations: ops,
+          ...(pending ? { pendingSave: { saveId: pending.saveId, actionId: pending.actionId, opIds: pending.opIds, operations: pending.operations, listId: pending.listId, chunkIndex: pending.chunkIndex, chunkCount: pending.chunkCount } } : {}),
         });
       }
     }, 400);
     return () => {
       if (persistTimer.current !== null) window.clearTimeout(persistTimer.current);
     };
-  }, [ops, resumed, userId, workspaceId, listId, draftId, generation, base.revision]);
+  }, [ops, resumed, userId, workspaceId, listId, draftId, generation, base.revision, saveStatus]);
 
   useEffect(() => {
     const flush = () => {
-      if (ops.length === 0) {
+      const pending = saveStatusRef.current.status === 'unknown' || saveStatusRef.current.status === 'saving'
+        ? (saveStatusRef.current as { manifest: SaveManifest }).manifest
+        : null;
+      const currentOps = opsRef.current;
+      if (currentOps.length === 0 && !pending) {
         clearRecordsDraft(userId, workspaceId, listId);
       } else {
         storeRecordsDraft(userId, workspaceId, listId, {
-          draftId, generation, baseRevision: base.revision, operations: ops,
+          draftId, generation, baseRevision: base.revision, operations: currentOps,
+          ...(pending ? { pendingSave: { saveId: pending.saveId, actionId: pending.actionId, opIds: pending.opIds, operations: pending.operations, listId: pending.listId, chunkIndex: pending.chunkIndex, chunkCount: pending.chunkCount } } : {}),
         });
       }
     };
@@ -439,14 +553,14 @@ export function useRecordsDraft(options: UseRecordsDraftOptions): RecordsDraftAp
       document.removeEventListener('visibilitychange', onHide);
       window.removeEventListener('pagehide', flush);
     };
-  }, [ops, userId, workspaceId, listId, draftId, generation, base.revision]);
+  }, [userId, workspaceId, listId, draftId, generation, base.revision]);
 
   const overlay = useMemo(() => applyOpsToBase(base, ops), [base, ops]);
 
-  const pushGroup = useCallback((label: string, nextOps: RecordEdit[], groupOpIds: string[]) => {
+  const pushGroup = useCallback((label: string, nextOps: RecordEdit[], groupOpIds: string[], replaced?: RecordEdit[]) => {
     const payloads = nextOps.filter((op) => groupOpIds.includes(op.op_id));
     setOps(nextOps);
-    setUndoStack((prev) => [...prev, { id: newOpId('grp'), opIds: groupOpIds, label, ops: payloads }]);
+    setUndoStack((prev) => [...prev, { id: newOpId('grp'), opIds: groupOpIds, label, ops: payloads, ...(replaced && replaced.length > 0 ? { replaced } : {}) }]);
     setRedoStack([]);
     setGeneration((g) => g + 1);
   }, []);
@@ -454,46 +568,61 @@ export function useRecordsDraft(options: UseRecordsDraftOptions): RecordsDraftAp
   const setCell = useCallback((rowRef: RecordRef, columnId: string, value: RecordValue) => {
     const baseCell = baseCellOf(base, rowRef.id, columnId);
     const baseValue = baseCell?.value ?? null;
-    const others = ops.filter((op) => !(
+    const replaced = ops.filter((op) =>
       (op.op === 'cell.set' || op.op === 'cell.clear') &&
       op.row_ref.kind === rowRef.kind && op.row_ref.id === rowRef.id && op.column_id === columnId
-    ));
+    );
+    const others = ops.filter((op) => !replaced.includes(op));
     // Editing back to the saved value clears dirtiness instead of staging a no-op.
     if (baseCell && valuesEqual(baseValue, value)) {
-      if (others.length !== ops.length) {
+      if (replaced.length > 0) {
         setOps(others);
-        setUndoStack((stack) => [...stack, { id: newOpId('grp'), opIds: [], label: `Revert ${columnId}`, ops: [] }]);
+        setUndoStack((stack) => [...stack, { id: newOpId('grp'), opIds: [], label: `Revert ${columnId}`, ops: [], replaced }]);
         setRedoStack([]);
         setGeneration((g) => g + 1);
       }
       return;
     }
-    const opId = `op_cell_${rowRef.id}_${columnId}`;
+    // Unique operation identity per edit: acknowledgement removes only the
+    // exact submitted generation, so an edit made while Save is in flight is
+    // retained and rebased instead of discarded with the older value.
+    const opId = `op_cell_${crypto.randomUUID().slice(0, 8)}`;
     const op: RecordEdit = {
       op: 'cell.set', op_id: opId, row_ref: rowRef, column_id: columnId,
       value, base_token: baseCell?.version,
     };
     setOps([...others, op]);
-    // Continuous typing on one cell coalesces into its existing group.
+    // Continuous typing on one cell coalesces into its existing group by cell
+    // coordinates. Undo must restore the value from before the group, so the
+    // group keeps only its original predecessor, never intermediates.
     setUndoStack((stack) => {
       const last = stack[stack.length - 1];
-      if (last && last.opIds.length === 1 && last.opIds[0] === opId) {
-        return [...stack.slice(0, -1), { ...last, ops: [op] }];
+      const lastOp = last?.ops[0];
+      if (last && last.ops.length === 1 && lastOp &&
+        (lastOp.op === 'cell.set' || lastOp.op === 'cell.clear') &&
+        lastOp.row_ref.id === rowRef.id && lastOp.column_id === columnId) {
+        const original = mergeEditPredecessors(last.replaced);
+        return [...stack.slice(0, -1), { ...last, opIds: [opId], ops: [op], ...(original.length > 0 ? { replaced: original } : {}) }];
       }
-      return [...stack, { id: newOpId('grp'), opIds: [opId], label: `Edit ${columnId}`, ops: [op] }];
+      return [...stack, { id: newOpId('grp'), opIds: [opId], label: `Edit ${columnId}`, ops: [op], ...(replaced.length > 0 ? { replaced } : {}) }];
     });
     setRedoStack([]);
     setGeneration((g) => g + 1);
   }, [base, ops]);
 
   const clearCell = useCallback((rowRef: RecordRef, columnId: string) => {
-    const opId = `op_cell_${rowRef.id}_${columnId}`;
+    const opId = `op_cell_${crypto.randomUUID().slice(0, 8)}`;
     const baseCell = baseCellOf(base, rowRef.id, columnId);
     const op: RecordEdit = {
       op: 'cell.clear', op_id: opId, row_ref: rowRef, column_id: columnId,
       base_token: baseCell?.version,
     };
-    pushGroup(`Clear ${columnId}`, [...ops.filter((o) => o.op_id !== opId), op], [opId]);
+    const replaced = ops.filter((o) =>
+      (o.op === 'cell.set' || o.op === 'cell.clear') &&
+      o.row_ref.kind === rowRef.kind && o.row_ref.id === rowRef.id && o.column_id === columnId
+    );
+    const others = ops.filter((o) => !replaced.includes(o));
+    pushGroup(`Clear ${columnId}`, [...others, op], [opId], replaced);
   }, [base, ops, pushGroup]);
 
   const createRow = useCallback((kind: RecordRef['kind'], initialValues?: Record<string, RecordValue>) => {
@@ -564,6 +693,14 @@ export function useRecordsDraft(options: UseRecordsDraftOptions): RecordsDraftAp
       if (createdIds.length > 0) {
         next = next.filter((op) => !createdIds.some((id) => opTargetsRow(op, id)));
       }
+      // Restore the predecessor unsaved value when an edit replaced one:
+      // editing A, then B, then A again undoes to the prior unsaved A.
+      if (group.replaced && group.replaced.length > 0) {
+        const present = new Set(next.map((op) => op.op_id));
+        for (const rep of group.replaced) {
+          if (!present.has(rep.op_id)) next.push(rep);
+        }
+      }
       return next;
     });
     setGeneration((g) => g + 1);
@@ -575,8 +712,13 @@ export function useRecordsDraft(options: UseRecordsDraftOptions): RecordsDraftAp
     setRedoStack((stack) => stack.slice(0, -1));
     setUndoStack((stack) => [...stack, group]);
     setOps((prev) => {
-      const present = new Set(prev.map((op) => op.op_id));
-      return [...prev, ...group.ops.filter((op) => !present.has(op.op_id))];
+      let next = [...prev];
+      if (group.replaced && group.replaced.length > 0) {
+        const replacedIds = new Set(group.replaced.map((op) => op.op_id));
+        next = next.filter((op) => !replacedIds.has(op.op_id));
+      }
+      const present = new Set(next.map((op) => op.op_id));
+      return [...next, ...group.ops.filter((op) => !present.has(op.op_id))];
     });
     setGeneration((g) => g + 1);
   }, [redoStack]);
@@ -593,70 +735,155 @@ export function useRecordsDraft(options: UseRecordsDraftOptions): RecordsDraftAp
   /** Stage an externally built op group (paste, fill, assistant patch) as one undo unit. */
   const stageOps = useCallback((label: string, staged: RecordEdit[]) => {
     if (staged.length === 0) return;
-    const ids = staged.map((op) => op.op_id);
-    setOps((prev) => {
-      const replaced = new Set(ids);
-      return [...prev.filter((op) => !replaced.has(op.op_id)), ...staged];
+    const cellKey = (op: RecordEdit): string | null => {
+      if (op.op === 'cell.set' || op.op === 'cell.clear') {
+        return `cell:${op.row_ref.kind}:${op.row_ref.id}:${op.column_id}`;
+      }
+      return null;
+    };
+    const stagedCellKeys = new Set(staged.map(cellKey).filter((k): k is string => !!k));
+    const stagedIds = new Set(staged.map((op) => op.op_id));
+    const current = opsRef.current;
+    const replaced = current.filter((op) => {
+      const key = cellKey(op);
+      if (key && stagedCellKeys.has(key)) return true;
+      return stagedIds.has(op.op_id);
     });
-    setUndoStack((stack) => [...stack, { id: newOpId('grp'), opIds: ids, label, ops: staged }]);
+    const kept = current.filter((op) => !replaced.includes(op));
+    setOps([...kept, ...staged]);
+    const ids = staged.map((op) => op.op_id);
+    setUndoStack((stack) => [...stack, { id: newOpId('grp'), opIds: ids, label, ops: staged, ...(replaced.length > 0 ? { replaced } : {}) }]);
     setRedoStack([]);
     setGeneration((g) => g + 1);
   }, []);
 
-  const beginSave = useCallback((): SaveManifest | null => {
-    if (ops.length === 0) return null;
+  const beginSave = useCallback((chunk?: { operations: RecordEdit[]; chunkIndex: number; chunkCount: number; saveId?: string }): SaveManifest | null => {
+    const chunkOps = chunk?.operations ?? ops;
+    if (chunkOps.length === 0) return null;
     const manifest: SaveManifest = {
-      saveId: `save_${crypto.randomUUID()}`,
+      saveId: chunk?.saveId ?? `save_${crypto.randomUUID()}`,
       actionId: `act_rec_${crypto.randomUUID()}`,
-      opIds: ops.map((op) => op.op_id),
-      operations: ops,
+      opIds: chunkOps.map((op) => op.op_id),
+      operations: chunkOps,
+      listId,
+      chunkIndex: chunk?.chunkIndex ?? 0,
+      chunkCount: chunk?.chunkCount ?? 1,
     };
     setSaveStatus({ status: 'saving', manifest });
+    try {
+      // Persist the live draft, not the captured render snapshot: chunk 2
+      // begins after chunk 1 was acknowledged, so the closure ops would
+      // resurrect already-saved operations on a hard termination.
+      const liveOps = opsRef.current;
+      storeRecordsDraft(userId, workspaceId, listId, {
+        draftId, generation: generationRef.current, baseRevision: base.revision, operations: liveOps,
+        pendingSave: {
+          saveId: manifest.saveId, actionId: manifest.actionId, opIds: manifest.opIds,
+          operations: manifest.operations, listId, chunkIndex: manifest.chunkIndex, chunkCount: manifest.chunkCount,
+        },
+      });
+    } catch {
+      // Memory editing stays usable.
+    }
     return manifest;
-  }, [ops]);
+  }, [ops, listId, userId, workspaceId, draftId, generation, base.revision]);
 
   const ackSave = useCallback((manifest: SaveManifest, response: {
     affected_values?: Array<{ row_ref: RecordRef; column_id: string; version: string }>;
     id_mappings?: Record<string, string>;
-  }) => {
+  }): RecordEdit[] => {
     const mappings = response.id_mappings ?? {};
     const versions = new Map(
       (response.affected_values ?? []).map((v) => [`${v.row_ref.kind}:${v.row_ref.id}:${v.column_id}`, v.version]),
     );
     const remapId = (id: string): string => mappings[id] ?? id;
-    setOps((prev) => {
-      const remaining = prev.filter((op) => !manifest.opIds.includes(op.op_id));
-      // Remap draft-only row ids to their saved ids and rebase surviving
-      // preconditions onto the authoritative returned versions, so edits
-      // made during the save flight stay valid instead of false-conflicting.
-      return remaining.map((op): RecordEdit => {
-        if (op.op === 'cell.set' || op.op === 'cell.clear') {
-          const newId = remapId(op.row_ref.id);
-          const version = versions.get(`${op.row_ref.kind}:${newId}:${op.column_id}`)
-            ?? versions.get(`${op.row_ref.kind}:${op.row_ref.id}:${op.column_id}`);
-          return { ...op, row_ref: { ...op.row_ref, id: newId }, base_token: version ?? op.base_token };
-        }
-        if (op.op === 'row.remove' || op.op === 'row.restore') {
-          return { ...op, row_ref: { ...op.row_ref, id: remapId(op.row_ref.id) } };
-        }
-        if (op.op === 'item.edit' || op.op === 'item.remove') {
-          return { ...op, source_ref: { ...op.source_ref, id: remapId(op.source_ref.id) } };
-        }
-        return op;
-      });
-    });
+    // Compute from the ref synchronously: a render may not have flushed
+    // yet, and the next chunk begins in this same tick. The ref assignment
+    // below keeps every later synchronous read exact.
+    const rebase = (op: RecordEdit): RecordEdit => {
+      if (op.op === 'cell.set' || op.op === 'cell.clear') {
+        const newId = remapId(op.row_ref.id);
+        const version = versions.get(`${op.row_ref.kind}:${newId}:${op.column_id}`)
+          ?? versions.get(`${op.row_ref.kind}:${op.row_ref.id}:${op.column_id}`);
+        return { ...op, row_ref: { ...op.row_ref, id: newId }, base_token: version ?? op.base_token };
+      }
+      if (op.op === 'row.remove' || op.op === 'row.restore') {
+        return { ...op, row_ref: { ...op.row_ref, id: remapId(op.row_ref.id) } };
+      }
+      if (op.op === 'item.edit' || op.op === 'item.remove') {
+        return { ...op, source_ref: { ...op.source_ref, id: remapId(op.source_ref.id) } };
+      }
+      return op;
+    };
+    // Acknowledge only the exact submitted operation identities: newer edits
+    // made during the flight carry different IDs and survive, rebased onto
+    // the authoritative returned versions and remapped IDs.
+    const remaining = opsRef.current
+      .filter((op) => !manifest.opIds.includes(op.op_id))
+      .map(rebase);
+    opsRef.current = remaining;
+    generationRef.current += 1;
+    setOps(remaining);
     setSaveStatus({ status: 'clean' });
-    setGeneration((g) => g + 1);
-  }, []);
+    setGeneration(generationRef.current);
+    // Acknowledged operations leave local Undo history: surviving during-flight
+    // edits keep their groups, pruned to live operations only. Cleared
+    // predecessors are set explicitly: spreading the old group would
+    // otherwise resurrect an acknowledged `replaced` array.
+    const ackedIds = new Set(manifest.opIds);
+    const pruneGroup = (group: DraftGroup): DraftGroup | null => {
+      const liveOps = group.ops.filter((op) => !ackedIds.has(op.op_id));
+      const liveReplaced = (group.replaced ?? []).filter((op) => !ackedIds.has(op.op_id));
+      if (liveOps.length === 0 && liveReplaced.length === 0) return null;
+      const pruned: DraftGroup = {
+        id: group.id,
+        opIds: liveOps.map((op) => op.op_id),
+        label: group.label,
+        ops: liveOps,
+      };
+      if (liveReplaced.length > 0) pruned.replaced = liveReplaced;
+      return pruned;
+    };
+    setUndoStack((prev) => prev.map(pruneGroup).filter((g): g is DraftGroup => g !== null));
+    setRedoStack((prev) => prev.map(pruneGroup).filter((g): g is DraftGroup => g !== null));
+    try {
+      if (remaining.length === 0) {
+        clearRecordsDraft(userId, workspaceId, listId);
+      } else {
+        storeRecordsDraft(userId, workspaceId, listId, {
+          draftId, generation: generationRef.current, baseRevision: base.revision, operations: remaining,
+        });
+      }
+    } catch {
+      // Best effort.
+    }
+    return remaining;
+  }, [userId, workspaceId, listId, draftId, base.revision]);
 
   const failSave = useCallback((manifest: SaveManifest, message: string, unknownOutcome: boolean) => {
     // The manifest (exact save/action ids plus payload) is retained: an
     // aborted fetch never rolls back an accepted commit, so retry reuses the
-    // identical immutable payload instead of inventing a new one.
+    // identical immutable payload instead of inventing a new one. Unknown
+    // outcomes persist the manifest for reload recovery; deterministic
+    // rejections do not.
+    if (unknownOutcome) {
+      try {
+        storeRecordsDraft(userId, workspaceId, listId, {
+          draftId, generation: generationRef.current, baseRevision: base.revision, operations: opsRef.current,
+          pendingSave: {
+            saveId: manifest.saveId, actionId: manifest.actionId, opIds: manifest.opIds,
+            operations: manifest.operations, listId: manifest.listId,
+            chunkIndex: manifest.chunkIndex, chunkCount: manifest.chunkCount,
+          },
+        });
+      } catch {
+        // Memory editing stays usable.
+      }
+    }
     setSaveStatus(unknownOutcome
       ? { status: 'unknown', manifest, message }
       : { status: 'error', message });
-  }, []);
+  }, [userId, workspaceId, listId, draftId, generation, base.revision]);
 
   const setConflict = useCallback((info: ConflictInfo) => {
     setSaveStatus({ status: 'conflict', info });
@@ -669,14 +896,21 @@ export function useRecordsDraft(options: UseRecordsDraftOptions): RecordsDraftAp
       if (opId) {
         setOps((prev) => prev.filter((op) => op.op_id !== opId));
         setUndoStack((stack) => [...stack, { id: newOpId('grp'), opIds: [], label: 'Accept saved value', ops: [] }]);
-      } else {
-        setOps([]);
-        setUndoStack([]);
-        setRedoStack([]);
+      }
+      // Without an operation identity the conflict cannot name its target:
+      // keep the entire draft for narrow review instead of discarding it.
+    } else {
+      // Keep mine is a reviewed correction: refresh the conflicted operation's
+      // base precondition to the current server version so the retry does not
+      // false-conflict against its own prior Save.
+      const opId = saveStatus.info.opId;
+      const currentToken = saveStatus.info.currentToken;
+      if (opId && currentToken) {
+        setOps((prev) => prev.map((op) =>
+          op.op_id === opId && ('base_token' in op) ? { ...op, base_token: currentToken } : op
+        ));
       }
     }
-    // Keep mine: the draft stays intact; the next save carries fresh base
-    // preconditions and a new action id as a reviewed correction.
     setSaveStatus({ status: 'clean' });
     setGeneration((g) => g + 1);
   }, [saveStatus]);

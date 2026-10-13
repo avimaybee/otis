@@ -41,6 +41,7 @@ import { handleRememberContext, handleForgetMemory } from '../commands/memory.js
 import { handleMarkMessageSent } from '../commands/markMessageSent.js';
 import { handleRecordsBatch } from '../commands/recordsBatch.js';
 import { recordsDetailStatements } from './records.js';
+import { batchedUpserts } from './records.js';
 
 /**
  * Computes SHA-256 hash using Web standard SubtleCrypto API.
@@ -1650,41 +1651,43 @@ export async function executeLedgerCommand<TArgs>(
     );
   }
 
-  // Step 3: Insert append-only events
-  for (const evt of events) {
-    statements.push(
-      db
-        .prepare(
-          `INSERT INTO events (
-             id, workspace_id, sequence, entity_id, actor_kind, actor_user_id, actor_job_id,
-             kind, schema_version, payload_json, occurred_at, recorded_at, channel,
-             source_message_id, source_job_id, action_id, supersedes_event_id, reverts_event_id,
-             provenance, created_at
-           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-        )
-        .bind(
-          evt.id,
-          evt.workspace_id,
-          evt.sequence,
-          evt.entity_id || null,
-          evt.actor_kind,
-          evt.actor_user_id || null,
-          evt.actor_job_id || null,
-          evt.kind,
-          evt.schema_version,
-          JSON.stringify(evt.payload),
-          evt.occurred_at,
-          evt.recorded_at,
-          evt.channel,
-          evt.source_message_id || null,
-          evt.source_job_id || null,
-          evt.action_id,
-          evt.supersedes_event_id || null,
-          evt.reverts_event_id || null,
-          evt.provenance,
-          evt.created_at,
-        )
-    );
+  // Step 3: Insert append-only events, batched into multi-row statements so
+  // a 30-operation chunk costs ~8 statements here instead of 30.
+  {
+    const rows: unknown[][] = events.map((evt) => [
+      evt.id,
+      evt.workspace_id,
+      evt.sequence,
+      evt.entity_id || null,
+      evt.actor_kind,
+      evt.actor_user_id || null,
+      evt.actor_job_id || null,
+      evt.kind,
+      evt.schema_version,
+      JSON.stringify(evt.payload),
+      evt.occurred_at,
+      evt.recorded_at,
+      evt.channel,
+      evt.source_message_id || null,
+      evt.source_job_id || null,
+      evt.action_id,
+      evt.supersedes_event_id || null,
+      evt.reverts_event_id || null,
+      evt.provenance,
+      evt.created_at,
+    ]);
+    statements.push(...batchedUpserts(
+      db,
+      `INSERT INTO events (
+         id, workspace_id, sequence, entity_id, actor_kind, actor_user_id, actor_job_id,
+         kind, schema_version, payload_json, occurred_at, recorded_at, channel,
+         source_message_id, source_job_id, action_id, supersedes_event_id, reverts_event_id,
+         provenance, created_at
+       ) VALUES`,
+      `(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ``,
+      rows,
+    ));
   }
 
   // Final Result shape

@@ -205,6 +205,13 @@ export interface ProviderError {
   /** Provider-supplied reset hint in ms when present; never invented. */
   retryAfterMs: number | null;
   status?: number;
+  /**
+   * Bounded terminal metadata for Responses classification. Counts and status
+   * strings only — never raw model content, tool arguments, or user text.
+   */
+  terminalStatus?: string | null;
+  incompleteReason?: string | null;
+  pendingCalls?: number | null;
 }
 
 export class ProviderErrorException extends Error {
@@ -237,6 +244,16 @@ export type ProviderEvent =
       type: 'finish';
       reason: FinishReason;
       continuation: ServerContinuation | null;
+      /**
+       * Terminal condition behind a `length_limit` finish, when the wire
+       * shape carries one (e.g. Responses `incomplete` status/reason).
+       * Absent on families without terminal metadata; the collector then
+       * reports nulls. Never raw content or arguments.
+       */
+      truncation?: {
+        terminalStatus?: string | null;
+        incompleteReason?: string | null;
+      };
     }
   | { type: 'error'; error: ProviderError };
 

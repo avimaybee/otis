@@ -19,6 +19,8 @@ import {
   loadMediaRow,
   imageAttachmentGuardStatement,
   linkImageAttachmentStatement,
+  documentAttachmentGuardStatement,
+  linkDocumentAttachmentStatement,
   markMediaTranscribingStatement,
   mediaValidatedGuardStatement,
   transcriptionIntentStatement,
@@ -620,6 +622,58 @@ export async function acceptWebMessage(
   if (!authorChat) throw new NotFoundError('Chat not found in this workspace.');
   if (authorChat.author_user_id !== params.userId) throw new ForbiddenError('Only the chat author can append messages to this conversation.');
 
+  // 0. Identical-retry replay before any attachment validation: when
+  // acceptance succeeded but its response was lost, the same transport ID
+  // and fingerprint return the already-accepted message/run instead of
+  // failing on already-linked files. Reuse by a different payload stays a
+  // conflict; reuse of the same files by a different message stays forbidden.
+  const existingInbound = await db
+    .prepare(
+      `SELECT id, workspace_id, user_id, chat_id, payload_fingerprint, acceptance_sequence
+       FROM messages_in WHERE channel = 'web' AND external_id = ?`
+    )
+    .bind(params.clientMessageId)
+    .first<Record<string, unknown>>();
+
+  if (existingInbound) {
+    // Check if it's the exact same caller, workspace, chat, and payload
+    const matches =
+      existingInbound['workspace_id'] === params.workspaceId &&
+      existingInbound['user_id'] === params.userId &&
+      existingInbound['chat_id'] === params.chatId &&
+      existingInbound['payload_fingerprint'] === fingerprint;
+
+    if (matches) {
+      // Find linked chat_message and agent_run to return recorded stable IDs
+      const inboundId = String(existingInbound['id']);
+      const linkedMsg = await db
+        .prepare(`SELECT id FROM chat_messages WHERE inbound_message_id = ?`)
+        .bind(inboundId)
+        .first<{ id: string }>();
+
+      let linkedRun = await db
+        .prepare(`SELECT run_id AS id FROM chat_messages WHERE inbound_message_id = ?`)
+        .bind(inboundId)
+        .first<{ id: string }>();
+      if (!linkedRun && params.command?.presentation === 'control') linkedRun = await db.prepare(`SELECT id FROM agent_runs WHERE source_message_id = ? AND workspace_id = ? AND chat_id = ? AND executor_kind = 'command'`).bind(inboundId, params.workspaceId, params.chatId).first<{ id: string }>();
+
+      const steering = linkedMsg ? await db.prepare(`SELECT 1 FROM run_activity WHERE workspace_id = ? AND run_id = ? AND type = 'message_accepted' AND json_extract(payload_json, '$.steering_message_id') = ?`).bind(params.workspaceId, linkedRun?.id ?? '', linkedMsg.id).first() : null;
+
+      return {
+        status: 'accepted',
+        message_id: linkedMsg ? linkedMsg.id : params.command?.presentation === 'control' ? inboundId : '',
+        run_id: linkedRun ? linkedRun.id : '',
+        mode: steering ? 'steer' : params.answerContext ? 'clarification' : 'new_run',
+        acceptance_sequence: Number(existingInbound['acceptance_sequence']),
+      };
+    }
+
+    // Conflicting reuse of clientMessageId
+    throw new ConflictError(
+      'Client message ID already used with different payload or context.',
+    );
+  }
+
   // Voice attachment: the recording must be the caller's validated private
   // object for this chat, and the route is snapshotted now. A steering voice
   // note would attach to a run that is already executing, so it is refused
@@ -734,6 +788,12 @@ export async function acceptWebMessage(
 
   let documentContext: Array<{ mediaId: string; contentType: string }> | null = null;
   if (documentMediaIds.length > 0) {
+    if (params.steerRunId || params.answerRunId) {
+      throw new ValidationError('Documents cannot be added to a running turn yet. Wait for it to finish, then send them with a new message.');
+    }
+    if (params.command?.presentation === 'control') {
+      throw new ValidationError('Documents cannot be attached to commands.');
+    }
     documentContext = [];
     for (const docId of documentMediaIds) {
       const media = await db
@@ -743,13 +803,23 @@ export async function acceptWebMessage(
            AND EXISTS (SELECT 1 FROM workspace_users WHERE workspace_id = m.workspace_id AND user_id = ?)`,
         )
         .bind(docId, params.workspaceId, params.userId)
-        .first<{ id: string; state: string; content_type: string | null; expires_at: string; retained: number }>();
+        .first<{ id: string; state: string; content_type: string | null; expires_at: string; retained: number; uploader_user_id: string | null }>();
 
       if (!media || !['ready', 'validated'].includes(media.state)) {
         throw new ValidationError('An attached document is not available for this message.');
       }
+      if (media.uploader_user_id && media.uploader_user_id !== params.userId) {
+        throw new ValidationError('An attached document is not available for this message.');
+      }
       if (media.retained !== 1 && media.expires_at <= new Date().toISOString()) {
         throw new ValidationError('An attached document expired before it was sent.');
+      }
+      const alreadyLinked = await db
+        .prepare(`SELECT 1 FROM message_document_attachments WHERE media_id = ?`)
+        .bind(docId)
+        .first();
+      if (alreadyLinked) {
+        throw new ValidationError('An attached document was already sent with another message.');
       }
       documentContext.push({
         mediaId: docId,
@@ -758,63 +828,8 @@ export async function acceptWebMessage(
     }
   }
 
-  // 1. Deduplication check on transport key: (channel = 'web', external_id = clientMessageId)
-  const existingInbound = await db
-    .prepare(
-      `SELECT id, workspace_id, user_id, chat_id, payload_fingerprint, acceptance_sequence
-       FROM messages_in WHERE channel = 'web' AND external_id = ?`
-    )
-    .bind(params.clientMessageId)
-    .first<Record<string, unknown>>();
-
-  if (existingInbound) {
-    // Check if it's the exact same caller, workspace, chat, and payload
-    const matches =
-      existingInbound['workspace_id'] === params.workspaceId &&
-      existingInbound['user_id'] === params.userId &&
-      existingInbound['chat_id'] === params.chatId &&
-      existingInbound['payload_fingerprint'] === fingerprint;
-
-    if (matches) {
-      // Find linked chat_message and agent_run to return recorded stable IDs
-      const inboundId = String(existingInbound['id']);
-      const linkedMsg = await db
-        .prepare(`SELECT id FROM chat_messages WHERE inbound_message_id = ?`)
-        .bind(inboundId)
-        .first<{ id: string }>();
-
-      let linkedRun = await db
-        .prepare(`SELECT run_id AS id FROM chat_messages WHERE inbound_message_id = ?`)
-        .bind(inboundId)
-        .first<{ id: string }>();
-      if (!linkedRun && params.command?.presentation === 'control') linkedRun = await db.prepare(`SELECT id FROM agent_runs WHERE source_message_id = ? AND workspace_id = ? AND chat_id = ? AND executor_kind = 'command'`).bind(inboundId, params.workspaceId, params.chatId).first<{ id: string }>();
-
-      const steering = linkedMsg ? await db.prepare(`SELECT 1 FROM run_activity WHERE workspace_id = ? AND run_id = ? AND type = 'message_accepted' AND json_extract(payload_json, '$.steering_message_id') = ?`).bind(params.workspaceId, linkedRun?.id ?? '', linkedMsg.id).first() : null;
-
-      return {
-        status: 'accepted',
-        message_id: linkedMsg ? linkedMsg.id : params.command?.presentation === 'control' ? inboundId : '',
-        run_id: linkedRun ? linkedRun.id : '',
-        mode: steering ? 'steer' : params.answerContext ? 'clarification' : 'new_run',
-        acceptance_sequence: Number(existingInbound['acceptance_sequence']),
-      };
-    }
-
-    // Conflicting reuse of clientMessageId
-    throw new ConflictError(
-      'Client message ID already used with different payload or context.',
-    );
-  }
-
   // 2. Validate Chat & Author permission
-  const chat = await getChat(db, params.workspaceId, params.chatId);
-  if (!chat) {
-    throw new NotFoundError('Chat not found in this workspace.');
-  }
-
-  if (chat.author_user_id !== params.userId) {
-    throw new ForbiddenError('Only the chat author can append messages to this conversation.');
-  }
+  const chat = authorChat;
 
   const readSteeringSize = () => db.prepare(`SELECT COUNT(*) AS count, COALESCE(SUM(length(cm.content_text)), 0) AS chars FROM chat_messages cm
     WHERE cm.workspace_id = ? AND cm.run_id = ? AND EXISTS (SELECT 1 FROM run_activity a WHERE a.workspace_id = cm.workspace_id AND a.run_id = cm.run_id AND a.type = 'message_accepted' AND json_extract(a.payload_json, '$.steering_message_id') = cm.id)`)
@@ -993,12 +1008,21 @@ export async function acceptWebMessage(
         }),
       ]) : []),
 
-      ...(documentContext && params.command?.presentation !== 'control' ? documentContext.map((attachment, position) =>
-        db.prepare(
-          `INSERT INTO message_document_attachments (chat_message_id, media_id, workspace_id, position, created_at)
-           VALUES (?, ?, ?, ?, ?)`
-        ).bind(chatMessageId, attachment.mediaId, params.workspaceId, position, now)
-      ) : []),
+      ...(documentContext && params.command?.presentation !== 'control' ? documentContext.flatMap((attachment, position) => [
+        documentAttachmentGuardStatement(db, {
+          workspaceId: params.workspaceId,
+          mediaId: attachment.mediaId,
+          uploaderUserId: params.userId,
+          nowIso: now,
+        }),
+        linkDocumentAttachmentStatement(db, {
+          chatMessageId,
+          workspaceId: params.workspaceId,
+          mediaId: attachment.mediaId,
+          position,
+          nowIso: now,
+        }),
+      ]) : []),
 
       db
         .prepare(

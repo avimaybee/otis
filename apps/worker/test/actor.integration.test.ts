@@ -801,6 +801,173 @@ describe('Worker Actor Dispatch & Recovery Integration (workerd)', () => {
     expect(await getWorkspaceLease(env.DB, ws)).toBeNull();
   });
 
+  it('BG03: execution-owned renewal keeps a legitimate slow turn authoritative', async () => {
+    // A turn that runs past its 1s TTL completes while renewal (short
+    // cadence in this test; 60s in production) keeps the lease live with
+    // the real clock. Without renewal this dispatches as lease_lost.
+    const slow: TurnHandler = {
+      name: 'slow-renewed',
+      async runTurn() {
+        await new Promise((resolve) => setTimeout(resolve, 1500));
+        return { kind: 'completed', replyText: 'slow but owned' };
+      },
+    };
+    const msg = await accept(chatAvi, aviId, 'act-msg-renewal', 'slow turn');
+    const outboxId = await outboxIdForRun(msg.run_id);
+    const result = await dispatchOutboxItem(env.DB, outboxId, ws, {
+      handler: slow,
+      leaseTtlSeconds: 1,
+      leaseRenewIntervalMs: 50,
+    });
+    expect(result.status).toBe('completed');
+    expect(await runStatus(msg.run_id)).toBe('succeeded');
+    expect(await replyCount(msg.run_id)).toBe(1);
+  });
+
+  it('BG08: a transient renewal write failure with a live lease requeues instead of failing', async () => {
+    // The renewal tick's write blips once while authority stays live. The
+    // tick aborts provider spend as a renewal error (not a user Stop); the
+    // post-turn handoff must re-verify ownership and requeue rather than
+    // commit the aborted outcome as a terminal failure.
+    const abortAware: TurnHandler = {
+      name: 'abort-aware',
+      async runTurn(ctx) {
+        await new Promise<void>((resolve) => {
+          if (ctx.signal?.aborted) {
+            resolve();
+            return;
+          }
+          ctx.signal?.addEventListener('abort', () => resolve(), { once: true });
+        });
+        return { kind: 'failed', errorCode: 'aborted', errorMessage: 'Run cancelled.' };
+      },
+    };
+    const msg = await accept(chatAvi, aviId, 'act-msg-renewal-blip', 'blip turn');
+    const outboxId = await outboxIdForRun(msg.run_id);
+    let renewWrites = 0;
+    const result = await dispatchOutboxItem(env.DB, outboxId, ws, {
+      handler: abortAware,
+      leaseTtlSeconds: 300,
+      leaseRenewIntervalMs: 50,
+      testHooks: {
+        beforeRenewal: async (info) => {
+          // Only the lease UPDATE blips; the authority read stays healthy.
+          if (info.phase !== 'write') return;
+          renewWrites += 1;
+          if (renewWrites === 1) throw new Error('transient D1 blip');
+        },
+      },
+    });
+    expect(renewWrites).toBeGreaterThanOrEqual(1);
+    expect(result.status).toBe('deferred');
+    expect(result.detail).toBe('retry');
+    // Recovery, not cancellation or terminal failure: the run is queued with
+    // no error recorded, and a redispatch completes it.
+    expect(await runStatus(msg.run_id)).toBe('queued');
+    const runRow = await env.DB.prepare(`SELECT error_code FROM agent_runs WHERE id = ?`)
+      .bind(msg.run_id)
+      .first<{ error_code: string | null }>();
+    expect(runRow?.error_code).toBeNull();
+    const second = await dispatchWorkspace(env.DB, ws);
+    expect(second.results.some((r) => r.run_id === msg.run_id && r.status === 'completed')).toBe(true);
+    expect(await runStatus(msg.run_id)).toBe('succeeded');
+  });
+
+  it('BG16: a failed renewal authority read aborts into recovery without renewing', async () => {
+    // The authority SELECT fails while the lease UPDATE would succeed. The
+    // tick must classify the unreadable authority as a renewal error and
+    // abort provider spend instead of continuing unverified.
+    const abortAware: TurnHandler = {
+      name: 'abort-aware-read',
+      async runTurn(ctx) {
+        await new Promise<void>((resolve) => {
+          if (ctx.signal?.aborted) {
+            resolve();
+            return;
+          }
+          ctx.signal?.addEventListener('abort', () => resolve(), { once: true });
+        });
+        return { kind: 'failed', errorCode: 'aborted', errorMessage: 'Run cancelled.' };
+      },
+    };
+    const msg = await accept(chatAvi, aviId, 'act-msg-renewal-readfail', 'readfail turn');
+    const outboxId = await outboxIdForRun(msg.run_id);
+    const phases: string[] = [];
+    const result = await dispatchOutboxItem(env.DB, outboxId, ws, {
+      handler: abortAware,
+      leaseTtlSeconds: 300,
+      leaseRenewIntervalMs: 50,
+      testHooks: {
+        beforeRenewal: async (info) => {
+          phases.push(info.phase);
+          if (info.phase === 'check') throw new Error('authority read failed');
+        },
+      },
+    });
+    // The write phase never ran: execution stopped on unverified authority.
+    expect(phases).toEqual(['check']);
+    expect(result.status).toBe('deferred');
+    expect(result.detail).toBe('retry');
+    expect(await runStatus(msg.run_id)).toBe('queued');
+    const runRow = await env.DB.prepare(`SELECT error_code FROM agent_runs WHERE id = ?`)
+      .bind(msg.run_id)
+      .first<{ error_code: string | null }>();
+    expect(runRow?.error_code).toBeNull();
+    const second = await dispatchWorkspace(env.DB, ws);
+    expect(second.results.some((r) => r.run_id === msg.run_id && r.status === 'completed')).toBe(true);
+    expect(await runStatus(msg.run_id)).toBe('succeeded');
+  });
+
+  it('BG08: member revocation mid-turn stops provider spend and fails visibly on redispatch', async () => {
+    // Hunor's membership is restored at the end: later tests assume him.
+    const nowIso = new Date().toISOString();
+    await env.DB.prepare(
+      `INSERT OR IGNORE INTO workspace_users (workspace_id, user_id, role, joined_at, created_at, updated_at)
+       VALUES (?, ?, 'member', ?, ?, ?)`,
+    )
+      .bind(ws, hunorId, nowIso, nowIso, nowIso)
+      .run();
+    const hanging: TurnHandler = {
+      name: 'hanging-revoked',
+      async runTurn(ctx) {
+        await new Promise<void>((resolve) => {
+          if (ctx.signal?.aborted) {
+            resolve();
+            return;
+          }
+          ctx.signal?.addEventListener('abort', () => resolve(), { once: true });
+        });
+        return { kind: 'failed', errorCode: 'aborted', errorMessage: 'Run cancelled.' };
+      },
+    };
+    const msg = await accept(chatHunor, hunorId, 'act-msg-revoke-midturn', 'revocable turn');
+    const outboxId = await outboxIdForRun(msg.run_id);
+    const dispatching = dispatchOutboxItem(env.DB, outboxId, ws, {
+      handler: hanging,
+      leaseTtlSeconds: 300,
+      leaseRenewIntervalMs: 50,
+    });
+    await waitFor('turn to pin', async () => (await loadRunById(msg.run_id)).attempt_id !== null);
+    await removeMember(env.DB, { workspaceId: ws, actorUserId: aviId, targetUserId: hunorId });
+    const result = await dispatching;
+    // The renewal tick noticed the revoked membership and stopped provider
+    // spend; the handoff deferred instead of failing while revoked.
+    expect(result.status).toBe('deferred');
+    expect(await runStatus(msg.run_id)).toBe('queued');
+    // Redispatch fails visibly at the membership gate: no silent execution
+    // without authority.
+    const redispatch = await dispatchOutboxItem(env.DB, outboxId, ws, { handler: hanging });
+    expect(redispatch.status).toBe('failed');
+    expect(redispatch.detail).toBe('member_removed');
+    expect(await runStatus(msg.run_id)).toBe('failed');
+    await env.DB.prepare(
+      `INSERT OR IGNORE INTO workspace_users (workspace_id, user_id, role, joined_at, created_at, updated_at)
+       VALUES (?, ?, 'member', ?, ?, ?)`,
+    )
+      .bind(ws, hunorId, new Date().toISOString(), new Date().toISOString(), new Date().toISOString())
+      .run();
+  });
+
   it('P1-3: cron discovers and recovers a workspace whose only work is an orphaned run', async () => {
     const msg = await accept(chatAvi, aviId, 'act-msg-023', 'cron orphan');
     await env.DB.prepare(`DELETE FROM outbox WHERE json_extract(payload_json, '$.run_id') = ?`)
@@ -1585,7 +1752,10 @@ describe('Worker Actor Dispatch & Recovery Integration (workerd)', () => {
             args: { scope: 'workspace', category: 'other_context', content: 'Partial survival note.' },
           }],
         },
-        { kind: 'fail', code: 'transient', message: 'Upstream went away mid-turn.' },
+        // Non-retryable failure: the test asserts the terminal partial path,
+        // and a transient failure would be retried against the script cursor
+        // (the retry then observes the fake's exhausted empty default).
+        { kind: 'fail', code: 'blocked', message: 'Upstream went away mid-turn.' },
       ],
     });
     const handler = new AgentHandler({

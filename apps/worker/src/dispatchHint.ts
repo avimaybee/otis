@@ -22,11 +22,26 @@ async function wakeWorkspaceActor(env: Env, workspaceId: string): Promise<void> 
   // Async actor wake: the actor acks fast and continues via its own
   // state.waitUntil, so this waitUntil never holds the Worker past its
   // post-response lifetime for a long model turn.
-  await stub.fetch(new Request('http://actor/dispatch', {
+  const res = await stub.fetch(new Request('http://actor/dispatch', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ action: 'dispatch', workspace_id: workspaceId, budget: 5 }),
   }));
+  // Consume the body so a non-2xx wake is observed instead of silently
+  // dropped: the durable work stays queued and cron is the backstop.
+  let body = '';
+  try {
+    body = await res.text();
+  } catch {
+    body = '';
+  }
+  if (!res.ok) {
+    workerFailure('dispatch', 'actor wake returned non-2xx; cron remains backstop', {
+      workspaceId,
+      status: res.status,
+      body: body.slice(0, 200),
+    });
+  }
 }
 
 export function publishDispatchHint(ctx: ExecutionContext | undefined, env: Env, workspaceId: string): void {

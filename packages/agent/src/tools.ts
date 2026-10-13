@@ -2371,7 +2371,7 @@ export function validateDocumentStartArgs(raw: unknown): ValidationResult<Docume
   if (sec) return sec;
   const unk = checkNoUnknownKeys(
     obj,
-    new Set(['title', 'intended_sections', 'document_id', 'base_revision_id']),
+    new Set(['title', 'intended_sections', 'document_id', 'base_revision_id', 'idempotency_key']),
     'document_start',
   );
   if (unk) return unk;
@@ -2413,6 +2413,14 @@ export function validateDocumentStartArgs(raw: unknown): ValidationResult<Docume
     baseRevisionId = obj['base_revision_id'].trim();
   }
 
+  let idempotencyKey: string | undefined;
+  if (obj['idempotency_key'] !== undefined) {
+    if (typeof obj['idempotency_key'] !== 'string' || !obj['idempotency_key'].trim()) {
+      return fail('invalid_argument', "Field 'idempotency_key' must be a non-empty string.");
+    }
+    idempotencyKey = obj['idempotency_key'].trim().slice(0, 64);
+  }
+
   return {
     ok: true,
     data: {
@@ -2420,6 +2428,7 @@ export function validateDocumentStartArgs(raw: unknown): ValidationResult<Docume
       intended_sections: intendedSections,
       ...(documentId ? { document_id: documentId } : {}),
       ...(baseRevisionId ? { base_revision_id: baseRevisionId } : {}),
+      ...(idempotencyKey ? { idempotency_key: idempotencyKey } : {}),
     },
   };
 }
@@ -3544,7 +3553,7 @@ export const ALL_AGENT_TOOLS: ProviderToolDeclaration[] = [
   {
     name: 'document_write_section',
     description:
-      'Write or update one or more sections of a document draft. Each section has an id, title, and rich markdown content.',
+      'Write or update a few sections of a document draft (at most 2-3 sections per call for long documents so each response fits the output budget). Each section has an id, title, and rich markdown content. Spread extensive documents across multiple calls, keeping saved section IDs unchanged.',
     parameters: {
       type: 'object',
       properties: {
@@ -3562,7 +3571,7 @@ export const ALL_AGENT_TOOLS: ProviderToolDeclaration[] = [
             required: ['id', 'title', 'content_markdown'],
             additionalProperties: false,
           },
-          description: 'Sections to save in this round (up to 16).',
+          description: 'Sections to save in this round (up to 16; use at most 2-3 for long documents).',
         },
       },
       required: ['document_id', 'revision_id', 'sections'],

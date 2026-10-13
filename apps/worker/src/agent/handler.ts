@@ -40,6 +40,7 @@ import {
   runAppliedBusinessMutation,
   SCHEMA_VERSION,
   type AssistantCall,
+  type CollectedProviderRound,
   type DurableAgentProgress,
   type EndpointFamily,
   type FetchFn,
@@ -51,6 +52,80 @@ import {
   type ThinkingRequest,
   type TurnInput,
 } from '@otis/agent';
+
+/** Cap on saved section IDs named in the truncation repair instruction. */
+const MAX_TRUNCATION_SAVED_SECTIONS = 20;
+
+/**
+ * Retires a truncation repair ticket once its issued request produced a
+ * durable outcome (final text, diverted correction, or executed tool round).
+ * Only an actually issued ticket is spent: a merely armed ticket (round
+ * checkpointed, tools still pending) stays live for issuance. Keeps the
+ * one-repair-per-run bound: a later truncation finds the spent ticket and
+ * fails truthfully instead of re-arming.
+ */
+function consumeTruncationRepair(progress: DurableAgentProgress): void {
+  const ticket = progress.truncationRepair;
+  if (ticket?.armed && ticket.issuedRoundIndex !== null) ticket.armed = false;
+}
+
+/**
+ * Drops a truncation repair ticket outright: fresh member input superseded
+ * the round it was scoped to, so stapling its stale scope onto new intent
+ * would be wrong. A later truncation re-arms from scratch.
+ */
+function dropTruncationRepair(progress: DurableAgentProgress): void {
+  if (progress.truncationRepair?.armed) progress.truncationRepair.armed = false;
+}
+
+/**
+ * One bounded smaller-scope instruction after an output-limit truncation
+ * (BG07). Names already-saved document section IDs so the model writes only
+ * the next single unfinished section instead of repeating the oversized
+ * request; a complete self-contained replacement when no document work was
+ * saved (the cut-off prefix is discarded, never continued). The provider
+ * output cap still bounds the reply; this only narrows its scope.
+ */
+function buildTruncationRepairSteering(progress: DurableAgentProgress): string {
+  const saved: string[] = [];
+  const intended: string[] = [];
+  let docTitle: string | null = null;
+  for (const result of progress.completedToolResults) {
+    if (result.result.status !== 'applied') continue;
+    if (result.name === 'document_write_section') {
+      const sections = (result.args as { sections?: Array<{ id?: unknown }> } | null)?.sections;
+      if (!Array.isArray(sections)) continue;
+      for (const section of sections) {
+        if (typeof section?.id === 'string' && section.id && saved.length < MAX_TRUNCATION_SAVED_SECTIONS) {
+          saved.push(section.id);
+        }
+      }
+    } else if (result.name === 'document_start') {
+      // Document scope survives even before any section saves: the start
+      // call's intended sections keep the repair scoped to authoring.
+      const args = (result.args ?? {}) as { title?: unknown; intended_sections?: unknown };
+      if (typeof args.title === 'string' && args.title && !docTitle) docTitle = args.title.slice(0, 80);
+      if (Array.isArray(args.intended_sections)) {
+        for (const title of args.intended_sections) {
+          if (typeof title === 'string' && title && intended.length < 10) intended.push(title.slice(0, 80));
+        }
+      }
+    }
+  }
+  if (saved.length > 0) {
+    return `\n[Truncation guard]: your previous reply was cut off by the output limit. Sections already saved (${saved.join(', ')}) must not be rewritten. Write ONLY the next single unfinished section now, keeping it under roughly 1200 words; remaining sections continue in later turns.`;
+  }
+  if (intended.length > 0 || docTitle) {
+    const scope = docTitle ? ` for "${docTitle}"` : '';
+    const plan = intended.length > 0 ? ` Planned sections: ${intended.join('; ')}.` : '';
+    return `\n[Truncation guard]: your previous reply was cut off by the output limit before any section was saved.${plan} Write ONLY the first unfinished section${scope} now, keeping it under roughly 1200 words; remaining sections continue in later turns. Do not finish or summarize the document early.`;
+  }
+  // Ordinary text: the cut-off prefix is discarded (it never enters the next
+  // request), so ask for a complete self-contained replacement that fits —
+  // never a continuation of unseen text, which would strand the answer as a
+  // bare ending.
+  return `\n[Truncation guard]: your previous reply was cut off by the output limit and its partial text was discarded. Answer the original request again from scratch, completely but concisely, in a single reply that fits comfortably within the output budget. Do not continue a cut-off fragment.`;
+}
 
 export interface ModelSnapshot {
   commandKey: string;
@@ -562,6 +637,17 @@ export class AgentHandler implements TurnHandler {
     }
 
     const originalText = ctx.sourceText;
+    // Fresh output-limit truncation observed this turn but not yet persisted.
+    // Declared up here (outside the slice loop and before consumeSteering,
+    // which retires it) so every caller shares one binding: the durable
+    // ticket is armed by the normal round checkpoint (Case 2) or Phase A's
+    // injection save, and a crash in between replays the same round instead
+    // of half-persisting a repair.
+    let truncationPending: { roundIndex: number; incompleteReason: string | null; pendingCalls: number } | null = null;
+    // Logical provider-request sequence within this turn. Combined with the
+    // execution attempt it gives every issued request — including a repair
+    // re-issue for an unchanged round — a distinct publication generation.
+    let providerRequestSeq = 0;
     const applySteeringContext = () => {
       const inputs = progress.steeringInputs ?? [];
       ctx.sourceText = originalText + inputs.map(input => `\n[Additional context from the same member]: ${input.text}`).join('');
@@ -575,6 +661,13 @@ export class AgentHandler implements TurnHandler {
       if (!inputs.length) { applySteeringContext(); return false; }
       progress.steeringInputs = [...(progress.steeringInputs ?? []), ...inputs];
       progress.lastSteeringSequence = inputs.at(-1)!.sequence;
+      // Fresh member input supersedes any pending truncated round and its
+      // repair: retire the ticket here — before this function's save — so
+      // every caller (turn-start redispatch included) persists new intent
+      // and retirement together, and no later request staples stale repair
+      // scope onto the new intent. A later truncation re-arms from scratch.
+      truncationPending = null;
+      dropTruncationRepair(progress);
       if (progress.phase === 'tools_executing' && progress.currentRound) {
         const round = progress.currentRound;
         const results = round.assistantCalls.map((call, index) => progress.completedToolResults.find(result => result.callId === call.callId) ?? { callId: call.callId, actionId: `${ctx.runId}_r${progress.roundIndex}_t${index}`, name: call.name, args: call.args, result: { status: 'rejected' as const, error: { code: 'superseded_by_steering', message: 'This proposal was not executed because the member added new context.' } } });
@@ -686,15 +779,18 @@ export class AgentHandler implements TurnHandler {
         if (assembledContext.recentMessages && assembledContext.recentMessages.length > 0) {
           for (const msg of assembledContext.recentMessages) {
             historicalProviderIndexByMessageId.set(msg.id, conversationMessages.length);
+            const docSuffix = msg.documents && msg.documents.length > 0
+              ? ` [Attached files: ${msg.documents.map((d) => `${d.filename} (${d.mediaId}, ${d.state})`).join('; ')}. Use read_document with the media ID to read sections before answering.]`
+              : '';
             if (msg.authorKind === 'system') {
               conversationMessages.push({
                 role: 'assistant',
-                text: msg.text,
+                text: msg.text + docSuffix,
               });
             } else {
               conversationMessages.push({
                 role: 'user',
-                text: msg.text,
+                text: msg.text + docSuffix,
               });
             }
           }
@@ -761,6 +857,82 @@ export class AgentHandler implements TurnHandler {
         if (ctx.answerText) {
           userContent += `\n[User Clarification Answer]: ${ctx.answerText}`;
         }
+        if (ctx.recordsContext) {
+          const rc = ctx.recordsContext;
+          const target = rc.target.mode === 'draft'
+            ? `unsaved draft ${rc.target.draft_id} generation ${rc.target.generation} (propose patches; do not commit saved writes)`
+            : 'saved records (read saved state; edits commit through edit_records)';
+          const rowIds = rc.selected_rows.slice(0, 20).map((r) => `${r.kind}:${r.id}`).join(', ') || 'none';
+          const colIds = rc.selected_columns.slice(0, 20).join(', ') || 'all visible';
+          const orderIds = rc.visible_row_order.slice(0, 20).map((r) => `${r.kind}:${r.id}`).join(', ') || 'unknown order';
+          const deltaOps = Array.isArray(rc.draft_delta) ? rc.draft_delta.slice(0, 30) : [];
+          const deltaText = deltaOps.length > 0
+            ? deltaOps.map((op) => {
+                try {
+                  const o = op as { op?: string; op_id?: string; column_id?: string; row_ref?: { id?: string } };
+                  if (o.op === 'cell.set' || o.op === 'cell.clear') return `${o.op} ${o.row_ref?.id ?? '?'}:${o.column_id ?? '?'}`;
+                  return `${o.op ?? 'op'} ${o.op_id ?? ''}`.trim();
+                } catch {
+                  return 'edit';
+                }
+              }).join('; ')
+            : 'no unsaved edits';
+          userContent += `\n[Records table context - lower trust, member-supplied selection]: list '${rc.list_id}', target ${target}. Selected rows: ${rowIds}. Selected columns: ${colIds}. Visible order: ${orderIds}. Unsaved draft delta (${deltaOps.length} ops): ${deltaText}.${rc.draft_delta_omitted ? ' NOTE: further unsaved edits were omitted for size — do not claim full coverage; ask the member to narrow the selection or Save first.' : ''} Read needed rows with the query tool and overlay this delta; table writes must respect the draft target.`;
+        }
+
+        // BG07/BG13 bounded truncation repair: one smaller-scope instruction
+        // for the next provider request after an output-limit truncation.
+        // Arming and freezing share one save: a fresh truncation arms the
+        // ticket and freezes its instruction together, so a crash before the
+        // save replays the same round instead of half-persisting a repair.
+        // An already-frozen ticket for this round reattaches its text
+        // without consuming budget; a ticket frozen for a gone round is
+        // spent. Restart-safe: frozen input survives until its request's
+        // result is durably consumed.
+        if (truncationPending && !progress.truncationRepair) {
+          progress.truncationRepair = {
+            armed: true,
+            roundIndex: truncationPending.roundIndex,
+            incompleteReason: truncationPending.incompleteReason,
+            pendingCalls: truncationPending.pendingCalls,
+            steering: null,
+            issuedRoundIndex: null,
+          };
+          truncationPending = null;
+        }
+        const repairTicket = progress.truncationRepair;
+        let repairSteering: string | null = null;
+        if (repairTicket?.armed && repairTicket.issuedRoundIndex === null) {
+          repairTicket.steering = buildTruncationRepairSteering(progress);
+          repairTicket.issuedRoundIndex = progress.roundIndex;
+          if (!(await this.saveProgress(ctx, progress))) {
+            return { kind: 'failed', errorCode: 'lease_lost', errorMessage: 'Workspace lease lost or expired before saving progress.' };
+          }
+          repairSteering = repairTicket.steering;
+        } else if (
+          repairTicket?.armed
+          && repairTicket.issuedRoundIndex === progress.roundIndex
+          && repairTicket.steering !== null
+        ) {
+          // Resumed or retried issuance of the same logical request (crash,
+          // abort, clarification resume): reattach the frozen instruction.
+          // Reconstruction never consumes repair budget.
+          repairSteering = repairTicket.steering;
+        } else if (
+          repairTicket?.armed
+          && repairTicket.issuedRoundIndex !== null
+          && repairTicket.issuedRoundIndex !== progress.roundIndex
+        ) {
+          // Defensive: the targeted round is gone without consuming the
+          // repair (every round-advancing path retires or supersedes it, so
+          // this is unreachable in practice). Spend the ticket rather than
+          // staple stale scope onto new intent.
+          repairTicket.armed = false;
+          if (!(await this.saveProgress(ctx, progress))) {
+            return { kind: 'failed', errorCode: 'lease_lost', errorMessage: 'Workspace lease lost or expired before saving progress.' };
+          }
+        }
+        if (repairSteering) userContent += repairSteering;
 
         let userAudio: ProviderMessage['audio'] | undefined = undefined;
         let attachedMediaId: string | null = null;
@@ -1087,13 +1259,18 @@ export class AgentHandler implements TurnHandler {
           Boolean(ctx.answerText) && (!ctx.answerMessageId || ctx.answerMessageId !== progress.sentAnswerMessageId);
         const newAnswer = answerIsNew ? ctx.answerText : null;
         const continuationInput: ProviderMessage[] =
-          lastCompletedRound?.continuation && (newSteering.length > 0 || newAnswer)
+          lastCompletedRound?.continuation && (newSteering.length > 0 || newAnswer || repairSteering)
             ? [
                 {
                   role: 'user',
                   text: [
                     ...(newAnswer ? [`[User Clarification Answer]: ${newAnswer}`] : []),
                     ...newSteering.map((input) => `[Additional context from the same member]: ${input.text}`),
+                    // BG14: the frozen truncation repair is genuinely new
+                    // linked input too — linked serializers skip non-system
+                    // messages, so without this a linked repair request would
+                    // silently drop its smaller-scope instruction.
+                    ...(repairSteering ? [repairSteering] : []),
                   ].join('\n'),
                 },
               ]
@@ -1122,11 +1299,18 @@ export class AgentHandler implements TurnHandler {
           thinkingRequest = { kind: 'provider_default' };
         }
 
+        // Logical provider-request sequence within this turn. Every built
+        // request — including a repair re-issue for an unchanged round —
+        // advances it, so each request carries a distinct durable identity
+        // even when round and attempt stay the same.
+        providerRequestSeq += 1;
+        const providerRequestSeqForTurn = providerRequestSeq;
+
         const turnInput: Omit<TurnInput, 'model'> = {
           workspaceId: ctx.workspaceId,
           chatId: ctx.chatId,
           runId: ctx.runId,
-          requestId: `${ctx.runId}_r${progress.roundIndex}`,
+          requestId: `${ctx.runId}_r${progress.roundIndex}q${providerRequestSeqForTurn}`,
           sessionId: ctx.chatId,
           messages: conversationMessages,
           continuationInput,
@@ -1188,6 +1372,7 @@ export class AgentHandler implements TurnHandler {
               round: progress.roundIndex,
               provider: modelSnapshot.provider,
               model: modelSnapshot.commandKey,
+              executionAttempt: ctx.attemptId,
               error: keyErr instanceof Error ? keyErr.message : String(keyErr),
             });
             return {
@@ -1225,17 +1410,32 @@ export class AgentHandler implements TurnHandler {
           });
         };
 
-        // Collect and validate round (with automatic retry on transient upstream outages / rate limits)
-        let collectedRound;
+        // Collect and validate round (with automatic retry on transient upstream outages / rate limits).
+        // Truncation (length_exceeded) carries its verified calls and linking
+        // continuation: the handler executes what completed and issues one
+        // bounded smaller-scope repair request (see truncationRepair), then
+        // fails truthfully if that repair also truncates. Deterministic
+        // protocol failures fail honestly without any same-input replay.
+        let collectedRound: CollectedProviderRound | undefined;
         const roundIndex = progress.roundIndex;
         const MAX_STREAM_ATTEMPTS = 3;
         let lastStreamErr: unknown;
+        const roundStartMs = Date.now();
+        const attemptShort = ctx.attemptId.replace(/[^A-Za-z0-9]/g, '').slice(-8) || 'att';
+        // providerRequestSeq advanced once per built request above; the retry
+        // loop below reuses this entry's sequence while streamAttempt varies.
 
         for (let streamAttempt = 0; streamAttempt < MAX_STREAM_ATTEMPTS; streamAttempt++) {
           if (ctx.signal?.aborted) {
             return { kind: 'failed', errorCode: 'aborted', errorMessage: 'Run cancelled.' };
           }
 
+          // Publication generation: execution attempt + logical request +
+          // provider request attempt. A retry or a repair re-issue gets a new
+          // generation so its preview frames and durable chunks never collide
+          // with an earlier request's provisional display under the same
+          // run/round keys. Verified tool action IDs are unaffected.
+          const generation = `${attemptShort}q${providerRequestSeqForTurn}s${streamAttempt}`;
           const stream = createStream();
           const publisher = new StreamPublisher(
             (key, type, payload) => publishAgentActivity(ctx, key, type, payload),
@@ -1255,19 +1455,20 @@ export class AgentHandler implements TurnHandler {
                 id: undefined,
                 data: {
                   schema_version: 1,
-                  id: `preview_${ctx.runId}_r${roundIndex}_${seq}`,
+                  id: `preview_${ctx.runId}_r${roundIndex}_g${generation}_${seq}`,
                   cursor: 0,
                   workspace_id: ctx.workspaceId,
                   chat_id: ctx.chatId,
                   run_id: ctx.runId,
                   created_at: new Date().toISOString(),
                   type: 'text_preview',
-                  payload: { text, round_index: roundIndex, seq },
+                  payload: { text, round_index: roundIndex, seq, generation },
                 },
               });
               telegramDraft?.update(roundIndex, text);
             },
             () => ctx.signal?.aborted ?? false,
+            generation,
           );
 
           let publishTimer: ReturnType<typeof setInterval> | null = setInterval(() => {
@@ -1324,8 +1525,65 @@ export class AgentHandler implements TurnHandler {
                 delayMs,
                 error: streamErr instanceof Error ? streamErr.message : String(streamErr),
               });
+              // Discard the failed request's provisional display before
+              // replacing it: the retry starts a new generation, so the old
+              // partial preamble must not persist as durable chunks nor keep
+              // its preview frames. Already-flushed thinking batches stay.
+              await publisher.discard();
               await new Promise((resolve) => setTimeout(resolve, delayMs));
               continue;
+            }
+
+            // BG07/BG13 bounded truncation recovery: an output-limit
+            // truncation preserves its verified completed calls and linking
+            // continuation instead of failing the run. Nothing is saved here:
+            // the calls route through the normal collected-round path below,
+            // whose tool-round checkpoint persists the round and the armed
+            // ticket together; the no-call path arms inside Phase A's
+            // injection save. A crash anywhere in between replays the same
+            // round and re-arms — never a half-persisted repair. At most one
+            // ticket per run; never on an aborted turn; never the same
+            // oversized input twice.
+            const truncErr =
+              streamErr instanceof AgentStreamError && streamErr.code === 'length_exceeded' ? streamErr : null;
+            if (truncErr?.truncation && !isAborted && !progress.truncationRepair && !truncationPending) {
+              streamOutcome = 'interrupted';
+              const drained = await publisher.close(streamOutcome);
+              if (!drained) {
+                workerFailure('agent', 'live preview incomplete; authoritative answer persists separately', {
+                  workspaceId: ctx.workspaceId,
+                  runId: ctx.runId,
+                  round: progress.roundIndex,
+                });
+              }
+              const truncation = truncErr.truncation;
+              truncationPending = {
+                roundIndex,
+                incompleteReason: truncation.incompleteReason,
+                pendingCalls: truncation.pendingCalls,
+              };
+              workerDebug('agent', 'truncation recovery armed; verified calls preserved', {
+                workspaceId: ctx.workspaceId,
+                runId: ctx.runId,
+                round: progress.roundIndex,
+                completedCalls: truncation.completedCalls.length,
+                pendingCalls: truncation.pendingCalls,
+                ...(truncation.incompleteReason ? { incompleteReason: truncation.incompleteReason } : {}),
+              });
+              if (truncation.completedCalls.length > 0) {
+                collectedRound = {
+                  text: '',
+                  toolCalls: truncation.completedCalls,
+                  finishReason: 'tool_handoff',
+                  continuation: truncation.continuation,
+                  usage: truncation.usage,
+                };
+                break;
+              }
+              // No verified calls to execute: head straight for the
+              // repair-steered request issued by Phase A below, which arms
+              // the durable ticket in its injection save.
+              continue slice;
             }
 
             streamOutcome = 'interrupted';
@@ -1341,14 +1599,23 @@ export class AgentHandler implements TurnHandler {
             const appliedCount = progress.completedToolResults.filter((r) => r.result.status === 'applied').length;
             const providerCode = streamErr instanceof AgentStreamError ? streamErr.providerCode : undefined;
             const agentCode = streamErr instanceof AgentStreamError ? streamErr.code : undefined;
+            const terminalStatus = streamErr instanceof AgentStreamError ? streamErr.terminalStatus ?? null : null;
+            const incompleteReason = streamErr instanceof AgentStreamError ? streamErr.incompleteReason ?? null : null;
+            const pendingCalls = streamErr instanceof AgentStreamError ? streamErr.pendingCalls ?? null : null;
             workerFailure('agent', 'provider round failed', {
               workspaceId: ctx.workspaceId,
               runId: ctx.runId,
               round: progress.roundIndex,
               provider: modelSnapshot.provider,
               model: modelSnapshot.commandKey,
+              executionAttempt: ctx.attemptId,
+              requestAttempt: streamAttempt,
+              elapsedMs: Date.now() - roundStartMs,
               agentCode,
               ...(providerCode ? { providerCode } : {}),
+              ...(terminalStatus ? { terminalStatus } : {}),
+              ...(incompleteReason ? { incompleteReason } : {}),
+              ...(typeof pendingCalls === 'number' ? { pendingCalls } : {}),
             });
             return {
               kind: 'failed',
@@ -1373,6 +1640,8 @@ export class AgentHandler implements TurnHandler {
 
         // An input accepted while the provider was streaming changes the next
         // interpretation before any of that response's proposed writes execute.
+        // (Supersession retirement lives inside consumeSteering so the new
+        // intent and the dropped repair persist together.)
         if (await consumeSteering()) {
           progress.roundIndex++; roundsExecutedThisTurn++;
           if (!(await this.saveProgress(ctx, progress))) return { kind: 'failed', errorCode: 'lease_lost', errorMessage: 'Lease lost before steering continuation.' };
@@ -1441,6 +1710,19 @@ export class AgentHandler implements TurnHandler {
               usage: collectedRound.usage,
             };
             progress.nextToolIndex = 0;
+            if (truncationPending && !progress.truncationRepair) {
+              // Atomic with the parked round below: the verified calls and
+              // the armed ticket persist in one save.
+              progress.truncationRepair = {
+                armed: true,
+                roundIndex: truncationPending.roundIndex,
+                incompleteReason: truncationPending.incompleteReason,
+                pendingCalls: truncationPending.pendingCalls,
+                steering: null,
+                issuedRoundIndex: null,
+              };
+              truncationPending = null;
+            }
 
             if (!(await this.saveProgress(ctx, progress))) {
               return { kind: 'failed', errorCode: 'lease_lost', errorMessage: 'Workspace lease lost or expired before saving progress.' };
@@ -1482,6 +1764,7 @@ export class AgentHandler implements TurnHandler {
             progress.phase = 'provider_pending';
             progress.roundIndex++;
             roundsExecutedThisTurn++;
+            consumeTruncationRepair(progress);
             ctx.sourceText = `${ctx.sourceText}\n[Correction guard]: the member corrected a previously stated business value in this message. Apply the correction with the appropriate update tool now (identify the entity first if needed), then confirm briefly what changed. Do not reply with only a promise to fix it.`;
             if (!(await this.saveProgress(ctx, progress))) {
               return { kind: 'failed', errorCode: 'lease_lost', errorMessage: 'Workspace lease lost or expired before saving progress.' };
@@ -1490,6 +1773,7 @@ export class AgentHandler implements TurnHandler {
           }
           progress.phase = 'completed';
           progress.finalAnswer = collectedRound.text;
+          consumeTruncationRepair(progress);
           if (!(await this.saveProgress(ctx, progress))) {
             progress.phase = 'provider_pending'; progress.finalAnswer = undefined;
             if (!(await this.saveProgress(ctx, progress))) return { kind: 'failed', errorCode: 'lease_lost', errorMessage: 'Lease lost before finishing.' };
@@ -1506,6 +1790,20 @@ export class AgentHandler implements TurnHandler {
           usage: collectedRound.usage,
         };
         progress.nextToolIndex = 0;
+        if (truncationPending && !progress.truncationRepair) {
+          // Atomic with this round checkpoint: the verified calls and the
+          // armed ticket persist in one save, so a restart keeps both or
+          // neither. Phase A freezes and issues the repair from the ticket.
+          progress.truncationRepair = {
+            armed: true,
+            roundIndex: truncationPending.roundIndex,
+            incompleteReason: truncationPending.incompleteReason,
+            pendingCalls: truncationPending.pendingCalls,
+            steering: null,
+            issuedRoundIndex: null,
+          };
+          truncationPending = null;
+        }
         if (!(await this.saveProgress(ctx, progress))) {
           return { kind: 'failed', errorCode: 'lease_lost', errorMessage: 'Workspace lease lost or expired before saving progress.' };
         }
@@ -1523,6 +1821,9 @@ export class AgentHandler implements TurnHandler {
             await this.options.testHooks.beforeToolExecution(call, actionId);
           }
 
+          // Steering supersession (including truncation-repair retirement)
+          // lives inside consumeSteering so intent and retirement persist
+          // together.
           if (await consumeSteering()) { roundsExecutedThisTurn++; continue slice; }
 
           // Check if this action ID was already committed (crash recovery idempotency)
@@ -1747,6 +2048,9 @@ export class AgentHandler implements TurnHandler {
         progress.phase = 'provider_pending';
         progress.roundIndex += 1;
         progress.currentRound = undefined;
+        // The repair-issued round's result is durably consumed with this
+        // checkpoint; retire its ticket in the same save.
+        consumeTruncationRepair(progress);
         if (!(await this.saveProgress(ctx, progress))) {
           return { kind: 'failed', errorCode: 'lease_lost', errorMessage: 'Workspace lease lost or expired before saving progress.' };
         }

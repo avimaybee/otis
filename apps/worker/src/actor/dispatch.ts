@@ -14,7 +14,7 @@ import { resolveDateAnswer } from './clarificationFields.js';
  * (echo). The lease/step/outbox protocol is handler-agnostic.
  */
 
-import { claimWorkspaceLease, releaseWorkspaceLease, renewWorkspaceLease } from './leases.js';
+import { claimWorkspaceLease, LeaseError, releaseWorkspaceLease, renewWorkspaceLease } from './leases.js';
 import type { PendingOperationPayload, RecordsContext } from '@otis/contracts';
 import { validateRecordsContext } from '@otis/contracts';
 import { workerDebug } from '../observability.js';
@@ -133,6 +133,12 @@ export interface DispatchOptions {
   /** Max outbox attempts before a run is declared poison. */
   maxAttempts?: number;
   leaseTtlSeconds?: number;
+  /**
+   * Execution-owned renewal cadence while a turn runs. Defaults to 60s
+   * against the 120s TTL (one bounded D1 write per minute of execution).
+   * Tests use a short cadence to prove renewal without waiting a minute.
+   */
+  leaseRenewIntervalMs?: number;
   nowIso?: string;
   /** Clock source; tests advance it to prove TTL enforcement mid-turn. */
   clock?: () => string;
@@ -143,6 +149,12 @@ export interface DispatchOptions {
   testHooks?: {
     beforePin?: (info: { attemptId: string; outboxId: string }) => Promise<void>;
     beforeIncrement?: (info: { attemptId: string; outboxId: string }) => Promise<void>;
+    /**
+     * Test-only renewal fault injection: runs around the authority read
+     * (`check` phase) and the lease UPDATE (`write` phase) of each execution
+     * renewal tick. Never set in production.
+     */
+    beforeRenewal?: (info: { attemptId: string; outboxId: string; phase: 'check' | 'write' }) => Promise<void>;
   };
 }
 
@@ -276,6 +288,35 @@ async function holderStillOwns(
     .first();
   return row !== null;
 }
+
+/**
+ * True while this attempt still owns a live, member-authorized turn. Uses
+ * the same commit-guard predicate (run, attempt, fence, lease, membership)
+ * as a read, so a renewal tick can stop provider spend the moment a turn is
+ * stopped, stolen, or member-revoked — even while the lease itself looks
+ * live. Read-only; never mutates.
+ */
+async function holderActiveForRenewal(
+  db: D1Database,
+  params: { runId: string; attemptId: string; fence: number; nowIso: string },
+): Promise<boolean> {
+  const row = await db
+    .prepare(`SELECT 1 AS ok WHERE EXISTS ${holderGuardSql()}`)
+    .bind(
+      params.runId,
+      params.attemptId,
+      params.fence,
+      params.fence,
+      params.attemptId,
+      params.attemptId,
+      params.nowIso,
+    )
+    .first();
+  return row !== null;
+}
+
+/** How an execution renewal tick interrupted its turn, if it did. */
+type RenewalInterruption = 'lease_lost' | 'renewal_error' | 'stale';
 
 /**
  * Requeues a run for retry, but only while this attempt still owns it.
@@ -1231,6 +1272,9 @@ export async function dispatchOutboxItem(
   // attempt-owned, so a successor's records can never be overwritten.
   const stepArgs = { source_message_id: run.source_message_id, source_job_id: run.source_job_id };
   let outcome: TurnOutcome;
+  // Classified by the execution renewal tick when it interrupts its turn;
+  // consulted by the post-turn handoff before believing an aborted outcome.
+  let renewalInterrupted: RenewalInterruption | null = null;
   try {
     const persisted = await persistStep(db, {
       runId: run.id,
@@ -1282,6 +1326,86 @@ export async function dispatchOutboxItem(
       const answer = await loadClarificationAnswer(db, run.id);
       const turnAbort = new AbortController();
       inflightTurnControllers.set(run.id, turnAbort);
+      // Execution-owned coarse lease renewal: a two-round slice with retries
+      // and backoff can legitimately outlast the 120s TTL before the
+      // post-turn renewal below. Renew serially about once a minute with the
+      // real clock while the turn executes. Every interruption is classified:
+      // 'lease_lost' (authority gone), 'renewal_error' (transient write
+      // failure, authority unknown), or 'stale' (stopped, stolen, or
+      // member-revoked while the lease looks live). The post-turn handoff
+      // re-verifies ownership and routes through holder-scoped requeue before
+      // believing an aborted outcome — a renewal interruption is never a user
+      // Stop. One bounded D1 write per minute of actual execution, plus one
+      // ownership read per tick. Never renew from token/preview/SSE callbacks.
+      const LEASE_RENEW_INTERVAL_MS = options.leaseRenewIntervalMs ?? 60_000;
+      let leaseRenewTimer: ReturnType<typeof setInterval> | null = null;
+      let leaseRenewChain: Promise<void> = Promise.resolve();
+      renewalInterrupted = null;
+      const stopLeaseRenewal = async (): Promise<void> => {
+        if (leaseRenewTimer) {
+          clearInterval(leaseRenewTimer);
+          leaseRenewTimer = null;
+        }
+        await leaseRenewChain;
+      };
+      leaseRenewTimer = setInterval(() => {
+        leaseRenewChain = leaseRenewChain
+          .then(async () => {
+            if (turnAbort.signal.aborted) return;
+            const tickNow = new Date().toISOString();
+            // Ownership first: a stopped, stolen, or member-revoked turn must
+            // not keep spending on provider work, even while its lease looks
+            // live. Commit guards would refuse its writes; this stops the
+            // spend itself.
+            let active: boolean | null = null;
+            try {
+              if (options.testHooks?.beforeRenewal) {
+                await options.testHooks.beforeRenewal({ attemptId, outboxId, phase: 'check' });
+              }
+              active = await holderActiveForRenewal(db, { runId: run.id, attemptId, fence: lease.fence, nowIso: tickNow });
+            } catch {
+              // Authority unverified: a failed run/membership read must not
+              // let execution continue on an unproven lease, even if the
+              // UPDATE below would succeed. Classify the interruption and
+              // abort; the post-turn handoff re-verifies ownership before
+              // believing the aborted outcome. Commit guards keep protecting
+              // business writes.
+              renewalInterrupted = 'renewal_error';
+              if (!turnAbort.signal.aborted) turnAbort.abort();
+              return;
+            }
+            if (active === false) {
+              renewalInterrupted = 'stale';
+              if (!turnAbort.signal.aborted) turnAbort.abort();
+              return;
+            }
+            try {
+              if (options.testHooks?.beforeRenewal) {
+                await options.testHooks.beforeRenewal({ attemptId, outboxId, phase: 'write' });
+              }
+              await renewWorkspaceLease(db, {
+                workspaceId,
+                attemptId,
+                ttlSeconds: options.leaseTtlSeconds,
+                nowIso: tickNow,
+              });
+            } catch (err) {
+              // LeaseError means authority is gone; any other failure is a
+              // transient write error with unknown authority. Both abort
+              // provider spend; the post-turn handoff re-verifies ownership
+              // before believing the aborted outcome.
+              renewalInterrupted = err instanceof LeaseError ? 'lease_lost' : 'renewal_error';
+              if (!turnAbort.signal.aborted) turnAbort.abort();
+            }
+          })
+          .catch(() => {
+            // Unreachable in practice (every step above is guarded), but a
+            // renewal interruption must never surface as an unhandled
+            // rejection: fail closed into ownership-checked recovery.
+            if (renewalInterrupted === null) renewalInterrupted = 'renewal_error';
+            if (!turnAbort.signal.aborted) turnAbort.abort();
+          });
+      }, LEASE_RENEW_INTERVAL_MS);
       try {
         outcome = await handler.runTurn({
           db,
@@ -1304,6 +1428,7 @@ export async function dispatchOutboxItem(
         if (inflightTurnControllers.get(run.id) === turnAbort) {
           inflightTurnControllers.delete(run.id);
         }
+        await stopLeaseRenewal();
       }
       await completeStep(db, persisted.step.id, attemptId, {
         resultJson: JSON.stringify(outcome),
@@ -1365,6 +1490,32 @@ export async function dispatchOutboxItem(
     return requeued
       ? { status: 'deferred', run_id: run.id, detail: 'retry' }
       : { status: 'deferred', run_id: run.id, detail: 'stale_attempt' };
+  }
+
+  // A renewal interruption aborts provider spend mid-turn, so the handler
+  // outcome that follows may be spurious — e.g. a transient D1 write error
+  // while the lease stayed live. Re-verify ownership and route through the
+  // holder-scoped requeue before committing a terminal failure. The requeue
+  // guard only fires while this attempt still owns a running run: a real
+  // user Stop (cancelled) or a successor's takeover falls through to the
+  // guarded commits below, which refuse stale writes. Renewal interruption
+  // is therefore never reported as an explicit user Stop, and never revives
+  // expired or stolen authority.
+  if (renewalInterrupted && outcome.kind === 'failed') {
+    const requeued = await requeueAsHolder(db, {
+      workspaceId,
+      runId: run.id,
+      attemptId,
+      outboxId,
+      nowIso: now(),
+    });
+    if (requeued) {
+      return {
+        status: 'deferred',
+        run_id: run.id,
+        detail: renewalInterrupted === 'lease_lost' ? 'lease_lost' : 'retry',
+      };
+    }
   }
 
   // Renew before committing so a slow handler cannot straddle expiry. The

@@ -392,7 +392,7 @@ export async function handleCreateMessage(
     return jsonSuccess(result, 202, { 'x-request-id': requestId });
   } catch (err) {
     if (err instanceof SteeringRunClosedError) {
-      const result = await acceptWebMessage(env.DB, { workspaceId, chatId, userId: auth.userId, clientMessageId: body.client_message_id, text: parseCommandText(body.text ?? '', 'web').kind === 'text' ? (parseCommandText(body.text ?? '', 'web') as { text: string }).text : body.text, mediaId: body.media_id, imageMediaIds: body.image_media_ids, recordsContext: body.records_context });
+      const result = await acceptWebMessage(env.DB, { workspaceId, chatId, userId: auth.userId, clientMessageId: body.client_message_id, text: parseCommandText(body.text ?? '', 'web').kind === 'text' ? (parseCommandText(body.text ?? '', 'web') as { text: string }).text : body.text, mediaId: body.media_id, imageMediaIds: body.image_media_ids, documentMediaIds: body.document_media_ids, isPastedText: body.is_pasted_text, recordsContext: body.records_context });
       publishDispatchHint(ctx, env, workspaceId);
       return jsonSuccess(result, 202, { 'x-request-id': requestId });
     }

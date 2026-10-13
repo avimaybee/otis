@@ -644,6 +644,25 @@ export class GeminiInteractionsAdapter implements ProviderAdapter {
             : null;
           if (status === 'completed') {
             terminal = { type: 'finish', reason: sawToolCall ? 'tool_handoff' : 'success', continuation };
+          } else if (status === 'incomplete') {
+            // Token-limited results (per the Interactions API, `incomplete`
+            // marks limit-stopped output): verified ended calls stay
+            // executable and the collector turns this into its typed
+            // truncation outcome. Anything still streaming is dropped there,
+            // never executed.
+            const incompleteDetails = interaction?.['incomplete_details'] as Record<string, unknown> | undefined;
+            const incompleteReason =
+              typeof interaction?.['incomplete_reason'] === 'string'
+                ? (interaction['incomplete_reason'] as string)
+                : typeof incompleteDetails?.['reason'] === 'string'
+                  ? (incompleteDetails['reason'] as string)
+                  : null;
+            terminal = {
+              type: 'finish',
+              reason: 'length_limit',
+              continuation,
+              truncation: { terminalStatus: 'incomplete', incompleteReason },
+            };
           } else if (status === 'requires_action') {
             // A tool call without a matching completed call is unusable.
             let incomplete = false;

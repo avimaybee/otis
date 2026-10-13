@@ -76,3 +76,72 @@ describe('Records grid guards (R16 Slice D)', () => {
     expect(plan.reviewRows).toEqual([]);
   });
 });
+
+describe('save chunking (RR02)', () => {
+  it('keeps a row.create with its same-row cells in one chunk', async () => {
+    const { buildSaveChunks, SAVE_CHUNK_OPS } = await import('../src/components/records/gridCore.js');
+    const ops: import('@otis/contracts').RecordEdit[] = [
+      { op: 'row.create', op_id: 'op_c', row_ref: { kind: 'entity', id: 'tmp_1' }, list_id: 'leads', initial_values: {} },
+      { op: 'cell.set', op_id: 'op_n', row_ref: { kind: 'entity', id: 'tmp_1' }, column_id: 'name', value: 'Acme' },
+    ];
+    for (let i = 0; i < SAVE_CHUNK_OPS - 1; i++) {
+      ops.unshift({ op: 'cell.set', op_id: `op_fill_${i}`, row_ref: { kind: 'entity', id: `ent_${i}` }, column_id: 'name', value: `N${i}` });
+    }
+    const chunks = buildSaveChunks(ops);
+    expect(chunks.length).toBe(2);
+    // The creation group moved whole into the second chunk, never split.
+    const second = chunks[1]!;
+    expect(second.map((op) => op.op_id)).toEqual(['op_c', 'op_n']);
+    expect(chunks.flat()).toHaveLength(ops.length);
+  });
+
+  it('bounds every chunk at the operation limit in order', async () => {
+    const { buildSaveChunks, SAVE_CHUNK_OPS } = await import('../src/components/records/gridCore.js');
+    const ops: import('@otis/contracts').RecordEdit[] = Array.from({ length: SAVE_CHUNK_OPS * 2 + 5 }, (_, i) => ({
+      op: 'cell.set' as const,
+      op_id: `op_${i}`,
+      row_ref: { kind: 'entity' as const, id: `ent_${i}` },
+      column_id: 'name',
+      value: `N${i}`,
+    }));
+    const chunks = buildSaveChunks(ops);
+    expect(chunks.length).toBe(3);
+    for (const chunk of chunks) expect(chunk.length).toBeLessThanOrEqual(SAVE_CHUNK_OPS);
+    expect(chunks.flat().map((op) => op.op_id)).toEqual(ops.map((op) => op.op_id));
+  });
+
+  it('never moves a cell edit ahead of the field definition that types it', async () => {    const { buildSaveChunks } = await import('../src/components/records/gridCore.js');
+    const ops: import('@otis/contracts').RecordEdit[] = [
+      { op: 'row.create', op_id: 'op_c', row_ref: { kind: 'custom', id: 'tmp_1' }, list_id: 'projects', initial_values: { name: 'Widget' } },
+      { op: 'cell.set', op_id: 'op_n', row_ref: { kind: 'custom', id: 'tmp_1' }, column_id: 'name', value: 'Widget' },
+      { op: 'field.create', op_id: 'op_f', field_id: 'budget', list_id: 'projects', label: 'Budget', type: 'currency' },
+      { op: 'cell.set', op_id: 'op_b', row_ref: { kind: 'custom', id: 'tmp_1' }, column_id: 'budget', value: { amount: 1000, currency: 'USD' } },
+    ];
+    const chunks = buildSaveChunks(ops);
+    expect(chunks).toHaveLength(1);
+    expect(chunks[0]!.map((op) => op.op_id)).toEqual(['op_c', 'op_n', 'op_f', 'op_b']);
+  });
+
+  it('remaps temporary IDs and rebases versions into unsubmitted chunks', async () => {
+    const { remapPendingChunks } = await import('../src/components/records/gridCore.js');
+    const chunks: import('@otis/contracts').RecordEdit[][] = [
+      [
+        { op: 'row.create', op_id: 'op_c', row_ref: { kind: 'entity', id: 'tmp_1' }, list_id: 'leads', initial_values: { name: 'Acme' } },
+      ],
+      [
+        { op: 'cell.set', op_id: 'op_p', row_ref: { kind: 'entity', id: 'tmp_1' }, column_id: 'phone', value: '+15551234567', base_token: 'v_stale' },
+      ],
+    ];
+    remapPendingChunks(chunks, 1, { tmp_1: 'ent_9' }, [
+      { row_ref: { kind: 'entity', id: 'ent_9' }, column_id: 'phone', version: 'v_new' },
+    ]);
+    const cell = chunks[1]![0]!;
+    expect(cell.op).toBe('cell.set');
+    if (cell.op === 'cell.set') {
+      expect(cell.row_ref.id).toBe('ent_9');
+      expect(cell.base_token).toBe('v_new');
+    }
+    // The submitted chunk itself is untouched.
+    expect(chunks[0]![0]!.op).toBe('row.create');
+  });
+});

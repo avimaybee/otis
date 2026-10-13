@@ -86,6 +86,7 @@ export async function handleGetRecords(
       cursor: url.searchParams.get('cursor') || undefined,
       search: (url.searchParams.get('search') || url.searchParams.get('q') || '').trim(),
       sortParam: (url.searchParams.get('sort') || '').trim(),
+      status: (url.searchParams.get('status') || '').trim() || undefined,
     });
     return jsonSuccess(payload, 200, {
       'x-request-id': requestId,
@@ -197,9 +198,12 @@ export async function handleSaveRecords(
 
   // 2. Validate bounds and the whole envelope before any effect. The ledger
   // handler re-validates; this boundary rejection keeps malformed saves out
-  // with the offending op identified.
-  if (operations.length > 100) {
-    return jsonError(422, 'validation_error', 'Records save chunk cannot exceed 100 operations.', requestId);
+  // with the offending op identified. Chunks stay small so the whole guarded
+  // invocation (hydration reads, events, projections, receipt, quota) fits
+  // Cloudflare Free D1 limits (100 bindings/statement, 50 statements/invocation):
+  // larger pastes arrive as serial atomic chunks with stable action ids.
+  if (operations.length > 30) {
+    return jsonError(422, 'validation_error', 'Records save chunk cannot exceed 30 operations. Split larger pastes into serial atomic chunks.', requestId);
   }
 
   if (operations.length === 0) {
@@ -226,9 +230,19 @@ export async function handleSaveRecords(
 
   // 3. Pre-validate row existence and workspace ownership on edits and
   // deletions: one batched read per touched kind, never one query per op.
-  // The ledger handler re-checks against its hydrated footprint; this early
-  // pass turns foreign or unknown ids into precise 404s before any commit.
-  {
+  // Rows created in this same chunk are excluded: the composing handler
+  // creates and remaps them, so an early existence check must not reject a
+  // new row before its creation commits. Collision and ownership checks stay
+  // inside the handler. An exact retry carries a committed receipt: replay it
+  // through the executor before reporting removed targets as missing.
+  const priorReceipt = await env.DB.prepare(
+    `SELECT 1 AS one FROM action_receipts WHERE workspace_id = ? AND action_id = ?`,
+  ).bind(workspaceId, actionId).first<{ one: number }>();
+  if (!priorReceipt) {
+    const createdIds = new Set<string>();
+    for (const op of operations) {
+      if (op.op === 'row.create') createdIds.add(`${op.row_ref.kind}:${op.row_ref.id}`);
+    }
     const idsByKind = new Map<string, Set<string>>();
     const labelFor = (kind: string): string =>
       kind === 'entity' ? 'Entity' : kind === 'task' ? 'Task' : kind === 'draft' ? 'Draft'
@@ -237,6 +251,7 @@ export async function handleSaveRecords(
       const ref = op.op === 'cell.set' || op.op === 'cell.clear' || op.op === 'row.remove' ? op.row_ref
         : op.op === 'item.edit' || op.op === 'item.remove' ? op.source_ref : null;
       if (!ref) continue;
+      if (createdIds.has(`${ref.kind}:${ref.id}`)) continue;
       let ids = idsByKind.get(ref.kind);
       if (!ids) {
         ids = new Set();
@@ -257,26 +272,41 @@ export async function handleSaveRecords(
       // Definitions, lists, and memory refs resolve inside the handler.
       if (!mapping) continue;
       const idList = [...ids];
-      const placeholders = idList.map(() => '?').join(',');
-      checks.push(
-        (async () => {
-          try {
-            const res = await env.DB.prepare(
-              `SELECT ${mapping.column} AS id FROM ${mapping.table} WHERE workspace_id = ? AND ${mapping.column} IN (${placeholders})`,
-            ).bind(workspaceId, ...idList).all<{ id: string }>();
-            return { kind, found: new Set((res.results || []).map((r) => r.id)) };
-          } catch (err) {
-            // Pre-records databases have no custom-row table: every custom
-            // ref is then unknown, which the handler reports as not_found.
-            if (!String(err).includes('no such table')) throw err;
-            return { kind, found: new Set<string>() };
-          }
-        })(),
-      );
+      // Bound each statement to 40 ids (41 bindings with workspace_id) so the
+      // 100-bindings-per-statement limit holds with margin.
+      for (let i = 0; i < idList.length; i += 40) {
+        const chunk = idList.slice(i, i + 40);
+        const placeholders = chunk.map(() => '?').join(',');
+        checks.push(
+          (async () => {
+            try {
+              const res = await env.DB.prepare(
+                `SELECT ${mapping.column} AS id FROM ${mapping.table} WHERE workspace_id = ? AND ${mapping.column} IN (${placeholders})`,
+              ).bind(workspaceId, ...chunk).all<{ id: string }>();
+              return { kind, found: new Set((res.results || []).map((r) => r.id)) };
+            } catch (err) {
+              // Pre-records databases have no custom-row table: every custom
+              // ref is then unknown, which the handler reports as not_found.
+              if (!String(err).includes('no such table')) throw err;
+              return { kind, found: new Set<string>() };
+            }
+          })(),
+        );
+      }
     }
     const settled = await Promise.all(checks);
+    const foundByKind = new Map<string, Set<string>>();
     for (const { kind, found } of settled) {
-      for (const id of idsByKind.get(kind) ?? []) {
+      let acc = foundByKind.get(kind);
+      if (!acc) {
+        acc = new Set();
+        foundByKind.set(kind, acc);
+      }
+      for (const id of found) acc.add(id);
+    }
+    for (const [kind, ids] of idsByKind) {
+      const found = foundByKind.get(kind) ?? new Set<string>();
+      for (const id of ids) {
         if (!found.has(id)) {
           return jsonError(404, 'not_found', `${labelFor(kind)} '${id}' not found in this workspace.`, requestId);
         }

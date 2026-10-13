@@ -188,9 +188,12 @@ describe('Records screen on the real API boundary (R16 Slice C)', () => {
 
   it('shows a conflict with keep-mine and use-saved recovery', async () => {
     mockGetRecords.mockResolvedValue(leadsResponse([entityRow('ent_1', 'Acme', '2026-10-10T10:00:00.000Z')]));
-    mockSaveRecords.mockRejectedValue(new ApiError(409, 'conflict', 'This value changed while you edited.', 'req-1', false, {
-      op_id: 'op_cell_ent_1_name', target_ref: { kind: 'entity', id: 'ent_1' }, reason: 'Concurrent modification.',
-    }));
+    mockSaveRecords.mockImplementationOnce(async (_ws: string, payload: unknown) => {
+      const opId = String((payload as { operations: Array<{ op_id: string }> }).operations[0]?.op_id ?? 'op_missing');
+      throw new ApiError(409, 'conflict', 'This value changed while you edited.', 'req-1', false, {
+        op_id: opId, target_ref: { kind: 'entity', id: 'ent_1' }, reason: 'Concurrent modification.',
+      });
+    });
     const view = await mount(<RecordsScreen {...screenProps} />);
     await waitForText(view.host, 'Acme');
 

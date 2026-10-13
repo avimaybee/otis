@@ -570,3 +570,94 @@ describe('Records batch guards (Slice A)', () => {
     expect(restoreActive.events).toHaveLength(0);
   });
 });
+
+describe('Records persistence budget (RR05)', () => {
+  function stubDb() {
+    return {
+      prepare: (sql: string) => ({
+        bind: (...args: unknown[]) => ({ sql, binds: args }),
+      }),
+    } as unknown as D1Database;
+  }
+
+  it('batches same-table upserts under the per-statement parameter limit', async () => {
+    const { batchedUpserts } = await import('../src/repository/records.js');
+    const db = stubDb();
+    const rows = Array.from({ length: 30 }, (_, i) =>
+      ['ws_test', `row_${i}`, 'note', null, `v${i}`, 1, null, new Date().toISOString()],
+    );
+    const statements = batchedUpserts(
+      db,
+      `INSERT INTO records_values (workspace_id, row_id, column_id, value_json, value_text, revision, source_event_id, updated_at) VALUES`,
+      `(?, ?, ?, ?, ?, ?, ?, ?)`,
+      `ON CONFLICT(workspace_id, row_id, column_id) DO UPDATE SET value_text = excluded.value_text`,
+      rows,
+    );
+    // 30 rows at 8 bindings each fit in 3 statements of at most 90 bindings.
+    expect(statements).toHaveLength(3);
+    for (const stmt of statements) {
+      expect((stmt as unknown as { binds: unknown[] }).binds.length).toBeLessThanOrEqual(90);
+    }
+  });
+
+  it('persists 30 changed custom cells in a bounded statement count', async () => {
+    const { recordsDetailStatements } = await import('../src/repository/records.js');
+    const db = stubDb();
+    const ctx = createDummyContext();
+    let state = createEmptyState();
+    const setup = handleRecordsBatch(ctx, state, 1, {
+      schema_version: 1,
+      save_id: 'save_setup',
+      list_id: 'projects',
+      operations: [
+        { op: 'list.create', op_id: 'op_l', list_id: 'projects', name: 'Projects', source_kind: 'custom' },
+        { op: 'field.create', op_id: 'op_f', field_id: 'note', list_id: 'projects', label: 'Note', type: 'text' },
+        ...Array.from({ length: 30 }, (_, i) => ({
+          op: 'row.create', op_id: `op_r${i}`,
+          row_ref: { kind: 'custom', id: `row_${i}` }, list_id: 'projects',
+          initial_values: {},
+        })),
+      ],
+    } as never);
+    // 32 operations exceed the 30-operation chunk cap by design.
+    expect(setup.result.status).toBe('rejected');
+    const setup30 = handleRecordsBatch(ctx, state, 1, {
+      schema_version: 1,
+      save_id: 'save_setup',
+      list_id: 'projects',
+      operations: [
+        { op: 'list.create', op_id: 'op_l', list_id: 'projects', name: 'Projects', source_kind: 'custom' },
+        { op: 'field.create', op_id: 'op_f', field_id: 'note', list_id: 'projects', label: 'Note', type: 'text' },
+        ...Array.from({ length: 28 }, (_, i) => ({
+          op: 'row.create', op_id: `op_r${i}`,
+          row_ref: { kind: 'custom', id: `row_${i}` }, list_id: 'projects',
+          initial_values: {},
+        })),
+      ],
+    } as never);
+    expect(setup30.result.status).toBe('applied');
+    state = setup30.nextState!;
+    const edited = handleRecordsBatch({ ...ctx, action_id: 'act_cells' }, state, 100, {
+      schema_version: 1,
+      save_id: 'save_cells',
+      list_id: 'projects',
+      operations: Array.from({ length: 28 }, (_, i) => ({
+        op: 'cell.set', op_id: `op_c${i}`,
+        row_ref: { kind: 'custom', id: `row_${i}` }, column_id: 'note', value: `v${i}`,
+      })),
+    } as never);
+    expect(edited.result.status).toBe('applied');
+    expect(edited.events).toHaveLength(28);
+    // The handler mutates its input maps, so diff against a snapshot taken
+    // as "before": all 28 values created.
+    const after = edited.nextState!;
+    const beforeSnap: LedgerProjectionState = { ...after, recordsValues: new Map() };
+    const statements = recordsDetailStatements(db, beforeSnap, after);
+    const valueStatements = statements.filter((s) =>
+      String((s as unknown as { sql: string }).sql).includes('INSERT INTO records_values'),
+    );
+    // 28 changed values persist in 3 multi-row statements, not 28.
+    expect(valueStatements).toHaveLength(3);
+    expect(statements.length).toBeLessThanOrEqual(10);
+  });
+});

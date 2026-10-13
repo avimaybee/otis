@@ -124,10 +124,10 @@ export function mergeActivity(
  * drops preview rounds as their persisted chunks arrive. Reconnects start
  * empty and render durable state honestly.
  */
-export type TransientPreview = Record<string, Record<number, { seq: number; text: string }>>;
+export type TransientPreview = Record<string, Record<number, { seq: number; text: string; generation?: string }>>;
 
 export function mergeTransientPreview(current: TransientPreview, activity: PublicActivity): TransientPreview {
-  const payload = activity.payload as { text?: unknown; round_index?: unknown; seq?: unknown } | null;
+  const payload = activity.payload as { text?: unknown; round_index?: unknown; seq?: unknown; generation?: unknown } | null;
   if (
     !payload
     || typeof payload.text !== 'string'
@@ -136,10 +136,14 @@ export function mergeTransientPreview(current: TransientPreview, activity: Publi
   ) {
     return current;
   }
+  const generation = typeof payload.generation === 'string' ? payload.generation : undefined;
   const rounds = current[activity.run_id] ?? {};
   const prev = rounds[payload.round_index];
-  if (prev && prev.seq >= payload.seq) return current;
-  return { ...current, [activity.run_id]: { ...rounds, [payload.round_index]: { seq: payload.seq, text: payload.text } } };
+  // A new publication generation (execution + request attempt) replaces the
+  // failed request's provisional display regardless of sequence numbers;
+  // within one generation, later sequences overwrite earlier ones.
+  if (prev && generation === prev.generation && prev.seq >= payload.seq) return current;
+  return { ...current, [activity.run_id]: { ...rounds, [payload.round_index]: { seq: payload.seq, text: payload.text, ...(generation ? { generation } : {}) } } };
 }
 
 export function dropCoveredTransientPreview(
@@ -149,7 +153,7 @@ export function dropCoveredTransientPreview(
 ): TransientPreview {
   const rounds = current[runId];
   if (!rounds) return current;
-  const kept: Record<number, { seq: number; text: string }> = {};
+  const kept: Record<number, { seq: number; text: string; generation?: string }> = {};
   for (const [round, frame] of Object.entries(rounds)) {
     if (Number(round) > roundIndex) kept[Number(round)] = frame;
   }

@@ -408,7 +408,16 @@ describe('Workspace erasure drill', () => {
       headers: CSRF,
     });
     expect(res.status).toBe(200);
-    expect(((await res.json()) as { deleted: boolean }).deleted).toBe(true);
+    const body = (await res.json()) as { deleted: boolean; r2_cleanup?: { deleted: number; failed_total: number; pending: boolean } };
+    expect(body.deleted).toBe(true);
+    // Post-commit byte cleanup reports honestly: bytes deleted, nothing pending, no retry record.
+    expect(body.r2_cleanup?.deleted).toBeGreaterThanOrEqual(3);
+    expect(body.r2_cleanup?.failed_total).toBe(0);
+    expect(body.r2_cleanup?.pending).toBe(false);
+    const leftover = await env.DB.prepare(`SELECT COUNT(*) AS n FROM workspace_erasure_cleanups WHERE workspace_id = ?`)
+      .bind(WS_E)
+      .first<{ n: number }>();
+    expect(Number(leftover?.n)).toBe(0);
 
     // Every workspace store reads back empty.
     for (const table of WS_TABLES) {
@@ -506,6 +515,17 @@ describe('Workspace erasure drill', () => {
   });
 
   it('refuses non-owners and outsiders without touching the workspace', async () => {
+    // A regular member's denied delete must not remove bytes: seed a real
+    // R2 object plus its inventory row in the standing workspace first.
+    const memberBytesKey = `workspace/${WS_E2}/media/med-standing-1`;
+    const nowDenied = new Date().toISOString();
+    await env.DB.prepare(
+      `INSERT INTO media_objects (id, workspace_id, chat_id, uploader_user_id, state, object_key, content_type, byte_size, expires_at, created_at, updated_at)
+       VALUES ('med-standing-1', ?, NULL, ?, 'validated', ?, 'image/png', 9, ?, ?, ?)`,
+    )
+      .bind(WS_E2, OWNER, memberBytesKey, new Date(Date.now() + 86400000).toISOString(), nowDenied, nowDenied)
+      .run();
+    await env.STORAGE!.put(memberBytesKey, new TextEncoder().encode('standing'));
     const memberDenied = await call(`/api/workspaces/${WS_E2}`, {
       method: 'DELETE',
       cookie: memberCookie,
@@ -522,5 +542,264 @@ describe('Workspace erasure drill', () => {
 
     const stillThere = await env.DB.prepare(`SELECT id FROM workspaces WHERE id = ?`).bind(WS_E2).first();
     expect(stillThere).toBeTruthy();
+    // Bytes and their inventory row survive the denied member delete.
+    expect(await env.STORAGE!.get(memberBytesKey)).not.toBeNull();
+    const standingRow = await env.DB.prepare(`SELECT id FROM media_objects WHERE id = 'med-standing-1'`).first();
+    expect(standingRow).toBeTruthy();
+    // No retry intent was committed either: the cascade never ran.
+    const noIntent = await env.DB.prepare(`SELECT COUNT(*) AS n FROM workspace_erasure_cleanups WHERE workspace_id = ?`)
+      .bind(WS_E2)
+      .first<{ n: number }>();
+    expect(Number(noIntent?.n)).toBe(0);
+  });
+
+  it('retries leftover erasure bytes through the cron cleanup', async () => {
+    const { processErasureR2Cleanups } = await import('../src/routes/erasureCleanup.js');
+    // A leftover retry record: one failed inventoried key plus an un-swept
+    // prefix holding an attempt-specific output the request pass missed.
+    const retryKey = `workspace/${WS_E2}/media/med-retry-1`;
+    const strayKey = `${WS_E2}/documents/stray-attempt.pdf`;
+    await env.STORAGE!.put(retryKey, new TextEncoder().encode('retry-bytes'));
+    await env.STORAGE!.put(strayKey, new TextEncoder().encode('stray-bytes'));
+    await env.DB.prepare(
+      `INSERT INTO workspace_erasure_cleanups (workspace_id, erasure_id, failed_keys_json, pending_prefixes_json, attempts, updated_at)
+       VALUES (?, 'erasure-retry-1', ?, ?, 1, ?)`,
+    )
+      .bind(WS_E2, JSON.stringify([retryKey]), JSON.stringify([`${WS_E2}/documents/`]), new Date().toISOString())
+      .run();
+    const summary = await processErasureR2Cleanups(env.DB, env.STORAGE!);
+    expect(summary.workspaces).toBe(1);
+    expect(await env.STORAGE!.get(retryKey)).toBeNull();
+    expect(await env.STORAGE!.get(strayKey)).toBeNull();
+    const cleared = await env.DB.prepare(`SELECT COUNT(*) AS n FROM workspace_erasure_cleanups WHERE workspace_id = ?`)
+      .bind(WS_E2)
+      .first<{ n: number }>();
+    expect(Number(cleared?.n)).toBe(0);
+  });
+
+  it('preserves every pending cleanup key without a cap', async () => {
+    const { storeErasureCleanup } = await import('../src/routes/erasureCleanup.js');
+    // 650 globally-keyed failures: prefix sweeps can never rediscover
+    // these, so dropping any of them would strand bytes permanently.
+    const keys = Array.from({ length: 650 }, (_, i) => `renditions/v1/med-overflow-${i}.img`);
+    await storeErasureCleanup(env.DB, {
+      workspaceId: 'ws-erase-overflow',
+      erasureId: 'erasure-overflow-1',
+      prev: null,
+      failedKeys: keys,
+      pendingPrefixes: [],
+    });
+    const row = await env.DB.prepare(
+      `SELECT failed_keys_json FROM workspace_erasure_cleanups WHERE workspace_id = ?`,
+    ).bind('ws-erase-overflow').first<{ failed_keys_json: string }>();
+    expect((JSON.parse(row!.failed_keys_json) as string[])).toHaveLength(650);
+    await env.DB.prepare(`DELETE FROM workspace_erasure_cleanups WHERE workspace_id = ?`)
+      .bind('ws-erase-overflow').run();
+  });
+
+  it('merges concurrently appended keys instead of overwriting or wrongly retiring them', async () => {
+    const { readErasureCleanup, reconcileErasureCleanup, retainRenderOrphanKey, storeErasureCleanup } = await import('../src/routes/erasureCleanup.js');
+    // A cron pass reads [key-A], then a renderer appends key-B mid-sweep.
+    // Reconciling the pass's (now stale) empty leftovers must keep B, not
+    // delete the row.
+    await storeErasureCleanup(env.DB, {
+      workspaceId: 'ws-erase-race',
+      erasureId: 'erasure-race-1',
+      prev: null,
+      failedKeys: ['workspace/ws-erase-race/media/a'],
+      pendingPrefixes: [],
+    });
+    const prev = await readErasureCleanup(env.DB, 'ws-erase-race');
+    expect(prev?.failedKeys).toEqual(['workspace/ws-erase-race/media/a']);
+    expect(await retainRenderOrphanKey(env.DB, 'ws-erase-race', 'workspace/ws-erase-race/media/b')).toBe(true);
+    await reconcileErasureCleanup(env.DB, {
+      workspaceId: 'ws-erase-race',
+      erasureId: prev!.erasureId,
+      prev,
+      failedKeys: [],
+      pendingPrefixes: [],
+    });
+    const merged = await readErasureCleanup(env.DB, 'ws-erase-race');
+    expect(merged?.failedKeys).toEqual(['workspace/ws-erase-race/media/b']);
+    // A quiet pass afterwards retires the row normally.
+    const prev2 = await readErasureCleanup(env.DB, 'ws-erase-race');
+    await reconcileErasureCleanup(env.DB, {
+      workspaceId: 'ws-erase-race',
+      erasureId: prev2!.erasureId,
+      prev: prev2,
+      failedKeys: [],
+      pendingPrefixes: [],
+    });
+    expect(await readErasureCleanup(env.DB, 'ws-erase-race')).toBeNull();
+  });
+
+  it('reports false retaining into a workspace with no erasure history', async () => {
+    const { retainRenderOrphanKey } = await import('../src/routes/erasureCleanup.js');
+    expect(await retainRenderOrphanKey(env.DB, 'ws-erase-nope', 'workspace/ws-erase-nope/media/x')).toBe(false);
+  });
+
+  it('retains in-flight attempt ownership across erasure until the sweep deadline', async () => {
+    const { processErasureR2Cleanups, readErasureCleanup } = await import('../src/routes/erasureCleanup.js');
+    // A claimed render attempt (upload still in flight) exists when the
+    // owner deletes the workspace through the production route, alongside
+    // a superseded attempt whose revision is already gone but whose
+    // registered row survives. The batch must capture both atomically —
+    // not just the revision's current attempt.
+    const WS_T3 = 'ws-erase-inflight';
+    const now = new Date().toISOString();
+    await env.DB.prepare(
+      `INSERT INTO workspaces (id, name, owner_user_id, business_revision, membership_revision, created_at, updated_at)
+       VALUES (?, 'Inflight Business', ?, 0, 1, ?, ?)`,
+    ).bind(WS_T3, OWNER, now, now).run();
+    await env.DB.prepare(
+      `INSERT INTO workspace_users (workspace_id, user_id, role, joined_at, created_at, updated_at)
+       VALUES (?, ?, 'owner', ?, ?, ?)`,
+    ).bind(WS_T3, OWNER, now, now, now).run();
+    await env.DB.prepare(
+      `INSERT INTO chats (id, workspace_id, author_user_id, title, created_at, updated_at, last_activity_at)
+       VALUES ('chat-erase-inflight', ?, ?, 'Inflight Chat', ?, ?, ?)`,
+    ).bind(WS_T3, OWNER, now, now, now).run();
+    await env.DB.prepare(
+      `INSERT INTO generated_documents (id, workspace_id, author_user_id, source_chat_id, run_id, title, created_at, updated_at)
+       VALUES ('doc-erase-inflight', ?, ?, 'chat-erase-inflight', NULL, 'Inflight Doc', ?, ?)`,
+    ).bind(WS_T3, OWNER, now, now).run();
+    await env.DB.prepare(
+      `INSERT INTO document_revisions (id, document_id, workspace_id, revision_number, parent_revision_id, title, source_key, checksum, request_fingerprint, render_state, render_attempt_id, render_attempt_expires_at, created_at, updated_at)
+       VALUES ('rev-erase-inflight', 'doc-erase-inflight', ?, 1, NULL, 'Inflight Doc', 'inflight-source.md', '', NULL, 'rendering', 'att-inflight-1', ?, ?, ?)`,
+    ).bind(WS_T3, new Date(Date.now() + 180000).toISOString(), now, now).run();
+    const future = new Date(Date.now() + 86400000).toISOString();
+    await env.DB.prepare(
+      `INSERT INTO media_objects (id, workspace_id, chat_id, uploader_user_id, state, object_key, content_type, byte_size, expires_at, created_at, updated_at)
+       VALUES
+       ('media_pdf_inflight', ?, NULL, ?, 'quarantine', ?, 'application/pdf', NULL, ?, ?, ?),
+       ('media_pdf_old', ?, NULL, ?, 'quarantine', ?, 'application/pdf', NULL, ?, ?, ?)`,
+    ).bind(
+      WS_T3, OWNER, `${WS_T3}/documents/doc-erase-inflight/rev-rev-erase-inflight-att-inflight-1.pdf`, future, now, now,
+      WS_T3, OWNER, `${WS_T3}/documents/doc-erase-inflight/rev-old-attempt-9.pdf`, future, now, now,
+    ).run();
+
+    const res = await call(`/api/workspaces/${WS_T3}`, {
+      method: 'DELETE',
+      cookie: ownerCookie,
+      headers: CSRF,
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { deleted: boolean; r2_cleanup?: { pending: boolean } };
+    expect(body.deleted).toBe(true);
+    // Both attempt keys outlive the sweep: pending stays truthful.
+    expect(body.r2_cleanup?.pending).toBe(true);
+
+    const intent = await readErasureCleanup(env.DB, WS_T3);
+    expect(intent?.attemptKeys).toHaveLength(2);
+    expect(intent?.attemptKeys.map((a) => a.key).sort()).toEqual([
+      `${WS_T3}/documents/doc-erase-inflight/rev-old-attempt-9.pdf`,
+      `${WS_T3}/documents/doc-erase-inflight/rev-rev-erase-inflight-att-inflight-1.pdf`,
+    ]);
+
+    // The final sweep does not drop in-flight ownership before the deadline.
+    const summary = await processErasureR2Cleanups(env.DB, env.STORAGE!);
+    expect(summary.workspaces).toBeGreaterThanOrEqual(1);
+    const retained = await readErasureCleanup(env.DB, WS_T3);
+    expect(retained?.attemptKeys).toHaveLength(2);
+  });
+
+  it('keeps an extended attempt deadline against a stale completing pass', async () => {
+    const { readErasureCleanup, reconcileErasureCleanup, storeErasureCleanup } = await import('../src/routes/erasureCleanup.js');
+    // The record holds K with deadline t1; the deadline is extended to t2
+    // (ownership reaffirmed) while a pass that started at t1 finishes and
+    // considers K complete. The stale pass must not shorten or drop it.
+    const t1 = new Date(Date.now() + 100_000).toISOString();
+    const t2 = new Date(Date.now() + 900_000).toISOString();
+    await storeErasureCleanup(env.DB, {
+      workspaceId: 'ws-erase-deadline',
+      erasureId: 'erasure-deadline-1',
+      prev: null,
+      failedKeys: [],
+      pendingPrefixes: [],
+      attemptKeys: [{ key: 'ws-erase-deadline/documents/k.pdf', deleteAfter: t1 }],
+    });
+    const prev = await readErasureCleanup(env.DB, 'ws-erase-deadline');
+    expect(prev?.attemptKeys).toHaveLength(1);
+    await env.DB.prepare(
+      `UPDATE workspace_erasure_cleanups SET attempt_keys_json = ? WHERE workspace_id = ?`,
+    ).bind(JSON.stringify([{ key: 'ws-erase-deadline/documents/k.pdf', deleteAfter: t2 }]), 'ws-erase-deadline').run();
+    const reconciled = await reconcileErasureCleanup(env.DB, {
+      workspaceId: 'ws-erase-deadline',
+      erasureId: 'erasure-deadline-1',
+      prev,
+      failedKeys: [],
+      pendingPrefixes: [],
+      attemptKeys: [],
+    });
+    expect(reconciled.reconciled).toBe(true);
+    const kept = await readErasureCleanup(env.DB, 'ws-erase-deadline');
+    expect(kept?.attemptKeys).toEqual([{ key: 'ws-erase-deadline/documents/k.pdf', deleteAfter: t2 }]);
+    await env.DB.prepare(`DELETE FROM workspace_erasure_cleanups WHERE workspace_id = ?`)
+      .bind('ws-erase-deadline').run();
+  });
+
+  it('reports observed durable state, not the proposal, when reconciliation defers', async () => {
+    const { reconcileErasureCleanup, storeErasureCleanup } = await import('../src/routes/erasureCleanup.js');
+    // A stored row is observed as-is on exhaustion, not as merged proposal.
+    await storeErasureCleanup(env.DB, {
+      workspaceId: 'ws-erase-deferred',
+      erasureId: 'erasure-deferred-1',
+      prev: null,
+      failedKeys: ['ws-erase-deferred/documents/kept.pdf'],
+      pendingPrefixes: [],
+    });
+    const deferred = await reconcileErasureCleanup(env.DB, {
+      workspaceId: 'ws-erase-deferred',
+      erasureId: 'erasure-deferred-1',
+      prev: null,
+      failedKeys: ['ws-erase-deferred/documents/proposal-only.pdf'],
+      pendingPrefixes: [],
+    }, 0);
+    expect(deferred.reconciled).toBe(false);
+    expect(deferred.failedKeys).toEqual(['ws-erase-deferred/documents/kept.pdf']);
+    // A retired row reports empty counts, still deferred — never the
+    // proposal's keys as stored totals.
+    await env.DB.prepare(`DELETE FROM workspace_erasure_cleanups WHERE workspace_id = ?`)
+      .bind('ws-erase-deferred').run();
+    const retired = await reconcileErasureCleanup(env.DB, {
+      workspaceId: 'ws-erase-deferred',
+      erasureId: 'erasure-deferred-1',
+      prev: null,
+      failedKeys: ['ws-erase-deferred/documents/proposal-only.pdf'],
+      pendingPrefixes: [],
+    }, 0);
+    expect(retired.reconciled).toBe(false);
+    expect(retired.failedKeys).toEqual([]);
+    expect(retired.pendingPrefixes).toEqual([]);
+    expect(retired.attemptKeys).toEqual([]);
+  });
+
+  it('refuses erasure when the cleanup table is missing', async () => {
+    const { deleteWorkspace } = await import('@otis/identity');
+    // Simulate a database that never applied migration 0033: the cascade
+    // must refuse before deleting anything, never strand cleanup.
+    await env.DB.prepare(`DROP TABLE workspace_erasure_cleanups`).run();
+    try {
+      await expect(
+        deleteWorkspace(env.DB, {
+          workspaceId: WS_E2,
+          actorUserId: OWNER,
+          r2CleanupIntent: { failedKeys: [], pendingPrefixes: [] },
+        }),
+      ).rejects.toThrow(/erasure_cleanup_unavailable/);
+      const intact = await env.DB.prepare(`SELECT id FROM workspaces WHERE id = ?`).bind(WS_E2).first();
+      expect(intact).toBeTruthy();
+    } finally {
+      await env.DB.prepare(
+        `CREATE TABLE IF NOT EXISTS workspace_erasure_cleanups (
+          workspace_id TEXT PRIMARY KEY,
+          erasure_id TEXT NOT NULL,
+          failed_keys_json TEXT NOT NULL,
+          pending_prefixes_json TEXT NOT NULL,
+          attempts INTEGER NOT NULL DEFAULT 0,
+          updated_at TEXT NOT NULL
+        )`,
+      ).run();
+    }
   });
 });

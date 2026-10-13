@@ -13,6 +13,15 @@ export interface PersistedRecordsDraft {
   baseRevision: number;
   operations: unknown[];
   updatedAt: string;
+  pendingSave?: {
+    saveId: string;
+    actionId: string;
+    opIds: string[];
+    operations: unknown[];
+    listId: string;
+    chunkIndex: number;
+    chunkCount: number;
+  } | null;
 }
 
 const KEY_PREFIX = 'otis:records-draft:';
@@ -71,12 +80,32 @@ export function loadRecordsDraft(userId: string, workspaceId: string, listId: st
     if (!raw) return null;
     const parsed = JSON.parse(raw) as Partial<PersistedRecordsDraft>;
     if (!parsed || typeof parsed.draftId !== 'string' || !Array.isArray(parsed.operations)) return null;
+    let pendingSave: PersistedRecordsDraft['pendingSave'] = null;
+    const rawPending = parsed.pendingSave;
+    if (rawPending && typeof rawPending === 'object' && !Array.isArray(rawPending)) {
+      const p = rawPending as Record<string, unknown>;
+      if (typeof p['saveId'] === 'string' && typeof p['actionId'] === 'string' &&
+        Array.isArray(p['opIds']) && Array.isArray(p['operations']) &&
+        typeof p['listId'] === 'string' && typeof p['chunkIndex'] === 'number' &&
+        typeof p['chunkCount'] === 'number') {
+        pendingSave = {
+          saveId: p['saveId'] as string,
+          actionId: p['actionId'] as string,
+          opIds: p['opIds'] as string[],
+          operations: p['operations'] as unknown[],
+          listId: p['listId'] as string,
+          chunkIndex: p['chunkIndex'] as number,
+          chunkCount: p['chunkCount'] as number,
+        };
+      }
+    }
     return {
       draftId: parsed.draftId,
       generation: typeof parsed.generation === 'number' ? parsed.generation : 0,
       baseRevision: typeof parsed.baseRevision === 'number' ? parsed.baseRevision : -1,
       operations: parsed.operations,
       updatedAt: typeof parsed.updatedAt === 'string' ? parsed.updatedAt : new Date(0).toISOString(),
+      pendingSave,
     };
   } catch {
     return null;

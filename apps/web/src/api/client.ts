@@ -199,13 +199,13 @@ export const api = {
       signal ? { signal } : undefined,
     ),
   getDocumentRevision: (workspaceId: string, documentId: string, revisionId: string, signal?: AbortSignal) =>
-    request<import('@otis/contracts').DocumentDetailResponse>(
+    request<import('@otis/contracts').DocumentRevisionDetailResponse>(
       `/api/workspaces/${encodeURIComponent(workspaceId)}/documents/${encodeURIComponent(documentId)}/revisions/${encodeURIComponent(revisionId)}`,
       signal ? { signal } : undefined,
     ),
   retryDocumentRender: (workspaceId: string, documentId: string, revisionId: string) =>
-    request<{ status: string; revision_id: string }>(
-      `/api/workspaces/${encodeURIComponent(workspaceId)}/documents/${encodeURIComponent(documentId)}/revisions/${encodeURIComponent(revisionId)}/retry`,
+    request<import('@otis/contracts').DocumentRetryResponse>(
+      `/api/workspaces/${encodeURIComponent(workspaceId)}/documents/${encodeURIComponent(documentId)}/revisions/${encodeURIComponent(revisionId)}/retry-render`,
       { method: 'POST' },
     ),
   listChatDocuments: (workspaceId: string, chatId: string, signal?: AbortSignal) =>
@@ -464,6 +464,7 @@ export const api = {
     if (query?.limit) params.set('limit', String(query.limit));
     if (query?.cursor) params.set('cursor', query.cursor);
     if (query?.search) params.set('search', query.search);
+    if (query?.status) params.set('status', query.status);
     if (query?.sort) params.set('sort', `${query.sort.column_id}:${query.sort.direction}`);
     const qs = params.toString();
     return request<import('@otis/contracts').RecordsResponse>(

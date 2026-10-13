@@ -105,4 +105,32 @@ describe('thinking reducer', () => {
     cursor = 0;
     expect(reduceThinking([], 'succeeded')).toEqual({ blocks: [], legacy: [] });
   });
+
+  it('keeps retry generations apart instead of concatenating reused block IDs (BG09)', () => {
+    cursor = 0;
+    const { blocks } = reduceThinking(
+      [
+        thinking('run-1', { text: 'failed attempt thought ', block_id: 's0', mode: 'append', state: 'streaming', round_index: 0, generation: 'abc123s0' }),
+        thinking('run-1', { text: 'replacement thought', block_id: 's0', mode: 'append', state: 'complete', round_index: 0, generation: 'abc123s1' }),
+      ],
+      'running',
+    );
+    expect(blocks).toHaveLength(2);
+    expect(blocks.map((block) => block.key)).toEqual(['run-1:0:s0:gabc123s0', 'run-1:0:s0:gabc123s1']);
+    // The superseded generation shows as interrupted with what arrived; the
+    // replacement keeps its own text and terminal state.
+    expect(blocks[0]).toMatchObject({ state: 'interrupted', text: 'failed attempt thought ' });
+    expect(blocks[1]).toMatchObject({ state: 'complete', text: 'replacement thought' });
+  });
+
+  it('folds legacy rows without generation exactly as before (BG09)', () => {
+    cursor = 0;
+    const { blocks } = reduceThinking([
+      thinking('run-1', { text: 'legacy ', block_id: 's0', mode: 'append', state: 'complete', round_index: 0 }),
+      thinking('run-1', { text: 'new ', block_id: 's0', mode: 'append', state: 'complete', round_index: 0, generation: '' }),
+    ]);
+    expect(blocks).toHaveLength(1);
+    expect(blocks[0]!.key).toBe('run-1:0:s0');
+    expect(blocks[0]!.text).toBe('legacy new ');
+  });
 });

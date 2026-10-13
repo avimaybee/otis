@@ -382,6 +382,62 @@ async function* decodeChatCompletions(
 }
 
 /**
+ * Reconciles streamed-but-unclosed function calls against the terminal
+ * response.output array. Only fully completed terminal function_call items
+ * become executable: the item must carry no explicit non-complete status, its
+ * identity and tool name must match the already-started streamed call, and its
+ * arguments must be a non-empty, bounded, parseable JSON string. Anything
+ * partial, mismatched, or missing is dropped, never inferred; a missing
+ * arguments string never becomes `{}`. Already-completed streamed calls are
+ * never duplicated.
+ */
+function reconcileTerminalFunctionCalls(
+  terminalOutput: unknown,
+  calls: Map<number, AccumulatedCall>,
+): Array<{ index: number; id: string; name: string; argsText: string }> {
+  if (!Array.isArray(terminalOutput) || calls.size === 0) return [];
+  const byCallId = new Map<string, { index: number; call: AccumulatedCall }>();
+  for (const [index, call] of calls) {
+    if (call.id) byCallId.set(call.id, { index, call });
+  }
+  const reconciled: Array<{ index: number; id: string; name: string; argsText: string }> = [];
+  const seen = new Set<string>();
+  for (const raw of terminalOutput) {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) continue;
+    const item = raw as Record<string, unknown>;
+    if (item['type'] !== 'function_call') continue;
+    // An explicitly unfinished terminal item is never executable. An omitted
+    // status is accepted: the Responses function_call shape does not always
+    // repeat completion state on the terminal copy.
+    if (typeof item['status'] === 'string' && item['status'] !== 'completed') continue;
+    const callId =
+      (typeof item['call_id'] === 'string' && item['call_id']) ||
+      (typeof item['id'] === 'string' && item['id']) ||
+      '';
+    const name = typeof item['name'] === 'string' ? item['name'] : '';
+    const argsText = typeof item['arguments'] === 'string' ? item['arguments'] : '';
+    if (!callId || !name || !argsText || seen.has(callId)) continue;
+    const pending = byCallId.get(callId);
+    if (!pending) continue;
+    // Identity alone is not enough: the reconciled name must match the tool
+    // the model actually started streaming, so mismatched final arguments
+    // are never validated against the wrong tool below.
+    if (!pending.call.name || pending.call.name !== name) continue;
+    seen.add(callId);
+    // Bounded complete arguments only: oversized, empty, or unparseable
+    // terminal arguments are not executable either.
+    if (argsText.length > MAX_TOOL_ARGUMENT_BYTES) continue;
+    try {
+      JSON.parse(argsText);
+    } catch {
+      continue;
+    }
+    reconciled.push({ index: pending.index, id: callId, name, argsText });
+  }
+  return reconciled;
+}
+
+/**
  * Responses-family SSE decoder. Wire shape follows the OpenAI Responses
  * streaming protocol implied by the Go endpoint table; mocked evidence only
  * until a live probe confirms the exact Go route. Unknown events pass
@@ -401,6 +457,7 @@ async function* decodeResponses(
   let responseId: string | null = null;
   let status: string | null = null;
   let incompleteReason: string | null = null;
+  let terminalOutput: unknown = null;
   let done = false;
 
   const finishCall = function* (
@@ -518,6 +575,10 @@ async function* decodeResponses(
         if (typeof response?.['status'] === 'string') status = response['status'];
         const incDetails = response?.['incomplete_details'] as Record<string, unknown> | undefined;
         if (typeof incDetails?.['reason'] === 'string') incompleteReason = incDetails['reason'];
+        // Terminal output reconciliation source: the final response object may
+        // carry complete function_call items even when a streamed
+        // output_item.done was missed. Captured here, consumed below.
+        if (Array.isArray(response?.['output'])) terminalOutput = response['output'];
         if (event === 'response.incomplete') status = 'incomplete';
         if (event === 'response.failed') status = 'failed';
         done = true;
@@ -548,21 +609,100 @@ async function* decodeResponses(
   if (!done || !responseId) {
     yield {
       type: 'error',
-      error: { code: 'malformed_response', message: 'Responses stream ended before receiving a valid terminal response event.', retryable: false, retryAfterMs: null },
+      error: { code: 'malformed_response', message: 'Responses stream ended before receiving a valid terminal response event.', retryable: false, retryAfterMs: null, terminalStatus: status, incompleteReason, pendingCalls: calls.size },
     };
     return;
+  }
+  // Classify the terminal condition before unfinished calls: truncation or a
+  // provider-side failure must not be misreported as a malformed completion,
+  // and partial calls are never executed.
+  if (status === 'incomplete') {
+    const isContentFilter = incompleteReason === 'content_filter';
+    const assistantToolCalls: AssistantToolCall[] = completedCalls.map((c) => ({
+      id: c.id,
+      name: c.name,
+      arguments: c.argsText,
+    }));
+    const priorRounds: HistoricalToolRound[] = [
+      ...(input?.previousContinuation?.priorRounds ?? []),
+      ...(input && input.pendingToolResults.length > 0 && input.previousContinuation?.assistantToolCalls
+        ? [{ assistantToolCalls: input.previousContinuation.assistantToolCalls, toolResults: input.pendingToolResults }]
+        : []),
+    ];
+    yield {
+      type: 'finish',
+      reason: isContentFilter ? 'refusal_or_block' : 'length_limit',
+      continuation: {
+        kind: 'go-responses',
+        ...(responseId ? { previousResponseId: responseId } : {}),
+        ...(assistantToolCalls.length > 0 ? { assistantToolCalls } : {}),
+        ...(priorRounds.length > 0 ? { priorRounds } : {}),
+      },
+      // Terminal condition for the collector's typed truncation outcome:
+      // an incomplete response ends here with its unfinished calls dropped,
+      // never executed.
+      ...(isContentFilter ? {} : { truncation: { terminalStatus: status, incompleteReason } }),
+    };
+    return;
+  }
+  if (status === 'failed' || status === 'cancelled') {
+    yield {
+      type: 'error',
+      error: {
+        code: status === 'cancelled' ? 'aborted' : 'transient',
+        message: status === 'cancelled' ? 'Responses request was cancelled.' : 'Responses request failed on provider.',
+        retryable: status !== 'cancelled',
+        retryAfterMs: null,
+        terminalStatus: status,
+        incompleteReason,
+        pendingCalls: calls.size,
+      },
+    };
+    return;
+  }
+  if (status !== 'completed') {
+    yield {
+      type: 'error',
+      error: { code: 'malformed_response', message: `Unknown response status '${String(status)}'.`, retryable: false, retryAfterMs: null, terminalStatus: status, incompleteReason, pendingCalls: calls.size },
+    };
+    return;
+  }
+  // Status is completed but streamed items never closed: reconcile against the
+  // terminal response.output before declaring a malformed completion. Only
+  // fully completed terminal function calls with bounded, parseable arguments
+  // become executable; anything partial is dropped, never inferred.
+  if (calls.size > 0) {
+    const reconciled = reconcileTerminalFunctionCalls(terminalOutput, calls);
+    for (const item of reconciled) {
+      // The helper only admits non-empty argument strings; an empty one here
+      // is a contract violation, never an inferred `{}`.
+      if (!item.argsText) {
+        yield {
+          type: 'error',
+          error: { code: 'malformed_response', message: `Tool call '${item.name}' completed without arguments; not exposed as executable.`, retryable: false, retryAfterMs: null, terminalStatus: status, incompleteReason, pendingCalls: calls.size },
+        };
+        return;
+      }
+      let args: unknown;
+      try {
+        args = JSON.parse(item.argsText) as unknown;
+      } catch {
+        yield {
+          type: 'error',
+          error: { code: 'malformed_response', message: `Tool call '${item.name}' returned unparseable arguments; not exposed as executable.`, retryable: false, retryAfterMs: null, terminalStatus: status, incompleteReason, pendingCalls: calls.size },
+        };
+        return;
+      }
+      sawToolCall = true;
+      completedCalls.push({ id: item.id, name: item.name, argsText: item.argsText });
+      yield { type: 'tool_call_end', callId: item.id, name: item.name, args };
+      calls.delete(item.index);
+    }
   }
   if (calls.size > 0) {
     yield {
       type: 'error',
-      error: { code: 'malformed_response', message: 'Responses stream completed with an unfinished tool call item.', retryable: false, retryAfterMs: null },
-    };
-    return;
-  }
-  if (status !== 'completed' && status !== 'incomplete' && status !== 'failed' && status !== 'cancelled') {
-    yield {
-      type: 'error',
-      error: { code: 'malformed_response', message: `Unknown response status '${String(status)}'.`, retryable: false, retryAfterMs: null },
+      error: { code: 'malformed_response', message: `Responses stream completed with ${calls.size} unfinished tool call item${calls.size === 1 ? '' : 's'} (status=completed).`, retryable: false, retryAfterMs: null, terminalStatus: status, incompleteReason, pendingCalls: calls.size },
     };
     return;
   }
@@ -579,32 +719,6 @@ async function* decodeResponses(
       : []),
   ];
 
-  if (status === 'incomplete') {
-    const isContentFilter = incompleteReason === 'content_filter';
-    yield {
-      type: 'finish',
-      reason: isContentFilter ? 'refusal_or_block' : 'length_limit',
-      continuation: {
-        kind: 'go-responses',
-        ...(responseId ? { previousResponseId: responseId } : {}),
-        ...(assistantToolCalls.length > 0 ? { assistantToolCalls } : {}),
-        ...(priorRounds.length > 0 ? { priorRounds } : {}),
-      },
-    };
-    return;
-  }
-  if (status === 'failed' || status === 'cancelled') {
-    yield {
-      type: 'error',
-      error: {
-        code: status === 'cancelled' ? 'aborted' : 'transient',
-        message: status === 'cancelled' ? 'Responses request was cancelled.' : 'Responses request failed on provider.',
-        retryable: status !== 'cancelled',
-        retryAfterMs: null,
-      },
-    };
-    return;
-  }
   yield {
     type: 'finish',
     reason: sawToolCall ? 'tool_handoff' : 'success',

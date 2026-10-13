@@ -8,6 +8,16 @@ import { cloudflareTest } from '@cloudflare/vitest-pool-workers';
 // Derive the local config from production so bindings cannot drift.
 const localWorkerConfig = JSON.parse(readFileSync(new URL('./wrangler.jsonc', import.meta.url), 'utf8')) as Record<string, unknown>;
 delete localWorkerConfig.ai;
+// The October 2026 pending-I/O keep-alive flag ships in wrangler.jsonc for
+// deployment, but the bundled local workerd (via @cloudflare/vitest-pool-workers)
+// predates it and refuses to start with unknown flags. Strip it for the local
+// generated config only; production keeps it. Revisit when the dev runtime is
+// upgraded to a workerd that recognizes the flag.
+if (Array.isArray(localWorkerConfig.compatibility_flags)) {
+  localWorkerConfig.compatibility_flags = (localWorkerConfig.compatibility_flags as string[]).filter(
+    (flag) => flag !== 'durable_object_io_tasks_prevent_eviction',
+  );
+}
 localWorkerConfig.main = fileURLToPath(new URL('./apps/worker/src/index.ts', import.meta.url));
 localWorkerConfig.assets = { ...(localWorkerConfig.assets as object), directory: fileURLToPath(new URL('./apps/web/dist', import.meta.url)) };
 for (const db of localWorkerConfig.d1_databases as { migrations_dir: string }[]) db.migrations_dir = fileURLToPath(new URL('./migrations', import.meta.url));

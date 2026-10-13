@@ -211,6 +211,7 @@ export interface RecordsViewQuery {
   list_id?: string;
   search?: string;
   filter?: Record<string, unknown>;
+  status?: string;
   sort?: { column_id: string; direction: 'asc' | 'desc' };
   columns?: string[];
   cursor?: string | null;
@@ -225,6 +226,10 @@ export interface RecordsContext {
   visible_row_order: RecordRef[];
   query: RecordsViewQuery;
   draft_delta?: RecordEdit[];
+  /** True when the accepted delta exceeded the inline bound and was truncated:
+   * the draft target and write boundary are preserved, but Otis did not
+   * receive every edit and must say so instead of claiming full coverage. */
+  draft_delta_omitted?: boolean;
   context_id?: string;
 }
 
@@ -669,8 +674,8 @@ export function validateRecordsSaveRequest(body: unknown): RecordsValidation {
   if (!Array.isArray(req['operations'])) {
     return invalidRecord('Save request requires an operations array.');
   }
-  if (req['operations'].length > 100) {
-    return invalidRecord('Records save chunk cannot exceed 100 operations.');
+  if (req['operations'].length > 30) {
+    return invalidRecord('Records save chunk cannot exceed 30 operations. Split larger pastes into serial atomic chunks.');
   }
   const seenOpIds = new Set<string>();
   for (const op of req['operations']) {
@@ -766,6 +771,9 @@ export function validateRecordsContext(value: unknown): RecordsValidation {
       const check = validateRecordEdit(op);
       if (!check.valid) return check;
     }
+  }
+  if (context['draft_delta_omitted'] !== undefined && typeof context['draft_delta_omitted'] !== 'boolean') {
+    return invalidRecord('records_context.draft_delta_omitted must be a boolean when present.');
   }
   if (context['context_id'] !== undefined && typeof context['context_id'] !== 'string') {
     return invalidRecord('records_context.context_id must be a string when present.');

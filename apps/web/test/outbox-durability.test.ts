@@ -24,8 +24,12 @@ import {
   clearUserOutbox,
   createOutboxEntry,
   entriesForChat,
+  flushOutbox,
   getNewChatMapping,
+  isOutboxEntryDurable,
   outboxDurable,
+  outboxDurableFor,
+  persistOutboxEntry,
   rehydrateOutbox,
   resetOutboxForTests,
   retryOutboxEntry,
@@ -232,5 +236,76 @@ describe('outbox durability ownership (R5)', () => {
     await restoring;
     expect(entriesForChat('avi', 'ws', 'chat')).toHaveLength(0);
     expect(getNewChatMapping('key-doomed', 'avi')).toBeUndefined();
+  });
+
+  it('a scoped flush persists only its owner and acks the entry identity', async () => {
+    const mine = createOutboxEntry({ userId: 'avi', workspaceId: 'ws', chatId: 'chat', text: 'mine' });
+    const theirs = createOutboxEntry({ userId: 'blair', workspaceId: 'ws', chatId: 'chat', text: 'theirs' });
+    expect(isOutboxEntryDurable(mine.clientId)).toBe(false);
+
+    expect(await flushOutbox('avi')).toBe(true);
+    expect(isOutboxEntryDurable(mine.clientId)).toBe(true);
+    expect(isOutboxEntryDurable(theirs.clientId)).toBe(false);
+    // The other owner's rows were neither persisted nor retired from the
+    // dirty set: their record is absent from storage until their own flush.
+    const store = await idbStore();
+    expect(store.has('otis/outbox/v1/user/blair')).toBe(false);
+    expect(await flushOutbox('blair')).toBe(true);
+    expect(isOutboxEntryDurable(theirs.clientId)).toBe(true);
+    expect(store.has('otis/outbox/v1/user/blair')).toBe(true);
+  });
+
+  it('a scoped flush reports its own failure without touching the other owner', async () => {    const mine = createOutboxEntry({ userId: 'avi', workspaceId: 'ws', chatId: 'chat', text: 'mine' });
+    createOutboxEntry({ userId: 'blair', workspaceId: 'ws', chatId: 'chat', text: 'theirs' });
+    updateMock.mockRejectedValueOnce(new Error('quota exceeded'));
+
+    expect(await persistOutboxEntry('avi', mine.clientId)).toBe(false);
+    expect(isOutboxEntryDurable(mine.clientId)).toBe(false);
+    // Blair never attempted a persist, so its per-owner outcome is honestly
+    // unknown/false — avi's failure neither implies nor masks anything
+    // about blair, and vice versa.
+    expect(outboxDurableFor('blair')).toBe(false);
+    // The failed owner stays dirty for a later retry; the other owner is
+    // unaffected and persists cleanly on its own flush.
+    expect(await flushOutbox('blair')).toBe(true);
+    expect(await persistOutboxEntry('avi', mine.clientId)).toBe(true);
+    expect(isOutboxEntryDurable(mine.clientId)).toBe(true);
+  });
+
+  it('acks only entries captured by the transaction, never later ones', async () => {
+    const first = createOutboxEntry({ userId: 'avi', workspaceId: 'ws', chatId: 'chat', text: 'first' });
+    let late: { clientId: string } | null = null;
+    updateMock.mockImplementationOnce(async (key: string, updater: (old: unknown) => unknown) => {
+      const store = await idbStore();
+      const next = updater(store.get(key));
+      // Created after the transaction captured its contents but before it
+      // resolved: persisted by a later write, not this one.
+      late = createOutboxEntry({ userId: 'avi', workspaceId: 'ws', chatId: 'chat', text: 'late' });
+      store.set(key, next);
+    });
+    expect(await flushOutbox('avi')).toBe(true);
+    expect(isOutboxEntryDurable(first.clientId)).toBe(true);
+    expect(isOutboxEntryDurable(late!.clientId)).toBe(false);
+    expect(await persistOutboxEntry('avi', late!.clientId)).toBe(true);
+    expect(isOutboxEntryDurable(late!.clientId)).toBe(true);
+  });
+
+  it('refuses to ack another owner\u2019s entry', async () => {
+    const theirs = createOutboxEntry({ userId: 'blair', workspaceId: 'ws', chatId: 'chat', text: 'theirs' });
+    expect(await persistOutboxEntry('avi', theirs.clientId)).toBe(false);
+    expect(await flushOutbox('blair')).toBe(true);
+    expect(isOutboxEntryDurable(theirs.clientId)).toBe(true);
+    expect(await persistOutboxEntry('avi', theirs.clientId)).toBe(false);
+  });
+
+  it('a scoped flush reschedules untouched dirty owners instead of stranding them', async () => {
+    createOutboxEntry({ userId: 'avi', workspaceId: 'ws', chatId: 'chat', text: 'mine' });
+    createOutboxEntry({ userId: 'blair', workspaceId: 'ws', chatId: 'chat', text: 'theirs' });
+    expect(await flushOutbox('avi')).toBe(true);
+    // Blair was never flushed explicitly, and the shared timer was
+    // cancelled by avi's flush: the deferred pass must still persist blair.
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    const store = await idbStore();
+    expect(store.has('otis/outbox/v1/user/blair')).toBe(true);
   });
 });

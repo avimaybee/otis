@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import type { DocumentDetailResponse } from '@otis/contracts';
+import type { DocumentDetailResponse, DocumentRevisionDetailResponse } from '@otis/contracts';
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { api } from '../api/client.js';
@@ -29,7 +29,7 @@ export function DocumentPreviewDialog({
   isOpen,
   onClose,
 }: DocumentPreviewDialogProps) {
-  const [detail, setDetail] = useState<DocumentDetailResponse | null>(null);
+  const [detail, setDetail] = useState<DocumentDetailResponse | DocumentRevisionDetailResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<'formatted' | 'raw'>('formatted');
@@ -64,7 +64,13 @@ export function DocumentPreviewDialog({
     };
   }, [isOpen, workspaceId, documentId, revisionId]);
 
-  const currentRev = detail?.current_revision;
+  const currentRev = detail && 'current_revision' in detail
+    ? detail.current_revision
+    : (detail as DocumentRevisionDetailResponse | null)?.revision ?? null;
+  const docTitle = detail && 'document' in detail && detail.document
+    ? detail.document.title
+    : currentRev?.title ?? 'Document preview';
+  const sourceMarkdown = detail?.source_markdown ?? null;
   const isPdfReady = currentRev?.render_state === 'ready' && Boolean(currentRev.output_media_id);
   const isFailed = currentRev?.render_state === 'failed';
   const isRendering = currentRev?.render_state === 'rendering' || currentRev?.render_state === 'source_ready';
@@ -89,12 +95,12 @@ export function DocumentPreviewDialog({
   };
 
   const handleDownloadMarkdown = () => {
-    if (!detail?.source_markdown) return;
-    const blob = new Blob([detail.source_markdown], { type: 'text/markdown;charset=utf-8' });
+    if (!sourceMarkdown) return;
+    const blob = new Blob([sourceMarkdown], { type: 'text/markdown;charset=utf-8' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `${detail.document.title || 'document'}.md`;
+    a.download = `${docTitle || 'document'}.md`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
@@ -108,7 +114,7 @@ export function DocumentPreviewDialog({
           <div className="flex items-center justify-between gap-4">
             <div className="min-w-0">
               <DialogTitle className="truncate text-xl font-medium">
-                {detail?.document.title ?? 'Document preview'}
+                {docTitle}
               </DialogTitle>
               <DialogDescription className="text-xs text-muted-foreground mt-1">
                 {currentRev ? `Revision ${currentRev.revision_number}` : ''}
@@ -163,7 +169,7 @@ export function DocumentPreviewDialog({
                 {retrying ? 'Retrying…' : 'Retry PDF'}
               </Button>
             )}
-            {detail?.source_markdown && (
+            {sourceMarkdown && (
               <Button variant="ghost" size="sm" onClick={handleDownloadMarkdown}>
                 <ArrowDownIcon className="size-3.5 mr-1" />
                 Export Markdown
@@ -199,12 +205,12 @@ export function DocumentPreviewDialog({
             viewMode === 'formatted' ? (
               <div className="prose prose-sm dark:prose-invert max-w-none">
                 <Markdown remarkPlugins={[remarkGfm]} components={markdownComponents} skipHtml>
-                  {detail.source_markdown || '*No content.*'}
+                  {sourceMarkdown || '*No content.*'}
                 </Markdown>
               </div>
             ) : (
               <pre className="overflow-x-auto rounded-xl bg-secondary/30 p-4 font-mono text-xs leading-relaxed text-foreground whitespace-pre-wrap">
-                {detail.source_markdown || ''}
+                {sourceMarkdown || ''}
               </pre>
             )
           )}

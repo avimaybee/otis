@@ -3,6 +3,7 @@ import TextareaAutosize from 'react-textarea-autosize';
 import type { CommandDescriptor, ModelOption, VoiceMediaSummary } from '@otis/contracts';
 import { DOMAIN_BOUNDS, IMAGE_BOUNDS, DOCUMENT_BOUNDS } from '@otis/contracts';
 import { cancelDraftSave, deleteDraft, draftSession, flushDraftSaves, loadDraft, scheduleDraftSave } from '../api/drafts.js';
+import { flushOutbox, persistOutboxEntry } from '../api/outbox.js';
 import type { VoiceUploadAdapter } from '../api/voice.js';
 import { validateImageFile, type ImageUploadRequest, type ImageUploadResult } from '../api/images.js';
 import { useMediaQuery } from '../hooks/useMediaQuery.js';
@@ -74,6 +75,14 @@ export interface DocumentAttachmentController {
   remove: (id: string) => void;
   clear: () => void;
 }
+
+/** One long-paste recovery slot, keyed by its converted attachment. */
+export interface PasteRecoveryEntry {
+  id: string;
+  pastedText: string;
+  surroundingText: string;
+  createdAt: string;
+}
 export interface DocumentComposerConfig {
   available: boolean;
   workspaceId: string;
@@ -97,7 +106,7 @@ export interface ComposerProps {
     text: string,
     imageMediaIds?: string[],
     extra?: { documentMediaIds?: string[]; isPastedText?: boolean },
-  ) => void | boolean | Promise<boolean>;
+  ) => void | boolean | string | Promise<boolean | string>;
 }
 export interface SuggestionItem { name: string; label?: string; summary: string; insert: string; hasSubmenu?: boolean; }
 export function Composer({ disabled, disabledReason, running, commands, models = [], workspaces = [],
@@ -264,6 +273,62 @@ export function Composer({ disabled, disabledReason, running, commands, models =
     },
   };
   const docController = documents?.controller ?? internalDocAttachments;
+  const docControllerRef = useRef(docController);
+  docControllerRef.current = docController;
+  // Long-paste recovery is keyed by attachment: one slot per converted
+  // file, so removing one paste never discards another, and send
+  // completion clears exactly the submitted entries.
+  const readPasteRecovery = (): Record<string, PasteRecoveryEntry> => {
+    try {
+      if (!draftKey) return {};
+      const raw = localStorage.getItem(`${draftKey}:pasted-recovery`);
+      if (!raw) return {};
+      const parsed = JSON.parse(raw) as
+        | { entries?: Record<string, PasteRecoveryEntry> }
+        | (Partial<PasteRecoveryEntry> & { text?: string });
+      if (parsed && typeof parsed === 'object' && 'entries' in parsed &&
+        parsed.entries && typeof parsed.entries === 'object') {
+        return parsed.entries as Record<string, PasteRecoveryEntry>;
+      }
+      // Legacy single-slot shape: kept recoverable; it migrates to a keyed
+      // entry when its file rebuilds on the next mount.
+      const legacy = parsed as Partial<PasteRecoveryEntry> & { text?: string };
+      const pastedText = typeof legacy.pastedText === 'string' ? legacy.pastedText
+        : typeof legacy.text === 'string' ? legacy.text : '';
+      if (!pastedText) return {};
+      return {
+        [`legacy-${typeof legacy.id === 'string' ? legacy.id : 'paste'}`]: {
+          id: typeof legacy.id === 'string' ? legacy.id : crypto.randomUUID(),
+          pastedText,
+          surroundingText: typeof legacy.surroundingText === 'string' ? legacy.surroundingText : '',
+          createdAt: new Date().toISOString(),
+        },
+      };
+    } catch {
+      return {};
+    }
+  };
+  const writePasteRecovery = (entries: Record<string, PasteRecoveryEntry>): void => {
+    try {
+      if (!draftKey) return;
+      localStorage.setItem(`${draftKey}:pasted-recovery`, JSON.stringify({ entries }));
+    } catch {
+      // Recovery is best effort; memory editing stays usable.
+    }
+  };
+  const persistPasteRecovery = (attachmentId: string, pastedText: string, surroundingText: string) => {
+    if (!attachmentId) return;
+    const entries = readPasteRecovery();
+    entries[attachmentId] = { id: crypto.randomUUID(), pastedText, surroundingText, createdAt: new Date().toISOString() };
+    writePasteRecovery(entries);
+  };
+  const dropPasteRecovery = (attachmentId: string) => {
+    const entries = readPasteRecovery();
+    if (entries[attachmentId]) {
+      delete entries[attachmentId];
+      writePasteRecovery(entries);
+    }
+  };
   // The internal recorder only runs when the composer owns the capture scope
   // and no story/test controller was injected. Capture never touches the
   // typed draft: the field is swapped out visually, not cleared.
@@ -321,7 +386,54 @@ export function Composer({ disabled, disabledReason, running, commands, models =
       // reload/remount path). Otherwise a session move mid-hydration means a
       // purge landed — drop it instead of filling abolished input.
       if (live && text != null && (session === null || draftSession(key) === session)) {
-        setValue(current => (current === '' ? text : current));
+        // valueRef mirrors committed state, so the recovery branch below
+        // observes the hydrated draft instead of a stale empty ref.
+        if (valueRef.current === '' && text !== '') {
+          setValue(text);
+          valueRef.current = text;
+        }
+      }
+      // Long-paste recovery rebuilds the converted attachment from its
+      // scoped record instead of stuffing oversized text back into the
+      // capped textarea. The file rebuilds whenever this scope holds no
+      // attachments; the textarea fills only when still empty, so newer
+      // instructions are never overwritten, and the persisted draft is
+      // only touched when recovery actually fills it.
+      if (live && (session === null || draftSession(key) === session)) {
+        try {
+          const controller = docControllerRef.current;
+          if (Object.keys(readPasteRecovery()).length > 0 && controller.attachments.length === 0) {
+            const entries = readPasteRecovery();
+            const missing = Object.keys(entries).filter((attachmentId) =>
+              !controller.attachments.some((a) => a.id === attachmentId));
+            const rebuilt: Array<{ attachmentId: string; entry: PasteRecoveryEntry }> = [];
+            for (const attachmentId of missing) {
+              const entry = entries[attachmentId]!;
+              if (new TextEncoder().encode(entry.pastedText).length > DOCUMENT_BOUNDS.MAX_TEXT_BYTES) continue;
+              const file = new File([new Blob([entry.pastedText], { type: 'text/plain;charset=utf-8' })], 'Pasted text.txt', { type: 'text/plain' });
+              const added = controller.addFiles([file], true) ?? [];
+              if (added.length > 0) {
+                // Migrate the slot to the rebuilt attachment identity so
+                // later removes and sends resolve the live file.
+                delete entries[attachmentId];
+                entries[added[0]!] = entry;
+                rebuilt.push({ attachmentId: added[0]!, entry });
+              }
+            }
+            if (rebuilt.length > 0) {
+              writePasteRecovery(entries);
+              const latest = rebuilt.map((r) => r.entry).sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1))[0]!;
+              if (valueRef.current === '' && latest.surroundingText.length <= DOMAIN_BOUNDS.MAX_INPUT_CHARS) {
+                setValue(latest.surroundingText);
+                valueRef.current = latest.surroundingText;
+                if (latest.surroundingText) commitDraft(latest.surroundingText);
+              }
+              setAnnouncement('Recovered your attached long text. You can add instructions and send.');
+            }
+          }
+        } catch {
+          // Recovery is best effort; the empty draft stands.
+        }
       }
     });
     return () => {
@@ -387,6 +499,7 @@ export function Composer({ disabled, disabledReason, running, commands, models =
       const file = new File([new Blob([pasted], { type: 'text/plain;charset=utf-8' })], 'Pasted text.txt', { type: 'text/plain' });
       const addedIds = docController.addFiles([file], true) ?? [];
       const attachmentId = addedIds[0] ?? '';
+      persistPasteRecovery(attachmentId, pasted, surrounding);
       commitDraft(surrounding);
       setPasteUndoSnapshot({
         draft: prospective,
@@ -405,6 +518,7 @@ export function Composer({ disabled, disabledReason, running, commands, models =
       const file = new File([new Blob([prospective], { type: 'text/plain;charset=utf-8' })], 'Pasted text.txt', { type: 'text/plain' });
       const addedIds = docController.addFiles([file], true) ?? [];
       const attachmentId = addedIds[0] ?? '';
+      persistPasteRecovery(attachmentId, prospective, '');
       commitDraft('');
       setPasteUndoSnapshot({
         draft: prospective,
@@ -419,6 +533,7 @@ export function Composer({ disabled, disabledReason, running, commands, models =
   const handleUndoPaste = () => {
     if (!pasteUndoSnapshot) return;
     docController.remove(pasteUndoSnapshot.attachmentId);
+    dropPasteRecovery(pasteUndoSnapshot.attachmentId);
     commitDraft(pasteUndoSnapshot.draft);
     const start = pasteUndoSnapshot.selectionStart;
     const end = pasteUndoSnapshot.selectionEnd;
@@ -445,7 +560,8 @@ export function Composer({ disabled, disabledReason, running, commands, models =
       return;
     }
     const file = new File([new Blob([value], { type: 'text/plain;charset=utf-8' })], 'Pasted text.txt', { type: 'text/plain' });
-    docController.addFiles([file], true);
+    const convertedIds = docController.addFiles([file], true) ?? [];
+    persistPasteRecovery(convertedIds[0] ?? '', value, '');
     commitDraft('');
     setAnnouncement('Long text attached as a file. You can add instructions and send.');
   };
@@ -478,15 +594,41 @@ export function Composer({ disabled, disabledReason, running, commands, models =
   };
 
   const submit = async () => {
-    const text = value.trim();
-    const pendingImages = imageController.attachments;
-    const pendingDocs = docController.attachments;
-    const hasImages = Boolean(images) && pendingImages.length > 0;
-    const hasDocs = Boolean(documents) && pendingDocs.length > 0;
-    if ((!text && !hasImages && !hasDocs) || disabled || sendingRef.current || tooLong || controlPending) return;
+    if (sendingRef.current) return;
+    const frozenText = value.trim();
+    const frozenImages = [...imageController.attachments];
+    const frozenDocs = [...docController.attachments];
+    const hasImages = Boolean(images) && frozenImages.length > 0;
+    const hasDocs = Boolean(documents) && frozenDocs.length > 0;
+    if ((!frozenText && !hasImages && !hasDocs) || disabled || tooLong || controlPending) return;
+    // Lock the upload/send snapshot immediately: repeat clicks during uploads
+    // find an empty composer instead of duplicate sends. The frozen snapshot
+    // (text, files, stable send identity) drives uploads and the outbox send;
+    // the next message gets its own identity after this one clears.
+    sendingRef.current = true;
+    setSending(true);
+    setError('');
+    const text = frozenText;
+    const frozenImageIds = new Set(frozenImages.map((a) => a.id));
+    const frozenDocIds = new Set(frozenDocs.map((a) => a.id));
+    // The recovery identities submitted with this snapshot: completion
+    // clears exactly those slots, so a newer paste that arrived during
+    // uploads keeps its own recovery entry.
+    const submittedRecoveryIds = new Set(
+      frozenDocs.filter((a) => a.isPastedText).map((a) => a.id),
+    );
+    // One finally over the complete send path: every early return below
+    // still releases the lock, so a failed chat-ensure or upload can never
+    // wedge the composer.
+    try {
     // A double slash is literal text (product command escape), never a command.
-    if (text.startsWith('/') && !text.startsWith('//') && !hasImages && !hasDocs) { await command(text, true); return; }
-    if (!modelReady) return;
+    if (text.startsWith('/') && !text.startsWith('//') && !hasImages && !hasDocs) {
+      await command(text, true);
+      return;
+    }
+    if (!modelReady) {
+      return;
+    }
 
     let imageMediaIds: string[] | undefined;
     if (hasImages && images && !images.controller) {
@@ -496,7 +638,7 @@ export function Composer({ disabled, disabledReason, running, commands, models =
         return;
       }
       const uploaded: string[] = [];
-      for (const attachment of pendingImages) {
+      for (const attachment of frozenImages) {
         if (attachment.status === 'done' && attachment.mediaId) {
           uploaded.push(attachment.mediaId);
           continue;
@@ -520,7 +662,7 @@ export function Composer({ disabled, disabledReason, running, commands, models =
       }
       imageMediaIds = uploaded;
     } else if (hasImages && images?.controller) {
-      imageMediaIds = pendingImages.map(attachment => attachment.mediaId ?? attachment.id);
+      imageMediaIds = frozenImages.map(attachment => attachment.mediaId ?? attachment.id);
     }
 
     let documentMediaIds: string[] | undefined;
@@ -532,7 +674,7 @@ export function Composer({ disabled, disabledReason, running, commands, models =
         return;
       }
       const uploadedDocs: string[] = [];
-      for (const attachment of pendingDocs) {
+      for (const attachment of frozenDocs) {
         if (attachment.isPastedText) isPastedText = true;
         if (attachment.status === 'done' && attachment.mediaId) {
           uploadedDocs.push(attachment.mediaId);
@@ -563,39 +705,94 @@ export function Composer({ disabled, disabledReason, running, commands, models =
       }
       documentMediaIds = uploadedDocs;
     } else if (hasDocs && documents?.controller) {
-      documentMediaIds = pendingDocs.map(attachment => attachment.mediaId ?? attachment.id);
-      isPastedText = pendingDocs.some(a => a.isPastedText);
+      documentMediaIds = frozenDocs.map(attachment => attachment.mediaId ?? attachment.id);
+      isPastedText = frozenDocs.some(a => a.isPastedText);
     }
 
-    // The submitted snapshot is accepted locally here: the outbox entry owns
-    // retry and redraft, so the composer clears without waiting for HTTP and
-    // a second message can submit immediately with its own identity.
-    sendingRef.current = true;
-    clearDraft();
-    const sentAttachments = imageController.attachments;
+    // The frozen snapshot is accepted locally here: the outbox entry owns
+    // retry and redraft. Completion clears only what was submitted: text
+    // typed during the upload stays as the next draft, and attachments added
+    // meanwhile are kept. The send lock has been held since the snapshot
+    // froze, so repeat clicks during uploads cannot duplicate the send.
+    if (valueRef.current.trim() === text) {
+      clearDraft();
+    } else {
+      commitDraft(valueRef.current);
+    }
+    // The outbox owner's identity for the durability acknowledgement:
+    // explicit config first, then the user segment of the scoped draft key.
+    const composerUserId = (() => {
+      if (documents?.userId) return documents.userId;
+      if (draftKey) {
+        const segments = draftKey.split(':');
+        if (segments.length >= 3 && segments[0] === 'otis' && segments[1] === 'draft' && segments[2]) {
+          return segments[2];
+        }
+      }
+      return undefined;
+    })();
+    // Recovery clears only after the submitted entry itself is durably
+    // persisted: per-owner outcome plus the entry identity, never a global
+    // flag that another account's success could satisfy. A refused or failed
+    // send keeps its recovery entries, and unmigrated legacy slots are never
+    // purged by an unrelated send — only submitted attachments retire theirs.
+    const clearSubmittedRecovery = async (submittedClientId: string | null) => {
+      let durable = false;
+      try {
+        durable = submittedClientId && composerUserId
+          ? await persistOutboxEntry(composerUserId, submittedClientId)
+          : await flushOutbox(composerUserId);
+      } catch {
+        durable = false;
+      }
+      if (!durable) return;
+      try {
+        const entries = readPasteRecovery();
+        let changed = false;
+        for (const id of submittedRecoveryIds) {
+          if (entries[id]) {
+            delete entries[id];
+            changed = true;
+          }
+        }
+        if (changed) writePasteRecovery(entries);
+      } catch {
+        // Best effort.
+      }
+    };
     if (!images?.controller) {
-      revokeAttachments(sentAttachments);
-      setAttachmentList([]);
+      const sent = attachmentsRef.current.filter((a) => frozenImageIds.has(a.id));
+      revokeAttachments(sent);
+      setAttachmentList(attachmentsRef.current.filter((a) => !frozenImageIds.has(a.id)));
     }
     if (!documents?.controller) {
-      setDocAttachmentList([]);
+      setDocAttachmentList(docAttachmentsRef.current.filter((a) => !frozenDocIds.has(a.id)));
     }
     setPasteUndoSnapshot(null);
     setAnnouncement('');
     if (fileInput.current) fileInput.current.value = '';
     if (docFileInput.current) docFileInput.current.value = '';
-    setSending(true); setError('');
-    sendingRef.current = false;
     try {
+      // A client-ID result acknowledges the exact submitted entry; a plain
+      // boolean true keeps the legacy per-owner flush for older senders.
+      let result: boolean | string | void;
       if (documentMediaIds?.length || isPastedText) {
-        await onSend(text, imageMediaIds, { documentMediaIds, isPastedText });
+        result = await onSend(text, imageMediaIds, { documentMediaIds, isPastedText });
       } else if (imageMediaIds?.length) {
-        await onSend(text, imageMediaIds);
+        result = await onSend(text, imageMediaIds);
       } else {
-        await onSend(text);
+        result = await onSend(text);
+      }
+      if (typeof result === 'string') {
+        await clearSubmittedRecovery(result);
+      } else if (result !== false) {
+        await clearSubmittedRecovery(null);
       }
     } catch { setError('Message not confirmed. It is kept in the conversation with Retry.'); }
-    finally { setSending(false); }
+    } finally {
+      sendingRef.current = false;
+      setSending(false);
+    }
   };
   const stop = async () => { if (!onStop || stopping) return; setStopping(true); setError(''); try { await onStop(); } catch { setError('Could not stop yet. Try again.'); } finally { setStopping(false); } };
 
@@ -681,7 +878,13 @@ export function Composer({ disabled, disabledReason, running, commands, models =
                 className="otis-attach-remove ml-1 grid size-5 place-items-center rounded-full text-muted-foreground hover:bg-card hover:text-foreground cursor-pointer"
                 aria-label="Remove document"
                 disabled={sending}
-                onClick={() => docController.remove(doc.id)}
+                onClick={() => {
+                  // A deliberate delete retires only its own recovery slot,
+                  // so other pastes stay recoverable and this file cannot
+                  // resurrect on a later reload.
+                  if (doc.isPastedText) dropPasteRecovery(doc.id);
+                  docController.remove(doc.id);
+                }}
               >
                 <CloseIcon />
               </button>
@@ -703,7 +906,25 @@ export function Composer({ disabled, disabledReason, running, commands, models =
           <label className="otis-visually-hidden" htmlFor={id}>{placeholder}</label>
           <TextareaAutosize id={id} ref={input} name="message" minRows={1} maxRows={6} className="otis-composer__input col-span-2 col-start-1 row-start-1 max-h-36 min-h-6 w-full min-w-0 resize-none bg-transparent text-base leading-6 outline-none placeholder:text-muted-foreground" placeholder={disabled ? disabledReason ?? placeholder : placeholder} autoComplete="off" value={value} disabled={disabled}
             {...(statusText ? { 'aria-describedby': `${id}-status` } : {})} aria-haspopup="listbox" aria-expanded={pickerOpen ? 'true' : undefined} aria-controls={pickerOpen ? `${id}-picker` : undefined} aria-activedescendant={pickerOpen && suggestions[activeIndex] ? `${id}-option-${activeIndex}` : undefined} aria-autocomplete="list"
-            onChange={event => { commitDraft(event.target.value); setDismissed(false); setIndex(0); }}
+            onChange={event => {
+              commitDraft(event.target.value); setDismissed(false); setIndex(0);
+              // A deliberate clear empties every recovery surrounding so a
+              // reload cannot restore older paste-time instructions over it.
+              // Other keystrokes skip storage: recovery surroundings only
+              // matter when the textarea is empty at reload.
+              if (event.target.value === '') {
+                try {
+                  const entries = readPasteRecovery();
+                  const ids = Object.keys(entries);
+                  if (ids.some((id) => entries[id]!.surroundingText !== '')) {
+                    for (const id of ids) entries[id]!.surroundingText = '';
+                    writePasteRecovery(entries);
+                  }
+                } catch {
+                  // Recovery is best effort.
+                }
+              }
+            }}
             onPaste={handlePaste}
             onKeyDown={event => {
               if (event.nativeEvent.isComposing || event.keyCode === 229) return;

@@ -10,6 +10,7 @@ import {
 } from '../src/actor/dispatch.js';
 import { acceptWebMessage, createChat } from '../src/inbox/repository.js';
 import { type TurnInput, type ProviderAdapter, FakeProviderAdapter, GeminiInteractionsAdapter, PRODUCTION_REGISTRY } from '@otis/agent';
+import { removeMember } from '@otis/identity';
 import { resolveProviderRawKey, runProviderTurn } from '../src/providers/service.js';
 
 describe('Worker Agent Loop, Recovery & Clarification Integration (006B workerd)', () => {
@@ -1681,11 +1682,346 @@ describe('Worker Agent Loop, Recovery & Clarification Integration (006B workerd)
     expect(callCount).toBe(2);
 
     const savedMessage = await env.DB.prepare(
-      `SELECT content_text FROM chat_messages WHERE chat_id = ? AND author_kind = 'assistant' ORDER BY created_at DESC LIMIT 1`,
+      `SELECT content_text FROM chat_messages WHERE run_id = ? AND author_kind = 'system' ORDER BY sequence DESC LIMIT 1`,
     )
-      .bind(chatAvi)
+      .bind(accepted.run_id)
       .first<{ content_text: string }>();
     expect(savedMessage?.content_text).toBe('Recovered cleanly from 503.');
+  });
+
+  it('recovers from output truncation with one smaller repair request preserving saved work (BG07)', async () => {
+    const accepted = await acceptWebMessage(env.DB, {
+      workspaceId: ws,
+      chatId: chatAvi,
+      userId: aviId,
+      clientMessageId: 'msg-client-trunc-repair-1',
+      text: 'Remember the truncation note',
+    });
+    const fake = new FakeProviderAdapter({
+      provider: 'gemini',
+      scripts: [
+        {
+          kind: 'truncated_calls',
+          calls: [
+            {
+              callId: 'c1',
+              name: 'remember_context',
+              args: { scope: 'workspace', category: 'other_context', content: 'Truncation survival note.' },
+            },
+          ],
+        },
+        { kind: 'text', text: 'Recovered after truncation.' },
+      ],
+    });
+    const handler = new AgentHandler({ providerAdapter: fake, maxRoundsPerSlice: 3, limits: defaultTestLimits });
+    const result = await dispatchOutboxItem(env.DB, await outboxIdForRun(accepted.run_id), ws, { handler });
+    expect(result.status).toBe('completed');
+    expect((await loadRunById(accepted.run_id)).status).toBe('succeeded');
+
+    // The verified call from the truncated round executed exactly once.
+    const receipts = await env.DB.prepare(
+      `SELECT COUNT(*) AS n FROM action_receipts WHERE workspace_id = ? AND run_id = ? AND result_status = 'applied'`,
+    )
+      .bind(ws, accepted.run_id)
+      .first<{ n: number }>();
+    expect(Number(receipts?.n ?? 0)).toBe(1);
+
+    // The follow-up request is a changed input — not a replay of the
+    // oversized request — carrying the one smaller-scope repair instruction.
+    expect(fake.inputs).toHaveLength(2);
+    const firstUserTexts = fake.inputs[0]!.messages.map((m) => m.text ?? '').join('\n');
+    const secondUserTexts = fake.inputs[1]!.messages.map((m) => m.text ?? '').join('\n');
+    expect(firstUserTexts).not.toContain('[Truncation guard]');
+    expect(secondUserTexts).toContain('[Truncation guard]');
+    // The replacement is self-contained: the discarded preamble is not
+    // smuggled into the new request.
+    expect(secondUserTexts).not.toContain('Partial preamble cut short');
+
+    // The bounded repair ticket persisted in durable progress: armed for the
+    // truncated round, frozen to its issued repair request, then consumed
+    // when that request's result completed the run.
+    const progressRow = await env.DB.prepare(`SELECT agent_progress_json FROM agent_runs WHERE id = ?`)
+      .bind(accepted.run_id)
+      .first<{ agent_progress_json: string | null }>();
+    const truncationRepair = (JSON.parse(String(progressRow?.agent_progress_json ?? '{}')) as {
+      truncationRepair?: { armed: boolean; issuedRoundIndex: number | null; steering: string | null };
+    }).truncationRepair;
+    expect(truncationRepair).toMatchObject({ armed: false, issuedRoundIndex: 1 });
+    expect(truncationRepair?.steering).toContain('[Truncation guard]');
+
+    const reply = await env.DB.prepare(
+      `SELECT content_text FROM chat_messages WHERE run_id = ? AND author_kind = 'system' ORDER BY sequence DESC LIMIT 1`,
+    )
+      .bind(accepted.run_id)
+      .first<{ content_text: string }>();
+    expect(reply?.content_text).toBe('Recovered after truncation.');
+  });
+
+  it('retains truncation repair across a slice boundary and resumes it (BG13)', async () => {
+    const accepted = await acceptWebMessage(env.DB, {
+      workspaceId: ws,
+      chatId: chatAvi,
+      userId: aviId,
+      clientMessageId: 'msg-client-trunc-slice-1',
+      text: 'Remember across slices',
+    });
+    const fake = new FakeProviderAdapter({
+      provider: 'gemini',
+      scripts: [
+        {
+          kind: 'truncated_calls',
+          calls: [
+            {
+              callId: 'c1',
+              name: 'remember_context',
+              args: { scope: 'workspace', category: 'other_context', content: 'Slice survival note.' },
+            },
+          ],
+        },
+        { kind: 'text', text: 'Recovered across slices.' },
+      ],
+    });
+    const first = await dispatchOutboxItem(env.DB, await outboxIdForRun(accepted.run_id), ws, {
+      handler: new AgentHandler({ providerAdapter: fake, maxRoundsPerSlice: 1, limits: defaultTestLimits }),
+    });
+    // One slice: verified calls executed and checkpointed, not failed.
+    expect(first.status).toBe('deferred');
+    expect(first.detail).toBe('checkpoint');
+    const mid = JSON.parse(
+      String(
+        (await env.DB.prepare(`SELECT agent_progress_json FROM agent_runs WHERE id = ?`).bind(accepted.run_id).first<{ agent_progress_json: string | null }>())
+          ?.agent_progress_json ?? '{}',
+      ),
+    ) as {
+      completedRounds?: Array<{ roundIndex: number }>;
+      truncationRepair?: { armed: boolean; issuedRoundIndex: number | null; steering: string | null };
+    };
+    // The verified round and the armed ticket persisted together; the repair
+    // itself is not yet issued.
+    expect(mid.completedRounds?.length).toBe(1);
+    expect(mid.truncationRepair).toMatchObject({ armed: true, issuedRoundIndex: null, steering: null });
+
+    const second = await dispatchOutboxItem(env.DB, await outboxIdForRun(accepted.run_id), ws, {
+      handler: new AgentHandler({ providerAdapter: fake, maxRoundsPerSlice: 1, limits: defaultTestLimits }),
+    });
+    expect(second.status).toBe('completed');
+    expect((await loadRunById(accepted.run_id)).status).toBe('succeeded');
+    const receipts = await env.DB.prepare(
+      `SELECT COUNT(*) AS n FROM action_receipts WHERE workspace_id = ? AND run_id = ? AND result_status = 'applied'`,
+    )
+      .bind(ws, accepted.run_id)
+      .first<{ n: number }>();
+    expect(Number(receipts?.n ?? 0)).toBe(1);
+    expect(fake.inputs).toHaveLength(2);
+    expect(fake.inputs[1]!.messages.map((m) => m.text ?? '').join('\n')).toContain('[Truncation guard]');
+    const done = JSON.parse(
+      String(
+        (await env.DB.prepare(`SELECT agent_progress_json FROM agent_runs WHERE id = ?`).bind(accepted.run_id).first<{ agent_progress_json: string | null }>())
+          ?.agent_progress_json ?? '{}',
+      ),
+    ) as { truncationRepair?: { armed: boolean; issuedRoundIndex: number | null; steering: string | null } };
+    expect(done.truncationRepair).toMatchObject({ armed: false, issuedRoundIndex: 1 });
+    expect(done.truncationRepair?.steering).toContain('[Truncation guard]');
+  });
+
+  it('reattaches a frozen repair instruction after an interrupted repair request (BG13)', async () => {
+    const nowIso = new Date().toISOString();
+    await env.DB.prepare(
+      `INSERT OR IGNORE INTO workspace_users (workspace_id, user_id, role, joined_at, created_at, updated_at)
+       VALUES (?, ?, 'member', ?, ?, ?)`,
+    )
+      .bind(ws, hunorId, nowIso, nowIso, nowIso)
+      .run();
+    const accepted = await acceptWebMessage(env.DB, {
+      workspaceId: ws,
+      chatId: chatHunor,
+      userId: hunorId,
+      clientMessageId: 'msg-client-trunc-interrupt-1',
+      text: 'Remember through interruption',
+    });
+    const hanging = new FakeProviderAdapter({
+      provider: 'gemini',
+      scripts: [
+        {
+          kind: 'truncated_calls',
+          calls: [
+            {
+              callId: 'c1',
+              name: 'remember_context',
+              args: { scope: 'workspace', category: 'other_context', content: 'Interruption survival note.' },
+            },
+          ],
+        },
+        { kind: 'hang_until_abort' },
+      ],
+    });
+    const dispatching = dispatchOutboxItem(env.DB, await outboxIdForRun(accepted.run_id), ws, {
+      handler: new AgentHandler({ providerAdapter: hanging, maxRoundsPerSlice: 3, limits: defaultTestLimits }),
+      leaseTtlSeconds: 300,
+      leaseRenewIntervalMs: 50,
+    });
+    // Wait for the frozen repair request to reach the provider, then revoke
+    // membership mid-request: the renewal tick must stop provider spend.
+    for (let step = 0; step < 200 && hanging.inputs.length < 2; step++) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    expect(hanging.inputs.length).toBe(2);
+    await removeMember(env.DB, { workspaceId: ws, actorUserId: aviId, targetUserId: hunorId });
+    const interrupted = await dispatching;
+    expect(interrupted.status).toBe('deferred');
+    expect((await loadRunById(accepted.run_id)).status).toBe('queued');
+    // The frozen instruction survived the interruption durably: armed, issued
+    // for round 1, never rebuilt, never consumed.
+    const frozen = JSON.parse(
+      String(
+        (await env.DB.prepare(`SELECT agent_progress_json FROM agent_runs WHERE id = ?`).bind(accepted.run_id).first<{ agent_progress_json: string | null }>())
+          ?.agent_progress_json ?? '{}',
+      ),
+    ) as { truncationRepair?: { armed: boolean; issuedRoundIndex: number | null; steering: string | null } };
+    expect(frozen.truncationRepair).toMatchObject({ armed: true, issuedRoundIndex: 1 });
+    expect(frozen.truncationRepair?.steering).toContain('[Truncation guard]');
+    expect(hanging.inputs[1]!.messages.map((m) => m.text ?? '').join('\n')).toContain('[Truncation guard]');
+
+    // Restore membership and resume: the same frozen instruction reattaches
+    // to the rebuilt request instead of consuming repair budget again.
+    const restoredIso = new Date().toISOString();
+    await env.DB.prepare(
+      `INSERT OR IGNORE INTO workspace_users (workspace_id, user_id, role, joined_at, created_at, updated_at)
+       VALUES (?, ?, 'member', ?, ?, ?)`,
+    )
+      .bind(ws, hunorId, restoredIso, restoredIso, restoredIso)
+      .run();
+    const resumed = new FakeProviderAdapter({
+      provider: 'gemini',
+      scripts: [{ kind: 'text', text: 'Resumed after interruption.' }],
+    });
+    const second = await dispatchOutboxItem(env.DB, await outboxIdForRun(accepted.run_id), ws, {
+      handler: new AgentHandler({ providerAdapter: resumed, maxRoundsPerSlice: 3, limits: defaultTestLimits }),
+    });
+    expect(second.status).toBe('completed');
+    expect((await loadRunById(accepted.run_id)).status).toBe('succeeded');
+    const resumedTexts = resumed.inputs[0]!.messages.map((m) => m.text ?? '').join('\n');
+    expect(resumedTexts).toContain(frozen.truncationRepair?.steering ?? '[Truncation guard]');
+    // The remembered note committed exactly once across the interruption.
+    const receipts = await env.DB.prepare(
+      `SELECT COUNT(*) AS n FROM action_receipts WHERE workspace_id = ? AND run_id = ? AND result_status = 'applied'`,
+    )
+      .bind(ws, accepted.run_id)
+      .first<{ n: number }>();
+    expect(Number(receipts?.n ?? 0)).toBe(1);
+    const reply = await env.DB.prepare(
+      `SELECT content_text FROM chat_messages WHERE run_id = ? AND author_kind = 'system' ORDER BY sequence DESC LIMIT 1`,
+    )
+      .bind(accepted.run_id)
+      .first<{ content_text: string }>();
+    expect(reply?.content_text).toBe('Resumed after interruption.');
+  });
+
+  it('gives a no-call truncation repair a distinct request and publication identity (BG15)', async () => {
+    const accepted = await acceptWebMessage(env.DB, {
+      workspaceId: ws,
+      chatId: chatAvi,
+      userId: aviId,
+      clientMessageId: 'msg-client-trunc-nocall-1',
+      text: 'Say something long',
+    });
+    const fake = new FakeProviderAdapter({
+      provider: 'gemini',
+      scripts: [
+        { kind: 'truncated_calls', calls: [], text: 'Partial preamble cut short' },
+        { kind: 'text', text: 'Replacement completion.' },
+      ],
+    });
+    const handler = new AgentHandler({ providerAdapter: fake, maxRoundsPerSlice: 3, limits: defaultTestLimits });
+    const result = await dispatchOutboxItem(env.DB, await outboxIdForRun(accepted.run_id), ws, { handler });
+    expect(result.status).toBe('completed');
+    expect((await loadRunById(accepted.run_id)).status).toBe('succeeded');
+    // Two logical requests with distinct identities: no same-input replay.
+    expect(fake.inputs).toHaveLength(2);
+    expect(fake.inputs[0]!.requestId).not.toBe(fake.inputs[1]!.requestId);
+    expect(fake.inputs[0]!.messages.map((m) => m.text ?? '').join('\n')).not.toContain('[Truncation guard]');
+    expect(fake.inputs[1]!.messages.map((m) => m.text ?? '').join('\n')).toContain('[Truncation guard]');
+    // Both the failed preamble and its replacement persisted under distinct
+    // durable keys instead of colliding.
+    const chunks = await env.DB.prepare(
+      `SELECT id, payload_json FROM run_activity WHERE run_id = ? AND type = 'text_chunk' ORDER BY cursor ASC`,
+    )
+      .bind(accepted.run_id)
+      .all<{ id: string; payload_json: string }>();
+    const rows = chunks.results ?? [];
+    expect(rows.length).toBe(2);
+    expect(new Set(rows.map((row) => row.id)).size).toBe(2);
+    const texts = rows.map((row) => String((JSON.parse(row.payload_json) as { text?: unknown }).text ?? ''));
+    expect(texts.join('\n')).toContain('Partial preamble cut short');
+    expect(texts.join('\n')).toContain('Replacement completion.');
+  });
+
+  it('drops a stale truncation repair when follow-up input arrives before redispatch', async () => {
+    const accepted = await acceptWebMessage(env.DB, {
+      workspaceId: ws,
+      chatId: chatAvi,
+      userId: aviId,
+      clientMessageId: 'msg-client-trunc-steer-1',
+      text: 'Remember then steer away',
+    });
+    const fake = new FakeProviderAdapter({
+      provider: 'gemini',
+      scripts: [
+        {
+          kind: 'truncated_calls',
+          calls: [
+            {
+              callId: 'c1',
+              name: 'remember_context',
+              args: { scope: 'workspace', category: 'other_context', content: 'Steered-away note.' },
+            },
+          ],
+        },
+        { kind: 'text', text: 'Steered summary.' },
+      ],
+    });
+    const first = await dispatchOutboxItem(env.DB, await outboxIdForRun(accepted.run_id), ws, {
+      handler: new AgentHandler({ providerAdapter: fake, maxRoundsPerSlice: 1, limits: defaultTestLimits }),
+    });
+    // Truncation armed the repair and checkpointed the verified round.
+    expect(first.status).toBe('deferred');
+    expect(first.detail).toBe('checkpoint');
+
+    // The member redirects before redispatch: new intent supersedes the
+    // truncated round and its repair.
+    await acceptWebMessage(env.DB, {
+      workspaceId: ws,
+      chatId: chatAvi,
+      userId: aviId,
+      clientMessageId: 'msg-client-trunc-steer-2',
+      text: 'leave that, just summarize the meeting',
+      steerRunId: accepted.run_id,
+    });
+    const second = await dispatchOutboxItem(env.DB, await outboxIdForRun(accepted.run_id), ws, {
+      handler: new AgentHandler({ providerAdapter: fake, maxRoundsPerSlice: 3, limits: defaultTestLimits }),
+    });
+    expect(second.status).toBe('completed');
+    expect((await loadRunById(accepted.run_id)).status).toBe('succeeded');
+    // The rebuilt request carries the new intent — never the stale frozen
+    // instruction to write the next document section.
+    expect(fake.inputs).toHaveLength(2);
+    const steeredTexts = fake.inputs[1]!.messages.map((m) => m.text ?? '').join('\n');
+    expect(steeredTexts).toContain('leave that, just summarize the meeting');
+    expect(steeredTexts).not.toContain('[Truncation guard]');
+    // Intent and retirement persisted together at redispatch.
+    const progressRow = await env.DB.prepare(`SELECT agent_progress_json FROM agent_runs WHERE id = ?`)
+      .bind(accepted.run_id)
+      .first<{ agent_progress_json: string | null }>();
+    const truncationRepair = (JSON.parse(String(progressRow?.agent_progress_json ?? '{}')) as {
+      truncationRepair?: { armed: boolean };
+    }).truncationRepair;
+    expect(truncationRepair?.armed ?? false).toBe(false);
+    const reply = await env.DB.prepare(
+      `SELECT content_text FROM chat_messages WHERE run_id = ? AND author_kind = 'system' ORDER BY sequence DESC LIMIT 1`,
+    )
+      .bind(accepted.run_id)
+      .first<{ content_text: string }>();
+    expect(reply?.content_text).toBe('Steered summary.');
   });
 });
 

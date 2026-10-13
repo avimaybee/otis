@@ -376,6 +376,12 @@ interface BatchRunner {
   events: LedgerEvent[];
   affectedValues: Array<{ row_ref: RecordRef; column_id: string; value: RecordValue; version: string }>;
   idAliases: Map<string, string>;
+  /**
+   * Version resolution deferred until after every reducer (including the
+   * final business pass) has touched state, so acknowledgments carry the
+   * exact version a follow-up edit must present.
+   */
+  deferred: Array<{ index: number; rowRef: RecordRef; rowId: string; columnId: string; binding: CellBinding }>;
 }
 
 function conflictOutcome(
@@ -445,7 +451,8 @@ function checkBaseConflict(
       (c) => c.entity_id === rowId && c.method === binding.method && c.state === 'active',
     );
     if (contacts.length === 0) return null;
-    token = contacts[0]!.updated_at ?? entityUpdatedFallback(run, rowId);
+    const displayed = contacts.find((c) => (c as unknown as { is_primary?: boolean }).is_primary) ?? contacts[0]!;
+    token = displayed.updated_at ?? entityUpdatedFallback(run, rowId);
     values = contacts.map((c) => c.value);
   } else if (binding.kind === 'task_property') {
     const task = run.state.tasks.get(binding.task_id || rowId);
@@ -528,8 +535,76 @@ function propagateSubResult(
   };
 }
 
-function trackApplied(run: BatchRunner, rowRef: RecordRef, columnId: string, value: RecordValue): void {
-  run.affectedValues.push({ row_ref: rowRef, column_id: columnId, value, version: String(run.currentSeq) });
+function bindingVersion(
+  state: LedgerProjectionState,
+  workspaceId: string,
+  rowRef: RecordRef,
+  rowId: string,
+  columnId: string,
+  binding: CellBinding,
+): string {
+  if (binding.kind === 'entity_property') {
+    return state.entities.get(rowId)?.updated_at ?? String(Date.now());
+  }
+  if (binding.kind === 'entity_field') {
+    return state.fields.get(`${rowId}:${binding.field_name}`)?.updated_at
+      ?? state.entities.get(rowId)?.updated_at
+      ?? String(Date.now());
+  }
+  if (binding.kind === 'entity_contact') {
+    const contacts = [...(state.contacts?.values() ?? [])].filter(
+      (c) => c.entity_id === rowId && c.method === binding.method && c.state === 'active',
+    );
+    const displayed = contacts.find((c) => (c as unknown as { is_primary?: boolean }).is_primary) ?? contacts[0];
+    return displayed?.updated_at ?? state.entities.get(rowId)?.updated_at ?? String(Date.now());
+  }
+  if (binding.kind === 'task_property') {
+    return state.tasks.get(binding.task_id || rowId)?.updated_at ?? String(Date.now());
+  }
+  if (binding.kind === 'draft_property') {
+    return state.drafts.get(binding.draft_id || rowId)?.updated_at ?? String(Date.now());
+  }
+  if (binding.kind === 'interaction') {
+    if (rowRef.kind === 'interaction') {
+      return state.interactions.get(rowId)?.head_event_id ?? String(Date.now());
+    }
+    return state.entities.get(rowId)?.updated_at ?? String(Date.now());
+  }
+  if (binding.kind === 'custom_row_value') {
+    return state.recordsValues?.get(`${workspaceId}:${rowId}:${columnId}`)?.updated_at ?? String(Date.now());
+  }
+  return String(Date.now());
+}
+
+function trackApplied(run: BatchRunner, rowRef: RecordRef, columnId: string, value: RecordValue, version?: string): void {
+  const fallback = version ?? String(run.currentSeq);
+  run.affectedValues.push({ row_ref: rowRef, column_id: columnId, value, version: fallback });
+}
+
+function trackAppliedForBinding(
+  run: BatchRunner,
+  rowRef: RecordRef,
+  rowId: string,
+  columnId: string,
+  binding: CellBinding,
+  value: RecordValue,
+): void {
+  // The version resolves after every reducer has run (see the end of
+  // handleRecordsBatch): reading it here would capture pre-reducer state.
+  run.deferred.push({
+    index: run.affectedValues.length,
+    rowRef, rowId, columnId, binding,
+  });
+  run.affectedValues.push({ row_ref: rowRef, column_id: columnId, value, version: '' });
+}
+
+function resolveDeferredVersions(run: BatchRunner): void {
+  for (const entry of run.deferred) {
+    const version = bindingVersion(run.state, run.context.workspace_id, entry.rowRef, entry.rowId, entry.columnId, entry.binding);
+    const slot = run.affectedValues[entry.index];
+    if (slot) slot.version = version;
+  }
+  run.deferred.length = 0;
 }
 
 /**
@@ -574,7 +649,7 @@ function applyCellValue(
       });
       run.events.push(evt);
       reduceEntity(run.state.entities, run.state.aliases, evt);
-      trackApplied(run, rowRef, columnId, value);
+      trackAppliedForBinding(run, rowRef, rowId, columnId, binding, value);
       return null;
     }
     const fieldName = binding.property === 'status' ? 'status' : 'assigned_user_id';
@@ -588,7 +663,7 @@ function applyCellValue(
     run.events.push(...res.events);
     run.currentSeq += res.events.length;
     if (res.nextState) run.state = res.nextState;
-    trackApplied(run, rowRef, columnId, value);
+    trackAppliedForBinding(run, rowRef, rowId, columnId, binding, value);
     return null;
   }
 
@@ -603,25 +678,55 @@ function applyCellValue(
     run.events.push(...res.events);
     run.currentSeq += res.events.length;
     if (res.nextState) run.state = res.nextState;
-    trackApplied(run, rowRef, columnId, value);
+    trackAppliedForBinding(run, rowRef, rowId, columnId, binding, value);
     return null;
   }
 
   if (binding.kind === 'entity_contact') {
     if (!run.state.contacts) run.state.contacts = new Map();
+    const method = binding.method;
+    const active = [...run.state.contacts.values()].filter(
+      (c) => c.entity_id === rowId && c.method === method && c.state === 'active',
+    );
+    const isClear = value === null || String(value ?? '') === '';
+    // Trusted source resolution: the displayed cell is the primary active
+    // contact when one exists; a legacy entity_field shadow only wins when
+    // no canonical contact exists. Never trust a client-supplied contact_id.
+    if (active.length === 0) {
+      const legacy = run.state.fields.get(`${rowId}:${method}`);
+      if (legacy) {
+        const legacyBinding: CellBinding = { kind: 'entity_field', field_id: method, field_name: method as 'phone' | 'email' extends never ? never : string } as CellBinding;
+        return applyCellValue(run, rowRef, columnId, legacyBinding, value, opId, baseToken);
+      }
+      if (isClear) return null;
+    } else if (active.length === 1) {
+      binding = { ...binding, contact_id: active[0]!.id };
+    } else {
+      const primary = active.find((c) => (c as unknown as { is_primary?: boolean }).is_primary) ?? active[0]!;
+      if (isClear) {
+        return fail(`Multiple ${method} contacts exist. Remove the specific entry instead of clearing the cell.`);
+      }
+      binding = { ...binding, contact_id: primary.id };
+    }
+    const contactId = binding.kind === 'entity_contact' ? binding.contact_id : undefined;
+    const contactMethod = binding.kind === 'entity_contact' ? binding.method : method;
+    const resolved = contactId ? run.state.contacts?.get(contactId) : undefined;
     const res = handleChangeContact(run.context, run.state, run.currentSeq, {
       entity_id: rowId,
-      contact_id: binding.contact_id,
-      operation: value === null || String(value ?? '') === '' ? 'remove' : 'save',
-      method: binding.method,
-      value: String(value ?? ''),
+      contact_id: contactId,
+      operation: isClear ? 'remove' : 'save',
+      method: contactMethod,
+      // Removal carries no value: an empty string fails contact validation.
+      // The revision of the exact displayed contact travels as the precondition.
+      ...(isClear ? {} : { value: String(value ?? '') }),
+      ...(resolved ? { expected_revision: resolved.revision } : {}),
     });
     const propagated = propagateSubResult(res.result);
     if (propagated) return propagated;
     run.events.push(...res.events);
     run.currentSeq += res.events.length;
     if (res.nextState) run.state = res.nextState;
-    trackApplied(run, rowRef, columnId, value);
+    trackAppliedForBinding(run, rowRef, rowId, columnId, binding, value);
     return null;
   }
 
@@ -648,7 +753,7 @@ function applyCellValue(
     run.events.push(...res.events);
     run.currentSeq += res.events.length;
     if (res.nextState) run.state = res.nextState;
-    trackApplied(run, rowRef, columnId, value);
+    trackAppliedForBinding(run, rowRef, rowId, columnId, binding, value);
     return null;
   }
 
@@ -666,7 +771,7 @@ function applyCellValue(
     run.events.push(...res.events);
     run.currentSeq += res.events.length;
     if (res.nextState) run.state = res.nextState;
-    trackApplied(run, rowRef, columnId, value);
+    trackAppliedForBinding(run, rowRef, rowId, columnId, binding, value);
     return null;
   }
 
@@ -703,13 +808,23 @@ function applyCellValue(
       run.events.push(...res.events);
       run.currentSeq += res.events.length;
       if (res.nextState) run.state = res.nextState;
-      trackApplied(run, rowRef, columnId, value);
+      trackAppliedForBinding(run, rowRef, rowId, columnId, binding, value);
       return null;
     }
     if (value === null || (typeof value === 'string' && value.trim() === '')) {
       return fail('Clearing a latest note or quote needs its entry removed. Remove the entry instead.');
     }
     if (binding.property === 'latest_note') {
+      const hasActiveNote = [...run.state.interactions.values()].some(
+        (r) => r.entity_id === rowId && r.kind === 'note' && r.state === 'active',
+      );
+      if (!hasActiveNote) {
+        const legacy = run.state.fields.get(`${rowId}:notes`) ?? run.state.fields.get(`${rowId}:note`);
+        if (legacy) {
+          const legacyBinding: CellBinding = { kind: 'entity_field', field_id: legacy.field_name, field_name: legacy.field_name };
+          return applyCellValue(run, rowRef, columnId, legacyBinding, value, opId, baseToken);
+        }
+      }
       const res = handleLogEvent(run.context, run.state, run.currentSeq, {
         entity_id: rowId,
         kind: 'note',
@@ -720,10 +835,22 @@ function applyCellValue(
       run.events.push(...res.events);
       run.currentSeq += res.events.length;
       if (res.nextState) run.state = res.nextState;
-      trackApplied(run, rowRef, columnId, value);
+      trackAppliedForBinding(run, rowRef, rowId, columnId, binding, value);
       return null;
     }
     if (binding.property === 'latest_quote') {
+      const hasActiveQuote = [...run.state.interactions.values()].some(
+        (r) => r.entity_id === rowId && r.kind === 'quote' && r.state === 'active',
+      );
+      if (!hasActiveQuote) {
+        const legacy = run.state.fields.get(`${rowId}:quote`)
+          ?? run.state.fields.get(`${rowId}:value`)
+          ?? run.state.fields.get(`${rowId}:deal_value`);
+        if (legacy) {
+          const legacyBinding: CellBinding = { kind: 'entity_field', field_id: legacy.field_name, field_name: legacy.field_name };
+          return applyCellValue(run, rowRef, columnId, legacyBinding, value, opId, baseToken);
+        }
+      }
       const quote = toQuotePayload(value, 'USD');
       if (!quote.payload) return fail(quote.error ?? 'Invalid quote value.');
       const res = handleLogEvent(run.context, run.state, run.currentSeq, {
@@ -736,16 +863,33 @@ function applyCellValue(
       run.events.push(...res.events);
       run.currentSeq += res.events.length;
       if (res.nextState) run.state = res.nextState;
-      trackApplied(run, rowRef, columnId, value);
+      trackAppliedForBinding(run, rowRef, rowId, columnId, binding, value);
       return null;
     }
     return fail(`Unsupported interaction binding '${binding.property}'.`);
   }
 
-  // Custom row value
+  // Custom row value: validate against the durable definition type so grid,
+  // row form, and tool saves share one typed owner. Invalid input rejects
+  // with its reason and the client retains the draft for review.
   const rowKey = `${context.workspace_id}:${rowId}`;
   const existingRow = run.state.recordsRows?.get(rowKey);
   if (!existingRow) return fail(`Row '${rowId}' not found.`, 'not_found');
+  const def = run.state.fieldDefinitions?.get(`${context.workspace_id}:${columnId}`);
+  if (def) {
+    if (def.value_type === 'number' && value !== null && typeof value !== 'number') {
+      return fail(`Column '${columnId}' needs a number. Open the row form to correct '${String(value).slice(0, 80)}'.`);
+    }
+    if (def.value_type === 'boolean' && value !== null && typeof value !== 'boolean') {
+      return fail(`Column '${columnId}' needs true or false.`);
+    }
+    if (def.value_type === 'currency' && value !== null && (typeof value !== 'object' || !('amount' in (value as object)))) {
+      return fail(`Column '${columnId}' needs a currency amount. Use the typed quote editor.`);
+    }
+    if (def.value_type === 'date' && value !== null && (typeof value !== 'object' || (!('local_date' in (value as object)) && !('instant' in (value as object))))) {
+      return fail(`Column '${columnId}' needs a date.`);
+    }
+  }
   const valKey = `${context.workspace_id}:${rowId}:${columnId}`;
   const evt = createLedgerEvent(run.context, run.currentSeq++, {
     kind: 'record_cell_changed',
@@ -754,7 +898,7 @@ function applyCellValue(
   run.events.push(evt);
   reduceRecords(run.state, evt);
   void valKey;
-  trackApplied(run, rowRef, columnId, value);
+  trackAppliedForBinding(run, rowRef, rowId, columnId, binding, value);
   return null;
 }
 
@@ -872,7 +1016,10 @@ function applyItemEdit(
     run.events.push(...res.events);
     run.currentSeq += res.events.length;
     if (res.nextState) run.state = res.nextState;
-    if (origin) trackApplied(run, rowRef, origin.column_id, (fields['text'] ?? fields['summary'] ?? '') as RecordValue);
+    if (origin) {
+      const newHead = run.state.interactions.get(rowId)?.head_event_id ?? String(run.currentSeq);
+      trackApplied(run, rowRef, origin.column_id, (fields['text'] ?? fields['summary'] ?? '') as RecordValue, newHead);
+    }
     return null;
   }
   if (sourceRef.kind === 'custom') {
@@ -915,8 +1062,8 @@ export function handleRecordsBatch(
 
   // One user Save chunk stays atomic in one D1 batch: larger pastes arrive
   // as serial chunks with stable action ids, never as one unbounded commit.
-  if (args.operations.length > 100) {
-    return rejected('Records save chunk cannot exceed 100 operations.');
+  if (args.operations.length > 30) {
+    return rejected('Records save chunk cannot exceed 30 operations. Split larger pastes into serial atomic chunks.');
   }
 
   if (args.operations.length === 0) {
@@ -963,6 +1110,36 @@ export function handleRecordsBatch(
     }
   }
 
+  // Fold same-chunk cell values into new-row creations: the normal UI stages
+  // row.create separately from its cell values, so the creation handler would
+  // otherwise reject a nameless row before the later cell op can supply it.
+  // Merged values are validated by the creation path; the later cell op then
+  // applies as a no-op or a genuine correction against the remapped id.
+  const createdRowIds = new Set(
+    args.operations.filter((op) => op.op === 'row.create').map((op) => `${op.row_ref.kind}:${op.row_ref.id}`),
+  );
+  const foldedInitialValues = new Map<string, Record<string, RecordValue>>();
+  if (createdRowIds.size > 0) {
+    for (const op of args.operations) {
+      if (op.op !== 'cell.set' || skippedOpIds.has(op.op_id)) continue;
+      const key = `${op.row_ref.kind}:${op.row_ref.id}`;
+      if (!createdRowIds.has(key)) continue;
+      let merged = foldedInitialValues.get(key);
+      if (!merged) {
+        merged = {};
+        foldedInitialValues.set(key, merged);
+      }
+      merged[op.column_id] = op.value;
+    }
+    for (const op of args.operations) {
+      if (op.op !== 'row.create') continue;
+      const key = `${op.row_ref.kind}:${op.row_ref.id}`;
+      const folded = foldedInitialValues.get(key);
+      if (!folded || Object.keys(folded).length === 0) continue;
+      op.initial_values = { ...(op.initial_values ?? {}), ...folded };
+    }
+  }
+
   ensureRecordsState(state);
   const run: BatchRunner = {
     context,
@@ -972,6 +1149,7 @@ export function handleRecordsBatch(
     events: [],
     affectedValues: [],
     idAliases: new Map<string, string>(),
+    deferred: [],
   };
   let appliedCount = 0;
 
@@ -1052,12 +1230,14 @@ export function handleRecordsBatch(
 
           const createdEntityId = res.result.data?.entity_id || op.row_ref.id;
           run.idAliases.set(op.row_ref.id, createdEntityId);
-          run.affectedValues.push({
-            row_ref: { kind: 'entity', id: createdEntityId },
-            column_id: 'name',
-            value: initialName,
-            version: String(run.currentSeq),
-          });
+          trackAppliedForBinding(
+            run,
+            { kind: 'entity', id: createdEntityId },
+            createdEntityId,
+            'name',
+            { kind: 'entity_property', property: 'name' },
+            initialName,
+          );
 
           if (op.initial_values) {
             for (const [k, v] of Object.entries(op.initial_values)) {
@@ -1075,7 +1255,7 @@ export function handleRecordsBatch(
                 run.events.push(...cRes.events);
                 run.currentSeq += cRes.events.length;
                 if (cRes.nextState) run.state = cRes.nextState;
-                run.affectedValues.push({ row_ref: { kind: 'entity', id: createdEntityId }, column_id: 'phone', value: String(v), version: String(run.currentSeq) });
+                trackAppliedForBinding(run, { kind: 'entity', id: createdEntityId }, createdEntityId, 'phone', { kind: 'entity_contact', method: 'phone' }, String(v));
               } else if (k === 'email' || k === 'leads:email' || (k === 'contact' && String(v).includes('@'))) {
                 if (!run.state.contacts) run.state.contacts = new Map();
                 const cRes = handleChangeContact(run.context, run.state, run.currentSeq, {
@@ -1089,7 +1269,7 @@ export function handleRecordsBatch(
                 run.events.push(...cRes.events);
                 run.currentSeq += cRes.events.length;
                 if (cRes.nextState) run.state = cRes.nextState;
-                run.affectedValues.push({ row_ref: { kind: 'entity', id: createdEntityId }, column_id: 'email', value: String(v), version: String(run.currentSeq) });
+                trackAppliedForBinding(run, { kind: 'entity', id: createdEntityId }, createdEntityId, 'email', { kind: 'entity_contact', method: 'email' }, String(v));
               } else if (k === 'notes' || k === 'leads:notes') {
                 const nRes = handleLogEvent(run.context, run.state, run.currentSeq, {
                   entity_id: createdEntityId,
@@ -1101,7 +1281,7 @@ export function handleRecordsBatch(
                 run.events.push(...nRes.events);
                 run.currentSeq += nRes.events.length;
                 if (nRes.nextState) run.state = nRes.nextState;
-                run.affectedValues.push({ row_ref: { kind: 'entity', id: createdEntityId }, column_id: 'notes', value: String(v), version: String(run.currentSeq) });
+                trackAppliedForBinding(run, { kind: 'entity', id: createdEntityId }, createdEntityId, 'notes', { kind: 'interaction', property: 'latest_note' }, String(v));
               } else if (k === 'value' || k === 'leads:value' || k === 'quote' || k === 'leads:quote') {
                 const quote = toQuotePayload(v as RecordValue, 'USD');
                 if (!quote.payload) return fail(quote.error ?? 'Invalid quote value.');
@@ -1115,7 +1295,7 @@ export function handleRecordsBatch(
                 run.events.push(...qRes.events);
                 run.currentSeq += qRes.events.length;
                 if (qRes.nextState) run.state = qRes.nextState;
-                run.affectedValues.push({ row_ref: { kind: 'entity', id: createdEntityId }, column_id: 'value', value: String(v), version: String(run.currentSeq) });
+                trackAppliedForBinding(run, { kind: 'entity', id: createdEntityId }, createdEntityId, 'value', { kind: 'interaction', property: 'latest_quote' }, String(v));
               } else {
                 const fRes = handleSetField(run.context, run.state, run.currentSeq, {
                   entity_id: createdEntityId,
@@ -1127,7 +1307,14 @@ export function handleRecordsBatch(
                 run.events.push(...fRes.events);
                 run.currentSeq += fRes.events.length;
                 if (fRes.nextState) run.state = fRes.nextState;
-                run.affectedValues.push({ row_ref: { kind: 'entity', id: createdEntityId }, column_id: k, value: String(v), version: String(run.currentSeq) });
+                trackAppliedForBinding(
+                  run,
+                  { kind: 'entity', id: createdEntityId },
+                  createdEntityId,
+                  k,
+                  { kind: 'entity_field', field_id: k.replace(/^leads:/, ''), field_name: k.replace(/^leads:/, '') },
+                  String(v),
+                );
               }
             }
           }
@@ -1203,12 +1390,14 @@ export function handleRecordsBatch(
             ? (res.result.data as { event_id?: string }).event_id : undefined;
           if (createdRoot) {
             run.idAliases.set(op.row_ref.id, createdRoot);
-            run.affectedValues.push({
-              row_ref: { kind: 'interaction', id: createdRoot },
-              column_id: 'summary',
-              value: text,
-              version: String(run.currentSeq),
-            });
+            trackAppliedForBinding(
+              run,
+              { kind: 'interaction', id: createdRoot },
+              createdRoot,
+              'summary',
+              { kind: 'interaction', property: 'latest_note' },
+              text,
+            );
           }
         } else {
           // Custom row: client IDs are scoped to this workspace and collide loudly.
@@ -1271,7 +1460,7 @@ export function handleRecordsBatch(
         reduceRecords(run.state, evtDef);
 
         if (op.list_id) {
-          const colId = `col_${crypto.randomUUID()}`;
+          const colId = op.field_id;
           const evtCol = createLedgerEvent(run.context, run.currentSeq++, {
             kind: 'record_column_created',
             payload: {
@@ -1317,12 +1506,21 @@ export function handleRecordsBatch(
       case 'field.archive':
       case 'field.restore': {
         const colKey = `${context.workspace_id}:${op.field_id}`;
-        const existingCol = run.state.recordsListColumns?.get(colKey);
+        const directCol = run.state.recordsListColumns?.get(colKey);
+        let resolvedColumnId: string | null = directCol ? op.field_id : null;
+        if (!resolvedColumnId && run.state.recordsListColumns) {
+          for (const col of run.state.recordsListColumns.values()) {
+            if (col.field_id === op.field_id) {
+              resolvedColumnId = col.id;
+              break;
+            }
+          }
+        }
         const existingDef = run.state.fieldDefinitions?.get(colKey);
-        if (!existingCol && !existingDef) return fail(`Field '${op.field_id}' not found.`, 'not_found');
+        if (!resolvedColumnId && !existingDef) return fail(`Field '${op.field_id}' not found.`, 'not_found');
         const evt = createLedgerEvent(run.context, run.currentSeq++, {
           kind: op.op === 'field.archive' ? 'record_column_archived' : 'record_column_restored',
-          payload: { column_id: op.field_id },
+          payload: { column_id: resolvedColumnId ?? op.field_id },
         });
         run.events.push(evt);
         reduceRecords(run.state, evt);
@@ -1405,6 +1603,10 @@ export function handleRecordsBatch(
   for (const event of run.events) {
     reduceBusinessDetails(run.state, event);
   }
+
+  // Versions resolve here, after every reducer has touched final state, so
+  // acknowledgments carry the exact token a follow-up edit must present.
+  resolveDeferredVersions(run);
 
   // Every operation matched saved state: pin the logical action without a
   // business event, revision, or quota effect.

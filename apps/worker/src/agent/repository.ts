@@ -818,13 +818,16 @@ export async function executeAgentTool(params: ExecuteAgentToolParams): Promise<
     }
     case 'document_start': {
       try {
+        // The idempotency identity is always the trusted logical action ID:
+        // a model-supplied key must never override it.
+        const startArgs = { ...(args as DocumentStartArgs), idempotency_key: actionId };
         const res = await startDocument(
-          { DB: db, STORAGE: params.storage, PDF_QUEUE: params.pdfQueue, BROWSER: params.browser } as unknown as Env,
+          { DB: db, STORAGE: params.storage, DISPATCH_QUEUE: params.pdfQueue, BROWSER: params.browser } as unknown as Env,
           workspaceId,
           actorUserId,
           chatId ?? '',
           runId ?? null,
-          args as DocumentStartArgs,
+          startArgs,
         );
         return { status: 'applied', action_id: actionId, data: res };
       } catch (err) {
@@ -841,7 +844,7 @@ export async function executeAgentTool(params: ExecuteAgentToolParams): Promise<
     case 'document_write_section': {
       try {
         const res = await writeDocumentSections(
-          { DB: db, STORAGE: params.storage, PDF_QUEUE: params.pdfQueue, BROWSER: params.browser } as unknown as Env,
+          { DB: db, STORAGE: params.storage, DISPATCH_QUEUE: params.pdfQueue, BROWSER: params.browser } as unknown as Env,
           workspaceId,
           args as DocumentWriteSectionArgs,
         );
@@ -860,7 +863,7 @@ export async function executeAgentTool(params: ExecuteAgentToolParams): Promise<
     case 'document_publish': {
       try {
         const res = await publishDocument(
-          { DB: db, STORAGE: params.storage, PDF_QUEUE: params.pdfQueue, BROWSER: params.browser } as unknown as Env,
+          { DB: db, STORAGE: params.storage, DISPATCH_QUEUE: params.pdfQueue, BROWSER: params.browser } as unknown as Env,
           workspaceId,
           args as DocumentPublishArgs,
         );
@@ -984,6 +987,8 @@ export async function executeAgentTool(params: ExecuteAgentToolParams): Promise<
         // Same shared reader as the route and dossier refreshes: lists,
         // columns with bindings, bounded rows with versions, and honest
         // cursors. Compact by default; fetch wider pages only when needed.
+        // Draft-aware: the accepted turn delta overlays saved state so Otis
+        // sees unsaved edits without another upload round trip.
         const page = await readRecordsPage(db, workspaceId, {
           list: qArgs.filters?.list_id,
           limit: Math.min(Math.max(1, qArgs.limit ?? 20), 100),
@@ -991,11 +996,24 @@ export async function executeAgentTool(params: ExecuteAgentToolParams): Promise<
           search: qArgs.filters?.text ?? qArgs.text ?? '',
           sortParam: '',
         });
+        const draftCtx = params.recordsContext;
+        if (draftCtx && draftCtx.target.mode === 'draft' && (Array.isArray(draftCtx.draft_delta) || draftCtx.draft_delta_omitted)) {
+          return {
+            status: 'applied',
+            action_id: actionId,
+            data: {
+              ...page,
+              draft_target: draftCtx.target,
+              ...(Array.isArray(draftCtx.draft_delta) ? { draft_delta: draftCtx.draft_delta.slice(0, 100) } : {}),
+              ...(draftCtx.draft_delta_omitted ? { draft_delta_omitted: true } : {}),
+            },
+          };
+        }
         return { status: 'applied', action_id: actionId, data: page };
       }
       if (qArgs.resource === 'documents') {
         const docs = await listChatDocuments(
-          { DB: db, STORAGE: params.storage, PDF_QUEUE: params.pdfQueue, BROWSER: params.browser } as unknown as Env,
+          { DB: db, STORAGE: params.storage, DISPATCH_QUEUE: params.pdfQueue, BROWSER: params.browser } as unknown as Env,
           workspaceId,
           actorUserId,
           qArgs.filters?.chat_id ?? chatId ?? '',
@@ -2854,6 +2872,31 @@ export async function executeAgentTool(params: ExecuteAgentToolParams): Promise<
       const erArgs = args as EditRecordsToolArgs;
       // Saved target (or no records turn): commit through the guarded ledger
       // exactly like a manual Save, with a retry-stable save identity.
+      // Model-proposed status changes are not explicit member intent: inferred
+      // status asks before mutation while clear facts still save. Manual Save
+      // is explicit authorization; model interpretation uses the same rule as
+      // set_fields.
+      const draftMode = params.recordsContext?.target.mode === 'draft';
+      if (!draftMode && Array.isArray(erArgs.operations)) {
+        for (const op of erArgs.operations) {
+          if ((op.op === 'cell.set') &&
+            (op.column_id === 'status' || op.column_id === 'leads:status') &&
+            (op.row_ref.kind === 'entity')) {
+            const explicit = isExplicitStatusIntent(sourceText, String(op.value ?? '') as LeadStatus);
+            if (!explicit.isExplicit) {
+              return {
+                status: 'needs_clarification',
+                action_id: actionId,
+                summary: `Inferred status change to '${String(op.value)}' requires member confirmation before mutation.`,
+                clarification: {
+                  prompt: `Did the record change status to '${String(op.value)}'? Confirm the exact status, or keep the current one.`,
+                  missing_fields: ['status'],
+                },
+              };
+            }
+          }
+        }
+      }
       return executeLedgerCommand(
         db,
         ledgerContext,

@@ -191,6 +191,20 @@ let version = 0;
 let storageOk = true;
 let persistTimer: ReturnType<typeof setTimeout> | null = null;
 const dirtyUsers = new Set<string>();
+/**
+ * In-flight deferred persist pass, when the timer already fired. A scoped
+ * flush awaits it instead of assuming the cancelled timer never ran.
+ */
+let persistManyInFlight: Promise<void> | null = null;
+/** Last persist outcome per owner: one account's success never masks another's failure. */
+const persistOk = new Map<string, boolean>();
+/**
+ * Submitted entry identities this instance has durably persisted at least
+ * once in their submitted shape. Delivery-state transitions after the fact
+ * (saved/failed) do not revoke durability of the submitted payload; entry
+ * removal (discard, prune, purge, stale-drop) does.
+ */
+const durableClients = new Set<string>();
 
 function notify(): void {
   version += 1;
@@ -213,14 +227,28 @@ export function outboxDurable(): boolean {
   return storageOk;
 }
 
-async function persistUser(userId: string): Promise<void> {
+async function persistUser(userId: string): Promise<boolean> {
   // Set when this tab discovers mid-transaction that another tab purged
   // first: memory rows for the owner are abolished and must be dropped.
   let staleStoredGen: number | null = null;
   let purgedGen: number | null = null;
   let adoptedGen: number | null = null;
+  const dropDurableIds = () => {
+    for (const [clientId, entry] of entries) {
+      if (entry.userId === userId) durableClients.delete(clientId);
+    }
+  };
+  // Entry identities present when the storage transaction below captures
+  // its contents. Only these ids may be acknowledged afterwards: an entry
+  // created after the capture is not in the persisted record even though
+  // the same write succeeds.
+  let committedIds: string[] = [];
   try {
     await idbUpdate<UserOutboxRecord>(userRecordKey(userId), previous => {
+      committedIds = [];
+      for (const [clientId, entry] of entries) {
+        if (entry.userId === userId) committedIds.push(clientId);
+      }
       const stored = validUserRecord(previous);
       const storedGen = stored?.generation ?? 0;
       let localGen = ownerGenerations.get(userId);
@@ -322,6 +350,7 @@ async function persistUser(userId: string): Promise<void> {
       for (const [clientId, entry] of entries) {
         if (entry.userId === userId) entries.delete(clientId);
       }
+      dropDurableIds();
       for (const [key, mapping] of newChats) {
         if (mapping.userId === userId) newChats.delete(key);
       }
@@ -329,7 +358,8 @@ async function persistUser(userId: string): Promise<void> {
         if (meta.userId === userId) localTombstones.delete(tomb);
       }
       notify();
-      return;
+      persistOk.set(userId, false);
+      return false;
     }
     if (purgedGen !== null) {
       // Own purge landed: retire the intent and observe the generation so
@@ -346,6 +376,12 @@ async function persistUser(userId: string): Promise<void> {
       debugLog('outbox', 'persistence recovered', {});
       notify();
     }
+    // The persisted record now carries exactly the captured identities:
+    // only those submitted payloads are durable, never entries created
+    // after the capture.
+    for (const clientId of committedIds) durableClients.add(clientId);
+    persistOk.set(userId, true);
+    return true;
   } catch (err) {
     if (storageOk) {
       storageOk = false;
@@ -354,7 +390,41 @@ async function persistUser(userId: string): Promise<void> {
       });
       notify();
     }
+    persistOk.set(userId, false);
+    return false;
   }
+}
+
+/**
+ * Persist a set of owners, keeping failures in the dirty set for the next
+ * pass instead of silently dropping their writes. Each owner's writes run
+ * through its own serial chain (see persistOwnerSerial) so concurrent timer
+ * and explicit flushes cannot interleave two writes for one owner.
+ */
+async function persistTargets(owners: string[]): Promise<boolean> {
+  let ok = true;
+  for (const owner of owners) {
+    const ownerOk = await persistOwnerSerial(owner);
+    if (!ownerOk) dirtyUsers.add(owner);
+    ok = ownerOk && ok;
+  }
+  return ok;
+}
+
+/**
+ * One persistence chain per owner shared by the deferred timer and explicit
+ * flushes: a flush joins the owner's in-flight write instead of racing it,
+ * and a newer write never consults an older write's result while pending.
+ */
+const ownerPersistQueue = new Map<string, Promise<boolean>>();
+function persistOwnerSerial(userId: string): Promise<boolean> {
+  const prev = ownerPersistQueue.get(userId) ?? Promise.resolve(true);
+  const next = prev.then(() => persistUser(userId));
+  ownerPersistQueue.set(userId, next);
+  void next.finally(() => {
+    if (ownerPersistQueue.get(userId) === next) ownerPersistQueue.delete(userId);
+  });
+  return next;
 }
 
 function schedulePersist(userId?: string): void {
@@ -363,12 +433,81 @@ function schedulePersist(userId?: string): void {
   if (persistTimer) return;
   persistTimer = setTimeout(() => {
     persistTimer = null;
-    const pending = [...dirtyUsers];
-    dirtyUsers.clear();
-    void (async () => {
-      for (const dirty of pending) await persistUser(dirty);
+    const pass = (async () => {
+      // Snapshot per owner: a concurrent schedulePersist re-adds owners for
+      // the next pass instead of losing their writes.
+      const pending = [...dirtyUsers];
+      for (const dirty of pending) dirtyUsers.delete(dirty);
+      await persistTargets(pending);
     })();
+    persistManyInFlight = pass;
+    void pass.finally(() => {
+      if (persistManyInFlight === pass) persistManyInFlight = null;
+    });
   }, 0);
+}
+
+/** Last persist outcome for one owner, or the global flag when never attempted. */
+export function outboxDurableFor(userId: string): boolean {
+  return persistOk.get(userId) ?? storageOk;
+}
+
+/** True when this instance durably persisted the submitted entry identity. */
+export function isOutboxEntryDurable(clientId: string): boolean {
+  return entries.has(clientId) && durableClients.has(clientId);
+}
+
+/**
+ * Persist one owner's dirty rows now instead of on the deferred timer and
+ * report that owner's outcome. Only the requested owner is retired from the
+ * dirty set — other owners keep their pending writes — and an already-running
+ * timer pass is awaited rather than raced. Returns false when this owner's
+ * rows are not durably stored (caller must retain its own backup copies).
+ */
+export async function flushOutbox(userId?: string): Promise<boolean> {
+  if (persistTimer) {
+    clearTimeout(persistTimer);
+    persistTimer = null;
+  }
+  await persistManyInFlight;
+  if (userId) {
+    // Dirty owners chain a new write after any in-flight one, so the new
+    // write's capture includes the latest entries. With nothing new, join
+    // an ongoing write; otherwise report the owner's last outcome rather
+    // than a global flag another account could satisfy.
+    let result: boolean;
+    if (dirtyUsers.has(userId)) {
+      dirtyUsers.delete(userId);
+      // Through the shared target path so a failure stays dirty for retry.
+      result = await persistTargets([userId]);
+    } else {
+      const inFlight = ownerPersistQueue.get(userId);
+      result = inFlight ? await inFlight : outboxDurableFor(userId);
+    }
+    // Other owners keep their dirty state but lost their scheduled wake
+    // when the shared timer was cancelled above: reschedule them. Failures
+    // stay dirty without an immediate loop — the single deferred pass is
+    // the bound, and the next write or flush retries.
+    if (dirtyUsers.size > 0 && !persistTimer) schedulePersist();
+    return result;
+  }
+  const targets = [...dirtyUsers];
+  for (const target of targets) dirtyUsers.delete(target);
+  const allOk = targets.length === 0 ? storageOk : await persistTargets(targets);
+  if (dirtyUsers.size > 0 && !persistTimer) schedulePersist();
+  return allOk;
+}
+
+/**
+ * Durability acknowledgement for one submitted message: persists its owner
+ * and confirms the entry identity itself landed in storage. The entry must
+ * belong to the requesting owner. Composer clears its paste-recovery backup
+ * only on true.
+ */
+export async function persistOutboxEntry(userId: string, clientId: string): Promise<boolean> {
+  if (entries.get(clientId)?.userId !== userId) return false;
+  const ok = await flushOutbox(userId);
+  return ok && isOutboxEntryDurable(clientId);
 }
 
 export async function rehydrateOutbox(userId: string): Promise<void> {
@@ -626,6 +765,7 @@ export function discardUnsentEntry(clientId: string): boolean {
   const entry = entries.get(clientId);
   if (!entry || entry.state === 'saved') return false;
   entries.delete(clientId);
+  durableClients.delete(clientId);
   tombstoneEntry(clientId, entry.userId);
   schedulePersist(entry.userId);
   return true;
@@ -667,6 +807,7 @@ export function pruneReconciledEntries(reconciledClientIds: Set<string>): void {
   for (const [clientId, entry] of entries) {
     if (entry.state !== 'failed' && reconciledClientIds.has(clientId)) {
       entries.delete(clientId);
+      durableClients.delete(clientId);
       tombstoneEntry(clientId, entry.userId);
       dirty.add(entry.userId);
     }
@@ -723,7 +864,10 @@ export function clearUserOutbox(userId: string): void {
   ownerGenerations.set(userId, generationOf(userId) + 1);
   purgePending.add(userId);
   for (const [clientId, entry] of entries) {
-    if (entry.userId === userId) entries.delete(clientId);
+    if (entry.userId === userId) {
+      entries.delete(clientId);
+      durableClients.delete(clientId);
+    }
   }
   for (const [key, mapping] of newChats) {
     if (mapping.userId === userId) newChats.delete(key);
@@ -748,6 +892,10 @@ export function resetOutboxForTests(): void {
   purgePending.clear();
   restoreInitiated.clear();
   dirtyUsers.clear();
+  durableClients.clear();
+  persistOk.clear();
+  ownerPersistQueue.clear();
+  persistManyInFlight = null;
   storageOk = true;
   if (persistTimer) {
     clearTimeout(persistTimer);

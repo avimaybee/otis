@@ -430,6 +430,9 @@ const WORKSPACE_ERASURE_TABLES = [
   'reminder_rule_cursors',
   'document_extractions',
   'media_annotations',
+  'message_document_attachments',
+  'generated_documents',
+  'document_revisions',
   'records_values',
   'records_rows',
   'records_list_columns',
@@ -450,16 +453,27 @@ const WORKSPACE_ERASURE_TABLES = [
  * pointers on them are nulled). Everything else with a workspace_id is
  * removed, including ledger events, receipts, projections, conversations,
  * runs, drafts, memory, briefs, reminders and media inventory rows. R2 media
- * bytes are removed by the worker route after this commit; orphaned bytes
- * are unreachable without their inventory rows.
+ * bytes are removed by the worker route after this commit; the cleanup
+ * intent recorded alongside the tombstone keeps leftover bytes
+ * cron-retryable instead of stranded without inventory.
  */
 export async function deleteWorkspace(
   db: D1Database,
   params: {
     workspaceId: string;
     actorUserId: string;
+    /**
+     * R2 cleanup intent committed atomically with the cascade: globally-keyed
+     * bytes the prefix sweeps cannot rediscover (inference renditions) plus
+     * the workspace-owned prefixes to sweep. Outstanding render attempt keys
+     * are captured by the batch itself from live media rows, before those
+     * rows are deleted. Post-commit byte deletion retires this record as it
+     * succeeds; whatever remains is cron-retryable even if the request
+     * crashes right after this commit.
+     */
+    r2CleanupIntent?: { failedKeys: string[]; pendingPrefixes: string[] };
   },
-): Promise<{ deleted: boolean }> {
+): Promise<{ deleted: boolean; erasureId: string }> {
   const membership = await db
     .prepare(`SELECT role FROM workspace_users WHERE workspace_id = ? AND user_id = ?`)
     .bind(params.workspaceId, params.actorUserId)
@@ -474,6 +488,22 @@ export async function deleteWorkspace(
   const masterTables = new Set(
     (await db.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all<{ name: string }>()).results.map((r) => r.name),
   );
+  // The cleanup intent is part of the erasure contract when supplied: a
+  // database missing its retry table (or the attempt-key column) must refuse
+  // before deleting anything, never commit the cascade and leave cleanup
+  // undiscoverable.
+  if (params.r2CleanupIntent) {
+    if (!masterTables.has('workspace_erasure_cleanups')) {
+      throw new Error('erasure_cleanup_unavailable');
+    }
+    const cleanupColumns = new Set(
+      (await db.prepare(`SELECT name FROM pragma_table_info('workspace_erasure_cleanups')`).all<{ name: string }>())
+        .results.map((r) => r.name),
+    );
+    if (!cleanupColumns.has('attempt_keys_json')) {
+      throw new Error('erasure_cleanup_unavailable');
+    }
+  }
   const tablesToCount = WORKSPACE_ERASURE_TABLES.filter((t) => masterTables.has(t));
 
   const countStatements = [
@@ -551,8 +581,39 @@ export async function deleteWorkspace(
     db.prepare(`DELETE FROM briefs WHERE workspace_id = ?`).bind(wid),
     ...(masterTables.has('document_extractions') ? [db.prepare(`DELETE FROM document_extractions WHERE workspace_id = ?`).bind(wid)] : []),
     ...(masterTables.has('media_annotations') ? [db.prepare(`DELETE FROM media_annotations WHERE workspace_id = ?`).bind(wid)] : []),
+    ...(masterTables.has('message_document_attachments') ? [db.prepare(`DELETE FROM message_document_attachments WHERE workspace_id = ?`).bind(wid)] : []),
+    ...(masterTables.has('document_revisions') ? [db.prepare(`DELETE FROM document_revisions WHERE workspace_id = ?`).bind(wid)] : []),
+    ...(masterTables.has('generated_documents') ? [db.prepare(`DELETE FROM generated_documents WHERE workspace_id = ?`).bind(wid)] : []),
+    ...(masterTables.has('records_values') ? [db.prepare(`DELETE FROM records_values WHERE workspace_id = ?`).bind(wid)] : []),
+    ...(masterTables.has('records_rows') ? [db.prepare(`DELETE FROM records_rows WHERE workspace_id = ?`).bind(wid)] : []),
+    ...(masterTables.has('records_list_columns') ? [db.prepare(`DELETE FROM records_list_columns WHERE workspace_id = ?`).bind(wid)] : []),
+    ...(masterTables.has('records_lists') ? [db.prepare(`DELETE FROM records_lists WHERE workspace_id = ?`).bind(wid)] : []),
     db.prepare(`DELETE FROM message_image_attachments WHERE workspace_id = ?`).bind(wid),
     db.prepare(`DELETE FROM media_transcriptions WHERE workspace_id = ?`).bind(wid),
+    // The R2 cleanup intent is captured inside this same atomic batch,
+    // before the rows it describes are deleted: an attempt that registers
+    // between the route's pre-commit inventory and this commit still has
+    // its output key preserved. Every outstanding registered attempt key
+    // (current or superseded) comes from its live media row, with a sweep
+    // deadline past any upload/settle window.
+    ...(masterTables.has('workspace_erasure_cleanups') && params.r2CleanupIntent
+      ? [db.prepare(
+        `INSERT INTO workspace_erasure_cleanups (workspace_id, erasure_id, failed_keys_json, pending_prefixes_json, attempt_keys_json, attempts, updated_at)
+         VALUES (?, ?, ?, ?, COALESCE((
+           SELECT json_group_array(json_object('key', object_key, 'deleteAfter', ?))
+           FROM (SELECT DISTINCT object_key FROM media_objects
+             WHERE workspace_id = ? AND id LIKE 'media_pdf\\_%' ESCAPE '\\' AND object_key != '')
+         ), '[]'), 0, ?)`,
+      ).bind(
+        wid,
+        erasureId,
+        JSON.stringify(params.r2CleanupIntent.failedKeys),
+        JSON.stringify(params.r2CleanupIntent.pendingPrefixes),
+        new Date(Date.parse(nowIso) + 900_000).toISOString(),
+        wid,
+        nowIso,
+      )]
+      : []),
     db.prepare(`DELETE FROM media_objects WHERE workspace_id = ?`).bind(wid),
     db.prepare(`DELETE FROM reminders WHERE workspace_id = ?`).bind(wid),
     db.prepare(`DELETE FROM outbox WHERE workspace_id = ?`).bind(wid),
@@ -594,6 +655,6 @@ BEGIN
 END`),
   ]);
 
-  return { deleted: true };
+  return { deleted: true, erasureId };
 }
 

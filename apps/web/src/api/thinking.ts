@@ -1,10 +1,12 @@
 /**
  * Thinking reducer: groups `reasoning_summary` activity into one Thinking
  * disclosure per run. Records carrying the additive block fields
- * (block_id, content_kind, mode, state) fold by (run, round, block) in cursor
- * order: `snapshot` replaces that block's base, `append` concatenates.
- * Identity is always record ID/cursor, never text equality, so repeated words
- * from distinct deltas survive and replays add nothing.
+ * (block_id, content_kind, mode, state) fold by (run, round, block,
+ * generation) in cursor order: `snapshot` replaces that block's base,
+ * `append` concatenates. Rows without a generation are legacy records and
+ * fold exactly as before. Identity is always record ID/cursor, never text
+ * equality, so repeated words from distinct deltas survive and replays add
+ * nothing.
  *
  * Records without block metadata are legacy summaries and render separately;
  * their unknown semantics are never blindly joined into new blocks.
@@ -20,6 +22,12 @@ export interface ThinkingBlock {
   runId: string;
   roundIndex: number;
   blockId: string;
+  /**
+   * Publication generation (execution + provider request attempt). Retried
+   * requests reuse provider block IDs; the generation keeps a failed
+   * request's summaries apart from its replacement. Null for legacy rows.
+   */
+  generation: string | null;
   provider?: string;
   contentKind: ThinkingContentKind;
   state: ThinkingBlockState;
@@ -48,6 +56,7 @@ interface ThinkingPayload {
   content_kind?: unknown;
   mode?: unknown;
   state?: unknown;
+  generation?: unknown;
 }
 
 const TERMINAL_RUN: RunStatus[] = ['succeeded', 'partial', 'failed', 'cancelled'];
@@ -76,7 +85,14 @@ export function reduceThinking(activities: PublicActivity[], runStatus?: RunStat
     const mode = payload.mode === 'snapshot' ? 'snapshot' : 'append';
     const state: ThinkingBlockState =
       payload.state === 'complete' || payload.state === 'truncated' || payload.state === 'interrupted' ? payload.state : 'streaming';
-    const key = `${activity.run_id}:${roundIndex}:${blockId}`;
+    const generation = typeof payload.generation === 'string' && payload.generation ? payload.generation : null;
+    // Retry generations reuse provider block IDs: the generation joins the
+    // fold key so a replacement attempt's summaries never concatenate into
+    // the failed request's blocks. Legacy rows (no generation) keep the
+    // historical key shape.
+    const key = generation
+      ? `${activity.run_id}:${roundIndex}:${blockId}:g${generation}`
+      : `${activity.run_id}:${roundIndex}:${blockId}`;
     const existing = blocks.get(key);
     if (!existing) {
       blocks.set(key, {
@@ -84,6 +100,7 @@ export function reduceThinking(activities: PublicActivity[], runStatus?: RunStat
         runId: activity.run_id,
         roundIndex,
         blockId,
+        generation,
         provider,
         contentKind,
         state,
@@ -102,6 +119,21 @@ export function reduceThinking(activities: PublicActivity[], runStatus?: RunStat
   }
   const terminal = runStatus !== undefined && (TERMINAL_RUN as string[]).includes(runStatus);
   const result = [...blocks.values()].sort((left, right) => left.firstCursor - right.firstCursor);
+  // A superseded request generation never resumes: generations start strictly
+  // in order, so the last-started generation per run and round is newest.
+  // Older generations' still-streaming blocks show as interrupted (kept what
+  // arrived) instead of concatenating into the replacement. Terminal
+  // complete/truncated states are preserved; legacy rows count as oldest.
+  const newestGenerationByScope = new Map<string, string | null>();
+  for (const block of result) {
+    newestGenerationByScope.set(`${block.runId}:${block.roundIndex}`, block.generation);
+  }
+  for (const block of result) {
+    if (block.state !== 'streaming') continue;
+    if (newestGenerationByScope.get(`${block.runId}:${block.roundIndex}`) !== block.generation) {
+      block.state = 'interrupted';
+    }
+  }
   if (terminal) {
     for (const block of result) {
       if (block.state === 'streaming') block.state = 'interrupted';

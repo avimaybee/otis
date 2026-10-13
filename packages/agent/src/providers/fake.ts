@@ -26,6 +26,14 @@ export type FakeTurnScript =
     }
   | { kind: 'tool_calls'; calls: Array<{ callId: string; name: string; args: unknown }> }
   | {
+      kind: 'truncated_calls';
+      calls: Array<{ callId: string; name: string; args: unknown }>;
+      /** Optional streamed text before the cut; persisted as partial display. */
+      text?: string;
+      terminalStatus?: string;
+      incompleteReason?: string;
+    }
+  | {
       kind: 'tool_result_continuation';
       intermediateText: string;
       calls: Array<{ callId: string; name: string; args: unknown }>;
@@ -155,7 +163,7 @@ export class FakeProviderAdapter implements ProviderAdapter {
       return;
     }
 
-    if (script.kind === 'tool_calls' || script.kind === 'tool_result_continuation') {
+    if (script.kind === 'tool_calls' || script.kind === 'tool_result_continuation' || script.kind === 'truncated_calls') {
       if (script.kind === 'tool_result_continuation' && script.intermediateText) {
         yield { type: 'text_delta', text: script.intermediateText };
       }
@@ -173,6 +181,23 @@ export class FakeProviderAdapter implements ProviderAdapter {
         }
       }
       yield { type: 'usage', usage: scriptUsage() };
+      if (script.kind === 'truncated_calls') {
+        // An output-limit truncation after verified calls (and optional
+        // partial text): the unfinished remainder is dropped (never
+        // executed); the handler recovers with one bounded smaller-scope
+        // request.
+        if (script.text) yield { type: 'text_delta', text: script.text };
+        yield {
+          type: 'finish',
+          reason: 'length_limit',
+          continuation: { kind: 'gemini-interactions', interactionId: `fake_${input.requestId}` },
+          truncation: {
+            terminalStatus: script.terminalStatus ?? 'incomplete',
+            incompleteReason: script.incompleteReason ?? 'max_output_tokens',
+          },
+        };
+        return;
+      }
       yield {
         type: 'finish',
         reason: 'tool_handoff',

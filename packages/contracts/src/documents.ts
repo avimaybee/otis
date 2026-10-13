@@ -43,6 +43,7 @@ export interface DocumentRevision {
   source_key: string;
   checksum: string;
   source_refs_json: string | null;
+  request_fingerprint?: string | null;
   render_state: DocumentRenderState;
   output_media_id: string | null;
   render_error: string | null;
@@ -65,6 +66,17 @@ export interface DocumentDetailResponse {
   source_markdown?: string | null;
 }
 
+export interface DocumentRevisionDetailResponse {
+  revision: DocumentRevision;
+  source_markdown: string | null;
+  document?: GeneratedDocument | null;
+}
+
+export interface DocumentRetryResponse {
+  retried: boolean;
+  revision_id: string;
+}
+
 export interface DocumentListResponse {
   documents: GeneratedDocumentSummary[];
 }
@@ -74,6 +86,7 @@ export interface DocumentStartArgs {
   intended_sections: string[];
   document_id?: string;
   base_revision_id?: string;
+  idempotency_key?: string;
 }
 
 export interface DocumentSectionInput {

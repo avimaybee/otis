@@ -269,6 +269,88 @@ describe('Gemini Interactions adapter', () => {
     expect(blocks.some((block) => block['type'] === 'function_result' && block['call_id'] === 'call_s')).toBe(true);
   });
 
+  it('maps a token-limited incomplete interaction to the typed truncation outcome (BG14)', async () => {
+    const stream = [
+      'event: interaction.created\n',
+      'data: {"interaction":{"id":"v1_inc","status":"in_progress"},"event_type":"interaction.created"}\n\n',
+      'event: step.delta\n',
+      'data: {"index":0,"delta":{"type":"text","text":"Partial answer"},"event_type":"step.delta"}\n\n',
+      'event: step.start\n',
+      'data: {"index":0,"step":{"type":"function_call","id":"call_inc","name":"echo_fixture","arguments":{}},"event_type":"step.start"}\n\n',
+      'event: step.delta\n',
+      'data: {"index":0,"delta":{"type":"arguments_delta","arguments":"{\\"fixture_id\\":\\"cut"}"},"event_type":"step.delta"}\n\n',
+      'event: interaction.completed\n',
+      'data: {"interaction":{"id":"v1_inc","status":"incomplete","usage":{"total_tokens":60,"total_input_tokens":10,"total_output_tokens":50}},"event_type":"interaction.completed"}\n\n',
+      'event: done\n',
+      'data: [DONE]\n\n',
+    ].join('');
+    const fetchFn = mockFetch(() => chunkedResponse([stream]));
+    const events = await collect(baseInput(geminiModel()), fetchFn);
+    // The unfinished call is dropped (never executed); streamed text and
+    // usage survive for display and accounting.
+    expect(events.filter((event) => event.type === 'tool_call_end')).toHaveLength(0);
+    expect(events).toContainEqual({ type: 'text_delta', text: 'Partial answer' });
+    expect(events.find((event) => event.type === 'usage')).toMatchObject({
+      usage: { inputTokens: 10, outputTokens: 50, totalTokens: 60 },
+    });
+    expect(events[events.length - 1]).toMatchObject({
+      type: 'finish',
+      reason: 'length_limit',
+      continuation: { kind: 'gemini-interactions', interactionId: 'v1_inc' },
+      truncation: { terminalStatus: 'incomplete' },
+    });
+  });
+
+  it('keeps verified ended calls executable on an incomplete interaction (BG14)', async () => {
+    const stream = [
+      'event: step.start\n',
+      'data: {"index":0,"step":{"type":"function_call","id":"call_ok","name":"echo_fixture","arguments":{}},"event_type":"step.start"}\n\n',
+      'event: step.delta\n',
+      'data: {"index":0,"delta":{"type":"arguments_delta","arguments":"{\\"fixture_id\\":\\"ok\\"}"},"event_type":"step.delta"}\n\n',
+      'event: step.stop\n',
+      'data: {"index":0,"event_type":"step.stop"}\n\n',
+      'event: interaction.completed\n',
+      'data: {"interaction":{"id":"v1_inc2","status":"incomplete"},"event_type":"interaction.completed"}\n\n',
+      'event: done\n',
+      'data: [DONE]\n\n',
+    ].join('');
+    const fetchFn = mockFetch(() => chunkedResponse([stream]));
+    const events = await collect(baseInput(geminiModel()), fetchFn);
+    expect(events).toContainEqual({
+      type: 'tool_call_end',
+      callId: 'call_ok',
+      name: 'echo_fixture',
+      args: { fixture_id: 'ok' },
+    });
+    expect(events[events.length - 1]).toMatchObject({
+      type: 'finish',
+      reason: 'length_limit',
+      continuation: { kind: 'gemini-interactions', interactionId: 'v1_inc2' },
+    });
+  });
+
+  it('linked repair input rides continuationInput blocks, not skipped history (BG14)', async () => {
+    const fetchFn = mockFetch(() => chunkedResponse([TEXT_STREAM]));
+    const input = baseInput(geminiModel(), {
+      messages: [
+        { role: 'system', text: 'System prompt' },
+        { role: 'user', text: 'Original request' },
+      ],
+      continuationInput: [{ role: 'user', text: '\n[Truncation guard]: write only the next section' }],
+      previousContinuation: { kind: 'gemini-interactions', interactionId: 'v1_linked' },
+    });
+    await collect(input, fetchFn);
+    const body = fetchFn.requests[0]!.body as Record<string, unknown>;
+    expect(body['previous_interaction_id']).toBe('v1_linked');
+    const blocks = body['input'] as Array<Record<string, unknown>>;
+    expect(blocks.filter((block) => block['type'] === 'user_input')).toEqual([
+      {
+        type: 'user_input',
+        content: [{ type: 'text', text: '\n[Truncation guard]: write only the next section' }],
+      },
+    ]);
+  });
+
   it('rejects malformed tool arguments without exposing a partial call', async () => {
     const stream = [
       'event: step.start\n',

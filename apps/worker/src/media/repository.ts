@@ -576,6 +576,47 @@ export function imageAttachmentGuardStatement(
 }
 
 /**
+ * Acceptance guard for one attached document: at commit it must still be the
+ * caller's ready or validated object and unexpired unless retained. Mirrors
+ * the image guard so a preflight cannot go stale before the batch commits.
+ */
+export function documentAttachmentGuardStatement(
+  db: D1Database,
+  params: { workspaceId: string; mediaId: string; uploaderUserId: string; nowIso: string },
+): D1PreparedStatement {
+  return db
+    .prepare(
+      `INSERT INTO acceptance_guards (id, guard_ok)
+       VALUES (?, (SELECT 1 FROM media_objects
+         WHERE id = ? AND workspace_id = ? AND (uploader_user_id = ? OR uploader_user_id IS NULL)
+           AND state IN ('ready', 'validated') AND (retained = 1 OR expires_at > ?)))`,
+    )
+    .bind(
+      `guard_${crypto.randomUUID()}`,
+      params.mediaId,
+      params.workspaceId,
+      params.uploaderUserId,
+      params.nowIso,
+    );
+}
+
+/**
+ * Durable message→document receipt committed with acceptance: the link rows
+ * are what the turn loader reads, so consumed media is always referenced.
+ */
+export function linkDocumentAttachmentStatement(
+  db: D1Database,
+  params: { chatMessageId: string; workspaceId: string; mediaId: string; position: number; nowIso: string },
+): D1PreparedStatement {
+  return db
+    .prepare(
+      `INSERT INTO message_document_attachments (chat_message_id, media_id, workspace_id, position, created_at)
+       VALUES (?, ?, ?, ?, ?)`,
+    )
+    .bind(params.chatMessageId, params.mediaId, params.workspaceId, params.position, params.nowIso);
+}
+
+/**
  * Durable message→image receipt committed with acceptance: the link rows
  * are what the turn loader reads, so consumed media is always referenced.
  */

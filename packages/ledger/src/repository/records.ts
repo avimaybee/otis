@@ -139,6 +139,37 @@ export async function hydrateRecordsDetails(
  * FK-safe: values deleted before rows; rows/columns deleted before lists.
  * Created/changed: lists before rows/columns; rows before values.
  */
+/**
+ * Group collected row bindings into multi-row INSERT statements bounded by
+ * the D1 per-statement parameter limit. One statement per row multiplies
+ * commit statements with operation count (30 custom cells produced 30 events
+ * plus 30 projection writes before guards/receipts); batching keeps the
+ * whole guarded invocation inside the Worker Free statement budget.
+ * Semantics equal sequential single-row upserts: same transaction, same
+ * row order, independent per-row conflict resolution.
+ */
+export function batchedUpserts(
+  db: D1Database,
+  insertInto: string,
+  rowPlaceholders: string,
+  conflictClause: string,
+  rows: unknown[][],
+  maxBindsPerStatement = 90,
+): D1PreparedStatement[] {
+  if (rows.length === 0) return [];
+  const perRow = Math.max(1, rows[0]!.length);
+  const perStmt = Math.max(1, Math.floor(maxBindsPerStatement / perRow));
+  const out: D1PreparedStatement[] = [];
+  for (let i = 0; i < rows.length; i += perStmt) {
+    const chunk = rows.slice(i, i + perStmt);
+    out.push(
+      db.prepare(`${insertInto} ${chunk.map(() => rowPlaceholders).join(', ')} ${conflictClause}`)
+        .bind(...chunk.flat()),
+    );
+  }
+  return out;
+}
+
 export function recordsDetailStatements(
   db: D1Database,
   before: LedgerProjectionState,
@@ -220,167 +251,177 @@ export function recordsDetailStatements(
   }
 
   // 2. Created and changed field_defs
-  for (const [key, def] of nextDefs) {
-    const prior = priorDefs.get(key);
-    if (!prior || JSON.stringify(prior) !== JSON.stringify(def)) {
-      statements.push(
-        db
-          .prepare(
-            `INSERT INTO field_defs (workspace_id, id, field_name, display_label, value_type, is_core, is_active, options_json, calculation_json, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, 0, 1, ?, ?, ?, ?)
-             ON CONFLICT(id) DO UPDATE SET
-               field_name = excluded.field_name,
-               display_label = excluded.display_label,
-               value_type = excluded.value_type,
-               options_json = excluded.options_json,
-               calculation_json = excluded.calculation_json,
-               updated_at = excluded.updated_at`,
-          )
-          .bind(
-            def.workspace_id,
-            def.id,
-            def.field_name,
-            def.display_label,
-            def.value_type,
-            def.options_json ?? null,
-            def.calculation_json ?? null,
-            def.created_at,
-            def.updated_at,
-          ),
-      );
+  {
+    const rows: unknown[][] = [];
+    for (const [key, def] of nextDefs) {
+      const prior = priorDefs.get(key);
+      if (prior && JSON.stringify(prior) === JSON.stringify(def)) continue;
+      rows.push([
+        def.workspace_id,
+        def.id,
+        def.field_name,
+        def.display_label,
+        def.value_type,
+        def.options_json ?? null,
+        def.calculation_json ?? null,
+        def.created_at,
+        def.updated_at,
+      ]);
     }
+    statements.push(...batchedUpserts(
+      db,
+      `INSERT INTO field_defs (workspace_id, id, field_name, display_label, value_type, is_core, is_active, options_json, calculation_json, created_at, updated_at)
+       VALUES`,
+      `(?, ?, ?, ?, ?, 0, 1, ?, ?, ?, ?)`,
+      `ON CONFLICT(id) DO UPDATE SET
+         field_name = excluded.field_name,
+         display_label = excluded.display_label,
+         value_type = excluded.value_type,
+         options_json = excluded.options_json,
+         calculation_json = excluded.calculation_json,
+         updated_at = excluded.updated_at`,
+      rows,
+    ));
   }
 
   // 3. Created and changed records_lists
-  for (const [key, list] of nextLists) {
-    const prior = priorLists.get(key);
-    if (!prior || JSON.stringify(prior) !== JSON.stringify(list)) {
-      statements.push(
-        db
-          .prepare(
-            `INSERT INTO records_lists (workspace_id, id, name, source_kind, status, revision, source_event_id, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-             ON CONFLICT(workspace_id, id) DO UPDATE SET
-               name = excluded.name,
-               source_kind = excluded.source_kind,
-               status = excluded.status,
-               revision = excluded.revision,
-               source_event_id = excluded.source_event_id,
-               updated_at = excluded.updated_at`,
-          )
-          .bind(
-            list.workspace_id,
-            list.id,
-            list.name,
-            list.source_kind,
-            list.status,
-            list.revision,
-            list.source_event_id ?? null,
-            list.created_at,
-            list.updated_at,
-          ),
-      );
+  {
+    const rows: unknown[][] = [];
+    for (const [key, list] of nextLists) {
+      const prior = priorLists.get(key);
+      if (prior && JSON.stringify(prior) === JSON.stringify(list)) continue;
+      rows.push([
+        list.workspace_id,
+        list.id,
+        list.name,
+        list.source_kind,
+        list.status,
+        list.revision,
+        list.source_event_id ?? null,
+        list.created_at,
+        list.updated_at,
+      ]);
     }
+    statements.push(...batchedUpserts(
+      db,
+      `INSERT INTO records_lists (workspace_id, id, name, source_kind, status, revision, source_event_id, created_at, updated_at)
+       VALUES`,
+      `(?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `ON CONFLICT(workspace_id, id) DO UPDATE SET
+         name = excluded.name,
+         source_kind = excluded.source_kind,
+         status = excluded.status,
+         revision = excluded.revision,
+         source_event_id = excluded.source_event_id,
+         updated_at = excluded.updated_at`,
+      rows,
+    ));
   }
 
   // 4. Created and changed records_list_columns
-  for (const [key, col] of nextCols) {
-    const prior = priorCols.get(key);
-    if (!prior || JSON.stringify(prior) !== JSON.stringify(col)) {
-      statements.push(
-        db
-          .prepare(
-            `INSERT INTO records_list_columns (workspace_id, id, list_id, field_id, is_core, core_binding_json, position, visible, width, revision, source_event_id, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-             ON CONFLICT(workspace_id, id) DO UPDATE SET
-               list_id = excluded.list_id,
-               field_id = excluded.field_id,
-               is_core = excluded.is_core,
-               core_binding_json = excluded.core_binding_json,
-               position = excluded.position,
-               visible = excluded.visible,
-               width = excluded.width,
-               revision = excluded.revision,
-               source_event_id = excluded.source_event_id,
-               updated_at = excluded.updated_at`,
-          )
-          .bind(
-            col.workspace_id,
-            col.id,
-            col.list_id,
-            col.field_id ?? null,
-            col.is_core ? 1 : 0,
-            col.core_binding_json ?? null,
-            col.position,
-            col.visible ? 1 : 0,
-            col.width ?? null,
-            col.revision,
-            col.source_event_id ?? null,
-            col.created_at,
-            col.updated_at,
-          ),
-      );
+  {
+    const rows: unknown[][] = [];
+    for (const [key, col] of nextCols) {
+      const prior = priorCols.get(key);
+      if (prior && JSON.stringify(prior) === JSON.stringify(col)) continue;
+      rows.push([
+        col.workspace_id,
+        col.id,
+        col.list_id,
+        col.field_id ?? null,
+        col.is_core ? 1 : 0,
+        col.core_binding_json ?? null,
+        col.position,
+        col.visible ? 1 : 0,
+        col.width ?? null,
+        col.revision,
+        col.source_event_id ?? null,
+        col.created_at,
+        col.updated_at,
+      ]);
     }
+    statements.push(...batchedUpserts(
+      db,
+      `INSERT INTO records_list_columns (workspace_id, id, list_id, field_id, is_core, core_binding_json, position, visible, width, revision, source_event_id, created_at, updated_at)
+       VALUES`,
+      `(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `ON CONFLICT(workspace_id, id) DO UPDATE SET
+         list_id = excluded.list_id,
+         field_id = excluded.field_id,
+         is_core = excluded.is_core,
+         core_binding_json = excluded.core_binding_json,
+         position = excluded.position,
+         visible = excluded.visible,
+         width = excluded.width,
+         revision = excluded.revision,
+         source_event_id = excluded.source_event_id,
+         updated_at = excluded.updated_at`,
+      rows,
+    ));
   }
 
   // 5. Created and changed records_rows
-  for (const [key, row] of nextRows) {
-    const prior = priorRows.get(key);
-    if (!prior || JSON.stringify(prior) !== JSON.stringify(row)) {
-      statements.push(
-        db
-          .prepare(
-            `INSERT INTO records_rows (workspace_id, id, list_id, status, revision, source_event_id, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-             ON CONFLICT(workspace_id, id) DO UPDATE SET
-               list_id = excluded.list_id,
-               status = excluded.status,
-               revision = excluded.revision,
-               source_event_id = excluded.source_event_id,
-               updated_at = excluded.updated_at`,
-          )
-          .bind(
-            row.workspace_id,
-            row.id,
-            row.list_id,
-            row.status,
-            row.revision,
-            row.source_event_id ?? null,
-            row.created_at,
-            row.updated_at,
-          ),
-      );
+  {
+    const rows: unknown[][] = [];
+    for (const [key, row] of nextRows) {
+      const prior = priorRows.get(key);
+      if (prior && JSON.stringify(prior) === JSON.stringify(row)) continue;
+      rows.push([
+        row.workspace_id,
+        row.id,
+        row.list_id,
+        row.status,
+        row.revision,
+        row.source_event_id ?? null,
+        row.created_at,
+        row.updated_at,
+      ]);
     }
+    statements.push(...batchedUpserts(
+      db,
+      `INSERT INTO records_rows (workspace_id, id, list_id, status, revision, source_event_id, created_at, updated_at)
+       VALUES`,
+      `(?, ?, ?, ?, ?, ?, ?, ?)`,
+      `ON CONFLICT(workspace_id, id) DO UPDATE SET
+         list_id = excluded.list_id,
+         status = excluded.status,
+         revision = excluded.revision,
+         source_event_id = excluded.source_event_id,
+         updated_at = excluded.updated_at`,
+      rows,
+    ));
   }
 
   // 6. Created and changed records_values
-  for (const [key, val] of nextValues) {
-    const prior = priorValues.get(key);
-    if (!prior || JSON.stringify(prior) !== JSON.stringify(val)) {
-      statements.push(
-        db
-          .prepare(
-            `INSERT INTO records_values (workspace_id, row_id, column_id, value_json, value_text, revision, source_event_id, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-             ON CONFLICT(workspace_id, row_id, column_id) DO UPDATE SET
-               value_json = excluded.value_json,
-               value_text = excluded.value_text,
-               revision = excluded.revision,
-               source_event_id = excluded.source_event_id,
-               updated_at = excluded.updated_at`,
-          )
-          .bind(
-            val.workspace_id,
-            val.row_id,
-            val.column_id,
-            val.value_json ?? null,
-            val.value_text ?? null,
-            val.revision,
-            val.source_event_id ?? null,
-            val.updated_at,
-          ),
-      );
+  {
+    const rows: unknown[][] = [];
+    for (const [key, val] of nextValues) {
+      const prior = priorValues.get(key);
+      if (prior && JSON.stringify(prior) === JSON.stringify(val)) continue;
+      rows.push([
+        val.workspace_id,
+        val.row_id,
+        val.column_id,
+        val.value_json ?? null,
+        val.value_text ?? null,
+        val.revision,
+        val.source_event_id ?? null,
+        val.updated_at,
+      ]);
     }
+    statements.push(...batchedUpserts(
+      db,
+      `INSERT INTO records_values (workspace_id, row_id, column_id, value_json, value_text, revision, source_event_id, updated_at)
+       VALUES`,
+      `(?, ?, ?, ?, ?, ?, ?, ?)`,
+      `ON CONFLICT(workspace_id, row_id, column_id) DO UPDATE SET
+         value_json = excluded.value_json,
+         value_text = excluded.value_text,
+         revision = excluded.revision,
+         source_event_id = excluded.source_event_id,
+         updated_at = excluded.updated_at`,
+      rows,
+    ));
   }
 
   return statements;

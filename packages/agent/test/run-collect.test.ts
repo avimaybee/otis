@@ -120,3 +120,57 @@ describe('collect correctable validation outcomes', () => {
     expect((duplicate as AgentStreamError).code).toBe('duplicate_call_id');
   });
 });
+
+describe('collect truncation recovery detail (BG07)', () => {
+  const continuation = { kind: 'go-responses' as const, previousResponseId: 'resp_1' };
+
+  it('carries verified calls, continuation, and terminal condition on length_exceeded', async () => {
+    const err = await collect([
+      ...toolCallEvents('call_done', 'log_event', { text: 'saved before the cut' }),
+      { type: 'tool_call_start', callId: 'call_cut', name: 'log_event' },
+      { type: 'tool_call_arguments', callId: 'call_cut', argumentsChunk: '{"text":"par' },
+      {
+        type: 'finish',
+        reason: 'length_limit',
+        continuation,
+        truncation: { terminalStatus: 'incomplete', incompleteReason: 'max_output_tokens' },
+      },
+    ]);
+    expect(err).toBeInstanceOf(AgentStreamError);
+    const typed = err as AgentStreamError;
+    expect(typed.code).toBe('length_exceeded');
+    expect(typed.truncation).toMatchObject({
+      terminalStatus: 'incomplete',
+      incompleteReason: 'max_output_tokens',
+      pendingCalls: 1,
+      continuation,
+    });
+    expect(typed.truncation?.completedCalls).toEqual([
+      { callId: 'call_done', name: 'log_event', args: { text: 'saved before the cut' } },
+    ]);
+  });
+
+  it('reports null terminal metadata when the wire shape carries none', async () => {
+    const err = await collect([
+      { type: 'text_delta', text: 'a long answer cut short' },
+      { type: 'finish', reason: 'length_limit', continuation: null },
+    ]);
+    const typed = err as AgentStreamError;
+    expect(typed.code).toBe('length_exceeded');
+    expect(typed.truncation).toMatchObject({
+      terminalStatus: null,
+      incompleteReason: null,
+      pendingCalls: 0,
+      completedCalls: [],
+      continuation: null,
+    });
+  });
+
+  it('still aborts a truncated round on an unknown tool before anything executes', async () => {
+    const err = await collect([
+      ...toolCallEvents('call_unknown', 'frobnicate', { x: 1 }),
+      { type: 'finish', reason: 'length_limit', continuation: null },
+    ]);
+    expect((err as AgentStreamError).code).toBe('unknown_tool');
+  });
+});

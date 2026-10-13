@@ -76,6 +76,7 @@ import {
   handleListChatDocuments,
 } from './routes/documents.js';
 import { processDocumentRenderJobs } from './media/generatedDocuments.js';
+import { processErasureR2Cleanups } from './routes/erasureCleanup.js';
 import {
   handleAcceptInvite,
   handleCreateInvite,
@@ -332,9 +333,12 @@ async function mapWithConcurrency<T>(items: T[], limit: number, fn: (item: T) =>
  *
  * Execution and live SSE subscribers share this isolate, so provider preview
  * streams directly to connected browsers. Async wakes ack fast and continue
- * via state.waitUntil (actor-owned liveness, independent of the Worker's
- * 30-second post-response window); sync wakes await full completion for
- * tests and for Queue/cron forwarding that needs the result.
+ * via state.waitUntil. That waitUntil is bounded by the compatibility
+ * behavior (durable_object_io_tasks_prevent_eviction): it survives client
+ * departure within the platform's pending-I/O keep-alive, but it is not
+ * restart durability — D1 runs/outbox/receipts plus Queue/cron recovery own
+ * that. Sync wakes await full completion for tests and for Queue/cron
+ * forwarding that needs the result.
  */
 export class WorkspaceActor {
   public state: DurableObjectState;
@@ -1016,6 +1020,13 @@ export default {
       return;
     }
     await processDocumentExtractions(env).catch(() => console.error('Document extraction recovery failed.'));
+    await processDocumentRenderJobs(env, undefined, undefined, 2).catch(() => console.error('Document render recovery failed.'));
+    // Erasure R2 retry: workspaces whose post-commit byte cleanup left
+    // leftovers recorded them in workspace_erasure_cleanups; finish them
+    // here to completion instead of stranding orphan bytes.
+    if (env.STORAGE) {
+      await processErasureR2Cleanups(env.DB, env.STORAGE).catch(() => console.error('Erasure R2 cleanup recovery failed.'));
+    }
     workerDebug('cron', 'scheduled sweep starting', {});
     try { await backfillConversationSearch(env.DB); } catch (error) { console.error('History index recovery failed:', error instanceof Error ? error.message : 'unknown error'); }
 

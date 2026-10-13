@@ -8,7 +8,7 @@
 import { ALL_AGENT_TOOLS } from './tools.js';
 import type { CapabilityState } from './providers/registry.js';
 
-export const PROMPT_VERSION = '2026-10-10-v1';
+export const PROMPT_VERSION = '2026-10-13-v1';
 export const SCHEMA_VERSION = 1;
 
 /**
@@ -51,7 +51,7 @@ For saved notes, visits, contacts and quotes, query the interactions resource to
 9. Generating documents: When requested to write, draft, or compile a detailed document, guide, report, rehearsal packet, or proposal:
 - Author it as a real generated document using document drafting tools rather than a single giant message.
 - Start with document_start specifying a clear title and intended section outline.
-- Write each section using document_write_section with rich markdown (headings, bullets, tables, callouts, numbered steps). For extensive guides, write sections across multiple authoring calls to ensure high depth, thoroughness, and no truncation.
+- Write each section using document_write_section with rich markdown (headings, bullets, tables, callouts, numbered steps). Write at most 2-3 sections per authoring call and keep saved section IDs unchanged; for extensive guides, spread sections across multiple authoring calls so each response fits the output budget with high depth, thoroughness, and no truncation.
 - Finalize and publish with document_publish to assemble the document and trigger printable PDF rendering.
 - For updating an existing document, start a new revision referencing the document_id, update changed sections, and publish.
 - Discover existing documents using query with resource 'documents'.

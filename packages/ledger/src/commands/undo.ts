@@ -13,6 +13,7 @@ import type {
   UndoPreviewDependency,
   UndoRequest,
 } from '@otis/contracts';
+import { BUILT_IN_RECORDS_LISTS } from '@otis/contracts';
 import type { LedgerCommandContext, LedgerProjectionState } from '../types.js';
 import { createLedgerEvent } from './events.js';
 import { rebuildProjections } from '../reducers/rebuild.js';
@@ -69,6 +70,9 @@ export function computeUndoPreview(
   const selectedEventIds: string[] = [];
   const createdEntityIds = new Map<string, number>();
   const createdTaskIds = new Map<string, number>();
+  const createdRecordRowIds = new Map<string, number>();
+  const createdRecordListIds = new Map<string, number>();
+  const createdFieldIds = new Map<string, number>();
 
   for (const evt of allEvents) {
     if (selectedActionSet.has(evt.action_id)) {
@@ -81,6 +85,18 @@ export function computeUndoPreview(
         if (evt.kind === 'task_created') {
           const payload = evt.payload as { task_id: string };
           if (payload.task_id) createdTaskIds.set(payload.task_id, evt.sequence);
+        }
+        if (evt.kind === 'record_row_created') {
+          const payload = evt.payload as { row_ref?: { id?: string } };
+          if (payload.row_ref?.id) createdRecordRowIds.set(payload.row_ref.id, evt.sequence);
+        }
+        if (evt.kind === 'record_list_created') {
+          const payload = evt.payload as { list_id?: string };
+          if (payload.list_id) createdRecordListIds.set(payload.list_id, evt.sequence);
+        }
+        if (evt.kind === 'field_definition_created') {
+          const payload = evt.payload as { field_id?: string };
+          if (payload.field_id) createdFieldIds.set(payload.field_id, evt.sequence);
         }
       }
     }
@@ -107,6 +123,66 @@ export function computeUndoPreview(
           dependencies.push({
             action_id: evt.action_id,
             reason: `Later action modified task '${payload.task_id}' that would be undone.`,
+            requires_clarification: true,
+          });
+        }
+      }
+      if ((evt.kind === 'record_cell_changed' || evt.kind === 'record_row_archived' || evt.kind === 'record_row_restored')) {
+        const payload = evt.payload as { row_ref?: { id?: string } };
+        const rowId = payload.row_ref?.id;
+        if (rowId && evt.sequence > (createdRecordRowIds.get(rowId) ?? Infinity)) {
+          dependencies.push({
+            action_id: evt.action_id,
+            reason: `Later action modified row '${rowId}' that would be undone.`,
+            requires_clarification: true,
+          });
+        }
+      }
+      // Later teammate work rooted in a list or field being undone: row and
+      // column creations, list lifecycle, and cell writes against its fields.
+      // Undoing the creation underneath them would orphan that work.
+      if (evt.kind === 'record_row_created' || evt.kind === 'record_list_updated' ||
+        evt.kind === 'record_list_archived' || evt.kind === 'record_list_restored') {
+        const payload = evt.payload as { list_id?: string };
+        const listId = payload.list_id;
+        if (listId && evt.sequence > (createdRecordListIds.get(listId) ?? Infinity)) {
+          dependencies.push({
+            action_id: evt.action_id,
+            reason: `Later action added work to list '${listId}' that would be undone.`,
+            requires_clarification: true,
+          });
+        }
+      }
+      if (evt.kind === 'record_column_created') {
+        const payload = evt.payload as { list_id?: string; field_id?: string };
+        const listHit = payload.list_id && evt.sequence > (createdRecordListIds.get(payload.list_id) ?? Infinity);
+        const fieldHit = payload.field_id && evt.sequence > (createdFieldIds.get(payload.field_id) ?? Infinity);
+        if (listHit || fieldHit) {
+          dependencies.push({
+            action_id: evt.action_id,
+            reason: `Later action defined a column on work that would be undone.`,
+            requires_clarification: true,
+          });
+        }
+      }
+      if (evt.kind === 'record_cell_changed' || evt.kind === 'record_column_archived' || evt.kind === 'record_column_restored') {
+        const payload = evt.payload as { column_id?: string };
+        const columnId = payload.column_id;
+        if (columnId && evt.sequence > (createdFieldIds.get(columnId) ?? Infinity)) {
+          dependencies.push({
+            action_id: evt.action_id,
+            reason: `Later action wrote to a field '${columnId}' that would be undone.`,
+            requires_clarification: true,
+          });
+        }
+      }
+      if (evt.kind === 'field_definition_updated' || evt.kind === 'calculation_defined') {
+        const payload = evt.payload as { field_id?: string };
+        const fieldId = payload.field_id;
+        if (fieldId && evt.sequence > (createdFieldIds.get(fieldId) ?? Infinity)) {
+          dependencies.push({
+            action_id: evt.action_id,
+            reason: `Later action changed field '${fieldId}' that would be undone.`,
             requires_clarification: true,
           });
         }
@@ -389,12 +465,13 @@ export function handleUndoCommit(
   // Re-reduce state with the new revert events
   const nextState = rebuildProjections([...allEvents, ...revertEvents]);
 
-  // Identify entities, tasks, and records items specifically created by the reverted events
+  // Identify entities and tasks specifically created by the reverted events.
+  // Records state (lists, columns, rows, values, field definitions) rebuilds
+  // deterministically from the event stream: no copy-back from current state
+  // is applied, so an undone cell value or removed column stays undone.
+  // Seeded entities/tasks outside the event stream are preserved below.
   const revertedEntityIds = new Set<string>();
   const revertedTaskIds = new Set<string>();
-  const revertedRecordRowIds = new Set<string>();
-  const revertedRecordListIds = new Set<string>();
-  const revertedFieldDefIds = new Set<string>();
 
   for (const eventId of preview.affected_event_ids) {
     const targetEvt = allEvents.find((e) => e.id === eventId);
@@ -405,18 +482,6 @@ export function handleUndoCommit(
     if (targetEvt.kind === 'task_created') {
       const p = targetEvt.payload as { task_id?: string };
       if (p?.task_id) revertedTaskIds.add(p.task_id);
-    }
-    if (targetEvt.kind === 'record_row_created') {
-      const p = targetEvt.payload as { row_ref?: { id?: string } };
-      if (p?.row_ref?.id) revertedRecordRowIds.add(p.row_ref.id);
-    }
-    if (targetEvt.kind === 'record_list_created') {
-      const p = targetEvt.payload as { list_id?: string };
-      if (p?.list_id) revertedRecordListIds.add(p.list_id);
-    }
-    if (targetEvt.kind === 'field_definition_created') {
-      const p = targetEvt.payload as { field_id?: string };
-      if (p?.field_id) revertedFieldDefIds.add(p.field_id);
     }
   }
 
@@ -432,43 +497,18 @@ export function handleUndoCommit(
       nextState.tasks.set(id, task);
     }
   }
+  // Preserve the unjournaled built-in list baseline only: built-in lists are
+  // seeded outside the event stream, so a rebuild without them would drop
+  // Leads/Tasks/Notes/Drafts that later work depends on. Keys present in the
+  // rebuild are journaled and left alone; custom lists stay event-sourced.
+  // Journaled cell state is never copied back.
   if (currentState.recordsLists) {
     if (!nextState.recordsLists) nextState.recordsLists = new Map();
+    const builtInIds = new Set(BUILT_IN_RECORDS_LISTS.map((l) => l.id));
     for (const [id, list] of currentState.recordsLists) {
-      if (!revertedRecordListIds.has(list.id) && !nextState.recordsLists.has(id)) {
+      const shortId = id.includes(':') ? id.slice(id.lastIndexOf(':') + 1) : id;
+      if (builtInIds.has(shortId) && !nextState.recordsLists.has(id)) {
         nextState.recordsLists.set(id, list);
-      }
-    }
-  }
-  if (currentState.recordsListColumns) {
-    if (!nextState.recordsListColumns) nextState.recordsListColumns = new Map();
-    for (const [id, col] of currentState.recordsListColumns) {
-      if (!nextState.recordsListColumns.has(id)) {
-        nextState.recordsListColumns.set(id, col);
-      }
-    }
-  }
-  if (currentState.recordsRows) {
-    if (!nextState.recordsRows) nextState.recordsRows = new Map();
-    for (const [id, row] of currentState.recordsRows) {
-      if (!revertedRecordRowIds.has(row.id) && !nextState.recordsRows.has(id)) {
-        nextState.recordsRows.set(id, row);
-      }
-    }
-  }
-  if (currentState.recordsValues) {
-    if (!nextState.recordsValues) nextState.recordsValues = new Map();
-    for (const [id, val] of currentState.recordsValues) {
-      if (!nextState.recordsValues.has(id)) {
-        nextState.recordsValues.set(id, val);
-      }
-    }
-  }
-  if (currentState.fieldDefinitions) {
-    if (!nextState.fieldDefinitions) nextState.fieldDefinitions = new Map();
-    for (const [id, def] of currentState.fieldDefinitions) {
-      if (!revertedFieldDefIds.has(def.field_name) && !nextState.fieldDefinitions.has(id)) {
-        nextState.fieldDefinitions.set(id, def);
       }
     }
   }

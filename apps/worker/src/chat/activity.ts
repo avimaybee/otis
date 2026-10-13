@@ -91,14 +91,52 @@ function safePayload(type: string, json: string): unknown {
   try {
     const parsed = JSON.parse(json) as Record<string, unknown>;
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
+    if (type === 'document_revision_updated' ||
+      (type === 'step_finished' && parsed['step'] === 'document_revision_updated')) {
+      const document = parsed['document'];
+      const revision = parsed['revision'];
+      const out: Record<string, unknown> = {};
+      if (type === 'step_finished') out['step'] = 'document_revision_updated';
+      if (document && typeof document === 'object' && !Array.isArray(document)) {
+        const doc = document as Record<string, unknown>;
+        out['document'] = {
+          id: typeof doc['id'] === 'string' ? doc['id'] : '',
+          workspace_id: typeof doc['workspace_id'] === 'string' ? doc['workspace_id'] : '',
+          author_user_id: typeof doc['author_user_id'] === 'string' ? doc['author_user_id'] : '',
+          source_chat_id: typeof doc['source_chat_id'] === 'string' ? doc['source_chat_id'] : '',
+          run_id: typeof doc['run_id'] === 'string' ? doc['run_id'] : null,
+          title: typeof doc['title'] === 'string' ? (doc['title'] as string).slice(0, 200) : '',
+          current_revision_id: typeof doc['current_revision_id'] === 'string' ? doc['current_revision_id'] : null,
+          created_at: typeof doc['created_at'] === 'string' ? doc['created_at'] : '',
+          updated_at: typeof doc['updated_at'] === 'string' ? doc['updated_at'] : '',
+        };
+      }
+      if (revision && typeof revision === 'object' && !Array.isArray(revision)) {
+        const rev = revision as Record<string, unknown>;
+        out['revision'] = {
+          id: typeof rev['id'] === 'string' ? rev['id'] : '',
+          document_id: typeof rev['document_id'] === 'string' ? rev['document_id'] : '',
+          workspace_id: typeof rev['workspace_id'] === 'string' ? rev['workspace_id'] : '',
+          revision_number: typeof rev['revision_number'] === 'number' ? rev['revision_number'] : 1,
+          parent_revision_id: typeof rev['parent_revision_id'] === 'string' ? rev['parent_revision_id'] : null,
+          title: typeof rev['title'] === 'string' ? (rev['title'] as string).slice(0, 200) : '',
+          render_state: typeof rev['render_state'] === 'string' ? rev['render_state'] : 'draft',
+          output_media_id: typeof rev['output_media_id'] === 'string' ? rev['output_media_id'] : null,
+          render_error: typeof rev['render_error'] === 'string' ? (rev['render_error'] as string).slice(0, 2000) : null,
+          created_at: typeof rev['created_at'] === 'string' ? rev['created_at'] : '',
+          updated_at: typeof rev['updated_at'] === 'string' ? rev['updated_at'] : '',
+        };
+      }
+      return out;
+    }
     const keys: Record<string, string[]> = {
       message_accepted: ['client_message_id', 'text', 'media_id', 'steering_message_id'],
       queued: ['status'], run_started: ['status'], text_chunk: ['text', 'round_index'],
       text_preview: ['text', 'round_index', 'seq'],
-      step_started: ['step_index', 'tool_name', 'target', 'detail'], step_finished: ['step_index', 'tool_name', 'status', 'target', 'detail'],
+      step_started: ['step_index', 'tool_name', 'target', 'detail'], step_finished: ['step_index', 'tool_name', 'status', 'target', 'detail', 'step'],
       action_applied: ['action_id', 'command_name', 'summary', 'event_ids'],
       action_reverted: ['action_id', 'mode', 'requested_by_user_id'],
-      reasoning_summary: ['text', 'provider', 'round_index', 'block_id', 'content_kind', 'mode', 'state'],
+      reasoning_summary: ['text', 'provider', 'round_index', 'block_id', 'content_kind', 'mode', 'state', 'generation'],
       clarification_required: ['question', 'missing_fields'],
       partial_failure: ['error_code', 'committed_actions', 'unfinished_steps'],
       answer_saved: ['reply', 'selected_workspace_id', 'message_id', 'sequence', 'text', 'text_truncated', 'channel'],

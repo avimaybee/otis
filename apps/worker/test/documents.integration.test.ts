@@ -89,6 +89,8 @@ describe('Generated Documents & File Ingestion Suite (R18)', () => {
   beforeAll(async () => {
     await applyMigrations(E.DB);
     await seedUserAndWorkspace();
+    (E as unknown as Record<string, unknown>)['PDF_RENDER_TRANSPORT'] = async (html: string) =>
+      synthesizePdf('render-test', html, '2026-10-10');
   });
 
   describe('Slice D1: Ingestion & Document Attachments', () => {
@@ -252,9 +254,111 @@ describe('Generated Documents & File Ingestion Suite (R18)', () => {
       expect(found?.content_text).toBe('');
       expect(found?.document_media_ids).toEqual([data.media_id]);
     });
+
+    it('returns the accepted message on an identical document-message retry', async () => {
+      const textBytes = new TextEncoder().encode('Retry probe content...');
+      const req = new Request('http://localhost/api/workspaces/ws_docs_test/documents/uploads', {
+        method: 'POST',
+        headers: authHeaders({
+          'Content-Type': 'text/plain',
+          'Content-Length': String(textBytes.byteLength),
+          'x-filename': encodeURIComponent('retry.txt'),
+          'x-upload-id': 'doc_retry_1',
+        }),
+        body: textBytes,
+      });
+      const res = await handleUploadDocument(req, E, WS, 'req_retry');
+      expect([200, 201]).toContain(res.status);
+      const data = await res.json<{ media_id: string }>();
+
+      const first = await acceptWebMessage(E.DB, {
+        workspaceId: WS,
+        userId: USER,
+        chatId: CHAT,
+        clientMessageId: 'cmsg_retry_doc',
+        text: 'Review this file.',
+        documentMediaIds: [data.media_id],
+      });
+      // The identical retry must replay the acceptance even though the file
+      // is now linked, not reject it as already sent.
+      const second = await acceptWebMessage(E.DB, {
+        workspaceId: WS,
+        userId: USER,
+        chatId: CHAT,
+        clientMessageId: 'cmsg_retry_doc',
+        text: 'Review this file.',
+        documentMediaIds: [data.media_id],
+      });
+      expect(second.message_id).toBe(first.message_id);
+      expect(second.run_id).toBe(first.run_id);
+    });
   });
 
   describe('Slice D2: Agent Authoring Tools & Revisions', () => {
+    it('replays an identical start and rejects identity reuse with different content', async () => {
+      const first = await startDocument(E, WS, USER, CHAT, 'run_replay_probe', {
+        title: 'Replay Probe Doc',
+        intended_sections: ['Alpha'],
+        idempotency_key: 'act_replay_probe_1',
+      });
+      const replay = await startDocument(E, WS, USER, CHAT, 'run_replay_probe', {
+        title: 'Replay Probe Doc',
+        intended_sections: ['Alpha'],
+        idempotency_key: 'act_replay_probe_1',
+      });
+      expect(replay.revision_id).toBe(first.revision_id);
+      expect(replay.revision_number).toBe(first.revision_number);
+      await expect(
+        startDocument(E, WS, USER, CHAT, 'run_replay_probe', {
+          title: 'A Different Title',
+          intended_sections: ['Alpha'],
+          idempotency_key: 'act_replay_probe_1',
+        }),
+      ).rejects.toThrow(/different content/);
+      // A different explicit base under the same identity is also rejected,
+      // even though the title and sections match.
+      const other = await startDocument(E, WS, USER, CHAT, 'run_replay_base', {
+        title: 'Base Doc',
+        intended_sections: ['Only'],
+        idempotency_key: 'act_replay_base_1',
+      });
+      await expect(
+        startDocument(E, WS, USER, CHAT, 'run_replay_base', {
+          title: 'Base Doc',
+          intended_sections: ['Only'],
+          document_id: other.document_id,
+          base_revision_id: other.revision_id,
+          idempotency_key: 'act_replay_base_1',
+        }),
+      ).rejects.toThrow(/different content/);
+    });
+
+    it('fails closed on legacy rows without a durable fingerprint', async () => {
+      // A pre-migration revision carries no request fingerprint and no
+      // draft bytes. Replaying its identity must mint a new action —
+      // never restore a draft from the new caller's arguments.
+      const now = new Date().toISOString();
+      await E.DB.prepare(
+        `INSERT INTO generated_documents (id, workspace_id, author_user_id, source_chat_id, run_id, title, created_at, updated_at)
+         VALUES ('doc_legacy_null', ?, ?, ?, NULL, 'Legacy Null Doc', ?, ?)
+         ON CONFLICT(id) DO NOTHING`,
+      ).bind(WS, USER, CHAT, now, now).run();
+      await E.DB.prepare(
+        `INSERT INTO document_revisions (id, document_id, workspace_id, revision_number, parent_revision_id, title, source_key, checksum, request_fingerprint, render_state, created_at, updated_at)
+         VALUES ('rev_act_legacy_null_1', 'doc_legacy_null', ?, 1, NULL, 'Legacy Null Doc', '', '', NULL, 'draft', ?, ?)`,
+      ).bind(WS, now, now).run();
+      await expect(
+        startDocument(E, WS, USER, CHAT, 'run_legacy_null', {
+          title: 'Legacy Null Doc',
+          intended_sections: ['Alpha'],
+          document_id: 'doc_legacy_null',
+          idempotency_key: 'act_legacy_null_1',
+        }),
+      ).rejects.toThrow(/different content/);
+      // No draft was conjured from the rejected caller's arguments.
+      expect(await E.STORAGE.get(`${WS}/documents/doc_legacy_null/rev-rev_act_legacy_null_1-draft.json`)).toBeNull();
+    });
+
     let createdDocId: string;
     let initialRevId: string;
 
@@ -326,14 +430,24 @@ describe('Generated Documents & File Ingestion Suite (R18)', () => {
             title: 'Negotiation Strategy',
             content_markdown: 'Price framing, tradeable concessions, walk-away boundaries, and contract duration flexibility.',
           },
+          {
+            id: 'sec_4',
+            title: 'Meeting 2: Dancer Follow-up',
+            content_markdown: 'Follow-up plan for the dancer prospect: value alignment, studio expansion options, and next-step agreement.',
+          },
+          {
+            id: 'sec_5',
+            title: 'Practice Agenda',
+            content_markdown: 'Timed rehearsal rounds, difficult scenarios, feedback criteria, and second attempts after feedback.',
+          },
         ],
       });
 
-      // Verify draft has 3 sections
+      // Verify draft has 5 sections
       const draftObj = await E.STORAGE.get(`${WS}/documents/${createdDocId}/rev-${initialRevId}-draft.json`);
       expect(draftObj).toBeTruthy();
       const draftJson = await draftObj!.json<{ sections: unknown[] }>();
-      expect(draftJson.sections.length).toBe(3);
+      expect(draftJson.sections.length).toBe(5);
     });
 
     it('publishes the document revision and creates frozen markdown source', async () => {
@@ -416,6 +530,153 @@ describe('Generated Documents & File Ingestion Suite (R18)', () => {
   });
 
   describe('Slice D3: PDF Generation & Fallback Synthesizer', () => {
+    it('never publishes a ready revision when the PDF upload fails', async () => {
+      const startRes = await startDocument(E, WS, USER, CHAT, 'run_render_fail', {
+        title: 'Upload Failure Packet',
+        intended_sections: ['Agenda'],
+      });
+      await writeDocumentSections(E, WS, {
+        document_id: startRes.document_id,
+        revision_id: startRes.revision_id,
+        sections: [
+          { id: 'sec_a', title: 'Agenda', content_markdown: 'Failed upload content' },
+        ],
+      });
+      await publishDocument(E, WS, {
+        document_id: startRes.document_id,
+        revision_id: startRes.revision_id,
+        render_pdf: true,
+      });
+
+      // Storage accepts reads but every PDF write throws: the revision must
+      // end failed with no media row, never ready.
+      const failingStorage = new Proxy(E.STORAGE, {
+        get: (target, prop, receiver) => {
+          if (prop === 'put') {
+            return async () => { throw new Error('R2 upload failed'); };
+          }
+          const value = Reflect.get(target, prop, receiver);
+          return typeof value === 'function' ? value.bind(target) : value;
+        },
+      });
+      const failingEnv = { ...E, STORAGE: failingStorage };
+      const processed = await processDocumentRenderJobs(failingEnv, WS, startRes.revision_id);
+      expect(processed).toBe(0);
+
+      const rev = await E.DB.prepare(
+        'SELECT render_state, output_media_id FROM document_revisions WHERE id = ?'
+      ).bind(startRes.revision_id).first<{ render_state: string; output_media_id: string | null }>();
+      expect(rev!.render_state).toBe('failed');
+      expect(rev!.output_media_id).toBeNull();
+      const mediaCount = await E.DB.prepare(
+        `SELECT COUNT(*) AS n FROM media_objects WHERE workspace_id = ? AND id LIKE 'media_pdf\\_%' ESCAPE '\\'
+         AND object_key LIKE ?`
+      ).bind(WS, `%rev-${startRes.revision_id}-%`).first<{ n: number }>();
+      expect(mediaCount!.n).toBe(0);
+    });
+
+    it('retains pre-registered attempt inventory when upload and byte deletion both fail', async () => {
+      (E as unknown as Record<string, unknown>)['PDF_RENDER_TRANSPORT'] = async (html: string) =>
+        synthesizePdf('render-test', html, '2026-10-10');
+      const start = await startDocument(E, WS, USER, CHAT, 'run_pre_row_probe', {
+        title: 'Pre-row Probe',
+        intended_sections: ['Agenda'],
+      });
+      await writeDocumentSections(E, WS, {
+        document_id: start.document_id,
+        revision_id: start.revision_id,
+        sections: [
+          { id: 'sec_a', title: 'Agenda', content_markdown: ' retenation probe content' },
+        ],
+      });
+      await publishDocument(E, WS, {
+        document_id: start.document_id,
+        revision_id: start.revision_id,
+        render_pdf: true,
+      });
+
+      // Storage rejects both the PDF write and its deletion: the revision
+      // must end failed, but the attempt's pre-registered row (written
+      // before any byte existed) stays discoverable for the orphan reaper
+      // instead of vanishing with a rolled-back publication.
+      const failingStorage = new Proxy(E.STORAGE, {
+        get: (target, prop, receiver) => {
+          if (prop === 'put' || prop === 'delete') {
+            return async () => { throw new Error('R2 unavailable'); };
+          }
+          const value = Reflect.get(target, prop, receiver);
+          return typeof value === 'function' ? value.bind(target) : value;
+        },
+      });
+      const processed = await processDocumentRenderJobs({ ...E, STORAGE: failingStorage }, WS, start.revision_id);
+      expect(processed).toBe(0);
+
+      const rev = await E.DB.prepare(
+        'SELECT render_state, output_media_id FROM document_revisions WHERE id = ?'
+      ).bind(start.revision_id).first<{ render_state: string; output_media_id: string | null }>();
+      expect(rev!.render_state).toBe('failed');
+      expect(rev!.output_media_id).toBeNull();
+      const retained = await E.DB.prepare(
+        `SELECT id, state, object_key FROM media_objects WHERE workspace_id = ? AND object_key LIKE ?`
+      ).bind(WS, `%rev-${start.revision_id}-%`).all<{ id: string; state: string; object_key: string }>();
+      expect(retained.results!.length).toBe(1);
+      expect(retained.results![0]!.id).toMatch(/^media_pdf_/);
+      expect(retained.results![0]!.state).toBe('quarantine');
+    });
+
+    it('erasure commits cleanup intent transactionally and stops the render queue', async () => {
+      const { deleteWorkspace } = await import('@otis/identity');
+      const now = new Date().toISOString();
+      const WS_T = 'ws_docs_erased';
+      const CHAT_T = 'chat_docs_erased';
+      await E.DB.prepare(
+        `INSERT OR IGNORE INTO workspaces (id, name, owner_user_id, created_at, updated_at) VALUES (?, 'Erased Docs', ?, ?, ?)`
+      ).bind(WS_T, USER, now, now).run();
+      await E.DB.prepare(
+        `INSERT OR IGNORE INTO workspace_users (workspace_id, user_id, role, joined_at, created_at, updated_at) VALUES (?, ?, 'owner', ?, ?, ?)`
+      ).bind(WS_T, USER, now, now, now).run();
+      await E.DB.prepare(
+        `INSERT OR IGNORE INTO chats (id, workspace_id, author_user_id, title, created_at, updated_at, last_activity_at) VALUES (?, ?, ?, 'Erased Chat', ?, ?, ?)`
+      ).bind(CHAT_T, WS_T, USER, now, now, now).run();
+      const start = await startDocument(E, WS_T, USER, CHAT_T, 'run_erased_probe', {
+        title: 'Erased Probe',
+        intended_sections: ['Agenda'],
+      });
+      await writeDocumentSections(E, WS_T, {
+        document_id: start.document_id,
+        revision_id: start.revision_id,
+        sections: [{ id: 'sec_a', title: 'Agenda', content_markdown: 'doomed content' }],
+      });
+      await publishDocument(E, WS_T, {
+        document_id: start.document_id,
+        revision_id: start.revision_id,
+        render_pdf: true,
+      });
+
+      // The cascade commits the retry intent in the same transaction: a
+      // crash right after this return still leaves a discoverable job.
+      const erased = await deleteWorkspace(E.DB, {
+        workspaceId: WS_T,
+        actorUserId: USER,
+        r2CleanupIntent: { failedKeys: [], pendingPrefixes: [`workspace/${WS_T}/`, `${WS_T}/documents/`] },
+      });
+      expect(erased.deleted).toBe(true);
+      const intent = await E.DB.prepare(
+        `SELECT erasure_id, failed_keys_json, pending_prefixes_json FROM workspace_erasure_cleanups WHERE workspace_id = ?`
+      ).bind(WS_T).first<{ erasure_id: string; failed_keys_json: string; pending_prefixes_json: string }>();
+      expect(intent?.erasure_id).toBe(erased.erasureId);
+      expect(JSON.parse(intent!.pending_prefixes_json)).toEqual([`workspace/${WS_T}/`, `${WS_T}/documents/`]);
+
+      // No new attempt starts after deletion: the queue finds no revision,
+      // uploads nothing, and leaves no media rows behind.
+      const processed = await processDocumentRenderJobs(E, WS_T, start.revision_id);
+      expect(processed).toBe(0);
+      const leftover = await E.DB.prepare(
+        `SELECT COUNT(*) AS n FROM media_objects WHERE workspace_id = ? AND id LIKE 'media_pdf\\_%' ESCAPE '\\'`
+      ).bind(WS_T).first<{ n: number }>();
+      expect(Number(leftover?.n)).toBe(0);
+    });
+
     it('synthesizes multi-page PDF 1.4 binary with Romanian diacritics and table layouts', () => {
       const markdown = `
 # Ghid de pregătire pentru Cluj-Napoca
@@ -447,6 +708,8 @@ Diacritice românești verificate: **ș**, **ț**, **ă**, **î**, **â**, **Ș*
     });
 
     it('processes document render jobs in background queue and creates ready media object', async () => {
+      (E as unknown as Record<string, unknown>)['PDF_RENDER_TRANSPORT'] = async (html: string) =>
+        synthesizePdf('render-test', html, '2026-10-10');
       // Start and publish a document requesting PDF render
       const startRes = await startDocument(E, WS, USER, CHAT, 'run_render_test', {
         title: 'Cluj Practice Packet PDF',
@@ -570,6 +833,18 @@ Hunor is traveling to Cluj-Napoca tomorrow to conduct in-person commercial meeti
 ### Objection Handling
 - **Objection**: "Our trainers already use WhatsApp groups."
 - **Response**: "WhatsApp works for informal chats, but it loses payment tracking and causes double bookings. Let us keep the convenience while securing the revenue."
+`,
+          },
+          {
+            id: 'sec_dancer',
+            title: 'Meeting 2: Dancer Follow-up & Value Alignment',
+            content_markdown: `
+### Studio Expansion Discovery
+- "How do you currently track trial-class conversions into memberships?"
+- "What would sustainable expansion look like without adding admin hours?"
+
+### Value Alignment
+Creative scheduling freedom plus reliable payment tracking for workshops and residencies.
 `,
           },
           {

@@ -69,6 +69,26 @@ export interface DurableAgentProgress {
   sentAnswerMessageId?: string;
   approvedBulkScope?: string[];
   /**
+   * Bounded output-truncation repair (BG07, BG13). Armed when a provider
+   * round ends `length_exceeded`; at most one repair ticket per run. The
+   * repair instruction is frozen with the logical repair request
+   * (`issuedRoundIndex` + `steering`) and reattached — never rebuilt, never
+   * double-counted — until that request's result is durably consumed, so a
+   * restart between arming, issuing, or consuming cannot lose or duplicate
+   * it. Survives slice boundaries and restarts inside durable progress; a
+   * repeated truncation afterwards fails truthfully.
+   */
+  truncationRepair?: {
+    armed: boolean;
+    roundIndex: number;
+    incompleteReason: string | null;
+    pendingCalls: number;
+    /** Frozen repair instruction attached to the issued request, if any. */
+    steering: string | null;
+    /** Round index the frozen instruction was issued on, if any. */
+    issuedRoundIndex: number | null;
+  };
+  /**
    * Set when the correction guard steered one extra round after a text-only
    * answer to an explicit value correction. At most one steered round per
    * run: a second text-only answer completes normally instead of looping.
@@ -97,6 +117,26 @@ export interface CollectedProviderRound {
   usage?: ProviderUsage | null;
 }
 
+/**
+ * Bounded truncation detail carried on a `length_exceeded` AgentStreamError.
+ * Lets the handler preserve verified work and issue one smaller repair
+ * request instead of failing the run on an oversized response. Counts and
+ * verified calls only; unfinished partial calls are never carried.
+ */
+export interface TruncationRecovery {
+  /** Terminal condition that cut the round short (`incomplete`, or null when the wire shape carries none). */
+  terminalStatus: string | null;
+  /** Provider incomplete reason (`max_output_tokens`, `content_filter`, ...), null when absent. */
+  incompleteReason: string | null;
+  /** Streamed calls still unfinished at truncation; dropped, never executed. */
+  pendingCalls: number;
+  /** Calls fully completed before truncation; validated executable. */
+  completedCalls: AssistantCall[];
+  /** Server continuation linking the next request; null when absent. */
+  continuation: ServerContinuation | null;
+  usage?: ProviderUsage | null;
+}
+
 export class AgentStreamError extends Error {
   public readonly code:
     | 'stream_interrupted'
@@ -118,6 +158,19 @@ export class AgentStreamError extends Error {
   public readonly retryable?: boolean;
   public readonly retryAfterMs?: number | null;
   public readonly status?: number;
+  /**
+   * Bounded terminal metadata carried from the adapter's classification.
+   * Counts/status only; never raw content or arguments.
+   */
+  public readonly terminalStatus?: string | null;
+  public readonly incompleteReason?: string | null;
+  public readonly pendingCalls?: number | null;
+  /**
+   * Truncation recovery detail, present only when `code` is
+   * `length_exceeded`. Carries the verified completed calls, the linking
+   * continuation, and the terminal condition — never unfinished partials.
+   */
+  public readonly truncation?: TruncationRecovery;
 
   constructor(
     code:
@@ -135,6 +188,8 @@ export class AgentStreamError extends Error {
     retryable?: boolean,
     retryAfterMs?: number | null,
     status?: number,
+    terminal?: { terminalStatus?: string | null; incompleteReason?: string | null; pendingCalls?: number | null },
+    truncation?: TruncationRecovery,
   ) {
     super(message);
     this.name = 'AgentStreamError';
@@ -143,6 +198,10 @@ export class AgentStreamError extends Error {
     if (retryable !== undefined) this.retryable = retryable;
     if (retryAfterMs !== undefined) this.retryAfterMs = retryAfterMs;
     if (status !== undefined) this.status = status;
+    if (terminal?.terminalStatus !== undefined) this.terminalStatus = terminal.terminalStatus;
+    if (terminal?.incompleteReason !== undefined) this.incompleteReason = terminal.incompleteReason;
+    if (terminal?.pendingCalls !== undefined) this.pendingCalls = terminal.pendingCalls;
+    if (truncation !== undefined) this.truncation = truncation;
   }
 }
 
@@ -206,6 +265,7 @@ export async function collectAndValidateProviderStream(
   let continuation: ServerContinuation | null = null;
   let usage: ProviderUsage | null = null;
   let receivedTerminalEvent = false;
+  let truncationSignal: { terminalStatus?: string | null; incompleteReason?: string | null } | null = null;
 
   for await (const event of stream) {
     switch (event.type) {
@@ -253,6 +313,7 @@ export async function collectAndValidateProviderStream(
         receivedTerminalEvent = true;
         finishReason = event.reason;
         continuation = event.continuation;
+        if (event.truncation) truncationSignal = event.truncation;
         break;
 
       case 'error':
@@ -263,6 +324,11 @@ export async function collectAndValidateProviderStream(
           event.error.retryable,
           event.error.retryAfterMs,
           event.error.status,
+          {
+            terminalStatus: event.error.terminalStatus ?? null,
+            incompleteReason: event.error.incompleteReason ?? null,
+            pendingCalls: event.error.pendingCalls ?? null,
+          },
         );
     }
   }
@@ -281,7 +347,36 @@ export async function collectAndValidateProviderStream(
   }
 
   if (finishReason === 'length_limit') {
-    throw new AgentStreamError('length_exceeded', 'Model reached maximum output token limit before finishing.');
+    // Truncation: validate only fully ended calls — unfinished partials are
+    // dropped here, never executed — and carry the verified calls plus the
+    // linking continuation so the handler can preserve saved work and issue
+    // one bounded smaller repair request instead of failing the run.
+    const completedCalls: AssistantCall[] = [];
+    let pendingCalls = 0;
+    for (const item of toolCallsMap.values()) {
+      if (!item.ended) {
+        pendingCalls += 1;
+        continue;
+      }
+      completedCalls.push(resolveValidatedCall(item));
+    }
+    throw new AgentStreamError(
+      'length_exceeded',
+      'Model reached maximum output token limit before finishing.',
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      {
+        terminalStatus: truncationSignal?.terminalStatus ?? null,
+        incompleteReason: truncationSignal?.incompleteReason ?? null,
+        pendingCalls,
+        completedCalls,
+        continuation,
+        usage,
+      },
+    );
   }
 
   if (finishReason !== 'success' && finishReason !== 'tool_handoff') {
@@ -297,48 +392,7 @@ export async function collectAndValidateProviderStream(
         `Tool call '${item.name}' (${item.callId}) ended without receiving tool_call_end event.`,
       );
     }
-
-    let args: unknown = item.parsedArgs;
-    if (args === undefined && item.argsChunk) {
-      try {
-        args = JSON.parse(item.argsChunk);
-      } catch (err) {
-        throw new AgentStreamError(
-          'malformed_tool_args',
-          `Tool '${item.name}' arguments failed JSON parse: ${err instanceof Error ? err.message : String(err)}`,
-        );
-      }
-    }
-    if (args === undefined) {
-      args = {};
-    }
-
-    // 3. Pre-validate against registered schema. Correctable argument
-    // errors on known tools flow through the executor as rejected tool
-    // results, so the model sees typed feedback and can fix and retry them
-    // in the next round instead of failing the whole run. An unknown tool
-    // still aborts the round before any sibling mutates: a plan referencing
-    // a nonexistent capability is untrustworthy as a whole. The executor
-    // re-validates identically (authority and policy stay rejected there);
-    // collection still throws only for transport/protocol defects otherwise.
-    const validation = validateToolCall(item.name, args);
-    if (!validation.ok) {
-      if (validation.error.code === 'unknown_tool') {
-        throw new AgentStreamError('unknown_tool', `Model proposed unrecognized tool '${item.name}'.`);
-      }
-      completedCalls.push({
-        callId: item.callId,
-        name: item.name,
-        args,
-      });
-      continue;
-    }
-
-    completedCalls.push({
-      callId: item.callId,
-      name: item.name,
-      args,
-    });
+    completedCalls.push(resolveValidatedCall(item));
   }
 
   return {
@@ -347,6 +401,52 @@ export async function collectAndValidateProviderStream(
     finishReason,
     continuation,
     usage,
+  };
+}
+
+/**
+ * Resolves one ended call's arguments and pre-validates it against the
+ * registered schema. Correctable argument errors on known tools are kept:
+ * the executor rejects them as tool results so the model sees typed feedback
+ * and can fix them next round. An unknown tool aborts the round before any
+ * sibling mutates. Shared by the success and truncation paths so both admit
+ * exactly the same calls.
+ */
+function resolveValidatedCall(item: { callId: string; name: string; argsChunk: string; parsedArgs?: unknown }): AssistantCall {
+  let args: unknown = item.parsedArgs;
+  if (args === undefined && item.argsChunk) {
+    try {
+      args = JSON.parse(item.argsChunk);
+    } catch (err) {
+      throw new AgentStreamError(
+        'malformed_tool_args',
+        `Tool '${item.name}' arguments failed JSON parse: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  }
+  if (args === undefined) {
+    args = {};
+  }
+
+  // 3. Pre-validate against registered schema. Correctable argument
+  // errors on known tools flow through the executor as rejected tool
+  // results, so the model sees typed feedback and can fix and retry them
+  // in the next round instead of failing the whole run. An unknown tool
+  // still aborts the round before any sibling mutates: a plan referencing
+  // a nonexistent capability is untrustworthy as a whole. The executor
+  // re-validates identically (authority and policy stay rejected there);
+  // collection still throws only for transport/protocol defects otherwise.
+  const validation = validateToolCall(item.name, args);
+  if (!validation.ok) {
+    if (validation.error.code === 'unknown_tool') {
+      throw new AgentStreamError('unknown_tool', `Model proposed unrecognized tool '${item.name}'.`);
+    }
+  }
+
+  return {
+    callId: item.callId,
+    name: item.name,
+    args,
   };
 }
 

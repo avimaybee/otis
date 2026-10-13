@@ -1039,7 +1039,7 @@ export function recordsScopeFor(handler: unknown, args: unknown): RecordsOperati
   return scope;
 }
 
-function chunkIn(ids: string[], size = 80): string[][] {
+function chunkIn(ids: string[], size = 40): string[][] {
   const unique = [...new Set(ids)];
   const chunks: string[][] = [];
   for (let i = 0; i < unique.length; i += size) chunks.push(unique.slice(i, i + size));

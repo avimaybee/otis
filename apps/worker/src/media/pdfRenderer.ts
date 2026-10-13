@@ -669,59 +669,77 @@ export async function renderDocumentToPdf(
     return await env.PDF_RENDER_TRANSPORT(html);
   }
 
-  // 2. Cloudflare Browser Rendering REST endpoint
-  if (env.BROWSER_RUN_ACCOUNT_ID && env.BROWSER_RUN_API_KEY) {
-    try {
-      const response = await fetch(
-        `https://api.cloudflare.com/client/v4/accounts/${env.BROWSER_RUN_ACCOUNT_ID}/browser-rendering/pdf`,
-        {
-          method: 'POST',
-          headers: {
-            Authorization: `Bearer ${env.BROWSER_RUN_API_KEY}`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            html,
-            pdfOptions: {
-              format: 'A4',
-              printBackground: true,
-              margin: { top: '20mm', bottom: '20mm', left: '15mm', right: '15mm' },
-            },
-          }),
-        }
-      );
-      if (response.ok) {
-        const bytes = new Uint8Array(await response.arrayBuffer());
-        if (bytes.byteLength >= 8) return bytes;
-      }
-    } catch {
-      // Fall through to synthesizer
-    }
-  }
-
-  // 3. Cloudflare Browser binding fetch
+  // 2. Cloudflare Browser Run binding via documented quickAction("pdf", …).
+  // No silent degraded substitute: an unavailable or failing renderer leaves
+  // a retryable failed state with source preview intact.
   if (env.BROWSER) {
     try {
-      const response = await env.BROWSER.fetch('https://browser.cloudflare.com/pdf', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
+      const browser = env.BROWSER as unknown as {
+        quickAction?: (action: string, params: Record<string, unknown>) => Promise<Response | Uint8Array | ArrayBuffer>;
+        fetch?: (input: string, init?: RequestInit) => Promise<Response>;
+      };
+      if (typeof browser.quickAction === 'function') {
+        const result = await browser.quickAction('pdf', {
           html,
+          rejectResourceTypes: ['image', 'media', 'font'],
           pdfOptions: {
             format: 'A4',
             printBackground: true,
+            displayHeaderFooter: true,
+            headerTemplate: '<div></div>',
+            footerTemplate: '<div style="width:100%;font-size:9px;text-align:right;padding:0 12mm;">Page <span class="pageNumber"></span> of <span class="totalPages"></span></div>',
+            margin: { top: '20mm', bottom: '20mm', left: '15mm', right: '15mm' },
           },
-        }),
-      });
-      if (response.ok) {
-        const bytes = new Uint8Array(await response.arrayBuffer());
-        if (bytes.byteLength >= 8) return bytes;
+        });
+        if (result instanceof Uint8Array && result.byteLength >= 8) return result;
+        if (result instanceof ArrayBuffer && result.byteLength >= 8) return new Uint8Array(result);
+        if (result && typeof (result as Response).arrayBuffer === 'function') {
+          const response = result as Response;
+          if (response.ok) {
+            const bytes = new Uint8Array(await response.arrayBuffer());
+            if (bytes.byteLength >= 8) return bytes;
+          }
+          throw new Error(`PDF renderer binding failed with HTTP ${response.status}.`);
+        }
+      } else if (typeof browser.fetch === 'function') {
+        throw new Error('PDF renderer binding does not implement quickAction("pdf", …). Configure a Browser Run binding.');
       }
-    } catch {
-      // Fall through to synthesizer
+    } catch (err) {
+      throw err instanceof Error ? err : new Error('PDF renderer binding failed.');
     }
   }
 
-  // 4. Pure-TS synthesizer fallback
-  return synthesizePdfFromText(title, markdown);
+  // 3. Cloudflare Browser Run REST endpoint (browser-run/pdf).
+  if (env.BROWSER_RUN_ACCOUNT_ID && env.BROWSER_RUN_API_KEY) {
+    const response = await fetch(
+      `https://api.cloudflare.com/client/v4/accounts/${env.BROWSER_RUN_ACCOUNT_ID}/browser-run/pdf`,
+      {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${env.BROWSER_RUN_API_KEY}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          html,
+          rejectResourceTypes: ['image', 'media'],
+          pdfOptions: {
+            format: 'A4',
+            printBackground: true,
+            displayHeaderFooter: true,
+            footerTemplate: '<div style="width:100%;font-size:9px;text-align:right;padding:0 12mm;">Page <span class="pageNumber"></span> of <span class="totalPages"></span></div>',
+            margin: { top: '20mm', bottom: '20mm', left: '15mm', right: '15mm' },
+          },
+        }),
+      }
+    );
+    if (response.ok) {
+      const bytes = new Uint8Array(await response.arrayBuffer());
+      if (bytes.byteLength >= 8) return bytes;
+    }
+    throw new Error(`PDF renderer REST failed with HTTP ${response.status}. Source preview remains available.`);
+  }
+
+  throw new Error(
+    'PDF renderer is not configured. Source preview remains available; configure a Browser Run binding or REST credentials, then Retry PDF.'
+  );
 }

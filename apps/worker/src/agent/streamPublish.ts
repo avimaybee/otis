@@ -86,6 +86,13 @@ export class StreamPublisher {
   private readonly budget: SharedThinkingBudget;
   private chain: Promise<void> = Promise.resolve();
   private closed = false;
+  /**
+   * Publication generation: execution attempt + provider request attempt
+   * (e.g. `a1b2c3d4.1`). Empty preserves the historical key shape; a retry
+   * uses a new generation so its frames/chunks never collide with the failed
+   * request's provisional display under run/round keys.
+   */
+  private readonly generation: string;
 
   constructor(
     private readonly publish: StreamPublishFn,
@@ -100,8 +107,15 @@ export class StreamPublisher {
      * durable close path is untouched (the turn outcome decides it).
      */
     private readonly isAborted?: () => boolean,
+    generation = '',
   ) {
     this.budget = sharedBudget ?? createThinkingBudget();
+    this.generation = generation;
+  }
+
+  /** Durable key scope: historical shape when generation is empty, generation-scoped on retry. */
+  private key(base: string): string {
+    return this.generation ? `r${this.roundIndex}_g${this.generation}_${base}` : `r${this.roundIndex}_${base}`;
   }
 
   /** Serializes every persisted flush; a rejection is logged and the chain continues. */
@@ -235,6 +249,30 @@ export class StreamPublisher {
     return this.drainOk;
   }
 
+  /**
+   * Retires the provisional display without persisting a replacement: a
+   * retryable stream failure that will retry must not append its partial
+   * preamble into the answer via durable chunks, nor collide with the
+   * replacement request's keys. Already-enqueued publication settles first
+   * so budget accounting stays exact; only the still-unpublished remainder
+   * releases its allowance back to the shared budget, and published counts
+   * stand. A terminal failure still uses close('interrupted') so its partial
+   * text remains visible.
+   */
+  async discard(): Promise<void> {
+    if (this.closed) return;
+    this.closed = true;
+    // Fence pending publication: refused pushes/ticks enqueue nothing new,
+    // and the serial chain settles exactly what was already authorized.
+    await this.chain;
+    for (const block of this.blocks.values()) {
+      this.budget.bufferedChars -= block.buffer.length;
+    }
+    this.blocks.clear();
+    this.textBuffer = '';
+    this.textBufferedAt = null;
+  }
+
   private drainOk = true;
 
   private async drainWork(outcome: 'complete' | 'interrupted'): Promise<void> {
@@ -248,7 +286,7 @@ export class StreamPublisher {
         await this.flushBlockWork(blockId, outcome);
       }
       if (terminal === 'truncated') {
-        await this.publish(`r${this.roundIndex}_think_${blockId}_end`, 'reasoning_summary', {
+        await this.publish(this.key(`think_${blockId}_end`), 'reasoning_summary', {
           provider: this.provider,
           text: '',
           round_index: this.roundIndex,
@@ -256,11 +294,12 @@ export class StreamPublisher {
           content_kind: 'summary',
           mode: 'append',
           state: 'truncated',
+          generation: this.generation,
         });
         block.lastState = 'truncated';
       } else if (block.publishedRecords > 0 && block.lastState === 'streaming') {
         // Final metadata-only record: terminal state without repeating text.
-        await this.publish(`r${this.roundIndex}_think_${blockId}_end`, 'reasoning_summary', {
+        await this.publish(this.key(`think_${blockId}_end`), 'reasoning_summary', {
           provider: this.provider,
           text: '',
           round_index: this.roundIndex,
@@ -268,6 +307,7 @@ export class StreamPublisher {
           content_kind: 'summary',
           mode: 'append',
           state: terminal,
+          generation: this.generation,
         });
         block.lastState = terminal;
       }
@@ -278,7 +318,7 @@ export class StreamPublisher {
     while (this.textBuffer && this.textChunks < TEXT_MAX_CHUNKS) {
       const text = this.textBuffer.slice(0, TEXT_CHUNK_CHARS);
       const chunk = this.textChunks;
-      await this.publish(`r${this.roundIndex}_text${chunk}`, 'text_chunk', {
+      await this.publish(this.key(`text${chunk}`), 'text_chunk', {
         text,
         round_index: this.roundIndex,
       });
@@ -295,7 +335,7 @@ export class StreamPublisher {
     const text = block.buffer.slice(0, THINKING_BATCH_CHARS);
     const mode = block.cleanSnapshot ? 'snapshot' : 'append';
     const record = block.publishedRecords;
-    await this.publish(`r${this.roundIndex}_think_${blockId}_${record}`, 'reasoning_summary', {
+    await this.publish(this.key(`think_${blockId}_${record}`), 'reasoning_summary', {
       provider: this.provider,
       text,
       round_index: this.roundIndex,
@@ -303,6 +343,10 @@ export class StreamPublisher {
       content_kind: 'summary',
       mode,
       state,
+      // Publication generation: retries reuse provider block IDs, so the
+      // client reducer keys on generation to keep a failed request's
+      // summaries apart from its replacement. Legacy rows carry ''.
+      generation: this.generation,
     });
     block.buffer = block.buffer.slice(THINKING_BATCH_CHARS);
     this.budget.bufferedChars -= text.length;

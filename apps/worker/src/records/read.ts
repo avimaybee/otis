@@ -44,6 +44,7 @@ export interface RecordsReadQuery {
   cursor?: string;
   search: string;
   sortParam: string;
+  status?: string;
 }
 const CORE_BUSINESS_KINDS = new Set([
   'lead',
@@ -104,6 +105,7 @@ export async function readRecordsPage(
   const limit = query.limit;
   const cursor = query.cursor;
   const search = query.search;
+  const statusFilter = (query.status ?? '').trim().toLowerCase();
 
     /**
      * Validated sort spec: `column:direction` against a per-list allowlist.
@@ -579,102 +581,96 @@ export async function readRecordsPage(
           binding: { kind: 'entity_contact', method: 'phone' },
           capabilities: { sortable: true, filterable: true, editable: true },
         });
-        if (hasData('email')) {
+        cols.push({
+          id: 'email',
+          name: 'Email',
+          type: 'text',
+          width: 180,
+          binding: { kind: 'entity_contact', method: 'email' },
+          capabilities: { sortable: true, filterable: true, editable: true },
+        });
+        cols.push({
+          id: 'company',
+          name: 'Company',
+          type: 'text',
+          width: 160,
+          binding: { kind: 'entity_field', field_id: 'company', field_name: 'company' },
+          capabilities: { sortable: true, filterable: true, editable: true },
+        });
+        cols.push({
+          id: 'value',
+          name: 'Deal value',
+          type: 'currency',
+          width: 130,
+          binding: { kind: 'interaction', property: 'latest_quote' },
+          capabilities: { sortable: true, filterable: true, editable: true },
+        });
+        cols.push({
+          id: 'notes',
+          name: 'Notes',
+          type: 'text',
+          width: 280,
+          binding: { kind: 'interaction', property: 'latest_note' },
+          capabilities: { sortable: true, filterable: true, editable: true },
+        });
+        cols.push({
+          id: 'next_action',
+          name: 'Next action',
+          type: 'text',
+          width: 200,
+          capabilities: { sortable: true, filterable: true, editable: false },
+        });
+        cols.push({
+          id: 'assignee',
+          name: 'Assignee',
+          type: 'text',
+          width: 140,
+          binding: { kind: 'entity_property', property: 'assigned_user_id' },
+          capabilities: { sortable: true, filterable: true, editable: true },
+        });
+        cols.push({
+          id: 'kind',
+          name: 'Type',
+          type: 'text',
+          width: 110,
+          binding: { kind: 'entity_property', property: 'kind' },
+          capabilities: { sortable: true, filterable: true, editable: false },
+        });
+        cols.push({
+          id: 'address',
+          name: 'Address',
+          type: 'text',
+          width: 200,
+          binding: { kind: 'entity_field', field_id: 'address', field_name: 'address' },
+          capabilities: { sortable: true, filterable: true, editable: true },
+        });
+        cols.push({
+          id: 'language',
+          name: 'Language',
+          type: 'text',
+          width: 120,
+          binding: { kind: 'entity_field', field_id: 'preferred_language', field_name: 'preferred_language' },
+          capabilities: { sortable: true, filterable: true, editable: true },
+        });
+        cols.push({
+          id: 'access',
+          name: 'Access instructions',
+          type: 'text',
+          width: 240,
+          binding: { kind: 'entity_field', field_id: 'access', field_name: 'access' },
+          capabilities: { sortable: true, filterable: true, editable: true },
+        });
+        // Durable custom columns for this list survive even when empty: they
+        // come from definitions, not from scanning the loaded page.
+        for (const durable of durableColsByList.get('leads') ?? []) {
+          if (cols.some((c) => c.id === (durable.field_id || durable.id))) continue;
+          const fieldId = durable.field_id || durable.id;
           cols.push({
-            id: 'email',
-            name: 'Email',
+            id: fieldId,
+            name: String(fieldId).replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase()),
             type: 'text',
-            width: 180,
-            binding: { kind: 'entity_contact', method: 'email' },
-            capabilities: { sortable: true, filterable: true, editable: true },
-          });
-        }
-        if (hasData('company')) {
-          cols.push({
-            id: 'company',
-            name: 'Company',
-            type: 'text',
-            width: 160,
-            binding: { kind: 'entity_field', field_id: 'company', field_name: 'company' },
-            capabilities: { sortable: true, filterable: true, editable: true },
-          });
-        }
-        if (hasData('value') || rows.length === 0) {
-          cols.push({
-            id: 'value',
-            name: 'Deal value',
-            type: 'currency',
-            width: 130,
-            binding: { kind: 'interaction', property: 'latest_quote' },
-            capabilities: { sortable: true, filterable: true, editable: true },
-          });
-        }
-        if (hasData('notes') || rows.length === 0) {
-          cols.push({
-            id: 'notes',
-            name: 'Notes',
-            type: 'text',
-            width: 280,
-            binding: { kind: 'interaction', property: 'latest_note' },
-            capabilities: { sortable: true, filterable: true, editable: true },
-          });
-        }
-        if (hasData('next_action')) {
-          cols.push({
-            id: 'next_action',
-            name: 'Next action',
-            type: 'text',
-            width: 200,
-            capabilities: { sortable: true, filterable: true, editable: false },
-          });
-        }
-        if (hasData('assignee')) {
-          cols.push({
-            id: 'assignee',
-            name: 'Assignee',
-            type: 'text',
-            width: 140,
-            binding: { kind: 'entity_property', property: 'assigned_user_id' },
-            capabilities: { sortable: true, filterable: true, editable: true },
-          });
-        }
-        if (hasData('kind')) {
-          cols.push({
-            id: 'kind',
-            name: 'Type',
-            type: 'text',
-            width: 110,
-            binding: { kind: 'entity_property', property: 'kind' },
-            capabilities: { sortable: true, filterable: true, editable: false },
-          });
-        }
-        if (hasData('address')) {
-          cols.push({
-            id: 'address',
-            name: 'Address',
-            type: 'text',
-            width: 200,
-            binding: { kind: 'entity_field', field_id: 'address', field_name: 'address' },
-            capabilities: { sortable: true, filterable: true, editable: true },
-          });
-        }
-        if (hasData('language')) {
-          cols.push({
-            id: 'language',
-            name: 'Language',
-            type: 'text',
-            width: 120,
-            binding: { kind: 'entity_field', field_id: 'preferred_language', field_name: 'preferred_language' },
-            capabilities: { sortable: true, filterable: true, editable: true },
-          });
-        }
-        if (hasData('access')) {
-          cols.push({
-            id: 'access',
-            name: 'Access instructions',
-            type: 'text',
-            width: 240,
-            binding: { kind: 'entity_field', field_id: 'access', field_name: 'access' },
+            width: durable.width || 160,
+            binding: { kind: 'custom_row_value', column_id: fieldId },
             capabilities: { sortable: true, filterable: true, editable: true },
           });
         }
@@ -686,7 +682,9 @@ export async function readRecordsPage(
         if (hasData('assignee')) cols.push({ id: 'assignee', name: 'Assignee', type: 'text', width: 140 });
       }
 
-      // Dynamic custom columns
+      // Legacy fallback for projection-only values without a durable
+      // definition: display as text so old data stays visible. Durable
+      // definitions above always win; no type is guessed from cell text.
       const knownIds = new Set(cols.map((c) => c.id));
       for (const row of rows) {
         for (const [cellKey, cellVal] of Object.entries(row.cells)) {
@@ -695,11 +693,7 @@ export async function readRecordsPage(
             cols.push({
               id: cellKey,
               name: cellKey.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase()),
-              type: /price|cost|amount|val/i.test(cellKey)
-                ? 'currency'
-                : /^\d+$/.test(cellVal.trim())
-                  ? 'number'
-                  : 'text',
+              type: 'text',
               width: 160,
               binding: { kind: 'entity_field', field_id: cellKey, field_name: cellKey },
               capabilities: { sortable: true, filterable: true, editable: true },
@@ -741,6 +735,14 @@ export async function readRecordsPage(
       const entityCursor = hasExplicitList && selectedListId === 'leads' ? decodeCursor(cursor, 2) : null;
       let entSql = `SELECT id, name, kind, status, assigned_user_id, created_at, updated_at FROM entities WHERE workspace_id = ? AND status != 'deleted'`;
       const entBinds: unknown[] = [workspaceId];
+      // Source predicates before pagination: core kinds only and no merged
+      // redirect sources, so LIMIT/has-more describe the displayed set.
+      entSql += ` AND (kind IS NULL OR lower(kind) IN ('lead','client','prospect','contact','person','business','company','organization','partner','vendor',''))`;
+      entSql += ` AND NOT EXISTS (SELECT 1 FROM entity_redirects redirect WHERE redirect.workspace_id = entities.workspace_id AND redirect.source_entity_id = entities.id)`;
+      if (statusFilter) {
+        entSql += ` AND lower(status) = ?`;
+        entBinds.push(statusFilter);
+      }
       if (search) {
         entSql += ` AND (name LIKE ? ${LIKE_ESCAPE} OR id LIKE ? ${LIKE_ESCAPE})`;
         entBinds.push(likePattern(search), likePattern(search));
@@ -761,6 +763,7 @@ export async function readRecordsPage(
         created_at: string;
         updated_at: string;
       }>();
+      // Safety filters only: SQL already restricts to core non-redirect rows.
       allRawEntities = (entRes.results || []).filter((e) => canonical(e.id) === e.id);
 
       const hasMoreEntities = allRawEntities.length > limit;
@@ -776,38 +779,58 @@ export async function readRecordsPage(
 
       if (targetEntities.length > 0) {
         const entIds = targetEntities.map((e) => e.id);
-        const placeholders = entIds.map(() => '?').join(',');
+        // Bound every statement under the 100-parameter limit: entity ID
+        // lists chunk at 80 (81 bindings with workspace), and each chunk
+        // contributes its own four reads merged below.
+        const entIdChunks: string[][] = [];
+        for (let i = 0; i < entIds.length; i += 80) entIdChunks.push(entIds.slice(i, i + 80));
+        const chunkedReads: D1PreparedStatement[] = [];
+        for (const chunk of entIdChunks) {
+          const placeholders = chunk.map(() => '?').join(',');
+          chunkedReads.push(
+            db.prepare(
+              `SELECT id, entity_id, method, value, is_primary, state, revision, updated_at
+               FROM entity_contacts WHERE workspace_id = ? AND entity_id IN (${placeholders}) AND state != 'removed'
+               ORDER BY is_primary DESC, updated_at ASC`,
+            ).bind(workspaceId, ...chunk),
+            db.prepare(
+              `SELECT entity_id, field_name, state, value_text, value_json, provenance, revision, updated_at
+               FROM entity_state WHERE workspace_id = ? AND entity_id IN (${placeholders})`,
+            ).bind(workspaceId, ...chunk),
+            db.prepare(
+              `SELECT id, entity_id, title, status, due_kind, due_local_date, due_instant, snooze_until
+               FROM tasks WHERE workspace_id = ? AND entity_id IN (${placeholders}) AND status = 'open'
+               ORDER BY CASE WHEN due_local_date IS NOT NULL THEN due_local_date WHEN due_instant IS NOT NULL THEN due_instant ELSE '9999-99-99' END ASC`,
+            ).bind(workspaceId, ...chunk),
+            db.prepare(
+              `SELECT i.entity_id, i.kind, i.occurred_at, i.head_event_id, i.head_value_json, e.payload_json AS head_payload_json
+               FROM interaction_state i
+               LEFT JOIN events e ON e.workspace_id = i.workspace_id AND e.id = i.head_event_id
+               WHERE i.workspace_id = ? AND i.entity_id IN (${placeholders}) AND i.state = 'active'
+               ORDER BY i.occurred_at DESC`,
+            ).bind(workspaceId, ...chunk),
+          );
+        }
 
-        const batchResults = await db.batch([
-          db.prepare(
-            `SELECT id, entity_id, method, value, is_primary, state, revision, updated_at
-             FROM entity_contacts WHERE workspace_id = ? AND entity_id IN (${placeholders}) AND state != 'removed'
-             ORDER BY is_primary DESC, updated_at ASC`,
-          ).bind(workspaceId, ...entIds),
-          db.prepare(
-            `SELECT entity_id, field_name, state, value_text, value_json, provenance, revision, updated_at
-             FROM entity_state WHERE workspace_id = ? AND entity_id IN (${placeholders})`,
-          ).bind(workspaceId, ...entIds),
-          db.prepare(
-            `SELECT id, entity_id, title, status, due_kind, due_local_date, due_instant, snooze_until
-             FROM tasks WHERE workspace_id = ? AND entity_id IN (${placeholders}) AND status = 'open'
-             ORDER BY CASE WHEN due_local_date IS NOT NULL THEN due_local_date WHEN due_instant IS NOT NULL THEN due_instant ELSE '9999-99-99' END ASC`,
-          ).bind(workspaceId, ...entIds),
-          db.prepare(
-            `SELECT i.entity_id, i.kind, i.occurred_at, i.head_event_id, i.head_value_json, e.payload_json AS head_payload_json
-             FROM interaction_state i
-             LEFT JOIN events e ON e.workspace_id = i.workspace_id AND e.id = i.head_event_id
-             WHERE i.workspace_id = ? AND i.entity_id IN (${placeholders}) AND i.state = 'active'
-             ORDER BY i.occurred_at DESC`,
-          ).bind(workspaceId, ...entIds),
-        ]);
-        const cRes = batchResults[0];
-        const fRes = batchResults[1];
-        const tRes = batchResults[2];
-        const iRes = batchResults[3];
-        if (!cRes || !fRes || !tRes || !iRes) {
+        const batchResults = await db.batch(chunkedReads);
+        if (batchResults.length !== chunkedReads.length) {
           throw new Error('Database batch query returned incomplete results');
         }
+        const cRows: Array<{ id: string; entity_id: string; method: string; value: string; is_primary: number; state: string; revision?: number; updated_at?: string }> = [];
+        const fRows: Array<{ entity_id: string; field_name: string; state: string; value_text: string | null; value_json: string | null; provenance: string; revision?: number; updated_at?: string }> = [];
+        const tRows: Array<{ id: string; entity_id: string; title: string; status: string; due_kind: string | null; due_local_date: string | null; due_instant: string | null; snooze_until: string | null }> = [];
+        const iRows: Array<{ entity_id: string; kind: string; occurred_at: string; head_event_id: string; head_value_json: string | null; head_payload_json: string | null }> = [];
+        batchResults.forEach((result, index) => {
+          const rows = ((result as unknown as { results?: Array<never> }).results ?? []) as never[];
+          if (index % 4 === 0) cRows.push(...(rows as typeof cRows));
+          else if (index % 4 === 1) fRows.push(...(rows as typeof fRows));
+          else if (index % 4 === 2) tRows.push(...(rows as typeof tRows));
+          else iRows.push(...(rows as typeof iRows));
+        });
+        const cRes = { results: cRows };
+        const fRes = { results: fRows };
+        const tRes = { results: tRows };
+        const iRes = { results: iRows };
 
         const contactsByEnt = new Map<string, Array<{ id: string; method: string; value: string; is_primary: number; state: string; revision?: number; updated_at?: string }>>();
         for (const c of (cRes.results || []) as Array<{ id: string; entity_id: string; method: string; value: string; is_primary: number; state: string; revision?: number; updated_at?: string }>) {
@@ -1216,14 +1239,20 @@ export async function readRecordsPage(
         const customRowItems = customItems;
         if (customRowItems.length > 0) {
           const rowIds = customRowItems.map((r) => r.id);
-          const placeholders = rowIds.map(() => '?').join(',');
-          const valRes = await db.prepare(
-            `SELECT row_id, column_id, value_text, value_json, updated_at FROM records_values WHERE workspace_id = ? AND row_id IN (${placeholders})`,
-          ).bind(workspaceId, ...rowIds).all<{ row_id: string; column_id: string; value_text: string | null; value_json: string | null; updated_at: string }>();
+          // Bound each statement under the 100-parameter limit.
+          const valRows: Array<{ row_id: string; column_id: string; value_text: string | null; value_json: string | null; updated_at: string }> = [];
+          for (let i = 0; i < rowIds.length; i += 80) {
+            const chunk = rowIds.slice(i, i + 80);
+            const placeholders = chunk.map(() => '?').join(',');
+            const valRes = await db.prepare(
+              `SELECT row_id, column_id, value_text, value_json, updated_at FROM records_values WHERE workspace_id = ? AND row_id IN (${placeholders})`,
+            ).bind(workspaceId, ...chunk).all<{ row_id: string; column_id: string; value_text: string | null; value_json: string | null; updated_at: string }>();
+            valRows.push(...(valRes.results || []));
+          }
 
           const valuesByRow = new Map<string, Record<string, string>>();
           const recordCellsByRow = new Map<string, Record<string, RecordCell>>();
-          for (const v of valRes.results || []) {
+          for (const v of valRows) {
             let rowMap = valuesByRow.get(v.row_id);
             if (!rowMap) {
               rowMap = {};
@@ -1375,13 +1404,15 @@ export async function readRecordsPage(
     }
 
     // Honest totals: single cheap counts per built-in list, skipped while
-    // searching (a filtered total would need its own count and is reported
-    // as unknown instead of a misleading full-list number).
+    // searching or status-filtering (a filtered total would need its own
+    // count and is reported as unknown instead of a misleading full-list
+    // number). Entity totals match the displayed set: core kinds,
+    // non-deleted, non-redirect sources.
     let totals: Record<string, number> = {};
-    if (!search) {
+    if (!search && !statusFilter) {
       try {
         const counted = await db.batch([
-          db.prepare(`SELECT COUNT(*) AS n FROM entities WHERE workspace_id = ? AND status != 'deleted'`).bind(workspaceId),
+          db.prepare(`SELECT COUNT(*) AS n FROM entities WHERE workspace_id = ? AND status != 'deleted' AND (kind IS NULL OR lower(kind) IN ('lead','client','prospect','contact','person','business','company','organization','partner','vendor','')) AND NOT EXISTS (SELECT 1 FROM entity_redirects redirect WHERE redirect.workspace_id = entities.workspace_id AND redirect.source_entity_id = entities.id)`).bind(workspaceId),
           db.prepare(`SELECT COUNT(*) AS n FROM tasks WHERE workspace_id = ?`).bind(workspaceId),
           db.prepare(`SELECT COUNT(*) AS n FROM interaction_state WHERE workspace_id = ? AND state = 'active'`).bind(workspaceId),
           db.prepare(`SELECT COUNT(*) AS n FROM draft_projections WHERE workspace_id = ? AND status != 'archived'`).bind(workspaceId),

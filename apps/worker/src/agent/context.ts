@@ -63,6 +63,7 @@ export interface AssembledTurnContext {
      * stays discoverable through the attachment query/read tools.
      */
     attachments: Array<{ mediaId: string; position: number }>;
+    documents: Array<{ mediaId: string; filename: string; state: string }>;
   }>;
   activeNotes: ActiveNoteExcerpt[];
   currentSummary: {
@@ -235,6 +236,7 @@ export async function getTurnContext(
         sequence: Number(r['sequence']),
         createdAt: String(r['created_at']),
         attachments: [] as Array<{ mediaId: string; position: number }>,
+        documents: [] as Array<{ mediaId: string; filename: string; state: string }>,
       };
     })
     .reverse();
@@ -242,6 +244,9 @@ export async function getTurnContext(
   // 3b. Attachment manifest for the included messages: one bounded query
   // over the same window (≤50 ids, far under the 100-parameter D1 limit).
   // Availability is rechecked at hydration time; this never gates text.
+  // Images and documents both ride here so later turns can read prior files
+  // without reupload: images hydrate pixels, documents expose bounded
+  // identities for explicit read_document calls.
   {
     const messageIds = recentMessages.map((m) => m.id).slice(0, 50);
     if (chatId && messageIds.length > 0) {
@@ -265,6 +270,33 @@ export async function getTurnContext(
       }
       for (const m of recentMessages) {
         m.attachments = byMessage.get(m.id) ?? [];
+      }
+      const docRows = (
+        await db
+          .prepare(
+            `SELECT a.chat_message_id AS message_id, a.media_id AS media_id, a.position AS position,
+                    m.filename AS filename, m.state AS state
+             FROM message_document_attachments a
+             JOIN media_objects m ON m.id = a.media_id AND m.workspace_id = a.workspace_id
+             WHERE a.workspace_id = ? AND a.chat_message_id IN (${placeholders})
+             ORDER BY a.position ASC`,
+          )
+          .bind(workspaceId, ...messageIds)
+          .all<{ message_id: string; media_id: string; position: number; filename: string | null; state: string }>()
+      ).results ?? [];
+      const byDocMessage = new Map<string, Array<{ mediaId: string; filename: string; state: string }>>();
+      for (const row of docRows.slice(0, 200)) {
+        const list = byDocMessage.get(row.message_id) ?? [];
+        if (list.length >= 4) continue;
+        list.push({
+          mediaId: row.media_id,
+          filename: String(row.filename ?? row.media_id).slice(0, 200),
+          state: String(row.state ?? 'unknown'),
+        });
+        byDocMessage.set(row.message_id, list);
+      }
+      for (const m of recentMessages) {
+        m.documents = byDocMessage.get(m.id) ?? [];
       }
     }
   }

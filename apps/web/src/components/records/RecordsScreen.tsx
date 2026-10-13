@@ -22,7 +22,7 @@ import type {
 import type { RecordsResponse } from '@otis/contracts';
 import { RecordsControlBar, RecordsEditBar, type SortSpec } from './RecordsControlBar.js';
 import { RecordsTable } from './RecordsTable.js';
-import { canUseCanvasGrid, planPaste, type GridCellEdit } from './gridCore.js';
+import { buildSaveChunks, remapPendingChunks, canUseCanvasGrid, planPaste, type GridCellEdit } from './gridCore.js';
 import { RecordRowList } from './RecordRowList.js';
 import { RecordRowEditor } from './RecordRowEditor.js';
 import { AddColumnDialog } from './AddColumnDialog.js';
@@ -32,6 +32,7 @@ import { AskOtisPane } from './AskOtisPane.js';
 import { UnifiedSearchDialog } from '../UnifiedSearchDialog.js';
 import { DuplicateMergeDialog } from '../DuplicateMergeDialog.js';
 import { useRecordsDraft, buildRecordsContext, displayValue, mergeRecordsPatch, type RecordsBase, type SaveManifest } from './useRecordsDraft.js';
+import { storeRecordsDraft, loadRecordsDraft } from './recordsDraftStore.js';
 import type { RecordEdit, RecordFieldType } from './types.js';
 
 const RecordsGridLazy = lazy(() => import('./RecordsGrid.js').then((m) => ({ default: m.RecordsGrid })));
@@ -182,13 +183,14 @@ export function RecordsScreen(props: RecordsScreenProps) {
     setExtraCursor(undefined);
     setSelectedIds([]);
     setSelectedRowForEditor(null);
-  }, [props.workspaceId, activeListId, search, sort.column, sort.dir]);
+  }, [props.workspaceId, activeListId, search, sort.column, sort.dir, statusFilter]);
 
   const recordsQuery = useQuery({
-    queryKey: qk.records(props.userId, props.workspaceId, activeListId, { search, sort: `${sort.column}:${sort.dir}` }),
+    queryKey: qk.records(props.userId, props.workspaceId, activeListId, { search, sort: `${sort.column}:${sort.dir}`, status: statusFilter ?? '' }),
     queryFn: ({ signal }) => api.getRecords(props.workspaceId, {
       list_id: activeListId,
       search: search || undefined,
+      status: statusFilter ?? undefined,
       sort: { column_id: sort.column, direction: sort.dir },
       limit: PAGE_LIMIT,
     }, signal),
@@ -237,25 +239,23 @@ export function RecordsScreen(props: RecordsScreenProps) {
 
   const columnById = useMemo(() => new Map(draft.columns.map((c) => [c.id, c])), [draft.columns]);
 
-  // Local view filter only; search itself runs on the server.
+  // Server owns search/status filtering over the whole list; the local view
+  // only drops removed rows. Changed rows the server filter excludes stay
+  // pinned with an explanation instead of vanishing.
   const filteredRows = useMemo(() => {
-    let rows = draft.rows.filter((r) => !draft.removedIds.has(r.id));
-    if (statusFilter) {
-      rows = rows.filter((r) => String(r.cells['status'] ?? '') === statusFilter);
-    }
-    return rows;
-  }, [draft.rows, draft.removedIds, statusFilter]);
+    return draft.rows.filter((r) => !draft.removedIds.has(r.id));
+  }, [draft.rows, draft.removedIds]);
 
-  // Changed rows the server search excludes stay pinned with an explanation.
+  // Changed rows the server search/status excludes stay pinned with an explanation.
   const pinnedRows = useMemo(() => {
-    if (!search) return [];
+    if (!search && !statusFilter) return [];
     const dirtyIds = new Set<string>();
     for (const op of draft.ops) {
       if (op.op === 'cell.set' || op.op === 'cell.clear') dirtyIds.add(op.row_ref.id);
       else if (op.op === 'row.create') dirtyIds.add(op.row_ref.id);
     }
     return draft.rows.filter((r) => (dirtyIds.has(r.id) || r.provisional) && !filteredRows.some((f) => f.id === r.id));
-  }, [search, draft.ops, draft.rows, filteredRows]);
+  }, [search, statusFilter, draft.ops, draft.rows, filteredRows]);
 
   // Dirty markers for the grid and editor: overlay rows already carry edited
   // values, so markers only flag which cells differ from the saved base.
@@ -353,21 +353,24 @@ export function RecordsScreen(props: RecordsScreenProps) {
   }, []);
 
   const stageGridEdits = useCallback((label: string, edits: GridCellEdit[]) => {
-    const ops: RecordEdit[] = edits.map((edit) => ({
-      op: 'cell.set',
-      op_id: `op_cell_${edit.rowId}_${edit.columnId}`,
-      row_ref: refOfRow(edit.rowId),
-      column_id: edit.columnId,
-      value: edit.text,
-      base_token: baseVersions.get(`${edit.rowId}:${edit.columnId}`),
-    }));
+    const ops: RecordEdit[] = edits.map((edit) => {
+      const column = columnById.get(edit.columnId);
+      return {
+        op: 'cell.set',
+        op_id: `op_cell_${crypto.randomUUID().slice(0, 8)}`,
+        row_ref: refOfRow(edit.rowId),
+        column_id: edit.columnId,
+        value: column ? parseTextInput(column, edit.text) : edit.text,
+        base_token: baseVersions.get(`${edit.rowId}:${edit.columnId}`),
+      };
+    });
     draft.stageOps(label, ops);
-  }, [draft, refOfRow, baseVersions]);
+  }, [draft, refOfRow, baseVersions, columnById]);
 
   const handleGridClear = useCallback((cells: GridCellEdit[]) => {
     const ops: RecordEdit[] = cells.map((edit) => ({
       op: 'cell.clear',
-      op_id: `op_cell_${edit.rowId}_${edit.columnId}`,
+      op_id: `op_cell_${crypto.randomUUID().slice(0, 8)}`,
       row_ref: refOfRow(edit.rowId),
       column_id: edit.columnId,
       base_token: baseVersions.get(`${edit.rowId}:${edit.columnId}`),
@@ -393,13 +396,19 @@ export function RecordsScreen(props: RecordsScreenProps) {
       },
     );
     if (plan.ops.length > 0) {
-      draft.stageOps(`Paste ${values.length} rows`, plan.ops);
+      const typedOps = plan.ops.map((op) => {
+        if (op.op !== 'cell.set') return op;
+        const column = columnById.get(op.column_id);
+        if (!column || typeof op.value !== 'string') return op;
+        return { ...op, value: parseTextInput(column, op.value) };
+      });
+      draft.stageOps(`Paste ${values.length} rows`, typedOps);
     }
     if (plan.reviewRows.length > 0) {
       setPasteReview({ rows: plan.reviewRows });
     }
     if (plan.skippedStructured > 0) flagSkipped(plan.skippedStructured, 'structured cells');
-  }, [visibleColumns, filteredRows, listKind, activeListId, refOfRow, baseVersions, draft, flagSkipped]);
+  }, [visibleColumns, filteredRows, listKind, activeListId, refOfRow, baseVersions, draft, flagSkipped, columnById]);
 
   const handleCellChange = useCallback((rowId: string, columnId: string, next: string) => {
     const column = columnById.get(columnId);
@@ -436,7 +445,7 @@ export function RecordsScreen(props: RecordsScreenProps) {
         if (first === undefined) continue;
         fillOps.push({
           op: 'cell.set',
-          op_id: `op_cell_${entry.rowId}_${fieldId}`,
+          op_id: `op_cell_${crypto.randomUUID().slice(0, 8)}`,
           row_ref: refOfRow(entry.rowId),
           column_id: fieldId,
           value: first,
@@ -448,11 +457,33 @@ export function RecordsScreen(props: RecordsScreenProps) {
   }, [draft, refOfRow, pasteReview]);
 
   const handleCreateList = useCallback((name: string) => {
-    const listId = draft.createList(name);
+    // Stage the creation manifest under the destination scope before
+    // switching: the hook flushes the current draft to the old scope on
+    // switch, so staging here first would lose the new list's draft.
+    const trimmed = name.trim();
+    if (!trimmed) return;
+    const newListId = `lst_${crypto.randomUUID().replace(/-/g, '').slice(0, 12)}`;
+    const newFieldId = `fld_${crypto.randomUUID().replace(/-/g, '').slice(0, 12)}`;
+    const creationOps: RecordEdit[] = [
+      { op: 'list.create', op_id: `op_list_${crypto.randomUUID().slice(0, 8)}`, list_id: newListId, name: trimmed, source_kind: 'custom' },
+      { op: 'field.create', op_id: `op_field_${crypto.randomUUID().slice(0, 8)}`, field_id: newFieldId, list_id: newListId, label: 'Name', type: 'text' },
+    ];
+    try {
+      const existing = loadRecordsDraft(props.userId, props.workspaceId, newListId);
+      const merged = [...(existing?.operations as RecordEdit[] ?? []), ...creationOps];
+      storeRecordsDraft(props.userId, props.workspaceId, newListId, {
+        draftId: existing?.draftId ?? `drd_${crypto.randomUUID()}`,
+        generation: (existing?.generation ?? 0) + 1,
+        baseRevision: existing?.baseRevision ?? -1,
+        operations: merged,
+      });
+    } catch {
+      // The new scope still opens; its draft simply starts empty.
+    }
     setIsAddListOpen(false);
-    setActiveListId(listId);
-    props.onNavigateToList?.(props.workspaceId, listId);
-  }, [draft, props]);
+    setActiveListId(newListId);
+    props.onNavigateToList?.(props.workspaceId, newListId);
+  }, [props]);
 
   const invalidateRecords = useCallback(() => {
     void queryClient.invalidateQueries({ queryKey: ['otis', props.userId, props.workspaceId, 'records'] });
@@ -461,58 +492,174 @@ export function RecordsScreen(props: RecordsScreenProps) {
   }, [queryClient, props.userId, props.workspaceId]);
 
   const handleSave = useCallback(async (manifestOverride?: SaveManifest) => {
-    const manifest = manifestOverride ?? draft.beginSave();
-    if (!manifest) return;
-    setSavedMessage(null);
-    try {
-      const res = await api.saveRecords(props.workspaceId, {
-        schema_version: 1,
-        save_id: manifest.saveId,
-        action_id: manifest.actionId,
-        chunk_index: 0,
-        chunk_count: 1,
-        list_id: activeListId,
-        operations: manifest.operations,
-      });
-      if (res.status === 'applied' || res.status === 'already_applied') {
-        draft.ackSave(manifest, res);
-        invalidateRecords();
-        const count = res.affected_count ?? manifest.operations.length;
-        setSavedMessage(count === 0 ? 'Already saved. No changes to apply.' : `Saved ${count} change${count === 1 ? '' : 's'} to workspace memory.`);
-        window.setTimeout(() => setSavedMessage(null), 4000);
-      } else if (res.status === 'conflict') {
-        const first = res.conflicts?.[0];
-        draft.setConflict({
-          opId: first?.op_id ?? null,
-          message: first?.message ?? 'Another edit landed first. Review both values, then keep yours or take the saved one.',
-          currentValue: first?.current_value,
-        });
-        invalidateRecords();
-      } else {
-        draft.failSave(manifest, 'The save was rejected and nothing changed. Your draft is intact.', false);
-      }
-    } catch (err) {
-      if (err instanceof ApiError) {
-        if (err.status === 409) {
-          const detail = err.details as { op_id?: string; current_token?: string; reason?: string } | string | undefined;
-          draft.setConflict({
-            opId: typeof detail === 'object' && detail?.op_id ? String(detail.op_id) : null,
-            message: err.message,
-          });
+    // Fence every async continuation to the scope captured here through
+    // current refs: a list, workspace, account, or draft switch mid-flight
+    // must not let an old response acknowledge, conflict, or fail a
+    // different draft. When the UI has moved on, the old scope's pending
+    // receipt is preserved independently (see below).
+    const saveScope = { userId: props.userId, workspaceId: props.workspaceId, listId: activeListId, draftId: draft.draftId };
+    const live = () =>
+      scopeRef.current.userId === saveScope.userId &&
+      scopeRef.current.workspaceId === saveScope.workspaceId &&
+      scopeRef.current.listId === saveScope.listId &&
+      scopeRef.current.draftId === saveScope.draftId;
+    const sendChunk = async (manifest: SaveManifest) => api.saveRecords(saveScope.workspaceId, {
+      schema_version: 1,
+      save_id: manifest.saveId,
+      action_id: manifest.actionId,
+      chunk_index: manifest.chunkIndex,
+      chunk_count: manifest.chunkCount,
+      list_id: manifest.listId,
+      operations: manifest.operations,
+    });
+    const applyConflict = (opId: string | null, message: string, currentValue?: import('@otis/contracts').RecordValue, currentToken?: string) => {
+      if (!live()) return;
+      draft.setConflict({ opId, message, currentValue, currentToken });
+      invalidateRecords();
+    };
+    if (manifestOverride) {
+      setSavedMessage(null);
+      try {
+        const res = await sendChunk(manifestOverride);
+        if (!live()) return;
+        if (res.status === 'applied' || res.status === 'already_applied') {
+          draft.ackSave(manifestOverride, res);
           invalidateRecords();
+          const count = res.affected_count ?? manifestOverride.operations.length;
+          setSavedMessage(count === 0 ? 'Already saved. No changes to apply.' : `Saved ${count} change${count === 1 ? '' : 's'} to workspace memory.`);
+          window.setTimeout(() => setSavedMessage(null), 4000);
+        } else if (res.status === 'conflict') {
+          const first = res.conflicts?.[0];
+          applyConflict(
+            first?.op_id ?? null,
+            first?.message ?? 'Another edit landed first. Review both values, then keep yours or take the saved one.',
+            first?.current_value,
+          );
         } else {
-          draft.failSave(manifest, err.message || 'The save failed and nothing changed. Your draft is intact.', false);
+          draft.failSave(manifestOverride, 'The save was rejected and nothing changed. Your draft is intact.', false);
         }
-      } else {
-        // Network loss, timeout, or abort: the commit outcome is unknown, so
-        // the exact manifest is retained for an identical retry.
+      } catch (err) {
+        if (!live()) return;
+        if (err instanceof ApiError) {
+          if (err.status === 409) {
+            const raw = err.details as { conflict?: { op_id?: string; reason?: string; current_token?: string }; op_id?: string; current_token?: string } | undefined;
+            const conflict = raw && typeof raw === 'object' && 'conflict' in raw ? raw.conflict : raw;
+            applyConflict(
+              conflict && typeof conflict.op_id === 'string' ? conflict.op_id : null,
+              err.message,
+              undefined,
+              conflict && typeof conflict.current_token === 'string' ? conflict.current_token : undefined,
+            );
+          } else if (err.status >= 500 || err.code === 'service_unavailable') {
+            draft.failSave(
+              manifestOverride,
+              'The save response was lost, so it may or may not have committed. Retry with the same save, or refresh to check first.',
+              true,
+            );
+          } else {
+            draft.failSave(manifestOverride, err.message || 'The save failed and nothing changed. Your draft is intact.', false);
+          }
+        } else {
+          draft.failSave(
+            manifestOverride,
+            'The save response was lost, so it may or may not have committed. Retry with the same save, or refresh to check first.',
+            true,
+          );
+        }
+      }
+      return;
+    }
+    const chunks = buildSaveChunks(draft.ops);
+    if (chunks.length === 0) return;
+    setSavedMessage(null);
+    const saveId = `save_${crypto.randomUUID()}`;
+    let savedCount = 0;
+    for (let index = 0; index < chunks.length; index++) {
+      const manifest = draft.beginSave({
+        operations: chunks[index]!,
+        chunkIndex: index,
+        chunkCount: chunks.length,
+        saveId,
+      });
+      if (!manifest) return;
+      try {
+        const res = await sendChunk(manifest);
+        if (!live()) return;
+        if (res.status === 'applied' || res.status === 'already_applied') {
+          draft.ackSave(manifest, res);
+          // Carry authoritative IDs and versions into not-yet-submitted
+          // chunks before freezing their requests: later chunks may address
+          // rows this chunk just created.
+          remapPendingChunks(chunks, index + 1, res.id_mappings, res.affected_values);
+          savedCount += res.affected_count ?? manifest.operations.length;
+          continue;
+        }
+        if (res.status === 'conflict') {
+          const first = res.conflicts?.[0];
+          applyConflict(
+            first?.op_id ?? null,
+            first?.message ?? 'Another edit landed first. Review both values, then keep yours or take the saved one.',
+            first?.current_value,
+          );
+          if (savedCount > 0) setSavedMessage(`${savedCount} saved · ${draft.ops.length} pending. Review the conflict, then Save again.`);
+          invalidateRecords();
+          return;
+        }
         draft.failSave(
           manifest,
-          'The save response was lost, so it may or may not have committed. Retry with the same save, or refresh to check first.',
+          savedCount > 0
+            ? `${savedCount} saved · remaining changes kept. The save was rejected and nothing further changed.`
+            : 'The save was rejected and nothing changed. Your draft is intact.',
+          false,
+        );
+        return;
+      } catch (err) {
+        if (!live()) return;
+        if (err instanceof ApiError) {
+          if (err.status === 409) {
+            const raw = err.details as { conflict?: { op_id?: string; reason?: string; current_token?: string }; op_id?: string; current_token?: string } | undefined;
+            const conflict = raw && typeof raw === 'object' && 'conflict' in raw ? raw.conflict : raw;
+            applyConflict(
+              conflict && typeof conflict.op_id === 'string' ? conflict.op_id : null,
+              err.message,
+              undefined,
+              conflict && typeof conflict.current_token === 'string' ? conflict.current_token : undefined,
+            );
+            if (savedCount > 0) setSavedMessage(`${savedCount} saved · ${draft.ops.length} pending. Review the conflict, then Save again.`);
+            return;
+          }
+          if (err.status >= 500 || err.code === 'service_unavailable') {
+            draft.failSave(
+              manifest,
+              savedCount > 0
+                ? `${savedCount} saved · the next response was lost, so it may or may not have committed. Retry with the same save.`
+                : 'The save response was lost, so it may or may not have committed. Retry with the same save, or refresh to check first.',
+              true,
+            );
+            return;
+          }
+          draft.failSave(
+            manifest,
+            savedCount > 0
+              ? `${savedCount} saved · remaining changes kept. ${err.message || 'The save failed.'}`
+              : err.message || 'The save failed and nothing changed. Your draft is intact.',
+            false,
+          );
+          return;
+        }
+        draft.failSave(
+          manifest,
+          savedCount > 0
+            ? `${savedCount} saved · the next response was lost, so it may or may not have committed. Retry with the same save.`
+            : 'The save response was lost, so it may or may not have committed. Retry with the same save, or refresh to check first.',
           true,
         );
+        return;
       }
     }
+    invalidateRecords();
+    setSavedMessage(savedCount === 0 ? 'Already saved. No changes to apply.' : `Saved ${savedCount} change${savedCount === 1 ? '' : 's'} to workspace memory.`);
+    window.setTimeout(() => setSavedMessage(null), 4000);
   }, [draft, props.workspaceId, activeListId, invalidateRecords]);
 
   const handleRetryUnknown = useCallback(() => {
@@ -628,9 +775,16 @@ export function RecordsScreen(props: RecordsScreenProps) {
   // composer and dialog inputs elsewhere keep their own keys.
   const draftRef = useRef(draft);
   const saveRef = useRef(handleSave);
+  const activeListIdRef = useRef(activeListId);
+  // The fence scope commits during render, not in a passive effect: an old
+  // request continuation settling between commit and effect would otherwise
+  // still observe the previous screen as live. The assignment is idempotent.
+  const scopeRef = useRef({ userId: props.userId, workspaceId: props.workspaceId, listId: activeListId, draftId: draft.draftId });
+  scopeRef.current = { userId: props.userId, workspaceId: props.workspaceId, listId: activeListId, draftId: draft.draftId };
   useEffect(() => {
     draftRef.current = draft;
     saveRef.current = handleSave;
+    activeListIdRef.current = activeListId;
   });
   useEffect(() => {
     const region = gridRegionRef.current;

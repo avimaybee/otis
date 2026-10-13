@@ -51,6 +51,9 @@ export interface WorkspaceExport {
   media_objects: unknown[];
   media_transcriptions: unknown[];
   message_image_attachments: unknown[];
+  message_document_attachments: unknown[];
+  generated_documents: unknown[];
+  document_revisions: unknown[];
   interaction_state: unknown[];
   entity_contacts: unknown[];
   entity_redirects: unknown[];
@@ -145,6 +148,9 @@ export async function handleExportWorkspace(
     media_objects: [...sections.mediaObjects, ...sections.mediaObjectsV2].map(({ object_key: _key, upload_token_hash: _ticket, upload_token_expires_at: _expiry, ...media }) => ({ ...media, original_url: `/api/workspaces/${encodeURIComponent(workspaceId)}/media/${encodeURIComponent(String(media.id))}` })),
     media_transcriptions: sections.mediaTranscriptions,
     message_image_attachments: sections.messageAttachments,
+    message_document_attachments: sections.messageDocumentAttachments ?? [],
+    generated_documents: sections.generatedDocuments ?? [],
+    document_revisions: sections.documentRevisions ?? [],
     interaction_state: sections.interactions ?? [],
     entity_contacts: sections.contacts ?? [],
     entity_redirects: sections.redirects ?? [],
@@ -171,6 +177,9 @@ export interface ExportSections {
   reminderRules?: Record<string, unknown>[];
   documentExtractions?: Record<string, unknown>[];
   mediaAnnotations?: Record<string, unknown>[];
+  messageDocumentAttachments?: Record<string, unknown>[];
+  generatedDocuments?: Record<string, unknown>[];
+  documentRevisions?: Record<string, unknown>[];
   recordsLists?: Record<string, unknown>[];
   recordsListColumns?: Record<string, unknown>[];
   recordsRows?: Record<string, unknown>[];
@@ -278,13 +287,14 @@ export async function collectWorkspaceExportSections(
     // Pre-images migration databases simply have no v2 inventory.
   }
 
-  const detailTables = ['interaction_state', 'entity_contacts', 'entity_redirects', 'attachment_links', 'reminder_rules', 'document_extractions', 'media_annotations', 'records_lists', 'records_list_columns', 'records_rows', 'records_values'];
+  const detailTables = ['interaction_state', 'entity_contacts', 'entity_redirects', 'attachment_links', 'reminder_rules', 'document_extractions', 'media_annotations', 'message_document_attachments', 'generated_documents', 'document_revisions', 'records_lists', 'records_list_columns', 'records_rows', 'records_values'];
   const present = new Set((await db.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all<{ name: string }>()).results.map(r => r.name));
   const available = detailTables.filter(table => present.has(table));
   const details = available.length ? await db.batch(available.map(table => q(`SELECT * FROM ${table} WHERE workspace_id = ?`))) : [];
   const detail = (table: string) => (details[available.indexOf(table)]?.results ?? []) as Record<string, unknown>[];
   return {
     interactions: detail('interaction_state'), contacts: detail('entity_contacts'), redirects: detail('entity_redirects'), attachmentLinks: detail('attachment_links'), reminderRules: detail('reminder_rules'), documentExtractions: detail('document_extractions'), mediaAnnotations: detail('media_annotations'),
+    messageDocumentAttachments: detail('message_document_attachments'), generatedDocuments: detail('generated_documents'), documentRevisions: detail('document_revisions'),
     recordsLists: detail('records_lists'), recordsListColumns: detail('records_list_columns'), recordsRows: detail('records_rows'), recordsValues: detail('records_values'),
     users: rowsAt(0),
     memberships: rowsAt(1),

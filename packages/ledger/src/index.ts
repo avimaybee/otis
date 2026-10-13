@@ -90,4 +90,4 @@ export { getBusinessProjectionState, getRecordsProjectionState, recordsScopeFor 
 export { ENTITY_FAMILY_SQL, familyBinds } from './repository/canonical.js';
 export { contactComparison } from './reducers/business.js';
 export { handleRecordsBatch } from './commands/recordsBatch.js';
-export { hydrateRecordsDetails, recordsDetailStatements } from './repository/records.js';
+export { hydrateRecordsDetails, recordsDetailStatements, batchedUpserts } from './repository/records.js';

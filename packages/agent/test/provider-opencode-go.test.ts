@@ -884,12 +884,11 @@ describe('OpenCode Go responses adapter (mocked OpenAI Responses shape)', () => 
     const fetchFn = mockFetch(() => chunkedResponse(['data: [DONE]\n\n']));
     const events: ProviderEvent[] = [];
     for await (const e of responsesAdapter(fetchFn).streamTurn(baseInput(goResponsesModel()))) events.push(e);
-    expect(events).toEqual([
-      {
-        type: 'error',
-        error: { code: 'malformed_response', message: expect.stringContaining('terminal response event'), retryable: false, retryAfterMs: null },
-      },
-    ]);
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      type: 'error',
+      error: { code: 'malformed_response', message: expect.stringContaining('terminal response event'), retryable: false, retryAfterMs: null },
+    });
   });
 
   it('Responses usage preserves input_tokens_details and output_tokens_details with zero and null counts (finding 3 follow-up regression)', async () => {
@@ -911,6 +910,107 @@ describe('OpenCode Go responses adapter (mocked OpenAI Responses shape)', () => 
         totalTokens: 15,
       },
     });
+  });
+
+  it('Responses incomplete with an unfinished call classifies as truncation, never executes the partial call (BG04)', async () => {
+    const truncatedStream = [
+      'event: response.output_item.added\n',
+      'data: {"output_index":0,"item":{"type":"function_call","call_id":"call_inc","name":"echo_fixture","arguments":""}}\n\n',
+      'event: response.function_call_arguments.delta\n',
+      'data: {"output_index":0,"delta":"{\\"fixture_id\\":\\"partial"}"}\n\n',
+      'event: response.incomplete\n',
+      'data: {"response":{"id":"resp_inc2","status":"incomplete","incomplete_details":{"reason":"max_output_tokens"},"usage":{"input_tokens":10,"output_tokens":50,"total_tokens":60}}}\n\n',
+    ].join('');
+    const fetchFn = mockFetch(() => chunkedResponse([truncatedStream]));
+    const events: ProviderEvent[] = [];
+    for await (const e of responsesAdapter(fetchFn).streamTurn(baseInput(goResponsesModel()))) events.push(e);
+    expect(events.filter((e) => e.type === 'tool_call_end')).toHaveLength(0);
+    expect(events[events.length - 1]).toMatchObject({
+      type: 'finish',
+      reason: 'length_limit',
+      continuation: { kind: 'go-responses', previousResponseId: 'resp_inc2' },
+    });
+  });
+
+  it('Responses failed with an unfinished call reports provider failure, not malformed completion (BG04)', async () => {
+    const failedStream = [
+      'event: response.output_item.added\n',
+      'data: {"output_index":0,"item":{"type":"function_call","call_id":"call_fail","name":"echo_fixture","arguments":""}}\n\n',
+      'event: response.failed\n',
+      'data: {"response":{"id":"resp_fail2","status":"failed"}}\n\n',
+    ].join('');
+    const fetchFn = mockFetch(() => chunkedResponse([failedStream]));
+    const events: ProviderEvent[] = [];
+    for await (const e of responsesAdapter(fetchFn).streamTurn(baseInput(goResponsesModel()))) events.push(e);
+    expect(events.filter((e) => e.type === 'tool_call_end')).toHaveLength(0);
+    expect(events[events.length - 1]).toMatchObject({
+      type: 'error',
+      error: { code: 'transient', terminalStatus: 'failed', pendingCalls: 1 },
+    });
+  });
+
+  it('Responses completed reconciles a missed item-done from terminal output without inventing arguments (BG04)', async () => {
+    const reconciledStream = [
+      'event: response.output_item.added\n',
+      'data: {"output_index":0,"item":{"type":"function_call","call_id":"call_rec","name":"echo_fixture","arguments":""}}\n\n',
+      'event: response.completed\n',
+      'data: {"response":{"id":"resp_rec","status":"completed","output":[{"type":"function_call","call_id":"call_rec","name":"echo_fixture","arguments":"{\\"fixture_id\\":\\"r\\"}"}]}}\n\n',
+    ].join('');
+    const fetchFn = mockFetch(() => chunkedResponse([reconciledStream]));
+    const events: ProviderEvent[] = [];
+    for await (const e of responsesAdapter(fetchFn).streamTurn(baseInput(goResponsesModel()))) events.push(e);
+    expect(events).toContainEqual({
+      type: 'tool_call_end',
+      callId: 'call_rec',
+      name: 'echo_fixture',
+      args: { fixture_id: 'r' },
+    });
+    expect(events[events.length - 1]).toMatchObject({
+      type: 'finish',
+      reason: 'tool_handoff',
+      continuation: { kind: 'go-responses', previousResponseId: 'resp_rec' },
+    });
+  });
+
+  it.each([
+    ['explicit non-complete item status', '{"type":"function_call","call_id":"call_x","name":"echo_fixture","status":"in_progress","arguments":"{\\"fixture_id\\":\\"x\\"}"}'],
+    ['mismatched tool name', '{"type":"function_call","call_id":"call_x","name":"other_tool","status":"completed","arguments":"{\\"fixture_id\\":\\"x\\"}"}'],
+    ['missing arguments string', '{"type":"function_call","call_id":"call_x","name":"echo_fixture","status":"completed"}'],
+    ['unparseable arguments', '{"type":"function_call","call_id":"call_x","name":"echo_fixture","status":"completed","arguments":"{oops"}'],
+  ])('Responses completed rejects terminal reconciliation with %s (BG11)', async (_label, terminalItem) => {
+    const stream = [
+      'event: response.output_item.added\n',
+      'data: {"output_index":0,"item":{"type":"function_call","call_id":"call_x","name":"echo_fixture","arguments":""}}\n\n',
+      'event: response.completed\n',
+      `data: {"response":{"id":"resp_bad","status":"completed","output":[${terminalItem}]}}\n\n`,
+    ].join('');
+    const fetchFn = mockFetch(() => chunkedResponse([stream]));
+    const events: ProviderEvent[] = [];
+    for await (const e of responsesAdapter(fetchFn).streamTurn(baseInput(goResponsesModel()))) events.push(e);
+    expect(events.filter((e) => e.type === 'tool_call_end')).toHaveLength(0);
+    expect(events[events.length - 1]).toMatchObject({
+      type: 'error',
+      error: { code: 'malformed_response', terminalStatus: 'completed', pendingCalls: 1 },
+    });
+  });
+
+  it('Responses completed still reconciles a terminal item with omitted status (BG11)', async () => {
+    const stream = [
+      'event: response.output_item.added\n',
+      'data: {"output_index":0,"item":{"type":"function_call","call_id":"call_ok","name":"echo_fixture","arguments":""}}\n\n',
+      'event: response.completed\n',
+      'data: {"response":{"id":"resp_ok","status":"completed","output":[{"type":"function_call","call_id":"call_ok","name":"echo_fixture","arguments":"{\\"fixture_id\\":\\"ok\\"}"}]}}\n\n',
+    ].join('');
+    const fetchFn = mockFetch(() => chunkedResponse([stream]));
+    const events: ProviderEvent[] = [];
+    for await (const e of responsesAdapter(fetchFn).streamTurn(baseInput(goResponsesModel()))) events.push(e);
+    expect(events).toContainEqual({
+      type: 'tool_call_end',
+      callId: 'call_ok',
+      name: 'echo_fixture',
+      args: { fixture_id: 'ok' },
+    });
+    expect(events[events.length - 1]).toMatchObject({ type: 'finish', reason: 'tool_handoff' });
   });
 });
 

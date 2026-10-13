@@ -287,7 +287,7 @@ function RunWork({ run, steps, activities, onInspectAction, onReply, onRetryRun,
         outcome && outcome.committed > 0
           ? `${formatFailureOutcome(outcome.committed, outcome.unfinished)}. Inspect the completed changes above.`
           : 'Some changes were saved. The run could not finish; inspect the completed changes above.'
-      }</p>{onRetryRun && <Button variant="outline" size="sm" type="button" onClick={() => onRetryRun(run!.run.id)}>Retry run</Button>}</div>;
+      }</p><p className="otis-run__status flex items-start gap-2 text-sm" role="status"><AlertCircleIcon /><span>{failureMessage(run.run.error_code)}</span></p>{onRetryRun && <Button variant="outline" size="sm" type="button" onClick={() => onRetryRun(run!.run.id)}>Retry run</Button>}{run.run.error_code && <details className="otis-provider-summary text-xs"><summary>Error details</summary><p>{run.run.error_code}{run.run.error_message ? `: ${run.run.error_message}` : ''}</p></details>}</div>;
     })()}
     {run?.status === 'failed' && (() => {
       const outcome = partialOutcome(activities, run?.run.id);
@@ -463,8 +463,10 @@ export interface TranscriptProps {
   followSignal?: number;
   /** Scope key for saved reading position (user/workspace/chat). */
   positionKey?: string;
+  workspaceId?: string;
+  chatId?: string | null;
 }
-export function Transcript({ messages, members, currentUserId, steps, run, runs = {}, activities = [], transients = {}, pendingUnread = 0, onJumpToLatest, onInspectAction, onReply, onRetryRun, onRetryQuestions, questionsFailed = false, onInspectSource, onEditMessage, loading, hasOlder, loadingOlder, onLoadOlder, delivery = {}, onRetryMessage, onDiscardMessage, olderError = null, followSignal = 0, positionKey = '' }: TranscriptProps) {
+export function Transcript({ messages, members, currentUserId, steps, run, runs = {}, activities = [], transients = {}, pendingUnread = 0, onJumpToLatest, onInspectAction, onReply, onRetryRun, onRetryQuestions, questionsFailed = false, onInspectSource, onEditMessage, loading, hasOlder, loadingOlder, onLoadOlder, delivery = {}, onRetryMessage, onDiscardMessage, olderError = null, followSignal = 0, positionKey = '', workspaceId, chatId }: TranscriptProps) {
   // Sole follow/release/Jump owner. Instant adjustments only: no animated
   // token-driven scrolling, so reduced motion is honored by construction.
   // Native overflow-anchor (default) owns prepend/in-place anchoring; no
@@ -500,7 +502,7 @@ export function Transcript({ messages, members, currentUserId, steps, run, runs 
     }
     return computed;
   }, [activitiesByRun, messages, run, runs]);
-  const docsByRun = useMemo(() => {
+  const activityDocsByRun = useMemo(() => {
     const map = new Map<string, Array<{ document: GeneratedDocument; revision: DocumentRevision }>>();
     for (const act of activities) {
       const isDoc =
@@ -522,6 +524,66 @@ export function Transcript({ messages, members, currentUserId, steps, run, runs 
     }
     return map;
   }, [activities]);
+  const [fallbackDocs, setFallbackDocs] = useState<Array<{ document: GeneratedDocument; revision: DocumentRevision }>>([]);
+  // Canonical cards refresh on document-activity signals (completion,
+  // reconnect catch-up, retry) without polling: a new activity re-reads
+  // the listing so missed Queue publication still converges.
+  const docActivityCount = activities.reduce(
+    (n, act) => n + (
+      act.type === 'document_revision_updated' ||
+      (act.type === 'step_finished' && (act.payload as Record<string, unknown> | null)?.step === 'document_revision_updated')
+        ? 1 : 0
+    ),
+    0,
+  );
+  useEffect(() => {
+    if (!workspaceId || !chatId) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const { api } = await import('../api/client.js');
+        const list = await api.listChatDocuments(workspaceId, chatId);
+        if (cancelled) return;
+        const mapped = (list.documents ?? [])
+          .filter((s) => s.document && s.current_revision)
+          .map((s) => ({ document: s.document, revision: s.current_revision! }));
+        setFallbackDocs(mapped);
+      } catch {
+        // Card recovery is best effort; activities remain the primary source.
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [workspaceId, chatId, docActivityCount]);
+  const docsByRun = useMemo(() => {
+    // Canonical recovery merges per document: the activity payload wins only
+    // when it is at least as fresh as the listing; a stale or partial
+    // activity never hides the current revision.
+    const byDoc = new Map<string, { document: GeneratedDocument; revision: DocumentRevision; runId: string }>();
+    for (const entry of fallbackDocs) {
+      byDoc.set(entry.document.id, { ...entry, runId: entry.document.run_id ?? '' });
+    }
+    for (const [runId, list] of activityDocsByRun) {
+      for (const entry of list) {
+        const canonical = byDoc.get(entry.document.id);
+        const activityTime = entry.revision.updated_at ?? '';
+        const canonicalTime = canonical?.revision.updated_at ?? '';
+        if (!canonical || activityTime >= canonicalTime) {
+          byDoc.set(entry.document.id, { ...entry, runId });
+        }
+      }
+    }
+    if (byDoc.size === 0) return activityDocsByRun;
+    const byRun = new Map<string, Array<{ document: GeneratedDocument; revision: DocumentRevision }>>();
+    const messageRunIds = new Set(messages.map((m) => m.run_id).filter((id): id is string => !!id));
+    const lastRunId = [...messages].reverse().find((m) => m.run_id)?.run_id ?? '__chat__';
+    for (const { document, revision, runId } of byDoc.values()) {
+      const target = (runId && messageRunIds.has(runId)) ? runId : lastRunId;
+      const list = byRun.get(target) ?? [];
+      if (!list.some((d) => d.document.id === document.id)) list.push({ document, revision });
+      byRun.set(target, list);
+    }
+    return byRun;
+  }, [activityDocsByRun, fallbackDocs, messages]);
   const restoredRef = useRef(false);
 
   const handleCopy = async (id: string, text: string) => {

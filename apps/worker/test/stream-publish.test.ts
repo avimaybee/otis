@@ -245,6 +245,98 @@ describe('StreamPublisher (R6 stream reliability)', () => {
     expect(calls.some(call => call.type === 'reasoning_summary')).toBe(false);
   });
 
+  it('scopes retry generations apart so a replacement never collides (BG06)', async () => {
+    const { calls, publish } = recorder();
+    const first = new StreamPublisher(publish, 0, 'gemini', () => undefined, undefined, undefined, undefined, 'abc123s0');
+    first.pushText('retry me');
+    await first.close('complete');
+    const second = new StreamPublisher(publish, 0, 'gemini', () => undefined, undefined, undefined, undefined, 'abc123s1');
+    second.pushText('retry me');
+    await second.close('complete');
+    const keys = calls.map(call => call.key);
+    expect(new Set(keys).size).toBe(keys.length);
+    expect(keys.some(key => key.includes('_gabc123s0_'))).toBe(true);
+    expect(keys.some(key => key.includes('_gabc123s1_'))).toBe(true);
+  });
+
+  it('discard drops the provisional display without persisting (BG06)', async () => {
+    const { calls, publish } = recorder();
+    const publisher = new StreamPublisher(publish, 0, 'gemini');
+    publisher.pushText('partial preamble');
+    publisher.pushThinking(thinking('partial thought'));
+    await publisher.discard();
+    publisher.pushText('late text');
+    await publisher.tick(Date.now() + 20_000);
+    expect(calls.filter(call => call.type === 'text_chunk')).toHaveLength(0);
+    expect(thinkingText(calls)).toBe('');
+  });
+
+  it('discard releases unpublished budget and fences in-flight publication (BG10)', async () => {
+    // Phase 1: buffered-but-never-enqueued content releases its allowance.
+    const budgetA = createThinkingBudget();
+    const plainA = recorder();
+    const first = new StreamPublisher(plainA.publish, 0, 'gemini', () => undefined, budgetA);
+    first.pushThinking(thinking('y'.repeat(100)));
+    expect(budgetA.bufferedChars).toBe(100);
+    await first.discard();
+    expect(budgetA.bufferedChars).toBe(0);
+    expect(budgetA.publishedChars).toBe(0);
+    expect(plainA.calls).toHaveLength(0);
+
+    // Phase 2: an in-flight publish settles exactly before retirement.
+    const budgetB = createThinkingBudget();
+    const gates: Array<() => void> = [];
+    const calls: RecordedCall[] = [];
+    const gatedPublish: StreamPublishFn = (_key, type, payload) =>
+      new Promise<void>((resolve) => {
+        gates.push(() => {
+          calls.push({ key: _key, type, payload: payload as Record<string, unknown> });
+          resolve();
+        });
+      });
+    const publisher = new StreamPublisher(gatedPublish, 0, 'gemini', () => undefined, budgetB);
+    publisher.pushThinking(thinking('x'.repeat(1000)));
+    for (let step = 0; step < 10 && gates.length === 0; step++) {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+    expect(gates.length).toBe(1);
+    const discarding = publisher.discard();
+    // Release the gate while discard waits: the authorized flush lands, then
+    // the (now empty) remainder retires with exact accounting.
+    gates.splice(0).forEach((gate) => gate());
+    await discarding;
+    expect(thinkingText(calls)).toBe('x'.repeat(1000));
+    expect(budgetB.publishedChars).toBe(1000);
+    expect(budgetB.bufferedChars).toBe(0);
+    // A replacement publisher on the same budget keeps its full allowance.
+    const plain = recorder();
+    const replacement = new StreamPublisher(plain.publish, 0, 'gemini', () => undefined, budgetB);
+    replacement.pushThinking(thinking('z'.repeat(100)));
+    await replacement.tick(Date.now() + 20_000);
+    await replacement.close('complete');
+    expect(budgetB.bufferedChars).toBe(0);
+    expect(
+      plain.calls
+        .filter((call) => call.type === 'reasoning_summary' && typeof call.payload['text'] === 'string')
+        .map((call) => call.payload['text'] as string)
+        .join(''),
+    ).toBe('z'.repeat(100));
+  });
+
+  it('carries the publication generation in thinking payloads (BG09)', async () => {
+    const { calls, publish } = recorder();
+    const publisher = new StreamPublisher(publish, 0, 'gemini', () => undefined, undefined, undefined, undefined, 'abc123s1');
+    publisher.pushThinking(thinking('thought ', 's0'));
+    await publisher.tick(Date.now() + 10_000);
+    await publisher.close('complete');
+    const summaries = calls.filter((call) => call.type === 'reasoning_summary');
+    expect(summaries.length).toBeGreaterThan(0);
+    for (const summary of summaries) {
+      expect(summary.payload['generation']).toBe('abc123s1');
+      expect(summary.payload['block_id']).toBe('s0');
+    }
+  });
+
   it('refuses pushes, ticks and preview frames once the run is aborted (F08)', async () => {
     const { calls, publish } = recorder();
     const previews: Array<{ text: string; seq: number }> = [];
